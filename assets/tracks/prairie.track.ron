@@ -1,0 +1,65 @@
+// "Prairie Pompon": the primitive test circuit (issue #3). Original layout.
+//
+// Format: see src/track/data.rs. Positions along the track ("at", "from", "to") are spline
+// parameters: 9.5 = halfway between points 9 and 10. Lateral "offset" goes from -1 (left
+// edge of the road) to 1 (right edge). Point 0 is the start line; karts drive toward point 1.
+(
+    name: "Prairie Pompon",
+    checkpoint_spacing: 25.0,
+    wall_height: 0.8,
+    points: [
+        // 0-3: long start straight, heading north (-Z).
+        (pos: (0.0, 0.0, 40.0)),
+        (pos: (0.0, 0.0, 10.0)),
+        (pos: (0.0, 0.0, -20.0)),
+        (pos: (0.0, 0.0, -50.0)),
+        // 4-8: hairpin to the right (radius 12 m at the apex): brake, or drift (issue #4).
+        (pos: (0.0, 0.0, -80.0), shoulder: 2.0),
+        (pos: (5.3, 0.0, -92.7), shoulder: 2.0),
+        (pos: (18.0, 0.0, -98.0), shoulder: 2.0),
+        (pos: (30.7, 0.0, -92.7), shoulder: 2.0),
+        (pos: (36.0, 0.0, -80.0), shoulder: 2.0),
+        // 9-11: back straight with the jump.
+        (pos: (36.0, 0.0, -50.0)),
+        (pos: (36.0, 0.0, -20.0)),
+        (pos: (36.0, 0.0, 8.0)),
+        // 12-15: chicane, a bit narrower.
+        (pos: (42.0, 0.0, 28.0), width: 13.0, shoulder: 3.0),
+        (pos: (55.0, 0.0, 42.0), width: 13.0, shoulder: 3.0),
+        (pos: (59.0, 0.0, 60.0), width: 13.0, shoulder: 3.0),
+        (pos: (55.0, 0.0, 78.0)),
+        (pos: (56.0, 0.0, 96.0)),
+        // 17-22: raised, banked right-hand turn.
+        (pos: (56.0, 1.5, 112.0), bank: 6.0, shoulder: 1.5),
+        (pos: (50.7, 3.0, 128.5), bank: 12.0, shoulder: 1.5),
+        (pos: (36.7, 3.5, 138.6), bank: 15.0, shoulder: 1.5),
+        (pos: (19.3, 3.5, 138.6), bank: 15.0, shoulder: 1.5),
+        (pos: (5.3, 3.0, 128.5), bank: 12.0, shoulder: 1.5),
+        (pos: (0.0, 1.5, 112.0), bank: 6.0, shoulder: 1.5),
+        // 23: back on the start straight (the grid sits between 23 and 0).
+        (pos: (0.0, 0.0, 80.0)),
+    ],
+    offroad: [
+        // Sand at the inside of the hairpin: cutting the apex costs speed.
+        (from: 5.3, to: 6.8, left: 0.55, right: 1.0),
+    ],
+    trick_ramps: [
+        (at: 9.4, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    boost_pads: [
+        (at: 1.6, offset: -0.45),
+        (at: 16.2, offset: 0.35),
+    ],
+    item_boxes: [
+        (at: 2.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 11.2, offsets: [-0.5, 0.0, 0.5]),
+        (at: 19.5, offsets: [-0.75], double: true),
+    ],
+    croquettes: [
+        (from: 0.8, count: 6, offset: 0.3),
+        (from: 10.0, count: 5, offset: -0.5),
+        (from: 13.0, count: 4, offset: 0.0),
+        (from: 20.2, count: 5, offset: -0.6),
+    ],
+    respawns: [],
+)

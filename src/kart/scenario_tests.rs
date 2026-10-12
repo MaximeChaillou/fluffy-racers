@@ -320,3 +320,23 @@ fn head_on_wall_bounces_without_tunneling_or_flipping() {
     scenario.run(2.0, brake);
     assert!(scenario.forward_speed() < -2.0);
 }
+
+#[test]
+fn drives_off_from_a_standstill_on_a_slight_uphill() {
+    // Regression (found on the circuit's starting grid): resting on a gentle slope, the kart
+    // creeps backwards and the throttle used to only brake that, forever.
+    let mut scenario = Scenario::new(|commands| {
+        spawn_static_box(
+            commands,
+            Transform::from_xyz(0.0, -0.5, 0.0)
+                .with_rotation(Quat::from_rotation_x(0.5f32.to_radians())),
+            Vec3::new(500.0, 0.5, 500.0),
+            Surface::Road,
+            0.0,
+        );
+    });
+    scenario.run(2.0, KartInput::default());
+    scenario.run(1.0, FULL_THROTTLE);
+    let speed = scenario.forward_speed();
+    assert!(speed > 10.0, "stuck at {speed} m/s");
+}

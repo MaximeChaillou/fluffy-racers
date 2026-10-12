@@ -157,10 +157,13 @@ pub fn next_forward_speed(
     }
 
     if throttle > 0.0 {
-        if speed < 0.0 {
+        if speed < -tuning.reverse_threshold {
             // Rolling backwards: the throttle first brakes.
             return approach(speed, 0.0, tuning.brake_decel * dt);
         }
+        // Barely rolling back (a slight slope): drive off right away. Treating it like real
+        // reverse speed would brake to 0 every tick while gravity pulls back: stuck forever.
+        let speed = speed.max(0.0);
         let accel = engine_accel(tuning, speed, top_speed) * throttle;
         return (speed + accel * dt).min(top_speed);
     }
@@ -385,6 +388,15 @@ mod tests {
         let t = KartTuning::default();
         let speed = next_forward_speed(&t, -5.0, &input(1.0, 0.0, 0.0), t.max_speed, false, DT);
         assert!(speed > -5.0 && speed <= 0.0);
+    }
+
+    #[test]
+    fn throttle_drives_off_when_barely_rolling_back() {
+        // Regression: on a slight slope the kart rolled back a millimeter per second and the
+        // throttle only braked to 0, every tick, forever.
+        let t = KartTuning::default();
+        let speed = next_forward_speed(&t, -0.0015, &input(1.0, 0.0, 0.0), t.max_speed, false, DT);
+        assert!(speed > 0.2, "{speed}");
     }
 
     #[test]

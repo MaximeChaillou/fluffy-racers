@@ -15,7 +15,7 @@ use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualPlugin, PlayerKart, SpawnPoint, kart_body,
     spawn_kart_visual,
 };
-use track::TrackPlugin;
+use track::{PlayerStart, TrackPlugin};
 
 /// Simulation tick rate (CLAUDE.md: the simulation runs in `FixedUpdate` at 60 Hz).
 pub const TICK_HZ: f64 = 60.0;
@@ -50,24 +50,21 @@ impl Plugin for GamePlugin {
                 KartVisualPlugin,
                 CameraPlugin,
             ))
-            .add_systems(Startup, (spawn_light, spawn_player));
+            .add_systems(Startup, spawn_light)
+            .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
     }
 }
 
-/// The player's starting position: the origin of the test ground, looking down -Z, wheels on
-/// the ground.
-pub fn player_spawn_point() -> Transform {
-    Transform::from_xyz(0.0, 0.55, 0.0)
-}
-
+/// Spawns the player's kart and camera once, when the track says where to start.
 fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     tuning: Res<KartTuning>,
     camera_tuning: Res<CameraTuning>,
+    start: Res<PlayerStart>,
 ) {
-    let spawn = player_spawn_point();
+    let spawn = start.0;
     let body = commands
         .spawn((kart_body(&tuning, spawn), PlayerKart, SpawnPoint(spawn)))
         .id();
@@ -111,11 +108,13 @@ mod tests {
     use super::*;
     use bevy::input::InputPlugin;
     use bevy::time::TimeUpdateStrategy;
+    use bevy_rapier3d::prelude::Velocity;
     use kart::{Kart, KartState, KartWheels};
+    use track::TrackChoice;
 
-    /// The whole game headless: real test ground, player kart, keyboard input. One fixed
-    /// tick per update.
-    fn game_app() -> App {
+    /// The whole game headless on `track`: player kart, keyboard input, one fixed tick per
+    /// update. Returns once the track is built and the player kart spawned.
+    fn app_on(track: TrackChoice) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -125,10 +124,29 @@ mod tests {
         ))
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
+        .insert_resource(track)
         .add_plugins(GamePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
-        app.update();
-        app
+        // Circuit files load asynchronously.
+        for _ in 0..2000 {
+            app.update();
+            let world = app.world_mut();
+            if world
+                .query_filtered::<(), With<PlayerKart>>()
+                .iter(world)
+                .next()
+                .is_some()
+            {
+                return app;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the track never finished loading");
+    }
+
+    /// The flat test ground of issue #1.
+    fn game_app() -> App {
+        app_on(TrackChoice::TestGround)
     }
 
     fn player(app: &mut App) -> Entity {
@@ -257,6 +275,158 @@ mod tests {
         );
     }
 
+    /// Issue #3: the circuit file loads, the track is built and the player starts on the grid
+    /// with its wheels on the road.
+    #[test]
+    fn circuit_loads_and_the_player_starts_on_the_grid() {
+        let mut app = app_on(TrackChoice::default());
+        run(&mut app, 0.5, |_| {});
+        let kart = player(&mut app);
+        let world = app.world();
+        let layout = world.resource::<track::TrackLayout>();
+        assert_eq!(layout.name, "Prairie Pompon");
+        let position = world.get::<Transform>(kart).unwrap().translation;
+        assert!(
+            position.distance(layout.grid[0].translation) < 0.5,
+            "kart at {position}"
+        );
+        assert_eq!(world.get::<KartState>(kart), Some(&KartState::Grounded));
+        assert_eq!(world.get::<KartWheels>(kart).unwrap().wheels_on_ground(), 4);
+        assert_eq!(world.get::<KartWheels>(kart).unwrap().offroad_ratio, 0.0);
+    }
+
+    /// Simple test driver: aims at a point of the centerline ahead and lifts off in tight turns.
+    fn follow_centerline(
+        layout: &track::TrackLayout,
+        transform: &Transform,
+        speed: f32,
+    ) -> kart::KartInput {
+        let center = &layout.center;
+        let here = center.samples()[center.nearest_index(transform.translation)].distance;
+        let target = center.at(here + 6.0 + 0.4 * speed).position;
+        let to_target = target - transform.translation;
+        let angle = to_target
+            .dot(*transform.right())
+            .atan2(to_target.dot(*transform.forward()));
+        kart::KartInput {
+            throttle: if angle.abs() > 0.25 && speed > 16.0 {
+                0.0
+            } else {
+                1.0
+            },
+            brake: if angle.abs() > 0.5 && speed > 12.0 {
+                1.0
+            } else {
+                0.0
+            },
+            steer: (angle * 3.0).clamp(-1.0, 1.0),
+            ..default()
+        }
+    }
+
+    /// Issue #3 acceptance: the kart of #1 can drive a full lap, through every checkpoint in
+    /// order (hairpin, jump, chicane, banked turn), without leaving the track.
+    #[test]
+    fn kart_drives_a_full_lap_of_the_circuit() {
+        let mut app = app_on(TrackChoice::default());
+        let kart = player(&mut app);
+        // The test drives, not the keyboard.
+        app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+        let layout = app.world().resource::<track::TrackLayout>().clone();
+        let length = layout.center.length();
+
+        let center = &layout.center;
+        let checkpoints = &layout.checkpoints;
+        let handle = app.world().resource::<track::TrackHandle>().0.clone();
+        let data = app
+            .world()
+            .resource::<Assets<track::TrackData>>()
+            .get(&handle)
+            .unwrap()
+            .clone();
+        let ramp = data.trick_ramps[0];
+        let ramp_start = center.param_to_distance(ramp.at);
+
+        // Distance to drive from the grid to reach checkpoint `k` (the last one closes the lap:
+        // back on the start line).
+        let start = center.samples()[center.nearest_index(layout.grid[0].translation)].distance;
+        let to_reach = |k: usize| {
+            if k == checkpoints.len() {
+                center.wrap(-start) + length
+            } else {
+                center.wrap(checkpoints[k].sample.distance - start)
+            }
+        };
+
+        let step = length / center.samples().len() as f32;
+        let n = center.samples().len() as i64;
+        let mut last = center.nearest_index(layout.grid[0].translation);
+        let mut progress = 0.0;
+        let mut next_checkpoint = 1;
+        let mut airborne_ticks = 0;
+        let mut ticks = 0;
+        while next_checkpoint <= checkpoints.len() && ticks < (90.0 * TICK_HZ) as usize {
+            ticks += 1;
+            let world = app.world();
+            let transform = *world.get::<Transform>(kart).unwrap();
+            let speed = world.get::<Velocity>(kart).unwrap().linear.length();
+            let input = follow_centerline(&layout, &transform, speed);
+            *app.world_mut().get_mut::<kart::KartInput>(kart).unwrap() = input;
+            app.update();
+
+            let world = app.world();
+            let position = world.get::<Transform>(kart).unwrap().translation;
+            let index = center.nearest_index(position);
+            let sample = center.samples()[index];
+            // Always between the walls...
+            let lateral = (position - sample.position).dot(sample.right).abs();
+            assert!(
+                lateral < track::mesh::wall_offset(&sample),
+                "left the track at {position}"
+            );
+            // ...and only in the air after the trick ramp.
+            if world.get::<KartState>(kart) == Some(&KartState::Airborne) {
+                airborne_ticks += 1;
+                let after_ramp = center.wrap(sample.distance - ramp_start);
+                assert!(
+                    after_ramp < ramp.length + 40.0,
+                    "airborne away from the ramp at {position}"
+                );
+            }
+            // Progress along the centerline (wrapping around the start line), never backwards.
+            let delta = (index as i64 - last as i64 + n + n / 2).rem_euclid(n) - n / 2;
+            assert!(delta > -5, "the kart went backwards at {position}");
+            progress += delta as f32 * step;
+            last = index;
+            while next_checkpoint <= checkpoints.len() && progress >= to_reach(next_checkpoint) {
+                next_checkpoint += 1;
+            }
+        }
+        assert!(
+            next_checkpoint > checkpoints.len(),
+            "stuck before checkpoint {next_checkpoint} of {} after {:.0} s (progress {progress:.0} m)",
+            checkpoints.len(),
+            ticks as f32 / TICK_HZ as f32
+        );
+        assert!(
+            airborne_ticks > 10,
+            "the jump was not taken ({airborne_ticks} ticks in the air)"
+        );
+    }
+
+    /// A missing or broken circuit file must not leave a blank screen.
+    #[test]
+    fn a_missing_circuit_file_falls_back_to_the_test_ground() {
+        let mut app = app_on(TrackChoice::Circuit("tracks/missing.track.ron".into()));
+        let kart = player(&mut app);
+        let position = app.world().get::<Transform>(kart).unwrap().translation;
+        assert!(
+            position.distance(Vec3::new(0.0, 0.55, 0.0)) < 0.1,
+            "kart at {position}"
+        );
+        assert!(app.world().get_resource::<track::TrackLayout>().is_none());
+    }
+
     #[test]
     fn falling_off_the_test_ground_resets_the_kart() {
         let mut app = game_app();
@@ -267,9 +437,7 @@ mod tests {
             .translation = Vec3::new(0.0, -50.0, 0.0);
         run(&mut app, 0.5, |_| {});
         let position = app.world().get::<Transform>(kart).unwrap().translation;
-        assert!(
-            position.distance(player_spawn_point().translation) < 0.5,
-            "kart at {position}"
-        );
+        let spawn = app.world().resource::<PlayerStart>().0.translation;
+        assert!(position.distance(spawn) < 0.5, "kart at {position}");
     }
 }
