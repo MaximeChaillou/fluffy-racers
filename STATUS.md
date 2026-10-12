@@ -10,10 +10,16 @@ _Mis à jour par Claude à chaque PR._
   - Machine à états `Grounded` / `Airborne` (les états drift, figure, touché viendront avec leurs issues).
   - Simulation en `FixedUpdate` 60 Hz, rendu interpolé entre deux ticks (`src/interpolation.rs`).
   - Entrées clavier + manette → `KartInput` ; touches de debug : **B** = boost, **R** = retour au départ.
-  - Caméra de suivi basique (la vraie caméra de poursuite arrive avec #2).
   - Tests de scénario headless (`src/kart/scenario_tests.rs`) : accélération, herbe, boost, frein/marche arrière, virage 3 s, saut de rampe, choc frontal contre un mur.
   - Test de bout en bout (`src/lib.rs`) : flèche haut maintenue sur le vrai terrain de test → le kart saute la rampe et retombe sur ses roues.
   - Vérifié dans Chromium headless (WebGL2 logiciel) : le jeu s'affiche, le kart roule et tourne au clavier. Le ressenti et les fps réels restent à juger par Max.
+- **Caméra de poursuite** (#2, `src/camera/`) :
+  - derrière le kart, elle suit sa pose *interpolée* ; ressorts critiques amortis (aucun dépassement, même rendu à 30, 60 ou 144 fps) ;
+  - elle pivote en virage avec un peu de retard, regarde devant le kart et anticipe les virages selon la vitesse de lacet ;
+  - FOV de 60° à l'arrêt, 70° à pleine vitesse, +6° en boost ;
+  - un rayon kart → caméra l'empêche de passer derrière un mur ou sous le sol ;
+  - hook `CameraLean` (−1 à 1) prêt pour le décalage latéral du drift (#4) ;
+  - réglages dans la Resource `CameraTuning`.
 - CI : fmt, clippy, tests et check wasm sur `main`, `dev`, les PR et les branches `claude/**`. Déploiement GitHub Pages depuis `dev`.
 - Fusion automatique des branches `claude/**` dans `dev` quand la CI passe (`automerge.yml`).
 
@@ -30,11 +36,13 @@ _Mis à jour par Claude à chaque PR._
 - 2026-10-12 (#1) : le hors-piste est mélangé roue par roue (2 roues dans l'herbe = moitié du ralentissement), pour éviter les à-coups en bordure.
 - 2026-10-12 (#1) : la simulation (`SimulationPlugin`) n'a ni fenêtre ni rendu ni périphérique d'entrée ; `GamePlugin` y ajoute le terrain, les entrées joueur, les visuels et la caméra. Les touches sont des positions physiques : W/A/S/D = Z/Q/S/D sur AZERTY.
 - 2026-10-12 (#1) : les murs et caisses ont une restitution de 0,3 (`track::WALL_RESTITUTION`), le kart 0 avec la règle `Max` : on rebondit sur les murs, pas sur le sol. Les surfaces de plus de 60° ne comptent pas comme sol (`min_ground_normal_y`), pour qu'un kart couché contre un mur se redresse au lieu de rouler dessus. À revoir pour l'anti-gravité (#20).
+- 2026-10-12 (#2) : la caméra suit le kart exactement à l'horizontale et ne lisse que la *direction* (pivot en virage) et la hauteur (sauts). Un ressort sur la position entière ferait traîner la caméra de plusieurs mètres à pleine vitesse.
+- 2026-10-12 (#2) : la fonction « regarder derrière » n'est pas faite ici ; elle est prévue dans #17.
 - 2026-10-12 (#1) : sous 30 m de hauteur, le kart revient au départ (filet de sécurité du terrain de test, en attendant le pélican dépanneur de #5).
 
 ## Prochaines étapes
 - Milestone 1 « Ça roule » (solo) :
-  - ~~kart~~ (#1), caméra de poursuite (#2, remplace la caméra de suivi basique), circuit, drift à 3 paliers, course, bots ;
+  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), circuit (#3), drift à 3 paliers, course, bots ;
   - puis départ fusée, figures et aspiration ; croquettes ; stats et gabarits ; objets 1/2 ; aides de conduite.
 - Milestone 2 « À plusieurs » : réseau 1/3 à 3/3, signalisation (attend un compte Cloudflare), objets 2/2.
 - Milestone 3 « Contenu » : vrais modèles (attend les assets), personnages mous, Grand Prix et classes, anti-gravité / planeur / eau, objets de phase 3 et Bataille.
