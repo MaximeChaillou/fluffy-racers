@@ -6,6 +6,8 @@ publish = false
 
 [dependencies]
 bevy = "0.20"
+# Collisions and ground contact only: kart feel comes from our own curves (docs/ARCHITECTURE.md).
+bevy_rapier3d = { version = "0.37", default-features = false, features = ["dim3"] }
 
 # Compile dependencies with optimizations even in dev: Bevy is very slow otherwise.
 [profile.dev]
