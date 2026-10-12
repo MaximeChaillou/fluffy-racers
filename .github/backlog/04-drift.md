@@ -1,12 +1,19 @@
-Le drift et le mini-turbo : c'est le cœur du fun d'un jeu de kart.
+Le drift et les **3 paliers de mini-turbo**, comme dans Mario Kart 8 Deluxe : c'est le cœur du jeu. Toutes les règles et valeurs sont dans `docs/GAME_DESIGN.md` § 3.
 
 ## À faire
-- Appuyer sur Drift en braquant → petit saut (hop), puis entrée en glisse du côté du virage.
-- En glisse : grip réduit, angle de dérapage maintenu, et la direction module le rayon (serrer ou élargir).
-- Charge du mini-turbo selon la durée du drift, en 3 niveaux. Retour visuel : étincelles provisoires de couleur différente selon le niveau.
-- Relâcher → boost proportionnel au niveau atteint.
-- Paramètres dans `KartTuning`.
+- Le bouton Saut/Drift déclenche un **saut**. Si on braque, on entre en **drift** à l'atterrissage, du côté du braquage (vitesse minimale requise).
+- En drift : angle de glisse maintenu. La direction resserre ou élargit la courbe, sans changer de côté.
+- Charge par tick : +5 en braquant vers l'intérieur (≥ 0,5), +2 sinon.
+- Paliers 270 / 570 / 870 (modulés plus tard par la stat MT) :
+  - étincelles bleues, orange, violettes (provisoires) ;
+  - boosts de 0,62 s, 1,67 s et 2,63 s au relâchement.
+- Relâcher avant le premier palier ne donne rien.
+- Prévoir le cas « direction assistée » : charge réduite et pas de palier violet (les aides arrivent dans une autre issue).
+- Valeurs dans `KartTuning`.
 
 ## Critères d'acceptation
-- Tests de scénario : drift de 0,5 s → aucun boost ; 1,2 s → niveau 1 ; 2,5 s → niveau 2 ; 4 s → niveau 3.
-- Un boost augmente temporairement la vitesse max, puis elle revient à la normale.
+Tests de scénario :
+- drift avec direction intérieure → bleu à 54 ticks, orange à 114, violet à 174 ;
+- direction extérieure → environ 2,5 fois plus lent ;
+- relâcher à chaque palier → boost de la bonne durée ;
+- impossible de drifter à l'arrêt.

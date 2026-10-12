@@ -26,11 +26,13 @@ Tu travailles le plus souvent **sans surveillance** : session cloud ou tâche pl
 
 ## Vision du jeu
 
-- Kart arcade, sessions courtes, fun immédiat. Jouable au clavier et à la manette.
+- **Le ressenti de référence est Mario Kart 8 Deluxe** : drift et mini-turbos à 3 paliers, départ fusée, figures, aspiration, croquettes (l'équivalent des pièces), objets dosés selon la distance au leader, 12 coureurs, 3 tours.
+- **`docs/GAME_DESIGN.md` est la source de vérité du gameplay.** Lis la section concernée avant toute issue de gameplay. En cas de conflit avec le texte d'une issue, c'est le game design qui l'emporte : signale l'écart dans la PR.
 - **4 joueurs minimum en ligne, 12 visés.** Des bots complètent la grille.
 - Personnages : animaux ronds, mous et maladroits. L'humour physique compte (rebonds, wobble, ragdoll léger quand on se fait toucher).
-- **Univers 100 % original.** N'utilise jamais les noms, personnages, logos, objets ou circuits de Mario Kart, Party Animals ni d'aucune autre marque.
+- **On reprend les mécaniques, jamais le contenu.** Aucun nom, personnage, objet, logo, tracé de circuit, musique ou son de Mario Kart, Party Animals ni d'aucune autre marque. Utilise les équivalents originaux du game design : pelure, pelote, abeille, piment, croquettes, pélican dépanneur…
 - **La fluidité est la priorité n°1** : 60 fps stables dans Chrome, Firefox et Safari sur un portable moyen, avec 12 karts.
+- **Les valeurs « (à régler) »** du game design vont dans des Resources de réglage avec ces valeurs par défaut. Ne les code jamais en dur.
 
 ## Stack (figée : ne la change pas sans l'accord de Max)
 
