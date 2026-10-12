@@ -9,7 +9,7 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use camera::{CameraPlugin, FollowCamera};
+use camera::{CameraPlugin, CameraTuning, ChaseCamera};
 use interpolation::InterpolationPlugin;
 use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualPlugin, PlayerKart, SpawnPoint, kart_body,
@@ -65,6 +65,7 @@ fn spawn_player(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     tuning: Res<KartTuning>,
+    camera_tuning: Res<CameraTuning>,
 ) {
     let spawn = player_spawn_point();
     let body = commands
@@ -79,8 +80,12 @@ fn spawn_player(
     );
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            fov: camera_tuning.base_fov.to_radians(),
+            ..default()
+        }),
         Transform::from_xyz(0.0, 4.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
-        FollowCamera::new(visual),
+        ChaseCamera::new(visual),
     ));
 }
 
@@ -148,7 +153,7 @@ mod tests {
         let world = app.world();
         assert_eq!(world.get::<KartState>(kart), Some(&KartState::Grounded));
         assert_eq!(world.get::<KartWheels>(kart).unwrap().wheels_on_ground(), 4);
-        let mut cameras = app.world_mut().query::<&FollowCamera>();
+        let mut cameras = app.world_mut().query::<&ChaseCamera>();
         assert_eq!(cameras.iter(app.world()).count(), 1);
     }
 
@@ -177,6 +182,79 @@ mod tests {
         );
         assert_eq!(world.get::<KartState>(kart), Some(&KartState::Grounded));
         assert!(transform.up().y > 0.98);
+    }
+
+    fn camera_and_kart_visual(app: &mut App) -> (Transform, Transform) {
+        let world = app.world_mut();
+        let (camera, target) = world
+            .query::<(&Transform, &ChaseCamera)>()
+            .single(world)
+            .map(|(t, c)| (*t, c.target))
+            .unwrap();
+        (camera, *world.get::<Transform>(target).unwrap())
+    }
+
+    /// Issue #2: the camera stays within a sane distance of the kart while driving.
+    #[test]
+    fn chase_camera_stays_close_while_driving() {
+        let mut app = game_app();
+        let mut distances = Vec::new();
+        let legs = [
+            (None, 2.0),
+            (Some(KeyCode::ArrowLeft), 1.5),
+            (Some(KeyCode::ArrowRight), 1.5),
+        ];
+        for (steer, seconds) in legs {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release_all();
+            keys.press(KeyCode::ArrowUp);
+            if let Some(key) = steer {
+                keys.press(key);
+            }
+            for _ in 0..(seconds * TICK_HZ as f32) as usize {
+                app.update();
+                let (camera, kart) = camera_and_kart_visual(&mut app);
+                distances.push(camera.translation.distance(kart.translation));
+            }
+        }
+        let tuning = CameraTuning::default();
+        let rest = (tuning.distance.powi(2) + tuning.height.powi(2)).sqrt();
+        let (min, max) = distances
+            .iter()
+            .fold((f32::MAX, 0.0f32), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+        assert!(
+            min > rest - 1.5 && max < rest + 1.5,
+            "camera distance in [{min}, {max}], rest {rest}"
+        );
+        // It looks at the kart: the kart is in front of the camera.
+        let (camera, kart) = camera_and_kart_visual(&mut app);
+        assert!((kart.translation - camera.translation).dot(*camera.forward()) > 0.0);
+    }
+
+    /// Issue #2: a wall between the kart and the camera pulls the camera in front of it.
+    #[test]
+    fn chase_camera_does_not_go_through_walls() {
+        let mut app = game_app();
+        run(&mut app, 0.5, |_| {});
+        // The kart looks down -Z from the origin, so the camera sits around z = +6.
+        let (camera, _) = camera_and_kart_visual(&mut app);
+        assert!(camera.translation.z > 4.0, "{}", camera.translation);
+        let mut commands = app.world_mut().commands();
+        track::spawn_static_box(
+            &mut commands,
+            Transform::from_xyz(0.0, 2.0, 3.0),
+            Vec3::new(10.0, 4.0, 0.25),
+            track::Surface::Road,
+            0.0,
+        );
+        app.world_mut().flush();
+        run(&mut app, 0.2, |_| {});
+        let (camera, _) = camera_and_kart_visual(&mut app);
+        assert!(
+            camera.translation.z < 2.75,
+            "camera behind the wall: {}",
+            camera.translation
+        );
     }
 
     #[test]
