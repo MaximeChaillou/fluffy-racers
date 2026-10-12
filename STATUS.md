@@ -66,7 +66,12 @@ _Mis à jour par Claude à chaque PR._
 Le gameplay de référence est décrit dans `docs/GAME_DESIGN.md` (inspiré de Mario Kart 8 Deluxe). Les textes des issues sont dans `.github/backlog/`.
 
 ## Questions pour Max
-_(aucune)_
+- **Taille du wasm : 56 Mo** en release (déploiement de `dev` après #2, avec Rapier). C'est long à charger sur une connexion moyenne. Pistes, qui touchent la configuration de build et que je n'ai donc pas appliquées sans ton accord :
+  - `strip = true` et `opt-level = "z"` dans `[profile.release]` ;
+  - désactiver les features Bevy inutiles (audio, gltf… tant qu'on n'en a pas besoin) ;
+  - vérifier que `wasm-opt` passe bien dans `trunk build --release` (`data-wasm-opt="s"`).
+
+  Je peux en faire une issue si tu veux.
 
 ## Métriques
-- Taille wasm : _à mesurer au premier déploiement_
+- Taille wasm (release, CI) : **56 Mo** au 2026-10-12, après #2 (kart + Rapier + caméra). Première mesure.
