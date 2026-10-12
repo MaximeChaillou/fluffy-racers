@@ -4,21 +4,24 @@
 //! 4 suspension raycasts → driving state → engine, grip and steering written to the velocity.
 //! The kart only reads its `KartInput`, never the keyboard.
 
+mod drift;
 mod input;
 mod physics;
 mod tuning;
 mod visual;
 
+pub use drift::{DriftSide, MiniTurbo};
 pub use input::{KartInputPlugin, PlayerKart, SpawnPoint};
 pub use physics::{Boost, KartState};
 pub use tuning::KartTuning;
-pub use visual::{KartVisualPlugin, spawn_kart_visual};
+pub use visual::{DriftSpark, KartBodyPivot, KartVisualPlugin, spawn_kart_visual};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use crate::interpolation::PhysicsPose;
 use crate::track::Surface;
+use drift::{StateContext, drift_yaw_rate, mini_turbo_boost, step_state};
 use physics::{
     max_speed, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
     righting_angular_velocity, suspension_accel, target_yaw_rate,
@@ -33,7 +36,8 @@ pub struct KartInput {
     pub brake: f32,
     /// -1 (full left) to 1 (full right).
     pub steer: f32,
-    /// Jump / drift / trick button, held (used by issue #4).
+    /// Jump / drift / trick button, held: pressing it hops, holding it drifts, releasing it
+    /// fires the mini-turbo (GD § 3, `drift.rs`).
     pub jump_drift: bool,
     /// Item button, held = drag the item behind (used by issue #16).
     pub item: bool,
@@ -43,8 +47,22 @@ pub struct KartInput {
 
 /// A kart's simulated body. Spawn it with [`kart_body`].
 #[derive(Component, Clone, Copy, Debug, Default)]
-#[require(KartInput, KartState, Boost, KartWheels)]
+#[require(KartInput, PreviousInput, KartAssists, KartState, Boost, KartWheels)]
 pub struct Kart;
+
+/// The kart's input on the previous tick: a hop starts when the jump/drift button is
+/// *pressed*, not every tick while it stays held.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct PreviousInput(pub KartInput);
+
+/// Driving aids of this kart's driver (GD § 11), set per player. Off by default; the options
+/// menu comes with issue #17.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KartAssists {
+    /// Assisted steering: the drift charges slower (2 and 0.8 units per tick) and the purple
+    /// mini-turbo is disabled (GD § 3.3 and 3.6). Keeping the kart on the track is #17.
+    pub assisted_steering: bool,
+}
 
 /// Half size of the kart's collision box: 1.4 m wide, 0.5 m high, 2 m long (GD § 2).
 pub const KART_HALF_EXTENTS: Vec3 = Vec3::new(0.7, 0.25, 1.0);
@@ -175,7 +193,9 @@ fn drive_karts(
             Entity,
             &Transform,
             &KartInput,
-            &Boost,
+            &mut PreviousInput,
+            &KartAssists,
+            &mut Boost,
             &mut KartState,
             &mut KartWheels,
             &mut Velocity,
@@ -198,7 +218,9 @@ fn drive_karts(
         entity,
         transform,
         input,
-        boost,
+        mut previous_input,
+        assists,
+        mut boost,
         mut state,
         mut wheels,
         mut velocity,
@@ -253,7 +275,7 @@ fn drive_karts(
         force.force = total_force;
         force.torque = total_torque;
 
-        // --- State machine.
+        // --- State machine: ground contact, hop, drift (`drift::step_state`).
         if grounded > 0 {
             wheels.ticks_without_ground = 0;
             wheels.offroad_ratio = offroad as f32 / grounded as f32;
@@ -261,58 +283,98 @@ fn drive_karts(
         } else {
             wheels.ticks_without_ground = wheels.ticks_without_ground.saturating_add(1);
         }
-        let new_state = next_state(
-            grounded,
-            wheels.ticks_without_ground,
-            tuning.airborne_grace_ticks,
+        let normal = wheels.ground_normal;
+        let ahead = (forward - normal * forward.dot(normal)).normalize_or(forward);
+        let right = ahead.cross(normal);
+        let mut linvel = velocity.linear;
+        let angvel = velocity.angular;
+
+        let step = step_state(
+            tuning,
+            *state,
+            &StateContext {
+                wheels_on_ground: grounded,
+                ticks_without_ground: wheels.ticks_without_ground,
+                forward_speed: linvel.dot(ahead),
+                input: *input,
+                jump_was_held: previous_input.0.jump_drift,
+                assisted: assists.assisted_steering,
+            },
         );
-        if *state != new_state {
-            *state = new_state;
+        if *state != step.state {
+            *state = step.state;
+        }
+        previous_input.set_if_neq(PreviousInput(*input));
+        if let Some(tier) = step.boost {
+            let (strength, duration) = mini_turbo_boost(tuning, tier);
+            boost.add(strength, duration);
+        }
+        if step.hop {
+            // Hop: at least `hop_speed` along the ground normal (never stacks on a bump).
+            linvel += normal * (tuning.hop_speed - linvel.dot(normal)).max(0.0);
         }
         if gravity.0 != tuning.gravity_scale {
             gravity.0 = tuning.gravity_scale;
         }
 
-        // --- Driving: rewrite the velocity from our curves.
-        let linvel = velocity.linear;
-        let angvel = velocity.angular;
-        match *state {
-            KartState::Grounded => {
-                let normal = wheels.ground_normal;
-                let ahead = (forward - normal * forward.dot(normal)).normalize_or(forward);
-                let right = ahead.cross(normal);
-                let forward_speed = linvel.dot(ahead);
-                let top_speed = max_speed(tuning, wheels.offroad_ratio, boost);
-                let new_forward = next_forward_speed(
-                    tuning,
-                    forward_speed,
-                    input,
-                    top_speed,
-                    boost.is_active(),
-                    dt,
-                );
-                let new_lateral = next_lateral_speed(tuning, linvel.dot(right), dt);
-                velocity.linear =
-                    ahead * new_forward + right * new_lateral + normal * linvel.dot(normal);
+        // --- Driving: rewrite the velocity from our curves. A hop keeps the ground handling
+        // (full steering, engine) for its short flight; a drift in the air (longer than the
+        // grace period) gets the air control.
+        let on_ground = next_state(
+            grounded,
+            wheels.ticks_without_ground,
+            tuning.airborne_grace_ticks,
+        ) == KartState::Grounded;
+        let ground_handling = match *state {
+            KartState::Grounded | KartState::Hop { .. } => true,
+            KartState::Drifting { .. } => on_ground,
+            KartState::Airborne => false,
+        };
+        if ground_handling {
+            let forward_speed = linvel.dot(ahead);
+            let top_speed = max_speed(tuning, wheels.offroad_ratio, &boost);
+            let new_forward = next_forward_speed(
+                tuning,
+                forward_speed,
+                input,
+                top_speed,
+                boost.is_active(),
+                dt,
+            );
+            let new_lateral = next_lateral_speed(tuning, linvel.dot(right), dt);
 
-                let yaw = angvel.dot(normal);
-                let tilt = angvel - normal * yaw;
-                let target = target_yaw_rate(tuning, input.steer, new_forward);
-                velocity.angular = normal * next_yaw_rate(tuning, yaw, target, dt)
-                    + tilt * (-tuning.tilt_damping * dt).exp();
-            }
-            KartState::Airborne => {
-                // A little air control, and turn back upright to land on the wheels.
-                let yaw = angvel.dot(Vec3::Y);
-                let tilt = angvel - Vec3::Y * yaw;
-                let target = target_yaw_rate(tuning, input.steer, linvel.dot(forward))
-                    * tuning.air_steer_factor;
-                let righting = righting_angular_velocity(up, Vec3::Y, tuning.righting_rate);
-                let blend = 1.0 - (-tuning.air_rotation_response * dt).exp();
-                velocity.angular = Vec3::Y * next_yaw_rate(tuning, yaw, target, dt)
-                    + tilt
-                    + (righting - tilt) * blend;
-            }
+            let yaw = angvel.dot(normal);
+            let tilt = angvel - normal * yaw;
+            // A drift always turns toward its side; the steering only tightens or widens it.
+            let target = match *state {
+                KartState::Drifting { side, .. } => {
+                    drift_yaw_rate(tuning, side, input.steer, new_forward)
+                }
+                _ => target_yaw_rate(tuning, input.steer, new_forward),
+            };
+            let new_yaw = next_yaw_rate(tuning, yaw, target, dt);
+            // A drift slides around the curve without losing speed: the velocity aims where
+            // the heading will be at the end of this step, so the grip finds no sideways speed
+            // to scrub on the next tick. The normal steering keeps the plain grip model, which
+            // scrubs a little speed in tight turns.
+            let travel = match *state {
+                KartState::Drifting { .. } => Quat::from_axis_angle(normal, new_yaw * dt) * ahead,
+                _ => ahead,
+            };
+            velocity.linear =
+                travel * new_forward + right * new_lateral + normal * linvel.dot(normal);
+            velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
+        } else {
+            // A little air control, and turn back upright to land on the wheels.
+            velocity.linear = linvel;
+            let yaw = angvel.dot(Vec3::Y);
+            let tilt = angvel - Vec3::Y * yaw;
+            let target =
+                target_yaw_rate(tuning, input.steer, linvel.dot(forward)) * tuning.air_steer_factor;
+            let righting = righting_angular_velocity(up, Vec3::Y, tuning.righting_rate);
+            let blend = 1.0 - (-tuning.air_rotation_response * dt).exp();
+            velocity.angular =
+                Vec3::Y * next_yaw_rate(tuning, yaw, target, dt) + tilt + (righting - tilt) * blend;
         }
     }
 }

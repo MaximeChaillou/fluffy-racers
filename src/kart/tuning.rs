@@ -86,6 +86,60 @@ pub struct KartTuning {
     pub air_rotation_response: f32,
     /// Ticks without any wheel on the ground before switching to `Airborne` (60 ticks = 1 s).
     pub airborne_grace_ticks: u32,
+
+    // --- Hop and drift (GD § 3, issue #4) -------------------------------------------------------
+    /// Upward speed given along the ground normal when the jump/drift button is pressed
+    /// (m/s). 3.5 with the reinforced gravity ≈ a 33 cm hop, 0.33 s long (measured).
+    pub hop_speed: f32,
+    /// The hop lasts at least this many ticks: the kart lands on the first tick after it with
+    /// a wheel on the ground.
+    pub hop_min_ticks: u32,
+    /// A hop still in the air after this many ticks becomes a real flight (`Airborne`, no drift):
+    /// the kart hopped off a ledge.
+    pub hop_max_ticks: u32,
+    /// Steering past this (either way) during the hop picks the drift side.
+    pub drift_steer_threshold: f32,
+    /// Minimum forward speed on landing to start a drift (m/s): no drift at a standstill.
+    pub drift_min_speed: f32,
+    /// Below this forward speed a drift breaks, charge lost (m/s). Lower than
+    /// `drift_min_speed` so that a slight slow-down does not end it.
+    pub drift_exit_speed: f32,
+    /// A drift survives that many ticks without ground contact (bumps, small jumps), charge
+    /// frozen; longer flights break it, charge lost.
+    pub drift_max_air_ticks: u32,
+    /// Steering toward the drift side by at least this much counts as "inward" (GD § 3.3: 0.5).
+    pub drift_inner_steer: f32,
+    /// Mini-turbo charge per tick steering inward (GD § 3.3, MK8DX: 5).
+    pub drift_charge_inner: f32,
+    /// Mini-turbo charge per tick otherwise: neutral or outward (GD § 3.3, MK8DX: 2).
+    pub drift_charge_outer: f32,
+    /// Same as `drift_charge_inner` with assisted steering (GD § 3.3, MK8DX: 2).
+    pub drift_charge_inner_assisted: f32,
+    /// Same as `drift_charge_outer` with assisted steering (GD § 3.3, MK8DX: 0.8).
+    pub drift_charge_outer_assisted: f32,
+    /// Charge thresholds of the blue, orange and purple mini-turbos (GD § 3.4: 270, 570, 870;
+    /// the Mini-turbo stat will scale them, issue #15).
+    pub mini_turbo_thresholds: [f32; 3],
+    /// Boost durations of the blue, orange and purple mini-turbos (GD § 3.4, MK8DX: 0.62 s,
+    /// 1.67 s, 2.63 s).
+    pub mini_turbo_durations: [f32; 3],
+    /// Boost strengths (max speed increase) of the blue, orange and purple mini-turbos. Our own
+    /// starting points, à régler: +20 %, +25 %, +30 % (the purple one is as strong as a chili).
+    pub mini_turbo_strengths: [f32; 3],
+    /// Radius of a drift steered fully inward, at `max_speed` (m). Tighter than the normal
+    /// steering (≈ 17 m at top speed): the hairpin (12 m) can be taken flat out.
+    pub drift_radius_tight: f32,
+    /// Radius of a drift steered fully outward, at `max_speed` (m). Neutral steering sits in
+    /// between (≈ 15 m by default). The yaw rate is fixed by these radii, so the curve is
+    /// tighter when slower and wider while boosting.
+    pub drift_radius_wide: f32,
+    /// Visual slip angle of a drift steered fully inward: the nose points this far inside the
+    /// curve (rad, 0.45 ≈ 26°). Visual only, the simulated body keeps its grip.
+    pub drift_slip_angle_tight: f32,
+    /// Visual slip angle of a drift steered fully outward (rad, 0.2 ≈ 11°).
+    pub drift_slip_angle_wide: f32,
+    /// How fast the visual slip angle follows its target (1/s).
+    pub drift_slip_response: f32,
 }
 
 impl Default for KartTuning {
@@ -126,6 +180,27 @@ impl Default for KartTuning {
             righting_rate: 4.0,
             air_rotation_response: 8.0,
             airborne_grace_ticks: 4,
+
+            hop_speed: 3.5,
+            hop_min_ticks: 8,
+            hop_max_ticks: 30,
+            drift_steer_threshold: 0.3,
+            drift_min_speed: 10.0,
+            drift_exit_speed: 7.0,
+            drift_max_air_ticks: 30,
+            drift_inner_steer: 0.5,
+            drift_charge_inner: 5.0,
+            drift_charge_outer: 2.0,
+            drift_charge_inner_assisted: 2.0,
+            drift_charge_outer_assisted: 0.8,
+            mini_turbo_thresholds: [270.0, 570.0, 870.0],
+            mini_turbo_durations: [0.62, 1.67, 2.63],
+            mini_turbo_strengths: [0.2, 0.25, 0.3],
+            drift_radius_tight: 10.0,
+            drift_radius_wide: 32.0,
+            drift_slip_angle_tight: 0.45,
+            drift_slip_angle_wide: 0.2,
+            drift_slip_response: 10.0,
         }
     }
 }

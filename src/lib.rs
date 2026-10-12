@@ -9,7 +9,7 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use camera::{CameraPlugin, CameraTuning, ChaseCamera};
+use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
 use interpolation::InterpolationPlugin;
 use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualPlugin, PlayerKart, SpawnPoint, kart_body,
@@ -66,7 +66,12 @@ fn spawn_player(
 ) {
     let spawn = start.0;
     let body = commands
-        .spawn((kart_body(&tuning, spawn), PlayerKart, SpawnPoint(spawn)))
+        .spawn((
+            kart_body(&tuning, spawn),
+            PlayerKart,
+            SpawnPoint(spawn),
+            CameraLean::default(),
+        ))
         .id();
     let visual = spawn_kart_visual(
         &mut commands,
@@ -109,7 +114,9 @@ mod tests {
     use bevy::input::InputPlugin;
     use bevy::time::TimeUpdateStrategy;
     use bevy_rapier3d::prelude::Velocity;
-    use kart::{Kart, KartState, KartWheels};
+    use kart::{
+        Boost, DriftSide, DriftSpark, Kart, KartBodyPivot, KartState, KartWheels, MiniTurbo,
+    };
     use track::TrackChoice;
 
     /// The whole game headless on `track`: player kart, keyboard input, one fixed tick per
@@ -200,6 +207,82 @@ mod tests {
         );
         assert_eq!(world.get::<KartState>(kart), Some(&KartState::Grounded));
         assert!(transform.up().y > 0.98);
+    }
+
+    fn hold_keys(app: &mut App, keys: &[KeyCode]) {
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.release_all();
+        for key in keys {
+            input.press(*key);
+        }
+    }
+
+    /// Issue #4 end to end on the keyboard: Space + left arrow at speed → hop, then a left
+    /// drift with blue sparks, the nose turned inside and the camera leaning out; releasing
+    /// Space fires the blue mini-turbo.
+    #[test]
+    fn keyboard_drift_shows_sparks_leans_the_camera_and_fires_a_mini_turbo() {
+        let mut app = game_app();
+        let kart = player(&mut app);
+        hold_keys(&mut app, &[KeyCode::ArrowUp]);
+        run(&mut app, 1.5, |_| {});
+        hold_keys(
+            &mut app,
+            &[KeyCode::ArrowUp, KeyCode::Space, KeyCode::ArrowLeft],
+        );
+        let mut drifting_ticks = 0;
+        for _ in 0..(3.0 * TICK_HZ) as usize {
+            app.update();
+            if matches!(
+                app.world().get::<KartState>(kart),
+                Some(KartState::Drifting { .. })
+            ) {
+                drifting_ticks += 1;
+            }
+            if drifting_ticks == 60 {
+                break;
+            }
+        }
+        assert_eq!(drifting_ticks, 60, "the kart never drifted");
+
+        let world = app.world_mut();
+        assert!(matches!(
+            world.get::<KartState>(kart),
+            Some(KartState::Drifting {
+                side: DriftSide::Left,
+                ..
+            })
+        ));
+        // Left drift: the camera shifts right (outside of the turn), the nose points left.
+        assert_eq!(world.get::<CameraLean>(kart), Some(&CameraLean(1.0)));
+        let slip = world.query::<&KartBodyPivot>().single(world).unwrap().slip;
+        assert!(slip < -0.2, "slip angle {slip}");
+        // 60 ticks steering inward: blue sparks, at both rear wheels.
+        let visible_sparks = |world: &mut World| {
+            let mut sparks = world.query::<(&DriftSpark, &Visibility)>();
+            let mut shown = [0; 3];
+            for (spark, visibility) in sparks.iter(world) {
+                if *visibility != Visibility::Hidden {
+                    shown[spark.tier.index()] += 1;
+                }
+            }
+            shown
+        };
+        assert_eq!(visible_sparks(world), [2, 0, 0]);
+
+        hold_keys(&mut app, &[KeyCode::ArrowUp]);
+        app.update();
+        let world = app.world_mut();
+        let boost = *world.get::<Boost>(kart).unwrap();
+        let duration = KartTuning::default().mini_turbo_durations[MiniTurbo::Blue.index()];
+        assert!((boost.remaining - duration).abs() < 1e-5, "{boost:?}");
+        assert!(!matches!(
+            world.get::<KartState>(kart),
+            Some(KartState::Drifting { .. })
+        ));
+        assert_eq!(visible_sparks(world), [0, 0, 0]);
+        run(&mut app, 0.1, |_| {});
+        assert_eq!(app.world().get::<CameraLean>(kart), Some(&CameraLean(0.0)));
     }
 
     fn camera_and_kart_visual(app: &mut App) -> (Transform, Transform) {
