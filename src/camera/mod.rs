@@ -13,7 +13,7 @@ use bevy::transform::TransformSystems;
 use bevy_rapier3d::prelude::*;
 
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::kart::{Boost, KartTuning};
+use crate::kart::{Boost, KartState, KartTuning};
 
 /// All the camera knobs, with their default values (our own starting points, à régler).
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -87,21 +87,40 @@ impl ChaseCamera {
     }
 }
 
-/// Side lean asked by the kart's state, from -1 (left) to 1 (right). The drift (issue #4)
-/// writes it on the kart body; the camera shifts by `CameraTuning::drift_side_offset`.
+/// Side lean asked by the kart's state, from -1 (left) to 1 (right). Put it on a kart body:
+/// [`lean_into_drifts`] writes it from the drift, and the camera shifts by
+/// `CameraTuning::drift_side_offset` (smoothed by the rig's spring).
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CameraLean(pub f32);
+
+/// Lean asked by a driving state: a drift shifts the camera toward the outside of the turn
+/// (left in a right drift), which shows off the kart's slip angle.
+pub fn drift_lean(state: &KartState) -> f32 {
+    match *state {
+        KartState::Drifting { side, .. } => -side.sign(),
+        _ => 0.0,
+    }
+}
+
+/// Writes `CameraLean` on kart bodies from their drift.
+fn lean_into_drifts(mut bodies: Query<(&KartState, &mut CameraLean)>) {
+    for (state, mut lean) in &mut bodies {
+        lean.set_if_neq(CameraLean(drift_lean(state)));
+    }
+}
 
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CameraTuning>().add_systems(
-            PostUpdate,
-            chase
-                .after(InterpolationSystems)
-                .before(TransformSystems::Propagate),
-        );
+        app.init_resource::<CameraTuning>()
+            .add_systems(Update, lean_into_drifts)
+            .add_systems(
+                PostUpdate,
+                chase
+                    .after(InterpolationSystems)
+                    .before(TransformSystems::Propagate),
+            );
     }
 }
 
@@ -156,5 +175,34 @@ fn chase(
         if let Projection::Perspective(perspective) = &mut *projection {
             perspective.fov = pose.fov_degrees.to_radians();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kart::DriftSide;
+
+    #[test]
+    fn drifts_lean_the_camera_toward_the_outside_of_the_turn() {
+        let right = KartState::Drifting {
+            side: DriftSide::Right,
+            charge: 0.0,
+        };
+        let left = KartState::Drifting {
+            side: DriftSide::Left,
+            charge: 300.0,
+        };
+        // Positive lean = camera shifts right (`RigInput::lean`).
+        assert_eq!(drift_lean(&right), -1.0);
+        assert_eq!(drift_lean(&left), 1.0);
+        assert_eq!(drift_lean(&KartState::Grounded), 0.0);
+        assert_eq!(
+            drift_lean(&KartState::Hop {
+                ticks: 3,
+                side: Some(DriftSide::Right)
+            }),
+            0.0
+        );
     }
 }

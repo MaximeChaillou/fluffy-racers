@@ -3,6 +3,16 @@
 _Mis à jour par Claude à chaque PR._
 
 ## Ce qui marche
+- **Drift et mini-turbos à 3 paliers** (#4, `src/kart/drift.rs`, logique pure testée) :
+  - Espace (ou RB/RT) = petit **saut** (33 cm, 0,33 s) ; si on braque pendant le saut et qu'on garde le bouton à l'atterrissage, au-dessus de 10 m/s, on part en **drift** du côté braqué ;
+  - en drift, le kart tourne toujours du côté du drift : braquer vers l'intérieur resserre (rayon 10 m à pleine vitesse), au neutre 15 m, vers l'extérieur élargit (32 m), jamais de changement de côté ; le drift ne fait pas perdre de vitesse (virage normal à fond : 17 m) ;
+  - charge par tick : +5 vers l'intérieur (≥ 0,5), +2 sinon ; paliers 270 / 570 / 870 → étincelles bleues, orange, violettes (cubes lumineux provisoires aux roues arrière) ;
+  - relâcher = boost de 0,62 s (+20 %), 1,67 s (+25 %) ou 2,63 s (+30 %) via le composant `Boost` ; avant le bleu, rien ;
+  - le drift casse sans boost sous 7 m/s (mur, frein) ou après 0,5 s en l'air ;
+  - direction assistée prête (`KartAssists::assisted_steering`, désactivée par défaut) : charge 2 / 0,8 et pas de violet ;
+  - angle de glisse **visuel** (le nez rentre de 11° à 26° dans le virage) et caméra décalée vers l'extérieur (`CameraLean`) ;
+  - tests : 21 de logique pure (drift et caméra), 9 scénarios headless (bleu/orange/violet à 54/114/174 ticks, extérieur 2,5× plus lent, durée de chaque boost au tick près, pas de drift à l'arrêt…), 1 test clavier de bout en bout (étincelles, caméra, boost) ;
+  - vu dans Chromium headless (build trunk de debug, WebGL logiciel à 2 fps) : le jeu se charge sans erreur, le saut et le drift se déclenchent, le nez du kart rentre dans le virage et la caméra se décale. Les étincelles n'ont pas pu être vues à l'écran (à 2 fps, le kart tapait le muret avant le bleu) ; elles sont vérifiées par le test de bout en bout.
 - **Circuit de test « Prairie Pompon »** (#3), généré depuis `assets/tracks/prairie.track.ron` :
   - spline Catmull-Rom fermée, avec largeur, dévers et bas-côté par point de contrôle ;
   - le tracé : longue ligne droite de départ, épingle (12 m de rayon au sommet), ligne droite arrière avec un tremplin, chicane, virage relevé surélevé ; 536 m ;
@@ -18,7 +28,7 @@ _Mis à jour par Claude à chaque PR._
   - Corps Rapier dynamique posé sur 4 raycasts de suspension (ressort + amortisseur), gravité ×2,2, redressement automatique en l'air.
   - Courbe moteur (0 → 28,5 m/s en 2,5 s), frein puis marche arrière sur le même bouton, grip latéral fort, direction pilotée en lacet.
   - Hors-piste à 55 % de la vitesse max (ignoré pendant un boost), composant `Boost` générique.
-  - Machine à états `Grounded` / `Airborne` (les états drift, figure, touché viendront avec leurs issues).
+  - Machine à états `Grounded` / `Hop` / `Drifting` / `Airborne` (figure, touché et dépannage viendront avec leurs issues).
   - Simulation en `FixedUpdate` 60 Hz, rendu interpolé entre deux ticks (`src/interpolation.rs`).
   - Entrées clavier + manette → `KartInput` ; touches de debug : **B** = boost, **R** = retour au départ.
   - Tests de scénario headless (`src/kart/scenario_tests.rs`) : accélération, herbe, boost, frein/marche arrière, virage 3 s, saut de rampe, choc frontal contre un mur.
@@ -60,17 +70,27 @@ _Mis à jour par Claude à chaque PR._
 - 2026-10-12 (#3) : correction d'un bug de #1 trouvé sur la grille (légèrement en pente) : à l'arrêt sur une faible pente, le kart reculait d'un millimètre par seconde et l'accélérateur ne faisait que freiner ce recul, indéfiniment. Les tests de #1 ne le voyaient pas (sol parfaitement plat). Test de régression ajouté.
 - 2026-10-12 (#2) : la fonction « regarder derrière » n'est pas faite ici ; elle est prévue dans #17.
 - 2026-10-12 (#1) : sous 30 m de hauteur, le kart revient au départ (filet de sécurité du terrain de test, en attendant le pélican dépanneur de #5).
+- 2026-10-12 (#4) : on suit le game design (§ 3.1) plutôt que le texte de l'issue : il faut **garder le bouton enfoncé à l'atterrissage** pour entrer en drift. Le côté est le dernier côté braqué (au-delà de 0,3) pendant le saut, tick d'atterrissage compris. Un nouveau saut demande un nouvel appui (maintenir le bouton ne re-saute pas).
+- 2026-10-12 (#4) : la charge se compte **depuis l'entrée en drift** : le tick d'atterrissage est le 1er tick de charge. Vers l'intérieur, le bleu arrive donc au 54e tick de drift, l'orange au 114e, le violet au 174e. La charge est plafonnée au seuil du plus haut palier accessible.
+- 2026-10-12 (#4) : le saut est **physique** (3,5 m/s vers le haut selon la normale du sol) ; il dure au moins 8 ticks et devient un vrai vol (`Airborne`, pas de drift) s'il n'a pas atterri après 30 ticks (saut depuis un rebord). Pendant le saut, le kart garde la conduite au sol (moteur, direction complète).
+- 2026-10-12 (#4) : l'**angle de glisse est purement visuel** (pivot sous le visuel du kart) : le corps simulé garde son grip, la caméra suit la direction réelle et le réseau n'aura rien de plus à synchroniser. En drift, la vitesse est orientée vers le cap de fin de tick : le grip ne « rabote » plus de vitesse (sans ça, le drift serré perdait 9 % de vitesse). La direction normale est inchangée.
+- 2026-10-12 (#4) : le drift tolère 0,5 s en l'air (bosses, petits sauts), charge figée ; au-delà, il casse sans boost. Sous 7 m/s (entrée à 10 m/s), il casse aussi sans boost. Relâcher en l'air déclenche quand même le boost.
+- 2026-10-12 (#4) : intensités des mini-turbos (« à régler », le game design ne les donne pas) : +20 % / +25 % / +30 % de vitesse max, le violet aussi fort qu'un piment.
+- 2026-10-12 (#4) : la direction assistée est un composant par kart, `KartAssists` (réglage par joueur, GD § 11), désactivé par défaut. Le menu et le maintien sur la piste viendront avec #17.
 
 ## Prochaines étapes
 - Milestone 1 « Ça roule » (solo) :
-  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), drift à 3 paliers (#4), course (#5), bots (#6) ;
-  - puis départ fusée, figures et aspiration ; croquettes ; stats et gabarits ; objets 1/2 ; aides de conduite.
+  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), ~~drift à 3 paliers~~ (#4), course (#5), bots (#6) ;
+  - puis départ fusée, figures et aspiration ; croquettes ; stats et gabarits (la stat Mini-turbo modulera seuils, durées et intensités du drift) ; objets 1/2 ; aides de conduite (#17 : brancher `KartAssists`).
+  - Bots (#6) : ils peuvent drifter avec le même `KartInput` (saut + braquage, puis relâcher au palier visé).
 - Milestone 2 « À plusieurs » : réseau 1/3 à 3/3, signalisation (attend un compte Cloudflare), objets 2/2.
 - Milestone 3 « Contenu » : vrais modèles (attend les assets), personnages mous, Grand Prix et classes, anti-gravité / planeur / eau, objets de phase 3 et Bataille.
 
 Le gameplay de référence est décrit dans `docs/GAME_DESIGN.md` (inspiré de Mario Kart 8 Deluxe). Les textes des issues sont dans `.github/backlog/`.
 
 ## Questions pour Max
+- **Bug connu, antérieur au drift (#1/#3)** : en tapant le muret à pleine vitesse sous un angle marqué, le kart peut **grimper dessus et retomber dehors**. Reproduit en headless sans drift (flèche haut 1,75 s puis flèche gauche sur la ligne droite de départ) comme avec. Cause : le kart s'incline contre le muret (0,8 m), un rayon de suspension touche le **dessus plat du muret**, qui compte comme du sol (seules les faces à plus de 60° sont exclues), et le ressort soulève ce coin. Piste : exclure les murets des rayons de suspension (groupe de collision ou marqueur `Surface`). Le drift rend les chocs contre les murets plus fréquents : à traiter dans une issue dédiée, je ne l'ai pas corrigé ici (une issue = une PR).
+- **Drift (#4)** : les réglages sont des points de départ, dis-moi ce qui ne va pas en jouant. Les plus parlants : rayon du drift serré (10 m) et large (32 m), angle de glisse visuel (11° à 26°), intensités des mini-turbos (+20 / +25 / +30 %), hauteur du saut (33 cm). Une question de ressenti aussi : faut-il pouvoir déclencher le drift en braquant **juste après** l'atterrissage, bouton maintenu (plus facile au clavier) ? Pour l'instant, comme le game design le dit, il faut braquer pendant le saut.
 - **Taille du wasm : 56 Mo** en release (déploiement de `dev` après #2, avec Rapier). C'est long à charger sur une connexion moyenne. Pistes, qui touchent la configuration de build et que je n'ai donc pas appliquées sans ton accord :
   - `strip = true` et `opt-level = "z"` dans `[profile.release]` ;
   - désactiver les features Bevy inutiles (audio, gltf… tant qu'on n'en a pas besoin) ;

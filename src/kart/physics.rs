@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use super::KartInput;
+use super::drift::{DriftSide, MiniTurbo, mini_turbo_tier};
 use super::tuning::KartTuning;
 
 /// Generic boost shared by every source (mini-turbo, chili, rocket start, trick, slipstream,
@@ -48,17 +49,40 @@ impl Boost {
     }
 }
 
-/// Driving state of a kart. Drift, trick, hit and respawn states come with their issues
-/// (docs/ARCHITECTURE.md § « Le kart »).
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Driving state of a kart. Trick, hit and respawn states come with their issues
+/// (docs/ARCHITECTURE.md § « Le kart »). Transitions: `drift::step_state`.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub enum KartState {
     #[default]
     Grounded,
+    /// Small jump from the jump/drift button (GD § 3.1). `ticks` since the press; `side` is the
+    /// last side steered during the hop, where the drift goes if the button is still held on
+    /// landing.
+    Hop {
+        ticks: u32,
+        side: Option<DriftSide>,
+    },
+    /// Drifting toward `side`, with the mini-turbo `charge` accumulated so far (GD § 3.3).
+    Drifting {
+        side: DriftSide,
+        charge: f32,
+    },
     Airborne,
 }
 
-/// Next driving state. `ticks_without_ground` counts consecutive ticks with no wheel touching:
-/// a short grace period avoids flickering to `Airborne` on every bump.
+impl KartState {
+    /// Mini-turbo tier reached by the current drift, if any (sparks, UI).
+    pub fn mini_turbo(&self, tuning: &KartTuning, assisted: bool) -> Option<MiniTurbo> {
+        match *self {
+            KartState::Drifting { charge, .. } => mini_turbo_tier(tuning, charge, assisted),
+            _ => None,
+        }
+    }
+}
+
+/// Ground contact part of the state machine: `Grounded` or `Airborne`. `ticks_without_ground`
+/// counts consecutive ticks with no wheel touching: a short grace period avoids flickering to
+/// `Airborne` on every bump.
 pub fn next_state(
     wheels_on_ground: usize,
     ticks_without_ground: u32,

@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use super::{Boost, KartInput, KartSystems};
+use super::{Boost, KartInput, KartState, KartSystems};
 use crate::interpolation::PhysicsPose;
 use bevy_rapier3d::prelude::Velocity;
 
@@ -112,6 +112,7 @@ fn debug_keys(
     mut karts: Query<
         (
             &mut Boost,
+            &mut KartState,
             &mut Transform,
             &mut Velocity,
             &mut PhysicsPose,
@@ -120,7 +121,7 @@ fn debug_keys(
         With<PlayerKart>,
     >,
 ) {
-    for (mut boost, mut transform, mut velocity, mut pose, spawn) in &mut karts {
+    for (mut boost, mut state, mut transform, mut velocity, mut pose, spawn) in &mut karts {
         if keys.just_pressed(DEBUG_BOOST_KEY) {
             boost.add(DEBUG_BOOST_STRENGTH, DEBUG_BOOST_DURATION);
         }
@@ -131,6 +132,7 @@ fn debug_keys(
             *transform = *spawn;
             *velocity = Velocity::zero();
             *boost = Boost::default();
+            *state = KartState::default();
             pose.snap(*spawn);
         }
     }

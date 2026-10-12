@@ -1,5 +1,5 @@
-//! Headless driving scenarios (issue #1 acceptance criteria): the real `SimulationPlugin`
-//! (Rapier + kart systems) at 60 Hz, one fixed tick per `app.update()`.
+//! Headless driving scenarios (acceptance criteria of issues #1 and #4): the real
+//! `SimulationPlugin` (Rapier + kart systems) at 60 Hz, one fixed tick per `app.update()`.
 
 use bevy::time::TimeUpdateStrategy;
 use bevy_rapier3d::prelude::Velocity;
@@ -7,6 +7,7 @@ use bevy_rapier3d::prelude::Velocity;
 use super::*;
 use crate::SimulationPlugin;
 use crate::track::{Surface, WALL_RESTITUTION, ramp_transform, spawn_static_box};
+use drift::{DriftSide, MiniTurbo};
 
 const TICKS_PER_SECOND: f32 = 60.0;
 const FULL_THROTTLE: KartInput = KartInput {
@@ -17,6 +18,15 @@ const FULL_THROTTLE: KartInput = KartInput {
     item: false,
     look_back: false,
 };
+
+/// Full throttle, jump/drift button held, steering `steer`.
+fn drifting(steer: f32) -> KartInput {
+    KartInput {
+        steer,
+        jump_drift: true,
+        ..FULL_THROTTLE
+    }
+}
 
 struct Scenario {
     app: App,
@@ -107,6 +117,81 @@ impl Scenario {
     /// How upright the kart is: 1 = wheels down, 0 = on its side, -1 = upside down.
     fn uprightness(&self) -> f32 {
         self.transform().up().dot(Vec3::Y)
+    }
+
+    fn boost(&self) -> Boost {
+        *self.app.world().get::<Boost>(self.kart).unwrap()
+    }
+
+    /// Mini-turbo tier reached by the current drift, if any.
+    fn tier(&self) -> Option<MiniTurbo> {
+        let assists = *self.app.world().get::<KartAssists>(self.kart).unwrap();
+        self.state()
+            .mini_turbo(&self.tuning(), assists.assisted_steering)
+    }
+
+    /// Runs a single tick.
+    fn tick(&mut self, input: KartInput) {
+        self.run(1.0 / TICKS_PER_SECOND, input);
+    }
+
+    /// Presses the jump/drift button steering with `hop_steer`, then keeps it held steering
+    /// with `landing_steer` until the kart lands. Returns the state after landing and the
+    /// number of ticks the hop took.
+    fn hop(&mut self, hop_steer: f32, landing_steer: f32, throttle: f32) -> (KartState, u32) {
+        let input = |steer| KartInput {
+            throttle,
+            steer,
+            jump_drift: true,
+            ..default()
+        };
+        self.tick(input(hop_steer));
+        assert!(
+            matches!(self.state(), KartState::Hop { .. }),
+            "no hop: {:?}",
+            self.state()
+        );
+        let mut ticks = 1;
+        while matches!(self.state(), KartState::Hop { .. }) {
+            assert!(ticks < 60, "the hop never landed");
+            self.tick(input(landing_steer));
+            ticks += 1;
+        }
+        (self.state(), ticks)
+    }
+
+    /// Full throttle for 2.5 s, then a hop steered to the right that lands in a right drift.
+    /// The landing tick (the first drifting tick) used `landing_steer`.
+    fn enter_right_drift(&mut self, landing_steer: f32) {
+        self.run(2.5, FULL_THROTTLE);
+        let (state, _) = self.hop(1.0, landing_steer, 1.0);
+        assert!(
+            matches!(
+                state,
+                KartState::Drifting {
+                    side: DriftSide::Right,
+                    ..
+                }
+            ),
+            "{state:?}"
+        );
+    }
+
+    /// Keeps drifting with `steer` until `tier` is reached; returns the number of ticks spent
+    /// drifting, the landing tick being the first one.
+    fn drift_until(&mut self, steer: f32, tier: MiniTurbo) -> u32 {
+        let mut ticks = 1;
+        while self.tier() != Some(tier) {
+            assert!(ticks < 600, "{tier:?} never reached");
+            self.tick(drifting(steer));
+            assert!(
+                matches!(self.state(), KartState::Drifting { .. }),
+                "the drift broke after {ticks} ticks: {:?}",
+                self.state()
+            );
+            ticks += 1;
+        }
+        ticks
     }
 
     fn add_boost(&mut self, strength: f32, duration: f32) {
@@ -339,4 +424,272 @@ fn drives_off_from_a_standstill_on_a_slight_uphill() {
     scenario.run(1.0, FULL_THROTTLE);
     let speed = scenario.forward_speed();
     assert!(speed > 10.0, "stuck at {speed} m/s");
+}
+
+// --- Issue #4: hop, drift and mini-turbos ------------------------------------------------------
+
+#[test]
+fn hop_is_a_short_jump_that_keeps_the_speed() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let max = scenario.tuning().max_speed;
+    scenario.run(2.5, FULL_THROTTLE);
+    let rest_height = scenario.transform().translation.y;
+    let mut highest = rest_height;
+    let mut wheels_left_ground = false;
+    let mut hop_ticks = 0;
+    scenario.tick(KartInput {
+        jump_drift: true,
+        ..FULL_THROTTLE
+    });
+    while matches!(scenario.state(), KartState::Hop { .. }) {
+        assert!(hop_ticks < 60, "the hop never landed");
+        highest = highest.max(scenario.transform().translation.y);
+        wheels_left_ground |= scenario.wheels().wheels_on_ground() == 0;
+        scenario.tick(FULL_THROTTLE);
+        hop_ticks += 1;
+    }
+    let hop_height = highest - rest_height;
+    assert!(wheels_left_ground, "the wheels never left the ground");
+    assert!(
+        hop_height > 0.15 && hop_height < 0.6,
+        "hop height {hop_height} m"
+    );
+    assert!(
+        (10..=30).contains(&hop_ticks),
+        "hop lasted {hop_ticks} ticks"
+    );
+    // No steering during the hop: no drift, and the kart lands at full speed on its wheels.
+    assert_eq!(scenario.state(), KartState::Grounded);
+    scenario.run(0.3, FULL_THROTTLE);
+    assert_eq!(scenario.wheels().wheels_on_ground(), 4);
+    assert!(scenario.uprightness() > 0.99);
+    assert!(
+        scenario.forward_speed() > 0.97 * max,
+        "{}",
+        scenario.forward_speed()
+    );
+}
+
+#[test]
+fn inward_drift_reaches_blue_orange_and_purple_at_54_114_and_174_ticks() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let max = scenario.tuning().max_speed;
+    scenario.enter_right_drift(1.0);
+    let start_heading = *scenario.transform().forward();
+    let mut lowest_speed = f32::MAX;
+    let mut first_tick = [None; 3];
+    let mut ticks = 1;
+    loop {
+        if let Some(tier) = scenario.tier() {
+            first_tick[tier.index()].get_or_insert(ticks);
+        }
+        if ticks == 200 {
+            break;
+        }
+        scenario.tick(drifting(1.0));
+        ticks += 1;
+        lowest_speed = lowest_speed.min(scenario.forward_speed());
+        assert!(
+            matches!(scenario.state(), KartState::Drifting { .. }),
+            "the drift broke after {ticks} ticks: {:?}",
+            scenario.state()
+        );
+    }
+    assert_eq!(first_tick, [Some(54), Some(114), Some(174)]);
+    // A tight drift does not slow the kart down, and it really turned (to the right).
+    assert!(lowest_speed > 0.95 * max, "{lowest_speed}");
+    let turned = start_heading.angle_between(*scenario.transform().forward());
+    assert!(turned > 1.0, "turned by {turned} rad only");
+    assert!(scenario.uprightness() > 0.95, "{}", scenario.uprightness());
+}
+
+#[test]
+fn outward_drift_charges_2_5_times_slower() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    // Land with the stick back to neutral (keeps the right side), then steer outward.
+    scenario.enter_right_drift(0.0);
+    let outward = scenario.drift_until(-1.0, MiniTurbo::Blue);
+    assert_eq!(outward, 135, "2.5 × 54 ticks");
+
+    let mut scenario = Scenario::flat(Surface::Road);
+    scenario.enter_right_drift(1.0);
+    let inward = scenario.drift_until(1.0, MiniTurbo::Blue);
+    assert_eq!(inward, 54);
+    let ratio = outward as f32 / inward as f32;
+    assert!((ratio - 2.5).abs() < 0.05, "{ratio}");
+}
+
+#[test]
+fn releasing_at_each_tier_fires_a_boost_of_the_right_duration() {
+    for tier in MiniTurbo::ALL {
+        let mut scenario = Scenario::flat(Surface::Road);
+        let tuning = scenario.tuning();
+        let max = tuning.max_speed;
+        scenario.enter_right_drift(1.0);
+        scenario.drift_until(1.0, tier);
+        assert!(!scenario.boost().is_active(), "no boost before releasing");
+
+        scenario.tick(FULL_THROTTLE);
+        let boost = scenario.boost();
+        let duration = tuning.mini_turbo_durations[tier.index()];
+        assert_eq!(scenario.state(), KartState::Grounded, "{tier:?}");
+        assert_eq!(boost.strength, tuning.mini_turbo_strengths[tier.index()]);
+        assert!(
+            (boost.remaining - duration).abs() < 1e-5,
+            "{tier:?}: {boost:?}"
+        );
+
+        // It lasts its full duration (to the tick), and the kart goes past its max speed.
+        let mut active_ticks = 1;
+        let mut top = scenario.forward_speed();
+        while scenario.boost().is_active() {
+            assert!(active_ticks < 300);
+            scenario.tick(FULL_THROTTLE);
+            top = top.max(scenario.forward_speed());
+            if scenario.boost().is_active() {
+                active_ticks += 1;
+            }
+        }
+        let seconds = active_ticks as f32 / TICKS_PER_SECOND;
+        assert!(
+            (seconds - duration).abs() <= 1.0 / TICKS_PER_SECOND,
+            "{tier:?}: boost lasted {seconds} s instead of {duration} s"
+        );
+        assert!(top > 1.05 * max, "{tier:?}: top speed {top} (max {max})");
+    }
+}
+
+#[test]
+fn releasing_before_blue_gives_nothing() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    scenario.enter_right_drift(1.0);
+    // 53 drifting ticks: one short of blue.
+    scenario.run(52.0 / TICKS_PER_SECOND, drifting(1.0));
+    assert!(matches!(scenario.state(), KartState::Drifting { .. }));
+    assert_eq!(scenario.tier(), None);
+    scenario.tick(FULL_THROTTLE);
+    assert_eq!(scenario.state(), KartState::Grounded);
+    assert!(!scenario.boost().is_active());
+}
+
+#[test]
+fn cannot_drift_at_a_standstill_or_too_slow() {
+    // Standing still: the button hops, but the kart lands without drifting.
+    let mut scenario = Scenario::flat(Surface::Road);
+    let (state, _) = scenario.hop(1.0, 1.0, 0.0);
+    assert_eq!(state, KartState::Grounded);
+    let mut ever_drifted = false;
+    scenario.run_with(2.0, drifting(1.0), |s| {
+        ever_drifted |= matches!(s.state(), KartState::Drifting { .. });
+    });
+    assert!(!ever_drifted);
+
+    // Rolling slower than the minimum drift speed.
+    let mut scenario = Scenario::flat(Surface::Road);
+    let min = scenario.tuning().drift_min_speed;
+    scenario.run_with(2.0, FULL_THROTTLE, |_| {});
+    let brake = KartInput {
+        brake: 1.0,
+        ..default()
+    };
+    while scenario.forward_speed() > 0.6 * min {
+        scenario.tick(brake);
+    }
+    let (state, _) = scenario.hop(1.0, 1.0, 0.0);
+    assert_eq!(
+        state,
+        KartState::Grounded,
+        "speed {}",
+        scenario.forward_speed()
+    );
+}
+
+#[test]
+fn drift_always_turns_toward_its_side_tighter_inward_wider_outward() {
+    // Settled yaw rate (rad/s) of a right drift steered with `steer`.
+    let yaw_rate = |steer: f32| {
+        let mut scenario = Scenario::flat(Surface::Road);
+        scenario.enter_right_drift(steer.max(0.0));
+        scenario.run(1.0, drifting(steer));
+        assert!(matches!(
+            scenario.state(),
+            KartState::Drifting {
+                side: DriftSide::Right,
+                ..
+            }
+        ));
+        (scenario.velocity().angular.y, scenario.forward_speed())
+    };
+    let (tight, tight_speed) = yaw_rate(1.0);
+    let (neutral, _) = yaw_rate(0.0);
+    let (wide, wide_speed) = yaw_rate(-1.0);
+    // Clockwise (right) in every case, even steering full left.
+    assert!(
+        tight < neutral && neutral < wide && wide < 0.0,
+        "{tight} {neutral} {wide}"
+    );
+    // Radii close to the tuning at full speed.
+    let tuning = KartTuning::default();
+    let tight_radius = tight_speed / -tight;
+    let wide_radius = wide_speed / -wide;
+    assert!(
+        (tight_radius - tuning.drift_radius_tight).abs() < 1.0,
+        "tight radius {tight_radius} m"
+    );
+    assert!(
+        (wide_radius - tuning.drift_radius_wide).abs() < 3.0,
+        "wide radius {wide_radius} m"
+    );
+}
+
+#[test]
+fn braking_hard_breaks_the_drift_and_loses_the_charge() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    scenario.enter_right_drift(1.0);
+    scenario.drift_until(1.0, MiniTurbo::Blue);
+    let brake_in_drift = KartInput {
+        brake: 1.0,
+        steer: 1.0,
+        jump_drift: true,
+        ..default()
+    };
+    let mut ticks = 0;
+    while matches!(scenario.state(), KartState::Drifting { .. }) {
+        assert!(ticks < 120, "the drift never broke");
+        scenario.tick(brake_in_drift);
+        ticks += 1;
+    }
+    assert!(scenario.forward_speed() < scenario.tuning().drift_exit_speed);
+    // Releasing now gives nothing.
+    scenario.tick(KartInput::default());
+    assert!(!scenario.boost().is_active());
+}
+
+#[test]
+fn assisted_steering_charges_slower_and_never_reaches_purple() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    scenario
+        .app
+        .world_mut()
+        .entity_mut(scenario.kart)
+        .insert(KartAssists {
+            assisted_steering: true,
+        });
+    scenario.enter_right_drift(1.0);
+    // 270 / 2 and 570 / 2 ticks.
+    let blue = scenario.drift_until(1.0, MiniTurbo::Blue);
+    assert_eq!(blue, 135);
+    // `drift_until` counts the current tick as its first one.
+    let orange = blue - 1 + scenario.drift_until(1.0, MiniTurbo::Orange);
+    assert_eq!(orange, 285);
+    let mut purple = false;
+    scenario.run_with(5.0, drifting(1.0), |s| {
+        purple |= s.tier() == Some(MiniTurbo::Purple);
+    });
+    assert!(matches!(scenario.state(), KartState::Drifting { .. }));
+    assert!(!purple, "purple is disabled with assisted steering");
+    // Releasing fires the orange mini-turbo.
+    scenario.tick(FULL_THROTTLE);
+    let duration = scenario.tuning().mini_turbo_durations[MiniTurbo::Orange.index()];
+    assert!((scenario.boost().remaining - duration).abs() < 1e-5);
 }
