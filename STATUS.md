@@ -11,12 +11,12 @@ _Mis à jour par Claude à chaque PR._
   - 21 checkpoints automatiques, ligne de départ et 12 places de grille en quinconce ;
   - dans les données mais pas encore actifs (repères visuels seulement) : zone de sable, panneaux de boost, boîtes d'objets simples et doubles, croquettes, points de dépannage (un par checkpoint par défaut) ;
   - décor : herbe tout autour, une soixantaine d'arbres en primitives ;
-  - test de bout en bout : un pilote automatique simple boucle un tour en 21,4 s en passant tous les checkpoints dans l'ordre, sans sortir des murets ni décoller ailleurs qu'au tremplin ;
+  - test de bout en bout : un pilote automatique simple boucle un tour en 19,9 s en passant tous les checkpoints dans l'ordre, sans sortir des murets ni décoller ailleurs qu'au tremplin ;
   - un fichier de circuit absent ou invalide (champ mal orthographié, valeurs absurdes) est signalé dans la console, et le jeu se rabat sur le terrain de test.
 - Le terrain plat de #1 reste disponible pour les tests (`TrackChoice::TestGround`).
 - **Kart arcade jouable** (#1) sur un terrain de test : route, zone d'herbe à gauche, caisses et mur à droite, rampe droit devant.
   - Corps Rapier dynamique posé sur 4 raycasts de suspension (ressort + amortisseur), gravité ×2,2, redressement automatique en l'air.
-  - Courbe moteur (0 → 26 m/s en 2,5 s), frein puis marche arrière sur le même bouton, grip latéral fort, direction pilotée en lacet.
+  - Courbe moteur (0 → 28,5 m/s en 2,5 s), frein puis marche arrière sur le même bouton, grip latéral fort, direction pilotée en lacet.
   - Hors-piste à 55 % de la vitesse max (ignoré pendant un boost), composant `Boost` générique.
   - Machine à états `Grounded` / `Airborne` (les états drift, figure, touché viendront avec leurs issues).
   - Simulation en `FixedUpdate` 60 Hz, rendu interpolé entre deux ticks (`src/interpolation.rs`).
@@ -48,6 +48,11 @@ _Mis à jour par Claude à chaque PR._
 - 2026-10-12 (#1) : la simulation (`SimulationPlugin`) n'a ni fenêtre ni rendu ni périphérique d'entrée ; `GamePlugin` y ajoute le terrain, les entrées joueur, les visuels et la caméra. Les touches sont des positions physiques : W/A/S/D = Z/Q/S/D sur AZERTY.
 - 2026-10-12 (#1) : les murs et caisses ont une restitution de 0,3 (`track::WALL_RESTITUTION`), le kart 0 avec la règle `Max` : on rebondit sur les murs, pas sur le sol. Les surfaces de plus de 60° ne comptent pas comme sol (`min_ground_normal_y`), pour qu'un kart couché contre un mur se redresse au lieu de rouler dessus. À revoir pour l'anti-gravité (#20).
 - 2026-10-12 (#2) : la caméra suit le kart exactement à l'horizontale et ne lisse que la *direction* (pivot en virage) et la hauteur (sauts). Un ressort sur la position entière ferait traîner la caméra de plusieurs mètres à pleine vitesse.
+- 2026-10-12 (#25, retour de Max après le premier essai : « braquage un peu sec, un peu plus de vitesse, les sauts sont cools ») :
+  - vitesse max 26 → **28,5 m/s** (≈ 103 km/h ; le game design part de 26, valeur « à régler ») ;
+  - braquage −12 % : `steer_rate` 2,6 → **2,3** rad/s, `steer_rate_at_max_speed` 1,9 → **1,65** rad/s (rayon à fond ≈ 17,5 m au lieu de 13,7) ;
+  - réponse du volant plus douce : `steer_response` 14 → **8** /s (63 % du braquage en 125 ms au lieu de 70 ms) ;
+  - sauts inchangés (gravité, suspension, tremplins) ; un peu plus longs avec la vitesse.
 - 2026-10-12 (#3) : format des circuits (`src/track/data.rs`) : les positions le long du tracé sont des **paramètres de spline** (`9.5` = à mi-chemin entre les points 9 et 10), plus faciles à écrire à la main que des mètres ; latéral de −1 (bord gauche) à 1 (bord droit). Les dépendances `ron` 0.12 et `serde` 1 étaient déjà compilées pour Bevy : aucun coût.
 - 2026-10-12 (#3) : le circuit est chargé comme un asset Bevy (`*.track.ron`) : un nouveau circuit = un nouveau fichier. `AssetMetaCheck::Never` dans `main.rs`, sinon le web demande des `.meta` inexistants.
 - 2026-10-12 (#3) : l'herbe autour du circuit est à −25 cm : la spline peut plonger de quelques centimètres sous ses points de contrôle avant une montée.

@@ -9,7 +9,8 @@ use bevy::prelude::*;
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct KartTuning {
     // --- Engine -------------------------------------------------------------------------------
-    /// Top speed on the road, 150cc (GD § 2: 26 m/s ≈ 94 km/h).
+    /// Top speed on the road, 150cc. GD § 2 starts at 26 m/s; raised to 28.5 m/s (≈ 103 km/h)
+    /// after Max's first test drive (issue #25).
     pub max_speed: f32,
     /// Time to reach `max_speed` from a standstill, full throttle (GD § 2: about 2.5 s).
     pub time_to_max_speed: f32,
@@ -90,7 +91,7 @@ pub struct KartTuning {
 impl Default for KartTuning {
     fn default() -> Self {
         Self {
-            max_speed: 26.0,
+            max_speed: 28.5,
             time_to_max_speed: 2.5,
             engine_curve: 2.0,
             overspeed_decel: 12.0,
@@ -104,10 +105,10 @@ impl Default for KartTuning {
             boost_accel: 40.0,
 
             lateral_grip: 30.0,
-            steer_rate: 2.6,
-            steer_rate_at_max_speed: 1.9,
+            steer_rate: 2.3,
+            steer_rate_at_max_speed: 1.65,
             steer_full_speed: 6.0,
-            steer_response: 14.0,
+            steer_response: 8.0,
             air_steer_factor: 0.3,
             tilt_damping: 4.0,
 

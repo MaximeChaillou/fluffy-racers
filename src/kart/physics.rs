@@ -438,7 +438,9 @@ mod tests {
     fn yaw_rate_converges_to_target() {
         let t = KartTuning::default();
         let mut yaw = 0.0;
-        for _ in 0..30 {
+        // Six time constants of the steering response.
+        let ticks = (6.0 / t.steer_response / DT).ceil() as usize;
+        for _ in 0..ticks {
             yaw = next_yaw_rate(&t, yaw, 2.0, DT);
         }
         assert!((yaw - 2.0).abs() < 0.01, "{yaw}");
