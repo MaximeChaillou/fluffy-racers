@@ -49,7 +49,7 @@ impl Boost {
     }
 }
 
-/// Driving state of a kart. Trick, hit and respawn states come with their issues
+/// Driving state of a kart. Trick and hit states come with their issues
 /// (docs/ARCHITECTURE.md § « Le kart »). Transitions: `drift::step_state`.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub enum KartState {
@@ -68,6 +68,9 @@ pub enum KartState {
         charge: f32,
     },
     Airborne,
+    /// Carried by the tow pelican (GD § 2, issue #5): the kart does not drive, its drift and
+    /// charge are gone and the race rules move it. Only the race rules leave this state.
+    Respawning,
 }
 
 impl KartState {

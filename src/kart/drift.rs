@@ -177,7 +177,8 @@ impl StateStep {
     }
 }
 
-/// Next driving state (docs/ARCHITECTURE.md: `Grounded`, `Hop`, `Drifting`, `Airborne`).
+/// Next driving state (docs/ARCHITECTURE.md: `Grounded`, `Hop`, `Drifting`, `Airborne`,
+/// `Respawning`).
 pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> StateStep {
     // Ground contact with the usual grace period against bumps.
     let base = next_state(
@@ -191,6 +192,9 @@ pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> 
     let steered = DriftSide::from_steer(ctx.input.steer, tuning.drift_steer_threshold);
 
     match state {
+        // The tow pelican carries the kart: nothing the driver does matters until the race rules
+        // drop it back on the track.
+        KartState::Respawning => StateStep::to(KartState::Respawning),
         KartState::Grounded | KartState::Airborne => {
             if grounded && pressed {
                 StateStep {
@@ -666,5 +670,23 @@ mod tests {
                 t.mini_turbo_thresholds[pair[1].index()] > t.mini_turbo_thresholds[pair[0].index()]
             );
         }
+    }
+
+    /// Issue #5: the tow pelican's state ignores the driver (no hop, no drift, no boost) and
+    /// only the race rules end it.
+    #[test]
+    fn respawning_ignores_the_driver_until_the_race_rules_end_it() {
+        let t = KartTuning::default();
+        for c in [
+            ctx(true, false, 1.0),
+            ctx(false, true, -1.0),
+            airborne(ctx(true, false, 0.0), 100),
+        ] {
+            let step = step_state(&t, KartState::Respawning, &c);
+            assert_eq!(step.state, KartState::Respawning);
+            assert!(!step.hop);
+            assert_eq!(step.boost, None);
+        }
+        assert_eq!(KartState::Respawning.mini_turbo(&t, false), None);
     }
 }

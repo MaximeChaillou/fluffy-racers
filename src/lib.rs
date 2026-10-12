@@ -3,7 +3,9 @@
 pub mod camera;
 pub mod interpolation;
 pub mod kart;
+pub mod race;
 pub mod track;
+pub mod ui;
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
@@ -15,7 +17,9 @@ use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualPlugin, PlayerKart, SpawnPoint, kart_body,
     spawn_kart_visual,
 };
-use track::{PlayerStart, TrackPlugin};
+use race::{PelicanPlugin, RacePlugin, Racer};
+use track::{PlayerStart, TrackLayout, TrackPlugin};
+use ui::HudPlugin;
 
 /// Simulation tick rate (CLAUDE.md: the simulation runs in `FixedUpdate` at 60 Hz).
 pub const TICK_HZ: f64 = 60.0;
@@ -37,7 +41,10 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// The whole game: simulation, test ground, player kart, visuals and camera.
+/// The whole game: simulation, track, race rules, player kart, visuals, camera and HUD.
+///
+/// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
+/// without a countdown. It only starts on a circuit, not on the flat test ground.
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -46,16 +53,21 @@ impl Plugin for GamePlugin {
             .add_plugins((
                 SimulationPlugin,
                 TrackPlugin,
+                RacePlugin,
                 KartInputPlugin,
                 KartVisualPlugin,
+                PelicanPlugin,
                 CameraPlugin,
+                HudPlugin,
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
     }
 }
 
-/// Spawns the player's kart and camera once, when the track says where to start.
+/// Spawns the player's kart and camera once, when the track says where to start. On a circuit
+/// the player is a racer on the pole (bots fill the other slots with issue #6); on the test
+/// ground it just drives, and falls back to its spawn point.
 fn spawn_player(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -63,16 +75,16 @@ fn spawn_player(
     tuning: Res<KartTuning>,
     camera_tuning: Res<CameraTuning>,
     start: Res<PlayerStart>,
+    circuit: Option<Res<TrackLayout>>,
 ) {
     let spawn = start.0;
-    let body = commands
-        .spawn((
-            kart_body(&tuning, spawn),
-            PlayerKart,
-            SpawnPoint(spawn),
-            CameraLean::default(),
-        ))
-        .id();
+    let mut kart = commands.spawn((kart_body(&tuning, spawn), PlayerKart, CameraLean::default()));
+    if circuit.is_some() {
+        kart.insert(Racer::new(0));
+    } else {
+        kart.insert(SpawnPoint(spawn));
+    }
+    let body = kart.id();
     let visual = spawn_kart_visual(
         &mut commands,
         &mut meshes,
@@ -121,7 +133,7 @@ mod tests {
 
     /// The whole game headless on `track`: player kart, keyboard input, one fixed tick per
     /// update. Returns once the track is built and the player kart spawned.
-    fn app_on(track: TrackChoice) -> App {
+    pub(crate) fn app_on(track: TrackChoice) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -156,7 +168,7 @@ mod tests {
         app_on(TrackChoice::TestGround)
     }
 
-    fn player(app: &mut App) -> Entity {
+    pub(crate) fn player(app: &mut App) -> Entity {
         app.world_mut()
             .query_filtered::<Entity, (With<Kart>, With<PlayerKart>)>()
             .single(app.world())
@@ -209,7 +221,7 @@ mod tests {
         assert!(transform.up().y > 0.98);
     }
 
-    fn hold_keys(app: &mut App, keys: &[KeyCode]) {
+    pub(crate) fn hold_keys(app: &mut App, keys: &[KeyCode]) {
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         input.release_all();
         for key in keys {
@@ -379,7 +391,7 @@ mod tests {
     }
 
     /// Simple test driver: aims at a point of the centerline ahead and lifts off in tight turns.
-    fn follow_centerline(
+    pub(crate) fn follow_centerline(
         layout: &track::TrackLayout,
         transform: &Transform,
         speed: f32,

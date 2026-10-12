@@ -10,7 +10,9 @@ use bevy_rapier3d::prelude::Velocity;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct PlayerKart;
 
-/// Where the kart goes back with the debug reset key.
+/// Where the kart goes back with the debug reset key, or when it falls off the test ground.
+/// Only karts outside a race have one: in a race, the tow pelican handles falls and the reset key
+/// (`crate::race`, issue #5).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct SpawnPoint(pub Transform);
 
@@ -18,10 +20,12 @@ pub struct SpawnPoint(pub Transform);
 pub const DEBUG_BOOST_KEY: KeyCode = KeyCode::KeyB;
 pub const DEBUG_BOOST_STRENGTH: f32 = 0.3;
 pub const DEBUG_BOOST_DURATION: f32 = 1.2;
-/// Debug key: put the player kart back on its spawn point.
+/// Debug key: put the player kart back on its spawn point. In a race (no `SpawnPoint`), the
+/// same key calls the tow pelican instead (`crate::race`).
 pub const DEBUG_RESET_KEY: KeyCode = KeyCode::KeyR;
-/// Below this height the kart fell off the test ground: back to the spawn point. The tow
-/// pelican (GD § 2) replaces this with issue #5.
+/// Below this height the kart fell off the test ground: back to the spawn point. Safety net of
+/// the test ground only (karts with a `SpawnPoint`); on a circuit the tow pelican (GD § 2,
+/// issue #5) rescues racers.
 pub const FALL_RESET_HEIGHT: f32 = -30.0;
 
 /// Stick dead zone: smaller deflections are ignored.
