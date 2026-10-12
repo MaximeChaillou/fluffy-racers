@@ -2,7 +2,9 @@
 
 Jeu de kart multijoueur dans le navigateur, avec des animaux tout mous. Rust + Bevy, compilé en WebAssembly.
 
-**Jouer :** https://maximechaillou.github.io/fluffy-racers/ (mis à jour à chaque merge sur `main`)
+**Jouer :** https://maximechaillou.github.io/fluffy-racers/ (la dernière version de `dev`, mise à jour automatiquement)
+
+Branches : `dev` reçoit automatiquement le travail de Claude (fusionné quand la CI passe), `main` est la version stable.
 
 ## Développer
 

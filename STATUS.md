@@ -4,13 +4,15 @@ _Mis à jour par Claude à chaque PR._
 
 ## Ce qui marche
 - Squelette Bevy 0.20 : fenêtre, sol, kart provisoire qui tourne sur lui-même, test headless.
-- CI : fmt, clippy, tests, check wasm, puis build trunk et déploiement GitHub Pages à chaque merge sur `main`.
+- CI : fmt, clippy, tests et check wasm sur `main`, `dev`, les PR et les branches `claude/**`. Déploiement GitHub Pages depuis `dev`.
+- Fusion automatique des branches `claude/**` dans `dev` quand la CI passe (`automerge.yml`).
 
 ## Décisions
 - 2026-10-12 : Bevy 0.20, physique bevy_rapier3d 0.37. Avian, lightyear et bevy_ggrs ne supportent pas encore 0.20.
 - 2026-10-12 : réseau P2P en maillage complet via matchbox_socket. Chaque joueur fait autorité sur son kart, l'hôte arbitre la course. Pas de serveur de jeu (voir `docs/ARCHITECTURE.md`).
 - 2026-10-12 : WebGL2 par défaut pour la compatibilité, WebGPU à évaluer plus tard.
 - 2026-10-12 : formes primitives d'abord, packs d'assets CC0 ensuite (issue dédiée).
+- 2026-10-12 : `dev` = branche par défaut, alimentée automatiquement par Claude (fusion auto si CI verte) et déployée sur Pages. `main` = version stable, fusionnée à la main par Max.
 - 2026-10-12 : référence de gameplay = Mario Kart 8 Deluxe (mécaniques et valeurs dans `docs/GAME_DESIGN.md`), avec un contenu 100 % original.
 
 ## Prochaines étapes

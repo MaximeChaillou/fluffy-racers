@@ -4,25 +4,53 @@ Jeu de kart arcade multijoueur dans le navigateur, avec des animaux tout mous et
 
 ## Mode de travail (lis ceci en premier)
 
-Tu travailles le plus souvent **sans surveillance** : session cloud ou tâche planifiée. Max lance une tâche et revient plus tard.
+Tu travailles **sans surveillance**, en général lancé par une routine planifiée. Max ne relit pas chaque changement.
 
-- **Une issue GitHub = une branche = une PR.** Nomme la branche `issue-<n>-<slug>`. La PR contient `Closes #<n>`. Ne pousse jamais directement sur `main`.
-- **Ne t'arrête pas pour poser une question** sauf blocage réel. Dans ce cas, écris la question dans `STATUS.md` (section « Questions pour Max ») et dans la PR, puis avance sur ce qui n'est pas bloqué. Pour les choix mineurs, décide toi-même et note la décision.
-- **Choisir la prochaine issue** (si on ne t'en a pas donné une) : l'issue ouverte au plus petit numéro dans le plus petit milestone (`milestone-1`, puis 2, puis 3), sans label `needs-max` et sans PR déjà ouverte.
+### Branches
+- **`dev`** est la branche par défaut. Ton travail y arrive automatiquement, et c'est elle qui est déployée sur GitHub Pages pour que Max teste.
+- **`main`** est la version stable. Seul Max y fusionne `dev`, quand il a joué.
+- **Toi, tu pousses uniquement des branches `claude/issue-<n>-<slug>`.** Ne pousse jamais sur `dev` ni sur `main`.
+- Quand la CI passe sur ta branche, `.github/workflows/automerge.yml` ouvre la PR vers `dev` (si elle n'existe pas), la fusionne en squash, supprime la branche et redéploie. Si la CI échoue, il ouvre une issue avec le label `ci-failure`.
+- **La CI est le seul garde-fou avant `dev`.** Tes tests doivent donc vraiment vérifier le comportement.
+
+### Déroulé d'une session
+1. **État des lieux.** Lance `git fetch origin --prune`, lis `STATUS.md` et les issues ouvertes avec le label `ci-failure`.
+   - S'il reste une branche distante `claude/*`, c'est une fusion en attente ou ratée.
+   - Si son dernier commit a moins de 30 min, attends sa fusion (étape 6).
+   - Sinon, reprends-la : rebase sur `origin/dev`, corrige, revérifie, repousse.
+2. **Choisir l'issue** (si le prompt n'en impose pas une) : l'issue ouverte au plus petit numéro dans le plus petit milestone (`milestone-1`, puis 2, puis 3), sans label `needs-max` ni `ci-failure`.
+3. **Créer la branche** `claude/issue-<n>-<slug>` depuis `origin/dev`.
+4. **Vérifier en local.** Avant chaque push, tout doit passer. Ne pousse jamais une branche qui échoue chez toi.
+   ```
+   cargo fmt
+   cargo clippy --all-targets -- -D warnings
+   cargo test
+   cargo check --target wasm32-unknown-unknown
+   ```
+5. **Écrire le dernier commit de la branche comme une description de PR**, puisque c'est lui qui sert à créer la PR.
+   - Titre court.
+   - Corps avec :
+     - **Comment tester** : étapes concrètes pour Max (lien du jeu, touches, ce qu'il doit observer) ;
+     - **Vérifié / non vérifié** : sois honnête sur ce que tu n'as pas pu voir, puisque tu ne peux pas jouer ;
+     - les réglages ajoutés et leurs valeurs ;
+     - `Closes #<n>`.
+6. **Pousser, puis attendre la fusion.**
+   - Lance `git fetch origin` toutes les 2 min jusqu'à ce que ton travail soit dans `origin/dev` (45 min maximum).
+   - Pour voir l'état de la CI : `gh run list --branch <branche>` si `gh` fonctionne, sinon `curl -s "https://api.github.com/repos/MaximeChaillou/fluffy-racers/actions/runs?branch=<branche>&per_page=1"`.
+   - Si la CI échoue, corrige sur la même branche et repousse.
+7. **Enchaîner.** Une fois la branche fusionnée, repars de `origin/dev` pour l'issue suivante, dans la limite fixée par le prompt (3 issues par session par défaut).
+8. **En cas de blocage** (3 échecs de CI sur la même issue, décision qui revient à Max, action de Max requise) :
+   - explique-le dans le message de commit et dans `STATUS.md` (section « Questions pour Max ») ;
+   - laisse la branche en place ;
+   - passe à une issue indépendante si possible, sinon arrête-toi.
+9. **Terminer la session** par un résumé : ce qui a été fusionné, ce qui a échoué, et les questions pour Max.
+
+### Règles permanentes
+- **Une issue = une branche = une PR.** Fais de petits incréments qui fonctionnent. Si une issue est trop grosse, livre une première étape utile. Pour la suite, crée une issue si tu peux, sinon note-la dans `STATUS.md`.
+- **Ne t'arrête pas pour poser une question.** Pour un choix mineur, décide et note la décision dans `STATUS.md`.
+- **Chaque branche met à jour `STATUS.md`** : ce qui marche, les décisions prises, la suite, et les questions éventuelles.
 - **Commit `Cargo.lock`** (c'est une application, pas une bibliothèque).
-- **Petites PR, toujours compilables.** Si une issue est trop grosse, livre une première étape qui fonctionne, puis crée une issue de suite.
-- **Avant chaque push**, tout doit passer :
-  ```
-  cargo fmt
-  cargo clippy --all-targets -- -D warnings
-  cargo test
-  cargo check --target wasm32-unknown-unknown
-  ```
-- **Chaque PR met à jour `STATUS.md`** : ce qui marche, les décisions prises, la suite, et les questions éventuelles.
-- **Chaque description de PR contient :**
-  - **Comment tester** : étapes concrètes pour Max (commande ou lien, touches, ce qu'il doit observer).
-  - **Vérifié / non vérifié** : sois honnête sur ce que tu n'as pas pu voir (tu ne peux pas jouer).
-  - Les réglages de gameplay ajoutés et leurs valeurs, pour que Max puisse les ajuster.
+- **Ne casse pas l'existant.** Tous les tests déjà en place doivent continuer à passer.
 
 ## Vision du jeu
 
@@ -95,7 +123,8 @@ Tu ne peux pas jouer, donc :
 
 ## Interdits
 
-- Pas de push sur `main`, pas de force-push sur une branche qui a une PR ouverte.
+- Ne pousse jamais sur `dev` ni sur `main`, et ne force-push jamais.
+- **Ne modifie pas `.github/workflows/`** (CI, fusion automatique, déploiement) ni la configuration de lint, sauf si une issue créée par Max le demande explicitement.
+- Ne supprime ni ne désactive de tests, et n'affaiblis pas les vérifications, pour faire passer la CI.
 - Ne change pas la version de Bevy ni la stack ci-dessus.
-- Ne supprime ni ne désactive de tests pour faire passer la CI.
 - Pas d'asset sous licence non libre, pas de contenu de marques existantes.

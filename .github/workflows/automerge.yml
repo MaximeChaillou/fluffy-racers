@@ -1,0 +1,101 @@
+name: Auto-merge Claude branches into dev
+
+# Branch model chosen by the repo owner (Max):
+# - `dev` (default branch): Claude's work lands here automatically and is deployed for testing.
+# - `main`: stable branch. Max reviews and merges dev -> main himself (e.g. once a week).
+#
+# When CI passes on a branch pushed by Claude Code (claude/**), open a PR into dev if needed,
+# squash-merge it and redeploy dev. When CI fails, open a `ci-failure` issue.
+# Never merges into main. Runs from the default branch (workflow_run) and never executes code from the branch.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: automerge
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+  BRANCH: ${{ github.event.workflow_run.head_branch }}
+  SHA: ${{ github.event.workflow_run.head_sha }}
+  RUN_URL: ${{ github.event.workflow_run.html_url }}
+  BASE: dev
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if the branch moved on since this CI run
+        id: check
+        run: |
+          current=$(gh api "repos/$GH_REPO/branches/$BRANCH" --jq .commit.sha 2>/dev/null || echo gone)
+          if [ "$current" != "$SHA" ]; then
+            echo "Branch is now at $current, not $SHA: a newer CI run will handle it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the pull request into dev if needed
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            msg=$(gh api "repos/$GH_REPO/commits/$SHA" --jq .commit.message)
+            title=$(printf '%s\n' "$msg" | head -n 1)
+            body=$(printf '%s\n' "$msg" | tail -n +3)
+            gh pr create --head "$BRANCH" --base "$BASE" --title "$title" --body "${body:-Branche $BRANCH}"
+          fi
+
+      - name: Squash-merge into dev and delete the branch
+        if: steps.check.outputs.skip != 'true'
+        run: gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$SHA"
+
+      - name: Close the ci-failure issue of this branch, if any
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          for n in $(gh issue list --label ci-failure --state open --search "\"$BRANCH\" in:title" --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "Branche fusionnée dans dev après une CI verte : $RUN_URL"
+          done
+
+      - name: Redeploy dev (pushes made with GITHUB_TOKEN do not trigger workflows)
+        if: steps.check.outputs.skip != 'true'
+        run: gh workflow run ci.yml --ref "$BASE"
+
+      - name: Report a merge failure
+        if: failure()
+        run: |
+          gh label create ci-failure --color B60205 --description "CI ou fusion automatique en échec" --force
+          title="Fusion automatique en échec : $BRANCH"
+          msg="La CI est verte mais la fusion de \`$BRANCH\` (commit ${SHA:0:7}) dans dev a échoué (conflit ?). Claude doit rebaser la branche sur dev. Run : $RUN_URL"
+          n=$(gh issue list --label ci-failure --state open --search "\"$BRANCH\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$msg"; else gh issue create --title "$title" --label ci-failure --body "$msg"; fi
+
+  report-ci-failure:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update the ci-failure issue
+        run: |
+          gh label create ci-failure --color B60205 --description "CI ou fusion automatique en échec" --force
+          title="CI en échec : $BRANCH"
+          msg="La CI a échoué sur \`$BRANCH\` (commit ${SHA:0:7}). Claude doit corriger sur la même branche. Run : $RUN_URL"
+          n=$(gh issue list --label ci-failure --state open --search "\"$BRANCH\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$msg"; else gh issue create --title "$title" --label ci-failure --body "$msg"; fi
