@@ -261,8 +261,9 @@ const GRID_FIRST_ROW: f32 = 5.0;
 const GRID_SPACING: f32 = 3.0;
 /// Lateral position of the grid places, as a fraction of the half width.
 const GRID_LATERAL: f32 = 0.4;
-/// Kart body height above the road when spawned (m): wheels on the ground.
-const GRID_HEIGHT: f32 = 0.55;
+/// Kart body height above the road when spawned (m): wheels on the ground. Also where the tow
+/// pelican drops karts (issue #5).
+pub const GRID_HEIGHT: f32 = 0.55;
 
 /// Everything derived from a track file that gameplay needs at runtime.
 #[derive(Resource, Clone, Debug)]

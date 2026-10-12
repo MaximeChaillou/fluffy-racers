@@ -3,6 +3,17 @@
 _Mis à jour par Claude à chaque PR._
 
 ## Ce qui marche
+- **Course de 3 tours** (#5, `src/race/`, logique pure testée ; HUD dans `src/ui/`) :
+  - un coureur = un kart avec le composant `Racer { grid_slot }`, quelle que soit la source de son `KartInput` (joueur, bots de #6, réseau) ; la logique gère N coureurs (testée avec 12). En solo, le joueur est seul sur la grille (« 1er / 1 ») ;
+  - états : grille (1 s) → compte à rebours « 3, 2, 1 » (1 s par étape) → GO → course → « FINI ! » (4 s) → classement → rejouer (Espace, Entrée, A ou Start, après 1 s) ;
+  - rien ne bouge avant GO : entrées et boosts des coureurs sont neutralisés. Le « 2 » (tick 121) et le GO (tick 241) sont exposés pour le départ fusée de #13 (`RaceFlow::ticks_since_two`, `RaceFlow::go_tick`) ;
+  - progression = (checkpoints validés, distance de course le long de la ligne centrale, tours compris). Un checkpoint ne compte que si c'est le suivant, en passant sa porte entre les murets, depuis le tronçon qui y mène : un raccourci ne valide rien et la distance reste bloquée avant le checkpoint manqué. Reculer fait baisser la distance (jusqu'à 30 m derrière le dernier checkpoint), sans perdre de checkpoint ni en compter un deux fois ;
+  - classement en temps réel (arrivés par ordre d'arrivée, puis distance de course, puis place de grille) et **distance au leader** en mètres le long de la ligne, tours compris (pour les objets, #16) ;
+  - chrono en ticks de 60 Hz : temps total, temps par tour, meilleur tour. Après l'arrivée, le kart roule en roue libre (accélérateur coupé, direction conservée) ;
+  - **pélican dépanneur** : chute (plus de 5 m sous la route : tout de suite), hors des murets pendant 1 s, ou bloqué (accélérateur ou frein appuyé sans s'éloigner de 2 m pendant 3 s). Il soulève le kart, le porte à 6 m au-dessus du circuit et le dépose arrêté, dans le sens de la course, au point de dépannage du dernier checkpoint validé : 2,5 s perdues. Pendant ce temps le kart est dans l'état `Respawning` (ni conduite ni gravité, drift et boost annulés). Oiseau provisoire en primitives : corps blanc, bec orange, ailes qui battent ;
+  - **R** pendant la course appelle le pélican ; sur le terrain de test, R ramène toujours au départ ;
+  - HUD `bevy_ui` : place (« 1er » et « / 1 ») en bas à droite, « Tour 2/3 » et croquettes (« x 0 », vide jusqu'à #14) en bas à gauche, chrono et meilleur tour en haut à droite, deux cases d'objets vides en haut à gauche (#16), compte à rebours, « GO ! », « DERNIER TOUR ! » et « FINI ! » au centre ; écran de classement (place, nom, temps, meilleur tour). Les textes ne sont réécrits que quand leur valeur change ;
+  - tests : 38 de logique pure (états de la course, progression, raccourcis, recul, classement de 12 karts, distance au leader, chrono, pélican, textes du HUD) et 7 scénarios headless : course complète de 3 tours par le pilote automatique (19,9 s, 18,9 s et 18,9 s, total 57,7 s ; HUD, arrivée, classement, rejouer), compte à rebours qui retient le kart même en boost, chute, kart bloqué contre un mur (dépanné après 3,4 s), hors des murets (1 s), touche R, pas de course sur le terrain de test.
 - **Drift et mini-turbos à 3 paliers** (#4, `src/kart/drift.rs`, logique pure testée) :
   - Espace (ou RB/RT) = petit **saut** (33 cm, 0,33 s) ; si on braque pendant le saut et qu'on garde le bouton à l'atterrissage, au-dessus de 10 m/s, on part en **drift** du côté braqué ;
   - en drift, le kart tourne toujours du côté du drift : braquer vers l'intérieur resserre (rayon 10 m à pleine vitesse), au neutre 15 m, vers l'extérieur élargit (32 m), jamais de changement de côté ; le drift ne fait pas perdre de vitesse (virage normal à fond : 17 m) ;
@@ -28,9 +39,9 @@ _Mis à jour par Claude à chaque PR._
   - Corps Rapier dynamique posé sur 4 raycasts de suspension (ressort + amortisseur), gravité ×2,2, redressement automatique en l'air.
   - Courbe moteur (0 → 28,5 m/s en 2,5 s), frein puis marche arrière sur le même bouton, grip latéral fort, direction pilotée en lacet.
   - Hors-piste à 55 % de la vitesse max (ignoré pendant un boost), composant `Boost` générique.
-  - Machine à états `Grounded` / `Hop` / `Drifting` / `Airborne` (figure, touché et dépannage viendront avec leurs issues).
+  - Machine à états `Grounded` / `Hop` / `Drifting` / `Airborne` / `Respawning` (dépanneur, #5) ; figure et touché viendront avec leurs issues.
   - Simulation en `FixedUpdate` 60 Hz, rendu interpolé entre deux ticks (`src/interpolation.rs`).
-  - Entrées clavier + manette → `KartInput` ; touches de debug : **B** = boost, **R** = retour au départ.
+  - Entrées clavier + manette → `KartInput` ; touches de debug : **B** = boost, **R** = retour au départ (terrain de test) ou pélican dépanneur (course, #5).
   - Tests de scénario headless (`src/kart/scenario_tests.rs`) : accélération, herbe, boost, frein/marche arrière, virage 3 s, saut de rampe, choc frontal contre un mur.
   - Test de bout en bout (`src/lib.rs`) : flèche haut maintenue sur le vrai terrain de test → le kart saute la rampe et retombe sur ses roues.
   - Vérifié dans Chromium headless (WebGL2 logiciel) : le jeu s'affiche, le kart roule et tourne au clavier. Le ressenti et les fps réels restent à juger par Max.
@@ -77,12 +88,23 @@ _Mis à jour par Claude à chaque PR._
 - 2026-10-12 (#4) : le drift tolère 0,5 s en l'air (bosses, petits sauts), charge figée ; au-delà, il casse sans boost. Sous 7 m/s (entrée à 10 m/s), il casse aussi sans boost. Relâcher en l'air déclenche quand même le boost.
 - 2026-10-12 (#4) : intensités des mini-turbos (« à régler », le game design ne les donne pas) : +20 % / +25 % / +30 % de vitesse max, le violet aussi fort qu'un piment.
 - 2026-10-12 (#4) : la direction assistée est un composant par kart, `KartAssists` (réglage par joueur, GD § 11), désactivé par défaut. Le menu et le maintien sur la piste viendront avec #17.
+- 2026-10-12 (#5) : la course (`RacePlugin`) est dans `GamePlugin`, pas dans `SimulationPlugin` : les scénarios de kart roulent sans compte à rebours. Elle ne démarre que sur un circuit ; le terrain de test n'a pas de course et garde son filet de sécurité (« sous −30 m → retour au départ »). Sur un circuit, le joueur n'a plus de `SpawnPoint` : c'est le pélican qui le récupère.
+- 2026-10-12 (#5) : **distance de course** = abscisse le long de la ligne centrale depuis la ligne de départ, tours compris : négative sur la grille, 3 × 536 m à l'arrivée. La position d'un kart n'est cherchée que sur le tronçon qui va de 30 m derrière son dernier checkpoint (ou de son point de dépannage, s'il est plus loin) jusqu'au checkpoint suivant : un kart ne peut jamais « sauter » sur une autre partie du circuit.
+- 2026-10-12 (#5) : la ligne de départ est le checkpoint 0, franchi juste après le GO puisque la grille est derrière : il faut valider 21 × 3 + 1 = 64 checkpoints pour finir. Le tour 1 est chronométré depuis le GO, comme dans MK8DX.
+- 2026-10-12 (#5) : la course est finie quand tous les joueurs locaux (`PlayerKart`) ont franchi l'arrivée ; sans joueur (pilote automatique des tests, bots seuls), quand tous les coureurs ont fini. Ceux qui sont encore en piste sont classés selon leur distance.
+- 2026-10-12 (#5) : après l'arrivée, le kart roule en roue libre, direction conservée : pas de pilote automatique comme dans MK8DX pour l'instant.
+- 2026-10-12 (#5) : 1 s de grille avant le « 3 » (réglable). Avant le GO, `RaceSystems::Gate` (entre la lecture des entrées et la conduite) met à zéro le `KartInput` des coureurs et annule leurs boosts. Le départ fusée (#13) devra lire l'accélérateur avant ce verrou.
+- 2026-10-12 (#5) : critères du pélican : chute à 5 m sous la route, 1 s hors des murets, ou 3 s à appuyer sans s'éloigner de 2 m (plus robuste qu'un seuil de vitesse : un kart qui rebondit contre un mur garde de la vitesse). Point de dépose = point de dépannage du circuit le plus proche à ou derrière le dernier checkpoint validé. Trois couloirs de dépose selon la place de grille (centre pour la pole) pour que deux karts déposés ensemble ne se chevauchent pas. Les 2,5 s comptent de la prise en charge à la dépose. Les checkpoints ne se valident pas pendant le transport.
+- 2026-10-12 (#5) : en course, **R** appelle le pélican au lieu de ramener sur la grille (revenir sur la grille en pleine course casserait la progression).
+- 2026-10-12 (#5) : textes du HUD **sans accents** (« FINI ! », « ENTREE ») : la police intégrée de Bevy ne contient que l'ASCII. Un test le vérifie. Une police CC0 avec accents pourra venir avec les assets (#11).
+- 2026-10-12 (#5) : l'état de la course (`RaceFlow` : deux compteurs de ticks) et la progression (`RaceProgress`) sont sérialisables (serde), pour que l'hôte puisse les diffuser (#9). Classement déterministe (égalités départagées par la place de grille), sans allocation par tick.
 
 ## Prochaines étapes
 - Milestone 1 « Ça roule » (solo) :
-  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), ~~drift à 3 paliers~~ (#4), course (#5), bots (#6) ;
+  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), ~~drift à 3 paliers~~ (#4), ~~course~~ (#5), bots (#6) ;
   - puis départ fusée, figures et aspiration ; croquettes ; stats et gabarits (la stat Mini-turbo modulera seuils, durées et intensités du drift) ; objets 1/2 ; aides de conduite (#17 : brancher `KartAssists`).
-  - Bots (#6) : ils peuvent drifter avec le même `KartInput` (saut + braquage, puis relâcher au palier visé).
+  - Bots (#6) : ils peuvent drifter avec le même `KartInput` (saut + braquage, puis relâcher au palier visé). Pour la course, il suffit de faire apparaître 11 karts avec `Racer::new(1..=11)` sur `TrackLayout::grid` : ils seront classés, chronométrés et dépannés comme le joueur, et le HUD affichera « / 12 ». À décider à ce moment-là : laisser les bots rouler après l'arrivée plutôt qu'en roue libre (sinon ils encombrent la ligne droite).
+  - Départ fusée (#13) : lire l'accélérateur entre `KartSystems::Input` et `RaceSystems::Gate`, mesurer depuis `RaceFlow::ticks_since_two`, donner le boost au GO.
 - Milestone 2 « À plusieurs » : réseau 1/3 à 3/3, signalisation (attend un compte Cloudflare), objets 2/2.
 - Milestone 3 « Contenu » : vrais modèles (attend les assets), personnages mous, Grand Prix et classes, anti-gravité / planeur / eau, objets de phase 3 et Bataille.
 
@@ -97,6 +119,9 @@ Le gameplay de référence est décrit dans `docs/GAME_DESIGN.md` (inspiré de M
   - vérifier que `wasm-opt` passe bien dans `trunk build --release` (`data-wasm-opt="s"`).
 
   Je peux en faire une issue si tu veux.
+
+- **Course (#5)** : à juger en jouant : durée du pélican (2,5 s), délai avant qu'il vienne chercher un kart bloqué (3 s) ou sorti des murets (1 s), 1 s de grille avant le compte à rebours, 4 s de « FINI ! » avant le classement. Et une question : après l'arrivée, ton kart roule en roue libre ; préfères-tu qu'il continue tout seul (pilote automatique, comme dans MK8DX) ou garder la main ?
+- **Police du HUD (#5)** : la police intégrée de Bevy n'a pas d'accents, donc le HUD écrit « FINI ! » et « ENTREE ». Une police libre (CC0) avec accents pèserait une centaine de Ko au plus ; je peux l'ajouter avec les assets (#11) si tu veux.
 
 ## Métriques
 - Taille wasm (release, CI) : **56 Mo** au 2026-10-12, après #2 (kart + Rapier + caméra). Première mesure.

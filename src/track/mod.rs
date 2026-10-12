@@ -12,7 +12,7 @@ use bevy_rapier3d::prelude::*;
 
 pub use circuit::{BoostPadSpot, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp};
 pub use data::TrackData;
-pub use layout::{CenterLine, Checkpoint, GRID_SLOTS, TrackLayout, TrackSample};
+pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
 
 /// Which track to build. Defaults to the test circuit.
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]

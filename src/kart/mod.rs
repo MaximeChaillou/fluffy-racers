@@ -11,7 +11,7 @@ mod tuning;
 mod visual;
 
 pub use drift::{DriftSide, MiniTurbo};
-pub use input::{KartInputPlugin, PlayerKart, SpawnPoint};
+pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
 pub use physics::{Boost, KartState};
 pub use tuning::KartTuning;
 pub use visual::{DriftSpark, KartBodyPivot, KartVisualPlugin, spawn_kart_visual};
@@ -228,6 +228,22 @@ fn drive_karts(
         mut gravity,
     ) in &mut karts
     {
+        if *state == KartState::Respawning {
+            // Carried by the tow pelican: no suspension, engine or gravity; the race rules move
+            // the body (issue #5).
+            force.force = Vec3::ZERO;
+            force.torque = Vec3::ZERO;
+            if velocity.linear != Vec3::ZERO || velocity.angular != Vec3::ZERO {
+                *velocity = Velocity::zero();
+            }
+            if gravity.0 != 0.0 {
+                gravity.0 = 0.0;
+            }
+            *wheels = KartWheels::default();
+            previous_input.set_if_neq(PreviousInput(*input));
+            continue;
+        }
+
         let up = *transform.up();
         let forward = *transform.forward();
         let center_of_mass = transform.transform_point(Vec3::Y * tuning.center_of_mass_height);
@@ -328,7 +344,7 @@ fn drive_karts(
         let ground_handling = match *state {
             KartState::Grounded | KartState::Hop { .. } => true,
             KartState::Drifting { .. } => on_ground,
-            KartState::Airborne => false,
+            KartState::Airborne | KartState::Respawning => false,
         };
         if ground_handling {
             let forward_speed = linvel.dot(ahead);
