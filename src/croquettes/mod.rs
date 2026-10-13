@@ -9,7 +9,9 @@
 //!   a mini-boost of 0.3 s through the kart's `Boost`, like every boost. It comes back 10 s
 //!   later.
 //! - **Lost**: bumped by another kart (`kart::KartBump`), a kart loses 1; hit by an item, 3
-//!   (issue #16 writes [`LoseCroquettes`]). Never below 0. The lost croquettes fly out behind
+//!   (issue #16 writes [`LoseCroquettes`]), then it is invincible for a while (GD § 8: 1 to 2 s
+//!   with its Invincibility stat, issue #15: `kart::Invincibility`) and the next item hits cost
+//!   nothing until it ends. Never below 0. The lost croquettes fly out behind
 //!   the kart and land on the ground ([`LooseCroquette`]): anyone can pick them up, the kart that
 //!   lost them a bit later, until they vanish.
 //!
@@ -37,7 +39,8 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::{QueryFilter, ReadRapierContext};
 
 use crate::kart::{
-    Boost, KART_HALF_EXTENTS, Kart, KartBump, KartState, KartSystems, MaxSpeedFactors,
+    Boost, Invincibility, KART_HALF_EXTENTS, Kart, KartBump, KartState, KartSystems,
+    MaxSpeedFactors, StatEffects,
 };
 use crate::race::{Race, RaceSystems};
 use crate::track::CroquetteSpot;
@@ -159,7 +162,9 @@ fn tick_croquettes(
 }
 
 /// Bumps (from the last physics step) and item hits: the kart loses croquettes, which fly out
-/// behind it. A bump costs nothing during the grace period of the previous one.
+/// behind it. A bump costs nothing during the grace period of the previous one (GD § 15: the
+/// same 1 s for every kart); an item hit, nothing while the kart is invincible after the
+/// previous one (GD § 8: its Invincibility stat).
 fn lose_croquettes(
     tuning: Res<CroquetteTuning>,
     rapier: ReadRapierContext,
@@ -167,7 +172,15 @@ fn lose_croquettes(
     mut bumps: MessageReader<KartBump>,
     mut hits: MessageReader<LoseCroquettes>,
     mut lost_messages: MessageWriter<CroquettesLost>,
-    mut karts: Query<(&Transform, &mut Croquettes), With<Kart>>,
+    mut karts: Query<
+        (
+            &Transform,
+            &mut Croquettes,
+            &mut Invincibility,
+            &StatEffects,
+        ),
+        With<Kart>,
+    >,
 ) {
     let context = rapier.single().ok();
     // Only the track and the static obstacles stop a flying croquette, never a kart.
@@ -181,14 +194,22 @@ fn lose_croquettes(
     let bumped = bumps.read().map(|bump| (bump.kart, LossCause::Bump));
     let hit = hits.read().map(|hit| (hit.kart, hit.cause));
     for (kart, cause) in bumped.chain(hit) {
-        let Ok((transform, mut held)) = karts.get_mut(kart) else {
+        let Ok((transform, mut held, mut invincibility, effects)) = karts.get_mut(kart) else {
             continue;
         };
-        if cause == LossCause::Bump {
-            if held.bump_grace > 0.0 {
-                continue;
+        match cause {
+            LossCause::Bump => {
+                if held.bump_grace > 0.0 {
+                    continue;
+                }
+                held.bump_grace = tuning.bump_grace;
             }
-            held.bump_grace = tuning.bump_grace;
+            LossCause::ItemHit => {
+                if invincibility.is_active() {
+                    continue;
+                }
+                invincibility.start(effects.invincibility);
+            }
         }
         let lost = held.lose(cause.croquettes(&tuning));
         if lost == 0 {

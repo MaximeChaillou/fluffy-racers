@@ -1,0 +1,22 @@
+// Roues (GD § 9, issue #15). Même format de stats que `characters.ron` (0 à 10 points chacune).
+// Les roues par défaut (« Pneus guimauve ») sont le standard : 2 partout.
+(
+    default: "Pneus guimauve",
+    parts: [
+        // Petites et légères : accélération, maniabilité et mini-turbo, moins de vitesse.
+        (
+            name: "Bobines de fil",
+            stats: (speed: 1, acceleration: 3, weight: 1, handling: 3, traction: 2, mini_turbo: 3, invincibility: 2),
+        ),
+        // Standard.
+        (
+            name: "Pneus guimauve",
+            stats: (speed: 2, acceleration: 2, weight: 2, handling: 2, traction: 2, mini_turbo: 2, invincibility: 2),
+        ),
+        // Grosses et lourdes : vitesse, poids et adhérence hors-piste, mais lentes à lancer.
+        (
+            name: "Pneus de tracteur",
+            stats: (speed: 3, acceleration: 1, weight: 3, handling: 1, traction: 4, mini_turbo: 1, invincibility: 2),
+        ),
+    ],
+)

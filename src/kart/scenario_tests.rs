@@ -11,6 +11,7 @@ use crate::track::{
     spawn_static_box,
 };
 use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
+use stats::{KartStats, Stat, StatEffects, StatsTuning};
 
 const TICKS_PER_SECOND: f32 = 60.0;
 const FULL_THROTTLE: KartInput = KartInput {
@@ -126,11 +127,12 @@ impl Scenario {
         *self.app.world().get::<Boost>(self.kart).unwrap()
     }
 
-    /// Mini-turbo tier reached by the current drift, if any.
+    /// Mini-turbo tier reached by the current drift, if any (with the kart's own thresholds:
+    /// its Mini-turbo stat moves them, issue #15).
     fn tier(&self) -> Option<MiniTurbo> {
         let assists = *self.app.world().get::<KartAssists>(self.kart).unwrap();
         self.state()
-            .mini_turbo(&self.tuning(), assists.assisted_steering)
+            .mini_turbo(&self.kart_tuning(), assists.assisted_steering)
     }
 
     /// Runs a single tick.
@@ -1453,4 +1455,355 @@ fn releasing_the_drift_realigns_the_body_without_a_snap() {
         / TICKS_PER_SECOND;
     assert!(aligned <= 1.2, "{aligned} s");
     assert_eq!(after.last().unwrap().motion.side, None);
+}
+
+// --- Issue #15: character and kart statistics --------------------------------------------------
+
+impl Scenario {
+    /// A kart with `stats` at the origin looking down -Z, on a large flat slab of `surface`.
+    fn flat_with_stats(surface: Surface, stats: KartStats) -> Self {
+        let mut scenario = Self::flat(surface);
+        let world = scenario.app.world_mut();
+        world.despawn(scenario.kart);
+        let tuning = world.resource::<KartTuning>().clone();
+        let stats_tuning = world.resource::<StatsTuning>().clone();
+        scenario.kart = world
+            .spawn(kart_body_with_stats(
+                &tuning,
+                &stats_tuning,
+                stats,
+                Transform::from_xyz(0.0, 0.55, 0.0),
+            ))
+            .id();
+        scenario.run(0.5, KartInput::default());
+        scenario
+    }
+
+    /// Another kart with `stats` at `position`, looking toward `heading`.
+    fn spawn_kart_with_stats(&mut self, position: Vec3, heading: Vec3, stats: KartStats) -> Entity {
+        let world = self.app.world_mut();
+        let tuning = world.resource::<KartTuning>().clone();
+        let stats_tuning = world.resource::<StatsTuning>().clone();
+        world
+            .spawn(kart_body_with_stats(
+                &tuning,
+                &stats_tuning,
+                stats,
+                Transform::from_translation(position).looking_to(heading, Vec3::Y),
+            ))
+            .id()
+    }
+
+    /// This kart's tuning, its stats applied.
+    fn kart_tuning(&self) -> KartTuning {
+        let effects = *self.app.world().get::<StatEffects>(self.kart).unwrap();
+        effects.apply(&self.tuning())
+    }
+
+    fn forward_speed_of(&self, kart: Entity) -> f32 {
+        let world = self.app.world();
+        let forward = *world.get::<Transform>(kart).unwrap().forward();
+        world.get::<Velocity>(kart).unwrap().linear.dot(forward)
+    }
+}
+
+/// How a kart drives in a straight line from a standstill, full throttle (issue #15).
+#[derive(Clone, Copy, Debug)]
+struct Launch {
+    /// Speed after 1 s (m/s).
+    at_one_second: f32,
+    /// Time to 95 % of its own top speed (s).
+    to_95_percent: f32,
+    /// Top speed, after 5 s (m/s).
+    top: f32,
+}
+
+fn launch(stats: KartStats) -> Launch {
+    let mut scenario = Scenario::flat_with_stats(Surface::Road, stats);
+    let mut speeds = Vec::new();
+    scenario.run_with(5.0, FULL_THROTTLE, |s| speeds.push(s.forward_speed()));
+    let top = *speeds.last().unwrap();
+    let ticks = speeds.iter().position(|v| *v >= 0.95 * top).unwrap() + 1;
+    Launch {
+        at_one_second: speeds[TICKS_PER_SECOND as usize - 1],
+        to_95_percent: ticks as f32 / TICKS_PER_SECOND,
+        top,
+    }
+}
+
+/// Radius of a settled right drift steered fully inward (m), and the speed it is driven at.
+fn tight_drift_radius(stats: KartStats) -> (f32, f32) {
+    let mut scenario = Scenario::flat_with_stats(Surface::Road, stats);
+    scenario.enter_right_drift(1.0);
+    scenario.run(1.0, drifting(1.0));
+    assert!(matches!(scenario.state(), KartState::Drifting { .. }));
+    let speed = scenario.forward_speed();
+    (speed / -scenario.velocity().angular.y, speed)
+}
+
+/// The light and the heavy loadouts of the roster: a mouse in a wicker basket on spools with
+/// a feather wing, a bear in a bathtub on tractor tyres with the standard wing.
+fn light_and_heavy() -> (KartStats, KartStats) {
+    use crate::characters::{Loadout, PartKind, Roster};
+    let roster = Roster::embedded();
+    let pick = |names: [&str; 4]| {
+        let mut loadout = Loadout::default();
+        for (kind, name) in PartKind::ALL.into_iter().zip(names) {
+            loadout.set(kind, roster.find(kind, name).unwrap());
+        }
+        roster.stats(&loadout)
+    };
+    (
+        pick(["Souris", "Panier en osier", "Bobines de fil", "Plume"]),
+        pick(["Ours", "Baignoire", "Pneus de tracteur", "Taie d'oreiller"]),
+    )
+}
+
+/// Issue #15: a kart at the middle level (the default loadout) drives exactly like a kart
+/// without stats, tick for tick: the stats modulate `KartTuning`, they do not replace it.
+#[test]
+fn the_middle_level_drives_exactly_like_the_tuning() {
+    let mut plain = Scenario::flat(Surface::Road);
+    let mut middle = Scenario::flat_with_stats(Surface::Road, KartStats::default());
+    assert_eq!(middle.kart_tuning(), middle.tuning());
+    let mass = |s: &Scenario| match s.app.world().get::<ColliderMassProperties>(s.kart) {
+        Some(ColliderMassProperties::MassProperties(m)) => m.mass,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(mass(&middle), mass(&plain));
+    assert_eq!(
+        middle.app.world().get::<MaxSpeedScale>(middle.kart),
+        Some(&MaxSpeedScale(1.0))
+    );
+    for scenario in [&mut plain, &mut middle] {
+        scenario.enter_right_drift(1.0);
+        scenario.drift_until(1.0, MiniTurbo::Orange);
+        scenario.run(1.0, FULL_THROTTLE);
+    }
+    // The flat scenario settled 0.5 s more before the plain kart was replaced: compare what
+    // they did, from the same start.
+    let moved = |s: &Scenario| s.transform().translation - Vec3::new(0.0, 0.55, 0.0);
+    assert!(
+        (moved(&plain) - moved(&middle)).length() < 1e-3,
+        "{} vs {}",
+        moved(&plain),
+        moved(&middle)
+    );
+    assert_eq!(plain.boost(), middle.boost());
+    assert!((plain.forward_speed() - middle.forward_speed()).abs() < 1e-4);
+}
+
+/// Issue #15 acceptance: a heavy kart has a higher top speed and a lower acceleration than a
+/// light one (the roster's lightest and heaviest loadouts, measured on the flat). Its drift is
+/// wider too (Handling). Run with `--nocapture` for the figures.
+#[test]
+fn a_heavy_kart_is_faster_at_the_top_but_slower_off_the_line() {
+    let (light_stats, heavy_stats) = light_and_heavy();
+    let middle = launch(KartStats::default());
+    let light = launch(light_stats);
+    let heavy = launch(heavy_stats);
+    let (light_radius, _) = tight_drift_radius(light_stats);
+    let (middle_radius, _) = tight_drift_radius(KartStats::default());
+    let (heavy_radius, _) = tight_drift_radius(heavy_stats);
+    println!("light  {light_stats:?}: {light:?}, tight drift {light_radius:.1} m");
+    println!("middle: {middle:?}, tight drift {middle_radius:.1} m");
+    println!("heavy  {heavy_stats:?}: {heavy:?}, tight drift {heavy_radius:.1} m");
+
+    assert!(heavy.top > light.top + 1.5, "{heavy:?} vs {light:?}");
+    assert!(light.top < middle.top && middle.top < heavy.top);
+    assert!((middle.top - 28.5).abs() < 0.1, "{middle:?}");
+    // Lower acceleration: slower after 1 s, and longer to reach its own top speed.
+    assert!(
+        light.at_one_second > heavy.at_one_second + 1.0,
+        "{light:?} vs {heavy:?}"
+    );
+    assert!(
+        heavy.to_95_percent > light.to_95_percent + 0.3,
+        "{heavy:?} vs {light:?}"
+    );
+    assert!(light.to_95_percent < middle.to_95_percent);
+    assert!(middle.to_95_percent < heavy.to_95_percent);
+    // GD § 2: about 2.5 s from 0 to the top speed for an average kart (95 % a little before).
+    assert!((1.8..=2.5).contains(&middle.to_95_percent), "{middle:?}");
+    // A light kart turns tighter.
+    assert!(light_radius < middle_radius - 0.5 && middle_radius < heavy_radius - 0.5);
+}
+
+/// Issue #15: each stat on its own, against the middle level (Speed 0 / 10 / 20 on the top
+/// speed, the others kept at 10).
+#[test]
+fn the_speed_stat_scales_the_top_speed() {
+    let top = |level| launch(KartStats::default().with(Stat::Speed, level)).top;
+    let (slow, middle, fast) = (top(0), top(10), top(20));
+    assert!((slow - 28.5 * 0.92).abs() < 0.1, "{slow}");
+    assert!((middle - 28.5).abs() < 0.1, "{middle}");
+    assert!((fast - 28.5 * 1.08).abs() < 0.1, "{fast}");
+}
+
+/// Issue #15: the Mini-turbo stat moves the drift's tiers. The middle level keeps the 54 / 114 /
+/// 174 ticks of issue #4 (270 / 570 / 870 at +5 per tick); 20 is 10 % lower, 0 is 10 % higher.
+/// Its mini-turbos also last longer.
+#[test]
+fn the_mini_turbo_stat_moves_the_drift_tiers() {
+    let first_ticks = |level: u8| {
+        let mut scenario = Scenario::flat_with_stats(
+            Surface::Road,
+            KartStats::default().with(Stat::MiniTurbo, level),
+        );
+        scenario.enter_right_drift(1.0);
+        let blue = scenario.drift_until(1.0, MiniTurbo::Blue);
+        let orange = blue - 1 + scenario.drift_until(1.0, MiniTurbo::Orange);
+        let purple = orange - 1 + scenario.drift_until(1.0, MiniTurbo::Purple);
+        scenario.tick(FULL_THROTTLE);
+        let boost = scenario.boost().remaining;
+        ([blue, orange, purple], boost, scenario.kart_tuning())
+    };
+    let (middle, middle_boost, middle_tuning) = first_ticks(10);
+    assert_eq!(middle, [54, 114, 174]);
+    assert_eq!(middle_tuning.mini_turbo_thresholds, [270.0, 570.0, 870.0]);
+    let (quick, quick_boost, quick_tuning) = first_ticks(20);
+    let (slow, slow_boost, _) = first_ticks(0);
+    // 243 / 513 / 783 and 297 / 627 / 957, at 5 per tick.
+    assert_eq!(quick, [49, 103, 157]);
+    assert_eq!(slow, [60, 126, 192]);
+    assert!((quick_tuning.mini_turbo_thresholds[0] - 243.0).abs() < 0.01);
+    // The purple boost: 2.63 s × 1.15 and × 0.85.
+    assert!((middle_boost - 2.63).abs() < 1e-4, "{middle_boost}");
+    assert!((quick_boost - 2.63 * 1.15).abs() < 1e-3, "{quick_boost}");
+    assert!((slow_boost - 2.63 * 0.85).abs() < 1e-3, "{slow_boost}");
+}
+
+/// Issue #15: the Handling stat tightens the drift (and the normal steering) around the radii of
+/// issue #30.
+#[test]
+fn the_handling_stat_changes_the_drift_radius() {
+    let radius = |level| tight_drift_radius(KartStats::default().with(Stat::Handling, level));
+    let ((nimble, nimble_speed), (middle, _), (clumsy, _)) = (radius(20), radius(10), radius(0));
+    let tuning = KartTuning::default();
+    assert!(nimble_speed > 0.95 * tuning.max_speed, "{nimble_speed}");
+    assert!((middle - tuning.drift_radius_tight).abs() < 1.0, "{middle}");
+    assert!(
+        (nimble - 0.9 * tuning.drift_radius_tight).abs() < 1.0,
+        "{nimble}"
+    );
+    assert!(
+        (clumsy - 1.1 * tuning.drift_radius_tight).abs() < 1.0,
+        "{clumsy}"
+    );
+    assert!(nimble < middle - 1.0 && middle < clumsy - 1.0);
+    // The normal steering too: a tighter circle at full lock.
+    let full_lock = |level| {
+        let mut scenario = Scenario::flat_with_stats(
+            Surface::Road,
+            KartStats::default().with(Stat::Handling, level),
+        );
+        scenario.run(3.0, FULL_THROTTLE);
+        scenario.run(
+            1.0,
+            KartInput {
+                steer: 1.0,
+                ..FULL_THROTTLE
+            },
+        );
+        scenario.velocity().angular.y.abs()
+    };
+    assert!(full_lock(20) > full_lock(10) * 1.05);
+    assert!(full_lock(0) < full_lock(10) * 0.95);
+}
+
+/// Issue #15: the Traction stat changes the off-road top speed (GD § 2: 55 % in the middle).
+#[test]
+fn the_traction_stat_changes_the_offroad_speed() {
+    let offroad = |level| {
+        let mut scenario = Scenario::flat_with_stats(
+            Surface::Offroad,
+            KartStats::default().with(Stat::Traction, level),
+        );
+        scenario.run(5.0, FULL_THROTTLE);
+        scenario.forward_speed()
+    };
+    let (slippery, middle, grippy) = (offroad(0), offroad(10), offroad(20));
+    assert!((middle - 0.55 * 28.5).abs() < 0.2, "{middle}");
+    assert!((slippery - 0.55 * 0.85 * 28.5).abs() < 0.2, "{slippery}");
+    assert!((grippy - 0.55 * 1.15 * 28.5).abs() < 0.2, "{grippy}");
+    // On the road, nothing changes.
+    let road = launch(KartStats::default().with(Stat::Traction, 20)).top;
+    assert!((road - 28.5).abs() < 0.1, "{road}");
+}
+
+/// Issue #15 acceptance: in a crash between a heavy and a light kart, the light one is pushed
+/// back the most. Head on, both at full throttle from 30 m apart (the roster's lightest and
+/// heaviest loadouts): the light kart loses much more speed, and the heavy one pushes it back.
+#[test]
+fn in_a_crash_the_light_kart_is_pushed_back_more_than_the_heavy_one() {
+    let (light_stats, heavy_stats) = light_and_heavy();
+    let mut scenario = Scenario::flat_with_stats(Surface::Road, light_stats);
+    let light = scenario.kart;
+    let heavy = scenario.spawn_kart_with_stats(Vec3::new(0.0, 0.55, -30.0), Vec3::Z, heavy_stats);
+    scenario.run(0.3, KartInput::default());
+    let mut previous = (0.0, 0.0);
+    let mut drops = (0.0f32, 0.0f32);
+    let mut after = None;
+    for _ in 0..(3.0 * TICKS_PER_SECOND) as usize {
+        let bumps = scenario.bumps_while(
+            1.0 / TICKS_PER_SECOND,
+            &[(light, FULL_THROTTLE), (heavy, FULL_THROTTLE)],
+        );
+        let now = (
+            scenario.forward_speed_of(light),
+            scenario.forward_speed_of(heavy),
+        );
+        if !bumps.is_empty() && after.is_none() {
+            drops = (previous.0 - now.0, previous.1 - now.1);
+            after = Some(now);
+        }
+        previous = now;
+    }
+    let after = after.expect("they never crashed");
+    println!(
+        "speed lost in the crash: light {:.1} m/s, heavy {:.1} m/s; just after: {after:?}",
+        drops.0, drops.1
+    );
+    assert!(drops.0 > 1.3 * drops.1, "{drops:?}");
+    // They come out of it at the same speed along the impact (no bounce between karts): in the
+    // heavy kart's direction, so the light one goes backwards.
+    assert!(after.0 < 0.0 && after.1 > 0.0, "{after:?}");
+}
+
+/// Issue #15: the same kart driving into the side of a kart standing still pushes a light one
+/// further aside than a heavy one (Weight 0 / 20, every other stat at the middle).
+#[test]
+fn a_light_kart_is_pushed_aside_further_than_a_heavy_one() {
+    let shove = |target_weight: u8| {
+        let mut scenario = Scenario::flat_with_stats(Surface::Road, KartStats::default());
+        let striker = scenario.kart;
+        let target = scenario.spawn_kart_with_stats(
+            Vec3::new(0.0, 0.55, -10.0),
+            Vec3::X,
+            KartStats::default().with(Stat::Weight, target_weight),
+        );
+        scenario.run(0.3, KartInput::default());
+        let start = scenario
+            .app
+            .world()
+            .get::<Transform>(target)
+            .unwrap()
+            .translation;
+        scenario.bumps_while(
+            1.6,
+            &[(striker, FULL_THROTTLE), (target, KartInput::default())],
+        );
+        let end = scenario
+            .app
+            .world()
+            .get::<Transform>(target)
+            .unwrap()
+            .translation;
+        // Pushed along the striker's way (-Z).
+        start.z - end.z
+    };
+    let (light, heavy) = (shove(0), shove(20));
+    println!("pushed aside: light {light:.2} m, heavy {heavy:.2} m");
+    assert!(light > 0.5, "{light}");
+    assert!(light > 1.3 * heavy, "light {light} m, heavy {heavy} m");
 }

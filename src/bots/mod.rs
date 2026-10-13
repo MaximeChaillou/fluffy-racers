@@ -12,6 +12,12 @@
 //! random choices from a deterministic generator seeded by its grid slot (variety, no single
 //! file, reproducible tests). They also try the rocket start and the tricks (issue #13), through
 //! their `KartInput` like a player. Using items comes with the item system (issue #16).
+//!
+//! Each bot also has its own character and parts (issue #15, [`bot_loadout`]): the weight
+//! classes take turns along the grid, so that the 9 animals line up and every stretch of the
+//! grid mixes light, medium and heavy karts; the kart, wheels and wing come from a generator
+//! seeded by the grid slot. A bot drives with its kart's own tuning (its stats applied): it
+//! plans its drifts with its own radii and aims at its own tiers.
 
 mod driver;
 mod line;
@@ -30,9 +36,11 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
 use crate::TICK_HZ;
+use crate::characters::{DriverLooks, Loadout, PartKind, Roster, WeightClass};
 use crate::kart::{
     Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
-    MaxSpeedFactors, MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
+    MaxSpeedFactors, MaxSpeedScale, PlayerKart, StatEffects, StatsTuning, TrickTracker,
+    kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
 use crate::track::TrackLayout;
@@ -68,6 +76,38 @@ pub fn bot_color(slot: usize) -> Color {
 /// Seed of the bot on grid slot `slot`: each slot always drives the same way.
 pub fn bot_seed(slot: usize) -> u64 {
     0xF1_0FF1 + slot as u64
+}
+
+/// Mixed into the seed of a bot's parts (their own generator: drawing them does not
+/// shift the bot's driving choices).
+const LOADOUT_SEED: u64 = 0x15_CA27_5EED;
+
+/// Weight class of the bot on grid slot `slot` (issue #15): the classes take turns, shifted by
+/// one every three slots (light, medium, heavy, then medium, heavy, light, then heavy, light,
+/// medium...). Any three neighbouring slots, and the slots taken one in three, mix the three
+/// classes: no stretch of the grid is all heavy or all light.
+pub fn bot_class(slot: usize) -> WeightClass {
+    WeightClass::ALL[(slot + slot / 3) % 3]
+}
+
+/// The character and parts of the bot on grid slot `slot` (issue #15). Its character: the next
+/// animal of its weight class ([`bot_class`]), so the first nine slots show the nine animals;
+/// its kart, wheels and wing: drawn from a generator seeded by the slot. Always the same for a
+/// slot.
+pub fn bot_loadout(roster: &Roster, slot: usize) -> Loadout {
+    let class = bot_class(slot);
+    let turn = (0..slot).filter(|s| bot_class(*s) == class).count();
+    let animals: Vec<usize> = roster.characters_of(class).collect();
+    let mut loadout = roster.default_loadout();
+    if !animals.is_empty() {
+        loadout.character = animals[turn % animals.len()];
+    }
+    let mut rng = BotRng::new(bot_seed(slot) ^ LOADOUT_SEED);
+    for kind in [PartKind::Kart, PartKind::Wheels, PartKind::Wing] {
+        let count = roster.count(kind).max(1) as u64;
+        loadout.set(kind, (rng.next_u64() % count) as usize);
+    }
+    loadout
 }
 
 /// What turns a racing kart into a bot of `difficulty` (its seed comes from `grid_slot`). Bots
@@ -112,13 +152,17 @@ fn build_racing_line(mut commands: Commands, layout: Res<TrackLayout>, tuning: R
     ));
 }
 
-/// Fills the front of the grid with bots once the circuit is built (`RaceGrid`).
+/// Fills the front of the grid with bots once the circuit is built (`RaceGrid`), each with its
+/// own character and parts ([`bot_loadout`]).
 fn spawn_bots(
     mut commands: Commands,
     layout: Res<TrackLayout>,
     grid: Res<RaceGrid>,
     tuning: Res<BotTuning>,
     kart_tuning: Res<KartTuning>,
+    stats_tuning: Res<StatsTuning>,
+    roster: Res<Roster>,
+    looks: Option<Res<DriverLooks>>,
     visuals: Option<Res<KartVisualAssets>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
 ) {
@@ -126,16 +170,25 @@ fn spawn_bots(
         let Some(spawn) = layout.grid.get(slot).copied() else {
             break;
         };
+        let loadout = bot_loadout(&roster, slot);
         let body = commands
             .spawn((
                 Name::new(format!("Bot {}", slot + 1)),
-                kart_body(&kart_tuning, spawn),
+                kart_body_with_stats(&kart_tuning, &stats_tuning, roster.stats(&loadout), spawn),
                 Racer::new(slot),
                 bot(tuning.grid_difficulty, slot, &tuning),
             ))
             .id();
         if let (Some(visuals), Some(materials)) = (&visuals, materials.as_mut()) {
-            spawn_kart_visual(&mut commands, visuals, materials, body, bot_color(slot));
+            let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
+            spawn_kart_visual_with_driver(
+                &mut commands,
+                visuals,
+                materials,
+                body,
+                bot_color(slot),
+                driver,
+            );
         }
     }
 }
@@ -192,6 +245,7 @@ fn drive_bots(
         &KartState,
         &KartAssists,
         &MaxSpeedScale,
+        &StatEffects,
         &TrickTracker,
         &Boost,
         &mut KartInput,
@@ -220,6 +274,7 @@ fn drive_bots(
         state,
         assists,
         scale,
+        effects,
         tricks,
         boost,
         mut input,
@@ -242,11 +297,12 @@ fn drive_bots(
             dt: time.delta_secs(),
             neighbors: &neighbors,
         };
+        // The bot knows its own kart: its stats applied (drift radii, tiers, steering).
         let new = drive(
             &mut brain,
             tuning.skill(bot.difficulty),
             &tuning,
-            &kart_tuning,
+            &effects.tuning(&kart_tuning),
             &line,
             &senses,
         );
@@ -270,5 +326,46 @@ mod tests {
         let mut seeds: Vec<u64> = (0..12).map(bot_seed).collect();
         seeds.dedup();
         assert_eq!(seeds.len(), 12);
+    }
+
+    /// Issue #15: the bots' characters and parts vary along the grid, always the same for a
+    /// slot: the nine animals on the first nine slots, the three weight classes in any three
+    /// neighbouring slots and in the slots taken one in three, several karts, wheels and wings.
+    #[test]
+    fn bots_get_varied_and_deterministic_loadouts() {
+        let roster = Roster::embedded();
+        let loadouts: Vec<Loadout> = (0..11).map(|slot| bot_loadout(&roster, slot)).collect();
+        let again: Vec<Loadout> = (0..11).map(|slot| bot_loadout(&roster, slot)).collect();
+        assert_eq!(loadouts, again);
+        let mut animals: Vec<usize> = loadouts[..9].iter().map(|l| l.character).collect();
+        animals.sort();
+        assert_eq!(animals, (0..9).collect::<Vec<_>>());
+        let class = |slot: usize| roster.character(&loadouts[slot]).class;
+        for start in 0..9 {
+            let mut three: Vec<WeightClass> = (start..start + 3).map(class).collect();
+            three.dedup();
+            assert_eq!(three.len(), 3, "slots {start}..{}", start + 3);
+            assert_eq!(bot_class(start), class(start));
+        }
+        for first in 0..3 {
+            let classes: Vec<WeightClass> = (first..9).step_by(3).map(class).collect();
+            for c in WeightClass::ALL {
+                assert!(classes.contains(&c), "slots {first}, {}, ...", first + 3);
+            }
+        }
+        for kind in [PartKind::Kart, PartKind::Wheels, PartKind::Wing] {
+            let mut used: Vec<usize> = loadouts.iter().map(|l| l.get(kind)).collect();
+            used.sort();
+            used.dedup();
+            assert_eq!(used.len(), roster.count(kind), "{kind:?}: {used:?}");
+        }
+        // Different stats along the grid.
+        let mut speeds: Vec<u8> = loadouts
+            .iter()
+            .map(|l| roster.stats(l).level(crate::kart::Stat::Speed))
+            .collect();
+        speeds.sort();
+        speeds.dedup();
+        assert!(speeds.len() >= 4, "{speeds:?}");
     }
 }

@@ -390,7 +390,7 @@ fn closed_the_panel_has_no_egui_context() {
 }
 
 /// The tunings registered for the panel are the game's resources, and every one of them is
-/// found by reflection.
+/// found by reflection. Issue #15 added `StatsTuning` (the bounds of the stats' effects).
 #[test]
 fn every_tuning_resource_is_in_the_panel() {
     let mut app = app_on(TrackChoice::TestGround);
@@ -408,7 +408,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "CroquetteTuning",
             "BotTuning",
             "CameraTuning",
-            "RaceTuning"
+            "RaceTuning",
+            "StatsTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {

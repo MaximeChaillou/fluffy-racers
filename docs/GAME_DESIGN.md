@@ -158,6 +158,8 @@ Roster de départ (original, 3 par gabarit) :
 | Moyen | chat, lapin, renard |
 | Lourd | ours, morse, vache |
 
+Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osier, caisse à savon, baignoire), 3 jeux de roues (bobines de fil, pneus guimauve, pneus de tracteur) et 2 ailes (taie d'oreiller, plume). Le personnage moyen « chat » avec la caisse à savon, les pneus guimauve et la taie d'oreiller fait exactement le niveau du milieu (10) partout.
+
 ## 10. Environnements spéciaux (phase 3)
 
 - **Anti-gravité** : zones marquées où les roues pivotent et où l'on roule sur les murs et les plafonds. **Se percuter donne un boost aux deux karts** (spin boost, MK8DX). Des plots dédiés donnent aussi un boost.
@@ -193,6 +195,7 @@ Roster de départ (original, 3 par gabarit) :
 - **Interaction** : X se tient de la main gauche à côté de Shift et d'Espace quand on conduit aux flèches ; F est l'équivalent de E pour qui conduit avec W/A/S/D (Z/Q/S/D). À la manette, RB se tient à l'index pendant que le pouce garde A (accélérer) : RB quitte donc le saut/drift, qui reste sur RT.
 - **Ni Ctrl ni Alt** : Ctrl + W (Cmd + W sur Mac) ferme l'onglet et le navigateur ne laisse pas la page l'empêcher ; Alt ouvre les menus de certains navigateurs.
 - Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay) ; Entrée et Espace relancent la course depuis le classement.
+- **Choix du pilote et du kart** (#15) : l'écran de sélection s'ouvre au lancement du jeu et avec **G** (« garage » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac). Flèches haut et bas (ou Z/S en AZERTY, W/S en QWERTY) : la ligne ; gauche et droite (Q/D ou A/D) : le choix ; **Entrée** lance la course avec ce choix ; **Échap** ou G referment l'écran sans rien changer. Le jeu est en pause tant qu'il est ouvert.
 - **Panneau d'admin** (#36) : **P** l'ouvre et le ferme (même lettre en AZERTY et en QWERTY, sans Fn sur Mac, contrairement à F1 à F12), tout comme le petit bouton « admin » en bas de l'écran ; `?admin` dans l'adresse de la page l'ouvre au démarrage (`--admin` en natif). Quand on écrit dans un de ses champs de texte, le jeu ne reçoit plus aucune touche.
 
 ## 14. Ressenti (« juice »)

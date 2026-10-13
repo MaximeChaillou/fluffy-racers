@@ -4,6 +4,7 @@ pub mod admin;
 pub mod audio;
 pub mod bots;
 pub mod camera;
+pub mod characters;
 pub mod croquettes;
 pub mod interpolation;
 pub mod kart;
@@ -20,11 +21,12 @@ use admin::AdminPlugin;
 use audio::SoundPlugin;
 use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
+use characters::{CharacterPlugin, DriverLooks, PlayerLoadout, Roster};
 use croquettes::{CroquettePlugin, CroquetteVisualPlugin};
 use interpolation::InterpolationPlugin;
 use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin, PlayerKart,
-    SpawnPoint, kart_body, spawn_kart_visual,
+    SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
@@ -51,9 +53,10 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// The whole game: simulation, track, race rules, croquettes, player kart, bots, visuals,
-/// sounds, camera, HUD, debug overlay and admin panel (its egui part only with a renderer).
-/// `LevelPlugin` restarts the level or switches tracks (issue #36).
+/// The whole game: simulation, track, race rules, croquettes, characters and their selection
+/// screen, player kart, bots, visuals, sounds, camera, HUD, debug overlay and admin panel (the
+/// egui parts only with a renderer). `LevelPlugin` restarts the level or switches tracks
+/// (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
@@ -68,7 +71,7 @@ impl Plugin for GamePlugin {
                 SimulationPlugin,
                 TrackPlugin,
                 RacePlugin,
-                CroquettePlugin,
+                (CroquettePlugin, CharacterPlugin),
                 KartInputPlugin,
                 KartVisualPlugin,
                 CroquetteVisualPlugin,
@@ -93,12 +96,17 @@ pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
 /// (a reloaded level, issue #36, gives the same camera the new kart to follow). In a race the
 /// player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without bots);
 /// on the test ground, or driving freely on a circuit (`RaceMode::FreeRoam`), it just drives,
-/// and falls back to its spawn point.
+/// and falls back to its spawn point. Its character and parts are the player's loadout
+/// (issue #15): their stats, and the driver on the kart.
 fn spawn_player(
     mut commands: Commands,
     visuals: Res<KartVisualAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     tuning: Res<KartTuning>,
+    stats_tuning: Res<StatsTuning>,
+    roster: Res<Roster>,
+    loadout: Res<PlayerLoadout>,
+    looks: Option<Res<DriverLooks>>,
     camera_tuning: Res<CameraTuning>,
     start: Res<PlayerStart>,
     circuit: Option<Res<TrackLayout>>,
@@ -114,13 +122,28 @@ fn spawn_player(
         (Some(layout), Some(slot)) => layout.grid[slot],
         _ => start.0,
     };
-    let mut kart = commands.spawn((kart_body(&tuning, spawn), PlayerKart, CameraLean::default()));
+    let stats = roster.stats(&loadout);
+    let mut kart = commands.spawn((
+        kart_body_with_stats(&tuning, &stats_tuning, stats, spawn),
+        PlayerKart,
+        CameraLean::default(),
+    ));
     match slot {
         Some(slot) => kart.insert(Racer::new(slot)),
         None => kart.insert(SpawnPoint(spawn)),
     };
     let body = kart.id();
-    let visual = spawn_kart_visual(&mut commands, &visuals, &mut materials, body, PLAYER_COLOR);
+    let driver = looks
+        .as_ref()
+        .and_then(|looks| looks.get(loadout.character));
+    let visual = spawn_kart_visual_with_driver(
+        &mut commands,
+        &visuals,
+        &mut materials,
+        body,
+        PLAYER_COLOR,
+        driver,
+    );
     let projection = Projection::Perspective(PerspectiveProjection {
         fov: camera_tuning.base_fov.to_radians(),
         ..default()
