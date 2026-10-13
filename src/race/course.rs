@@ -146,6 +146,21 @@ impl Course {
         }
     }
 
+    /// Projects `position` on the nearest point of the whole centerline, without a progress
+    /// window: for a racer whose progress no longer moves (finished, but still driving: bots).
+    /// `distance` is then the centerline distance in `[0, length)`. Brute force over the samples.
+    pub fn project_anywhere(&self, position: Vec3) -> Projection {
+        let samples = self.center.samples();
+        let s = &samples[self.center.nearest_index(position)];
+        let offset = position - s.position;
+        Projection {
+            distance: s.distance + offset.dot(s.forward),
+            lateral: offset.dot(s.right),
+            height: offset.dot(s.up),
+            wall: wall_offset(s),
+        }
+    }
+
     /// Whether a kart there is inside the gate of its next checkpoint (laterally and in height).
     pub fn inside_gate(&self, projection: &Projection) -> bool {
         projection.lateral.abs() <= projection.wall + self.gate_margin
@@ -238,6 +253,23 @@ pub(crate) mod tests {
         assert!(far.lateral.abs() > 15.0, "{far:?}");
         assert!(course.outside_walls(&far, 0.5), "{far:?}");
         assert!(!course.inside_gate(&far), "{far:?}");
+    }
+
+    #[test]
+    fn projecting_anywhere_finds_the_nearest_stretch_of_track() {
+        let (_, course) = prairie();
+        let length = course.length();
+        // A finished racer's window is around the finish line; it drives on (bots) past the
+        // hairpin, to the back straight 36 m beside the start straight.
+        let finished = course.checkpoints_to_finish();
+        let back_straight = at(&course, 3.0 * length + 220.0, -2.0);
+        let windowed = course.project(finished, back_straight);
+        assert!(course.outside_walls(&windowed, 0.5), "{windowed:?}");
+        let anywhere = course.project_anywhere(back_straight);
+        assert!((anywhere.lateral + 2.0).abs() < 0.2, "{anywhere:?}");
+        assert!((anywhere.distance - 220.0).abs() < 0.5, "{anywhere:?}");
+        assert!(!course.outside_walls(&anywhere, 0.5));
+        assert!((anywhere.height - GRID_HEIGHT).abs() < 0.05);
     }
 
     #[test]

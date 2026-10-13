@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use super::data::{ControlPoint, TrackData};
+use super::data::{ControlPoint, OffroadZone, TrackData};
 
 /// One point of the sampled centerline.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -274,6 +274,8 @@ pub struct TrackLayout {
     pub grid: Vec<Transform>,
     /// Where the tow pelican puts karts back (distances along the track).
     pub respawns: Vec<f32>,
+    /// Sand patches on the road, as in the file: the bots' racing line keeps out of them.
+    pub offroad: Vec<OffroadZone>,
 }
 
 /// Racers on the grid (GD § 1).
@@ -316,6 +318,7 @@ impl TrackLayout {
             grid: center.grid(GRID_SLOTS),
             checkpoints,
             respawns,
+            offroad: data.offroad.clone(),
             center,
         }
     }

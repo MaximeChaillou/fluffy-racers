@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 pub use circuit::{BoostPadSpot, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp};
-pub use data::TrackData;
+pub use data::{OffroadZone, TrackData};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
 
 /// Which track to build. Defaults to the test circuit.
@@ -32,7 +32,8 @@ impl Default for TrackChoice {
 /// The test circuit of issue #3.
 pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
 
-/// Where the local player's kart starts, available once the track is built.
+/// Where the local player's kart starts, available once the track is built. On a circuit it is
+/// the pole; the player's actual grid slot comes from `race::RaceGrid` (behind the bots).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct PlayerStart(pub Transform);
 
@@ -110,17 +111,30 @@ impl Plugin for TrackPlugin {
             )
             .add_systems(
                 Update,
+                // In this order: the fallback removes the `TrackHandle` the build reads (left
+                // unordered, a sync point between them made the build fail, issue #6).
                 (
                     circuit::build_circuit_when_loaded,
                     circuit::fall_back_when_loading_fails,
                 )
+                    .chain()
                     .run_if(resource_exists::<TrackHandle>)
                     .run_if(not(resource_exists::<TrackLayout>)),
             );
     }
 }
 
-fn load_circuit(mut commands: Commands, choice: Res<TrackChoice>, assets: Res<AssetServer>) {
+/// Loads the chosen circuit file, unless a circuit was handed over directly (a `TrackHandle`
+/// already there, e.g. a circuit built by a test).
+fn load_circuit(
+    mut commands: Commands,
+    choice: Res<TrackChoice>,
+    assets: Res<AssetServer>,
+    given: Option<Res<TrackHandle>>,
+) {
+    if given.is_some() {
+        return;
+    }
     if let TrackChoice::Circuit(path) = &*choice {
         commands.insert_resource(TrackHandle(assets.load(path.clone())));
     }

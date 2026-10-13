@@ -4,7 +4,10 @@
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race: `crate::race` never depends on it. Texts are rewritten only when their value changes.
 
+pub mod debug;
 pub mod format;
+
+pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationCost};
 
 use bevy::prelude::*;
 

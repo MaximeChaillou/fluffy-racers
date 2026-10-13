@@ -10,21 +10,23 @@ mod physics;
 mod tuning;
 mod visual;
 
-pub use drift::{DriftSide, MiniTurbo};
+pub use drift::{DriftSide, MiniTurbo, drift_yaw_rate};
 pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
-pub use physics::{Boost, KartState};
+pub use physics::{Boost, KartState, target_yaw_rate};
 pub use tuning::KartTuning;
-pub use visual::{DriftSpark, KartBodyPivot, KartVisualPlugin, spawn_kart_visual};
+pub use visual::{
+    DriftSpark, KartBodyPivot, KartVisualAssets, KartVisualPlugin, spawn_kart_visual,
+};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use crate::interpolation::PhysicsPose;
 use crate::track::Surface;
-use drift::{StateContext, drift_yaw_rate, mini_turbo_boost, step_state};
+use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
     max_speed, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
-    righting_angular_velocity, suspension_accel, target_yaw_rate,
+    righting_angular_velocity, suspension_accel,
 };
 
 /// What a driver (player, bot, network) asks the kart to do this tick.
@@ -47,7 +49,15 @@ pub struct KartInput {
 
 /// A kart's simulated body. Spawn it with [`kart_body`].
 #[derive(Component, Clone, Copy, Debug, Default)]
-#[require(KartInput, PreviousInput, KartAssists, KartState, Boost, KartWheels)]
+#[require(
+    KartInput,
+    PreviousInput,
+    KartAssists,
+    KartState,
+    Boost,
+    KartWheels,
+    MaxSpeedScale
+)]
 pub struct Kart;
 
 /// The kart's input on the previous tick: a hop starts when the jump/drift button is
@@ -62,6 +72,18 @@ pub struct KartAssists {
     /// Assisted steering: the drift charges slower (2 and 0.8 units per tick) and the purple
     /// mini-turbo is disabled (GD § 3.3 and 3.6). Keeping the kart on the track is #17.
     pub assisted_steering: bool,
+}
+
+/// Multiplier on this kart's top speed, boosted or not (1 = unchanged). The bots' light
+/// catch-up writes it (GD § 12, issue #6: within ±3 %); the croquettes (#14) and the stats (#15)
+/// will have to combine their own factors into it.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct MaxSpeedScale(pub f32);
+
+impl Default for MaxSpeedScale {
+    fn default() -> Self {
+        Self(1.0)
+    }
 }
 
 /// Half size of the kart's collision box: 1.4 m wide, 0.5 m high, 2 m long (GD § 2).
@@ -195,6 +217,7 @@ fn drive_karts(
             &KartInput,
             &mut PreviousInput,
             &KartAssists,
+            &MaxSpeedScale,
             &mut Boost,
             &mut KartState,
             &mut KartWheels,
@@ -220,6 +243,7 @@ fn drive_karts(
         input,
         mut previous_input,
         assists,
+        speed_scale,
         mut boost,
         mut state,
         mut wheels,
@@ -348,7 +372,8 @@ fn drive_karts(
         };
         if ground_handling {
             let forward_speed = linvel.dot(ahead);
-            let top_speed = max_speed(tuning, wheels.offroad_ratio, &boost);
+            let top_speed =
+                max_speed(tuning, wheels.offroad_ratio, &boost) * speed_scale.0.max(0.0);
             let new_forward = next_forward_speed(
                 tuning,
                 forward_speed,

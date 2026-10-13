@@ -44,7 +44,7 @@ use crate::kart::{Boost, Kart, KartInput, KartState, KartSystems, PlayerKart};
 use crate::track::TrackLayout;
 
 /// A kart taking part in the race. `grid_slot`: its starting place (0 = pole), where a restart
-/// puts it back. Issue #6 spawns bots with slots 1 to 11.
+/// puts it back. See [`RaceGrid`] for who takes which slot.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[require(RaceProgress, Tow)]
 pub struct Racer {
@@ -62,6 +62,45 @@ impl Racer {
         [0.0, -1.0, 1.0][self.grid_slot % 3]
     }
 }
+
+/// Who lines up on the grid (GD § 1: 12 racers): `bots` bots on the front slots, the local
+/// player behind them, like the first race of a Grand Prix in MK8DX. With no bot, the player is
+/// alone on the pole.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RaceGrid {
+    /// Bots on the grid (issue #6), at most `GRID_SLOTS - 1`.
+    pub bots: usize,
+}
+
+impl Default for RaceGrid {
+    fn default() -> Self {
+        Self {
+            bots: crate::track::GRID_SLOTS - 1,
+        }
+    }
+}
+
+impl RaceGrid {
+    /// Bots actually on the grid: one slot always stays for the player.
+    pub fn bot_count(&self) -> usize {
+        self.bots.min(crate::track::GRID_SLOTS - 1)
+    }
+
+    /// Grid slots of the bots: the front of the grid.
+    pub fn bot_slots(&self) -> std::ops::Range<usize> {
+        0..self.bot_count()
+    }
+
+    /// Grid slot of the local player: right behind the bots.
+    pub fn player_slot(&self) -> usize {
+        self.bot_count()
+    }
+}
+
+/// A racer that keeps driving after the finish line instead of coasting (bots, issue #6:
+/// coasting bots would block the straight for the racers still finishing).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct DrivesOnAfterFinish;
 
 /// The race in progress, created with the circuit. The static part lives in [`Course`].
 #[derive(Resource, Debug)]
@@ -121,6 +160,7 @@ pub struct RacePlugin;
 impl Plugin for RacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RaceTuning>()
+            .init_resource::<RaceGrid>()
             .configure_sets(
                 FixedUpdate,
                 (
@@ -250,17 +290,25 @@ fn advance_race(
 }
 
 /// Nothing moves before GO (no input, and no boost: a boost pushes even without throttle);
-/// finished racers coast (they keep their steering).
+/// finished racers coast (they keep their steering), unless they drive on (bots).
 fn gate_inputs(
     race: Res<Race>,
-    mut racers: Query<(&mut KartInput, &mut Boost, &RaceProgress), With<Racer>>,
+    mut racers: Query<
+        (
+            &mut KartInput,
+            &mut Boost,
+            &RaceProgress,
+            Has<DrivesOnAfterFinish>,
+        ),
+        With<Racer>,
+    >,
 ) {
     let started = race.started();
-    for (mut input, mut boost, progress) in &mut racers {
+    for (mut input, mut boost, progress, drives_on) in &mut racers {
         if !started {
             input.set_if_neq(KartInput::default());
             boost.set_if_neq(Boost::default());
-        } else if progress.finished() {
+        } else if progress.finished() && !drives_on {
             let coast = KartInput {
                 steer: input.steer,
                 ..default()
@@ -309,11 +357,18 @@ fn update_progress(
                 tow.carry = Some(carry);
             }
         } else if started {
+            // A finished racer's progress no longer follows it: if it drives on (bots), watch it
+            // wherever it is on the track.
+            let watched = if progress.finished() {
+                course.project_anywhere(transform.translation)
+            } else {
+                projection
+            };
             let observation = TowObservation {
                 position: transform.translation,
                 trying_to_move: input.throttle > 0.5 || input.brake > 0.5,
-                outside: course.outside_walls(&projection, tuning.outside_margin),
-                height: projection.height,
+                outside: course.outside_walls(&watched, tuning.outside_margin),
+                height: watched.height,
             };
             if let Some(reason) = tow.observe(&tuning, &observation) {
                 // Picked up: the drift, its charge and any boost are lost.
@@ -353,5 +408,26 @@ fn rank_racers(mut race: ResMut<Race>, mut racers: Query<(Entity, &Racer, &mut R
             progress.rank = i as u32 + 1;
             progress.gap_to_leader = distance_to_leader(leader, entry.distance);
         }
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+
+    #[test]
+    fn the_bots_take_the_front_of_the_grid_and_the_player_starts_behind() {
+        let grid = RaceGrid::default();
+        assert_eq!(grid.bot_count(), 11);
+        assert_eq!(grid.bot_slots(), 0..11);
+        assert_eq!(grid.player_slot(), 11);
+        // Alone: on the pole, as before the bots.
+        let solo = RaceGrid { bots: 0 };
+        assert_eq!(solo.player_slot(), 0);
+        assert!(solo.bot_slots().is_empty());
+        // Never more than 12 racers: one slot always stays for the player.
+        let crowded = RaceGrid { bots: 30 };
+        assert_eq!(crowded.bot_count(), 11);
+        assert_eq!(crowded.player_slot(), 11);
     }
 }

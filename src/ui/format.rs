@@ -145,6 +145,30 @@ pub fn write_croquettes(out: &mut String, count: u32) {
     let _ = write!(out, "x {count}");
 }
 
+/// Debug overlay (F3): "FPS 60 | 16.7 ms | Karts 12 | Sim 0.85 ms" (dashes until measured).
+pub fn write_debug_overlay(
+    out: &mut String,
+    fps: Option<f64>,
+    frame_ms: Option<f64>,
+    karts: usize,
+    sim_ms: Option<f64>,
+) {
+    out.clear();
+    let _ = match fps {
+        Some(fps) => write!(out, "FPS {fps:.0}"),
+        None => write!(out, "FPS -"),
+    };
+    let _ = match frame_ms {
+        Some(ms) => write!(out, " | {ms:.1} ms"),
+        None => write!(out, " | - ms"),
+    };
+    let _ = write!(out, " | Karts {karts}");
+    let _ = match sim_ms {
+        Some(ms) => write!(out, " | Sim {ms:.2} ms"),
+        None => write!(out, " | Sim - ms"),
+    };
+}
+
 /// Static labels of the HUD and the results screen.
 pub const RESULTS_TITLE: &str = "CLASSEMENT";
 pub const RESULTS_FOOTER: &str = "ESPACE ou ENTREE (manette : A) : rejouer";
@@ -197,6 +221,19 @@ mod tests {
         assert_eq!(s, "Meilleur tour -:--.--");
         write_best_lap(&mut s, Some(2012));
         assert_eq!(s, "Meilleur tour 0:20.12");
+    }
+
+    #[test]
+    fn debug_overlay_shows_fps_frame_time_karts_and_simulation_cost() {
+        let mut s = String::with_capacity(64);
+        let capacity = s.capacity();
+        write_debug_overlay(&mut s, Some(59.6), Some(16.78), 12, Some(0.853));
+        assert_eq!(s, "FPS 60 | 16.8 ms | Karts 12 | Sim 0.85 ms");
+        write_debug_overlay(&mut s, None, None, 1, None);
+        assert_eq!(s, "FPS - | - ms | Karts 1 | Sim - ms");
+        write_debug_overlay(&mut s, Some(1234.0), Some(999.99), 12, Some(123.456));
+        assert!(s.is_ascii());
+        assert_eq!(s.capacity(), capacity, "no new allocation");
     }
 
     #[test]
