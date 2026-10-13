@@ -16,7 +16,6 @@
 //! items, as in the game ([`bots_race_with_items`]): every race ends, the bots take boxes and use
 //! their items, karts get hit, and no bot gets towed in free driving.
 
-use bevy::ecs::schedule::SingleThreadedExecutor;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
@@ -35,7 +34,7 @@ use crate::race::{
     Course, DrivesOnAfterFinish, Race, RaceGrid, RacePhase, RaceProgress, RaceTuning, Racer, Tow,
     TowReason, ticks_to_seconds,
 };
-use crate::tests::{game_app_unloaded, player, wait_for_the_player};
+use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
 use crate::track::{TrackChoice, TrackData, TrackHandle, TrackLayout};
 use crate::ui::{DebugOverlay, HudText, SimulationCost};
 
@@ -90,17 +89,6 @@ fn for_each_seed<T: Send>(seeds: &[u64], race: impl Fn(u64) -> T + Sync) -> Vec<
             })
             .collect()
     })
-}
-
-/// Every schedule of `app` runs its systems one after the other, in the fixed order of the
-/// schedule: the executor of the browser (wasm has a single thread). The races of a test run
-/// side by side, one thread each, so a race gains nothing from Bevy's multi-threaded executor,
-/// which costs several times more per tick here; and a fixed order of the systems makes a seed
-/// give the same race on every machine, whatever the load.
-fn single_threaded(app: &mut App) {
-    for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
-        schedule.set_executor(SingleThreadedExecutor::new());
-    }
 }
 
 // --- Race log ----------------------------------------------------------------------------------
@@ -1132,8 +1120,8 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         Some(20.5),
         Some(20.0),
     );
-    // Hardly ever towed: a pile-up at the start or a shunt in the pack may cost a few tows
-    // (the known wall climb #27 one), the bots alone (almost) never.
+    // Hardly ever towed: a pile-up at the start or a shunt in the pack may cost a few tows (a
+    // kart thrown over a wall; far fewer since #27), the bots alone (almost) never.
     tow_checks(
         &mut checks,
         &runs.iter().map(|r| &r.race).collect::<Vec<_>>(),

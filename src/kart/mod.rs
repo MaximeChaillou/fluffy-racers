@@ -52,6 +52,7 @@ pub use visual::{
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
+use bevy_rapier3d::rapier::geometry::Collider as RapierCollider;
 
 use crate::interpolation::PhysicsPose;
 use crate::track::{BoostPad, Surface, TrickRamp};
@@ -513,7 +514,6 @@ fn drive_karts(
     ramps: Query<(), With<TrickRamp>>,
     mut karts: Query<
         (
-            Entity,
             &Transform,
             &KartInput,
             &mut PreviousInput,
@@ -542,9 +542,20 @@ fn drive_karts(
     let base = &*tuning;
     // The trick window in ticks (GD § 5: about 0.2 s).
     let trick_window = (base.trick_window / dt).round() as u32;
+    // The suspension rays only find the ground (issue #27): a static collider whose `Surface` is
+    // ground. Never a wall: a kart tipped against a low wall found ground on its flat top, and
+    // the spring helped lift that side over it. Never another kart: in a side shunt, the
+    // rammer's front wheels found ground on the other kart's roof and drove onto it.
+    let ground = |collider: Entity, _: &RapierCollider| {
+        surfaces
+            .get(collider)
+            .is_ok_and(|surface| surface.is_ground())
+    };
+    let filter = QueryFilter::only_fixed()
+        .exclude_sensors()
+        .predicate(&ground);
 
     for (
-        entity,
         transform,
         input,
         mut previous_input,
@@ -611,9 +622,6 @@ fn drive_karts(
         let up = *transform.up();
         let forward = *transform.forward();
         let center_of_mass = transform.transform_point(Vec3::Y * tuning.center_of_mass_height);
-        let filter = QueryFilter::default()
-            .exclude_rigid_body(entity)
-            .exclude_sensors();
 
         // --- Suspension: one ray per wheel, spring + damper pushing along the kart's up axis.
         let mut total_force = Vec3::ZERO;

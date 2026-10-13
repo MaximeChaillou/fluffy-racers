@@ -454,7 +454,7 @@ fn the_pelican_rescues_a_kart_stuck_against_a_wall() {
         Transform::from_translation(start.translation + *start.forward() * 4.0)
             .with_rotation(start.rotation),
         Vec3::new(12.0, 3.0, 0.5),
-        Surface::Road,
+        Surface::Wall,
         crate::track::WALL_RESTITUTION,
     );
     app.world_mut().flush();

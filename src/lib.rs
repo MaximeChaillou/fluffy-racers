@@ -186,6 +186,7 @@ fn spawn_light(mut commands: Commands) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::schedule::SingleThreadedExecutor;
     use bevy::input::InputPlugin;
     use bevy::time::TimeUpdateStrategy;
     use bevy_rapier3d::prelude::Velocity;
@@ -224,6 +225,18 @@ mod tests {
         .add_plugins(GamePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
         app
+    }
+
+    /// Every schedule of `app` runs its systems one after the other, in the fixed order of the
+    /// schedule: the executor of the browser (wasm has a single thread). The bot races (issue
+    /// #40) and the crashes into walls (issue #27) run side by side, one App per thread, so they
+    /// gain nothing from Bevy's multi-threaded executor, which costs several times more per tick
+    /// here; and a fixed order of the systems gives the same run on every machine, whatever the
+    /// load.
+    pub(crate) fn single_threaded(app: &mut App) {
+        for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+            schedule.set_executor(SingleThreadedExecutor::new());
+        }
     }
 
     /// Runs updates until the track is built and the player kart spawned (circuit files load
@@ -439,7 +452,7 @@ mod tests {
             &mut commands,
             Transform::from_xyz(0.0, 2.0, 3.0),
             Vec3::new(10.0, 4.0, 0.25),
-            track::Surface::Road,
+            track::Surface::Wall,
             0.0,
         );
         app.world_mut().flush();

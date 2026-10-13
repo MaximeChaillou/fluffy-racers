@@ -144,8 +144,8 @@ pub fn build_circuit_when_loaded(
     );
     spawn_trimesh(
         &mut commands,
-        &generated.walls,
-        Surface::Road,
+        &generated.wall_collider,
+        Surface::Wall,
         WALL_RESTITUTION,
         TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,
     );

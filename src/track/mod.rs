@@ -42,13 +42,26 @@ pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct PlayerStart(pub Transform);
 
-/// Kind of ground under a wheel. Put it on a collider entity; colliders without it count as road.
+/// What a static collider of the track is to a kart's wheels. Put it on every one of them: the
+/// suspension rays only stand on a collider whose surface [`is_ground`](Self::is_ground), never
+/// on a wall, an obstacle or another kart (issue #27). A collider without it is not ground.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Surface {
     #[default]
     Road,
     /// Grass, sand...: the max speed drops (GD § 2, `KartTuning::offroad_speed_factor`).
     Offroad,
+    /// A wall or an obstacle: the karts bump into it (GD § 2) but never drive on it. The
+    /// suspension rays go through it: a kart tipped against a low wall no longer finds ground on
+    /// its flat top, which helped lift that side of the kart over the wall (issue #27).
+    Wall,
+}
+
+impl Surface {
+    /// Whether the wheels can stand on it: the road and the off-road, not a wall.
+    pub fn is_ground(self) -> bool {
+        self != Self::Wall
+    }
 }
 
 /// Bounciness of walls and obstacles: the kart bounces back and never stops dead (GD § 2).
@@ -56,6 +69,7 @@ pub enum Surface {
 pub const WALL_RESTITUTION: f32 = 0.3;
 
 /// Spawns a static box collider (physics only, no mesh): ground slab, wall, obstacle, ramp.
+/// `surface`: `Surface::Wall` for a wall or an obstacle (the wheels never stand on it).
 /// `restitution`: 0 for the ground, `WALL_RESTITUTION` for things the kart bumps into. It belongs
 /// to the level (`LevelScoped`): reloading the level removes it.
 pub fn spawn_static_box(
@@ -177,3 +191,6 @@ mod tests {
         assert!(top_end.x > start.x + 7.0);
     }
 }
+
+#[cfg(test)]
+mod scenario_tests;

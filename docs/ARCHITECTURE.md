@@ -12,8 +12,9 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 
 - **Machine à états** explicite : `Grounded`, `Hop`, `Drifting { side, charge }`, `Airborne`, `Trick`, `Hit { reaction, elapsed, duration }`, `Respawning`. Les transitions sont de la **logique pure**, testée unitairement. Dans l'état `Hit` (touché par un objet), le kart n'écoute plus son pilote et freine fort ; à la fin, il démarre son invincibilité (`Invincibility`, stat du § 9). Le tête-à-queue et la culbute ne sont que visuels : la carrosserie tourne ou se retourne, le corps simulé garde son cap.
 - **Rapier** sert aux collisions (murs, karts, objets) et au contact avec le sol. Les vitesses viennent de nos courbes : chaque tick, on calcule la vitesse cible et on l'applique au corps. **La physique ne décide pas du ressenti.**
-- Corps rigide dynamique (boîte arrondie ou capsule), avec une inertie réglée pour ne pas se retourner facilement.
-- **Suspension par 4 raycasts** (ressort + amortisseur) : le kart épouse le sol et rebondit de façon cartoon.
+- Corps rigide dynamique (boîte arrondie ou capsule), avec une inertie réglée pour ne pas se retourner facilement. Son centre de masse est au milieu de la boîte (#27) : un muret ou un autre kart pousse sur un flanc de la boîte, à mi-hauteur, donc à travers le centre de masse, et le choc ne fait pas basculer le kart.
+- **Suspension par 4 raycasts** (ressort + amortisseur) : le kart épouse le sol et rebondit de façon cartoon. Les rayons ne trouvent que le sol : un collider du circuit dont la `Surface` est du sol (route, hors-piste, tremplins), jamais un muret (`Surface::Wall`) ni un autre kart (#27).
+- **Murets** : leur collider est plus haut que leur dessin (1,2 m au moins, contre 0,8 m dessinés) : un kart ne rencontre que leur face, jamais leur arête du haut (#27).
 - **Moteur** : courbe d'accélération vers une vitesse max qui dépend de la classe, des stats, des croquettes, du terrain (hors-piste) et des boosts actifs.
 - **Grip latéral** : on annule chaque tick une grande fraction de la vitesse de côté (sauf en drift).
 - **Direction** : on pilote directement la vitesse angulaire en lacet, selon la vitesse et la stat Maniabilité.
