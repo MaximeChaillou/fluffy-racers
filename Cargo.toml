@@ -12,6 +12,23 @@ bevy_rapier3d = { version = "0.37", default-features = false, features = ["dim3"
 # (same versions), so they add nothing to the build.
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
+# Admin panel (issue #36): egui over the game, only while the panel is open. Without its default
+# `open_url` (no link to open) and `picking` (the game does not use bevy_picking) features;
+# `manage_clipboard` is what lets "Copier" and Cmd+V work, in the browser too.
+bevy_egui = { version = "0.43", default-features = false, features = [
+    "render",
+    "bevy_ui",
+    "default_fonts",
+    "manage_clipboard",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Already compiled for Bevy (winit, wgpu): the admin panel only adds the browser's local storage
+# (its settings survive a reload) and the page address (`?admin`).
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location"] }
+# Already compiled for Bevy (bevy_winit), no feature added: while the panel's text field has the
+# keyboard, the browser handles the keys again (Cmd+V pastes, Cmd+C copies).
+winit = { version = "0.30", default-features = false }
 
 # Compile dependencies with optimizations even in dev: Bevy is very slow otherwise.
 [profile.dev]

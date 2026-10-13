@@ -145,6 +145,16 @@ impl RaceFlow {
     pub fn started(&self, timings: &FlowTimings) -> bool {
         self.race_ticks(timings) > 0
     }
+
+    /// Skips what is left of the grid and the countdown (admin panel, issue #36): the next tick
+    /// is GO. Nothing happens once the race has started. Returns whether it skipped.
+    pub fn skip_countdown(&mut self, timings: &FlowTimings) -> bool {
+        if self.over_at.is_some() || self.tick >= timings.before_go() {
+            return false;
+        }
+        self.tick = timings.before_go();
+        true
+    }
 }
 
 /// The race is over once every awaited racer (the local players) has finished; with no awaited
@@ -301,6 +311,25 @@ mod tests {
         // No awaited racer (autopilot test, bots only): everyone must finish.
         assert!(!race_over([(false, true), (false, false)]));
         assert!(race_over([(false, true), (false, true)]));
+    }
+
+    /// Issue #36: the admin panel's "GO !" goes straight to GO, from the grid or mid-countdown,
+    /// and does nothing once the race has started.
+    #[test]
+    fn skipping_the_countdown_makes_the_next_tick_go() {
+        let t = timings();
+        for ticks_before in [0, 30, 150] {
+            let mut flow = RaceFlow::default();
+            run(&mut flow, &t, ticks_before);
+            assert!(flow.skip_countdown(&t));
+            assert!(!flow.started(&t));
+            run(&mut flow, &t, 1);
+            assert_eq!(flow.tick, RaceFlow::go_tick(&t));
+            assert!(flow.started(&t));
+            assert_eq!(flow.race_ticks(&t), 1);
+            assert!(!flow.skip_countdown(&t), "already racing");
+            assert_eq!(flow.tick, RaceFlow::go_tick(&t));
+        }
     }
 
     #[test]

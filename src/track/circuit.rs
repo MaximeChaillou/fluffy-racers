@@ -1,4 +1,5 @@
-//! Loading a circuit file and building it: meshes, Rapier colliders, gameplay spots, decor.
+//! Loading a circuit file and building it: meshes, Rapier colliders, gameplay spots, decor. Every
+//! root entity built here is `LevelScoped`: reloading the level (issue #36) removes them all.
 
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext, RenderAssetUsages};
@@ -10,6 +11,7 @@ use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, CURB_WIDTH, GROUND_HEIGHT, MeshData, WALL_THICKNESS};
 use super::{PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
+use crate::level::LevelScoped;
 
 /// Loads `*.track.ron` files as [`TrackData`].
 #[derive(Default, TypePath)]
@@ -111,6 +113,7 @@ pub fn build_circuit_when_loaded(
         ..default()
     });
     commands.spawn((
+        LevelScoped,
         Name::new(format!("Track: {}", layout.name)),
         Mesh3d(meshes.add(to_mesh(&generated.combined()))),
         MeshMaterial3d(track_material),
@@ -176,6 +179,7 @@ fn spawn_trimesh(
     match Collider::trimesh_with_flags(vertices, triangles, flags) {
         Ok(collider) => {
             commands.spawn((
+                LevelScoped,
                 Transform::default(),
                 RigidBody::Fixed,
                 collider,
@@ -315,6 +319,7 @@ fn spawn_spots(
     for pad in &data.boost_pads {
         commands
             .spawn((
+                LevelScoped,
                 BoostPad {
                     half_size: BOOST_PAD_SIZE / 2.0,
                 },
@@ -357,6 +362,7 @@ fn spawn_spots(
                 &box_material
             };
             commands.spawn((
+                LevelScoped,
                 ItemBoxSpot { double: row.double },
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(material.clone()),
@@ -371,6 +377,7 @@ fn spawn_spots(
         for i in 0..line.count {
             let sample = center.at(start + i as f32 * line.spacing);
             commands.spawn((
+                LevelScoped,
                 Name::new("Croquette"),
                 CroquetteSpot,
                 place(&sample, line.offset, CROQUETTE_HEIGHT),
@@ -422,7 +429,11 @@ fn spawn_trees(
         }
         planted += 1;
         commands
-            .spawn((Transform::from_translation(position), Visibility::default()))
+            .spawn((
+                LevelScoped,
+                Transform::from_translation(position),
+                Visibility::default(),
+            ))
             .with_children(|tree| {
                 tree.spawn((
                     Mesh3d(trunk_mesh.clone()),

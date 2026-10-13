@@ -62,7 +62,7 @@ impl DriftSide {
 }
 
 /// Mini-turbo tiers (GD § 3.4), in increasing order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Reflect)]
 pub enum MiniTurbo {
     /// Mini-turbo: blue sparks.
     Blue,

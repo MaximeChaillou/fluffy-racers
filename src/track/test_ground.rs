@@ -24,7 +24,8 @@ pub(super) fn spawn_test_ground(
     build(&mut commands, &mut meshes, &mut materials);
 }
 
-pub(super) fn build(
+/// Builds the test ground (its pieces are `LevelScoped`, as boxes) and says where to start.
+pub fn build(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,

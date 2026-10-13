@@ -9,7 +9,8 @@ use crate::TICK_HZ;
 ///
 /// Durations are in seconds (converted to 60 Hz ticks with [`seconds_to_ticks`]), distances in
 /// meters.
-#[derive(Resource, Clone, Debug, PartialEq)]
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
 pub struct RaceTuning {
     // --- Format (GD § 1) ----------------------------------------------------------------------
     /// Laps of a race (GD § 1: 3, like most MK8DX tracks).

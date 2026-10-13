@@ -16,7 +16,8 @@ use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{Boost, KartState, KartTuning};
 
 /// All the camera knobs, with their default values (our own starting points, à régler).
-#[derive(Resource, Clone, Debug, PartialEq)]
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
 pub struct CameraTuning {
     /// Distance behind the kart (m).
     pub distance: f32,

@@ -10,6 +10,8 @@ pub mod test_ground;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use crate::level::LevelScoped;
+
 pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp,
 };
@@ -53,7 +55,8 @@ pub enum Surface {
 pub const WALL_RESTITUTION: f32 = 0.3;
 
 /// Spawns a static box collider (physics only, no mesh): ground slab, wall, obstacle, ramp.
-/// `restitution`: 0 for the ground, `WALL_RESTITUTION` for things the kart bumps into.
+/// `restitution`: 0 for the ground, `WALL_RESTITUTION` for things the kart bumps into. It belongs
+/// to the level (`LevelScoped`): reloading the level removes it.
 pub fn spawn_static_box(
     commands: &mut Commands,
     transform: Transform,
@@ -63,6 +66,7 @@ pub fn spawn_static_box(
 ) -> Entity {
     commands
         .spawn((
+            LevelScoped,
             transform,
             RigidBody::Fixed,
             Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),

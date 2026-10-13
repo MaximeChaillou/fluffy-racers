@@ -6,7 +6,11 @@ use bevy::prelude::*;
 /// All the knobs of the arcade kart model, for the 150cc class and an average kart.
 ///
 /// Speeds are in m/s, accelerations in m/s², rates in 1/s, angles in radians.
-#[derive(Resource, Clone, Debug, PartialEq)]
+///
+/// Reflected (`Reflect`) so that the admin panel (issue #36) edits every field without knowing
+/// them: a new field shows up there by itself.
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
 pub struct KartTuning {
     // --- Engine -------------------------------------------------------------------------------
     /// Top speed on the road, 150cc. GD § 2 starts at 26 m/s; raised to 28.5 m/s (≈ 103 km/h)
