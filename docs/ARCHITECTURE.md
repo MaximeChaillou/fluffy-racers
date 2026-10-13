@@ -10,7 +10,7 @@
 
 Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont dans `docs/GAME_DESIGN.md`. Ici, on décrit seulement *comment* on les implémente.
 
-- **Machine à états** explicite : `Grounded`, `Hop`, `Drifting { side, charge }`, `Airborne`, `Trick`, `Hit { kind, timer }`, `Respawning`. Les transitions sont de la **logique pure**, testée unitairement.
+- **Machine à états** explicite : `Grounded`, `Hop`, `Drifting { side, charge }`, `Airborne`, `Trick`, `Hit { reaction, elapsed, duration }`, `Respawning`. Les transitions sont de la **logique pure**, testée unitairement. Dans l'état `Hit` (touché par un objet), le kart n'écoute plus son pilote et freine fort ; à la fin, il démarre son invincibilité (`Invincibility`, stat du § 9). Le tête-à-queue et la culbute ne sont que visuels : la carrosserie tourne ou se retourne, le corps simulé garde son cap.
 - **Rapier** sert aux collisions (murs, karts, objets) et au contact avec le sol. Les vitesses viennent de nos courbes : chaque tick, on calcule la vitesse cible et on l'applique au corps. **La physique ne décide pas du ressenti.**
 - Corps rigide dynamique (boîte arrondie ou capsule), avec une inertie réglée pour ne pas se retourner facilement.
 - **Suspension par 4 raycasts** (ressort + amortisseur) : le kart épouse le sol et rebondit de façon cartoon.
@@ -27,9 +27,21 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 
   Pas de joint Rapier : la conduite réécrit la vitesse à chaque tick, et en ligne l'autre kart n'est qu'un proxy kinématique.
 
+## Objets (#16)
+
+- **Logique pure** dans `src/items/` :
+  - `table.rs` : table de distribution, redistribution des objets pas encore implémentés, tirage déterministe ;
+  - `slots.rs` : les deux emplacements, la roulette, le bouton Objet ;
+  - `objects.rs` : objets tenus autour du kart, pelote qui roule, contacts balayés.
+
+  Les systèmes tournent en `FixedUpdate`, après les entrées et le verrou du départ, avant les croquettes et la conduite.
+- **Aucun corps Rapier** pour les objets. Une pelote fait deux rayons par tick contre la piste (muret devant, sol dessous). L'abeille suit la ligne centrale (`Course`) puis plonge en ligne droite. Les contacts sont des segments (position au tick précédent → position actuelle) contre des sphères (objets) et la boîte de chaque kart : rien ne traverse entre deux ticks, et le coût reste de quelques dizaines de tests par tick avec 12 karts.
+- **Position simulée et visuel** : un objet garde sa position simulée (`ItemObject::position` et `previous`) ; son `Transform` n'est que le visuel, interpolé entre deux ticks.
+- **La victime décide** : un objet qui touche un kart casse et envoie `ItemHit { kart, by, item }`. Le système de la victime l'applique à son propre kart, ou l'ignore si le kart est immunisé (touché, pélican, invincible, arrivé). Il applique alors l'état `Hit`, la perte du boost et des objets tenus dehors, et la perte de croquettes (`LoseCroquettes`).
+
 ## Entrées
 
-`KartInput { throttle: f32, brake: f32, steer: f32, jump_drift: bool, item: bool, look_back: bool, interact: bool }` est produit chaque tick par une source. `jump_drift` sert à la fois au saut, au drift et aux figures ; `item` maintenu permet de traîner un objet derrière soi.
+`KartInput { throttle: f32, brake: f32, steer: f32, jump_drift: bool, item: bool, look_back: bool, interact: bool }` est produit chaque tick par une source. `jump_drift` sert à la fois au saut, au drift et aux figures ; `item` maintenu permet de traîner un objet derrière soi, et un objet part derrière si `brake` ou `look_back` est tenu au moment du lancer (#16).
 
 `interact` est l'état du bouton Interaction (`docs/GAME_DESIGN.md` § 15). Les règles du kart en déduisent l'appui court (coup de patte, au relâchement) et le maintien (attraper), comme elles distinguent saut et drift sur `jump_drift`. Le côté visé quand il y a des karts des deux côtés, et le côté d'un jet, viennent de `steer`. Le verrou du départ met déjà tout le `KartInput` à zéro avant le GO ; le calage et l'arrivée ignorent aussi `interact`.
 
@@ -67,6 +79,10 @@ Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur s
 - **Bots** : l'hôte tire une graine de course et l'envoie avec le départ (`RaceGrid::seed`). Chaque pair en tire les mêmes bots : pièces du kart, donc stats et allure, et tirages de conduite (`bots::bot_seed`). Seul le pair qui simule un bot le conduit ; les autres le voient comme un kart distant.
 - **Croquettes et boîtes à objets** : l'hôte décide qui a ramassé quoi (événement fiable). La roulette est tirée localement par le ramasseur, avec la table du game design.
 - **Objets** : le lanceur fait autorité sur la trajectoire. C'est **la victime qui décide** si elle est touchée, puis elle l'annonce. On évite ainsi le sentiment d'injustice dû à la latence.
+  - Le lanceur diffuse un événement fiable par objet lancé : objet, tick, position, vitesse, mouvement (pelote : rebonds restants ; abeille : cible et distance le long de la piste). Chaque pair simule ensuite l'objet lui-même. Le mouvement est déterministe contre une piste statique : rayons, ligne centrale, position de la cible.
+  - Les objets tenus autour d'un kart (traîné, « x3 ») se déduisent de l'état de ses emplacements, diffusé avec le kart.
+  - Le contact d'un objet avec **mon** kart est jugé chez moi : c'est l'entrée `ItemHit` de la victime. Je réponds « touché » ou « ignoré », comme pour un coup de patte.
+  - Le tirage d'une boîte est déterministe : `draw_unit(graine de course, place de grille, nombre de tirages du kart)`. L'hôte n'arbitre que « qui a cassé la boîte ».
 
 ### Interactions entre karts
 

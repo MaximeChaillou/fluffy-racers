@@ -230,6 +230,15 @@ pub struct KartTuning {
     /// The kart that brought at least this share of the closing speed is the bumper, the other
     /// one is bumped. When neither did (head on), both are bumped.
     pub bump_bumper_share: f32,
+
+    // --- Hit by an item (GD § 8, issue #16) -----------------------------------------------------
+    /// Deceleration of a kart spinning out (`KartState::Hit`, light items: pelure, abeille), the
+    /// accelerator and the steering ignored (m/s², à régler): from top speed, about a quarter of
+    /// it is left after the 1 s spin. How long the spin lasts is the item's
+    /// (`ItemTuning::spin_time`).
+    pub hit_spin_decel: f32,
+    /// Same for a tumble (heavy items: pelote), which stops the kart (m/s², à régler).
+    pub hit_tumble_decel: f32,
 }
 
 impl Default for KartTuning {
@@ -320,6 +329,9 @@ impl Default for KartTuning {
 
             bump_min_speed: 5.0,
             bump_bumper_share: 0.6,
+
+            hit_spin_decel: 21.0,
+            hit_tumble_decel: 26.0,
         }
     }
 }

@@ -27,9 +27,10 @@ use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_n
 use crate::camera::ChaseCamera;
 use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
+use crate::items::{ItemSlots, ItemStats, Slot};
 use crate::kart::{
-    Boost, DriftSide, KartState, KartStats, KartTuning, KartWheels, MaxSpeedScale, PlayerKart,
-    Slipstream, Stall, Stat, StatEffects, max_speed,
+    Boost, DriftSide, HitReaction, Invincibility, KartState, KartStats, KartTuning, KartWheels,
+    MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
 };
 use crate::level::LoadLevel;
 use crate::race::{Race, RaceGrid, RaceMode};
@@ -583,6 +584,7 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         &KartStats,
         &StatEffects,
         Option<&Croquettes>,
+        (&Invincibility, Option<&ItemSlots>, Option<&ItemStats>),
     ), With<PlayerKart>>();
     let base = world.resource::<KartTuning>();
     let Some((
@@ -597,6 +599,7 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         stats,
         effects,
         croquettes,
+        (invincibility, items, item_stats),
     )) = karts.iter(world).next()
     else {
         ui.label("Pas de kart joueur.");
@@ -633,6 +636,19 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         }
         KartState::Airborne => "en l'air".to_string(),
         KartState::Trick => "figure".to_string(),
+        KartState::Hit {
+            reaction,
+            elapsed,
+            duration,
+        } => format!(
+            "touché ({}, {:.2} / {:.2} s)",
+            match reaction {
+                HitReaction::Spin => "tête-à-queue",
+                HitReaction::Tumble => "culbute",
+            },
+            elapsed as f32 / 60.0,
+            duration as f32 / 60.0
+        ),
         KartState::Respawning => "pélican".to_string(),
     };
     let thresholds = tuning.mini_turbo_thresholds;
@@ -702,6 +718,33 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
             );
             if let Some(held) = croquettes {
                 row("Croquettes", held.count.to_string());
+            }
+            if invincibility.is_active() {
+                row(
+                    "Invincible",
+                    format!("encore {:.2} s", invincibility.remaining),
+                );
+            }
+            if let Some(items) = items {
+                let slot = |slot: &Slot| match *slot {
+                    Slot::Empty => "-".to_string(),
+                    Slot::Spinning { ticks, .. } => format!("roulette ({ticks} ticks)"),
+                    Slot::Ready { item, count } => format!("{} x{count}", item.label()),
+                };
+                let mut text = format!("{} | {}", slot(&items.hand), slot(&items.reserve));
+                if let Some((item, count)) = items.held_out() {
+                    text.push_str(&format!(" ; dehors : {} x{count}", item.label()));
+                }
+                row("Objets (main | réserve)", text);
+            }
+            if let Some(counts) = item_stats {
+                row(
+                    "Boîtes, objets, touché",
+                    format!(
+                        "{} boîtes, {} utilisés, touché {} fois, {} coups réussis",
+                        counts.boxes, counts.used, counts.hits_taken, counts.hits_landed
+                    ),
+                );
             }
         });
 }

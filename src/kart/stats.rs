@@ -433,11 +433,11 @@ impl StatEffects {
     }
 }
 
-/// Protection after an item hit (GD § 8: 1 to 2 s with the Invincibility stat). Started by an
-/// item hit for the kart's [`StatEffects::invincibility`]; until issue #16 the item hit is the
-/// croquettes' entry point (`LoseCroquettes` with `LossCause::ItemHit`), which costs nothing
-/// during it. Counted down with the boosts (`KartSystems::Timers`). Issue #16 makes the items
-/// skip an invincible kart, issue #34 the paw strikes and tethers (GD § 15).
+/// Protection after an item hit (GD § 8: 1 to 2 s with the Invincibility stat). Started for
+/// the kart's [`StatEffects::invincibility`] when the spin out or tumble of an item hit ends
+/// (`KartState::Hit`, issue #16); meanwhile no item hits it (`items::immune_to_items`), and the
+/// kart blinks. Counted down with the boosts (`KartSystems::Timers`). Issue #34 makes the paw
+/// strikes and tethers skip it too (GD § 15).
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Invincibility {
     /// Seconds left.

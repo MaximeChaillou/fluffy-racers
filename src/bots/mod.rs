@@ -11,8 +11,10 @@
 //! anticipation of the turns, all in [`BotTuning`]. Each bot also has its own lane, pace and
 //! random choices from a deterministic generator seeded by the race seed and its grid slot
 //! ([`bot_seed`]: variety, no single file, reproducible tests). They also try the rocket start
-//! and the tricks (issue #13), through their `KartInput` like a player. Using items comes with
-//! the item system (issue #16).
+//! and the tricks (issue #13), through their `KartInput` like a player. They take item boxes
+//! (a little detour on the straights when a slot is free) and use their items (issue #16,
+//! `items.rs`): the item button of their `KartInput` too, more or less often with their level
+//! (`BotSkill::item_delay`).
 //!
 //! Each bot also has its own character and parts (issue #15, [`bot_loadout`]): the weight
 //! classes take turns along the grid, so that the 9 animals line up and every stretch of the
@@ -25,6 +27,7 @@
 //! tests run several, and the network will share the host's.
 
 mod driver;
+mod items;
 mod line;
 mod rng;
 mod tuning;
@@ -33,6 +36,7 @@ mod tuning;
 mod scenario_tests;
 
 pub use driver::{BotBrain, DriftPlan, Neighbor, Senses, catch_up_scale, charge_per_radian, drive};
+pub use items::{BotItemBrain, ItemButtons, ItemSenses, item_buttons};
 pub use line::{Located, RacingLine, Turn};
 pub use rng::BotRng;
 pub use tuning::{BotDifficulty, BotSkill, BotTuning};
@@ -42,6 +46,8 @@ use bevy_rapier3d::prelude::Velocity;
 
 use crate::TICK_HZ;
 use crate::characters::{DriverLooks, Loadout, PartKind, Roster, WeightClass};
+use crate::croquettes::{CroquetteTuning, Croquettes};
+use crate::items::{ItemBox, ItemSlots, ItemTuning, Slot};
 use crate::kart::{
     Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
     MaxSpeedFactors, MaxSpeedScale, PlayerKart, StatEffects, StatsTuning, TrickTracker,
@@ -128,6 +134,7 @@ pub fn bot(difficulty: BotDifficulty, seed: u64, tuning: &BotTuning) -> impl Bun
     (
         Bot { difficulty },
         BotBrain::new(seed, tuning),
+        BotItemBrain::new(seed),
         DrivesOnAfterFinish,
     )
 }
@@ -238,20 +245,79 @@ fn catch_up(
     }
 }
 
-/// Every bot writes its kart's input for this tick. The other karts are gathered once in a
-/// buffer kept between ticks (no allocation per tick).
+/// The closest item box worth going for (issue #16): available, ahead within `range` and at
+/// most `range` / 8 to the side of a kart at `position` heading `forward`. `(ahead, right)` (m).
+fn item_box_ahead(
+    boxes: &[Vec3],
+    position: Vec3,
+    forward: Vec3,
+    right: Vec3,
+    range: f32,
+) -> Option<(f32, f32)> {
+    boxes
+        .iter()
+        .map(|at| {
+            let to = *at - position;
+            (to.dot(forward), to.dot(right))
+        })
+        .filter(|(ahead, side)| *ahead > 6.0 && *ahead < range && side.abs() < range / 8.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+/// The closest kart ahead within `ahead_range` (distance, angle off the heading) and behind
+/// within `behind_range` (distance, angle off straight back), for the items (issue #16).
+fn karts_around(
+    me: Entity,
+    position: Vec3,
+    forward: Vec3,
+    neighbors: &[Neighbor],
+    ahead_range: f32,
+    behind_range: f32,
+) -> (Option<(f32, f32)>, Option<(f32, f32)>) {
+    let flat = forward.with_y(0.0).normalize_or(Vec3::NEG_Z);
+    let mut ahead: Option<(f32, f32)> = None;
+    let mut behind: Option<(f32, f32)> = None;
+    for other in neighbors {
+        let to = other.position - position;
+        if other.entity == me || to.y.abs() > 3.0 {
+            continue;
+        }
+        let distance = to.with_y(0.0).length();
+        if distance < 1e-3 {
+            continue;
+        }
+        let angle = flat.angle_between(to.with_y(0.0));
+        let side = flat.cross(to).y.signum();
+        if angle < std::f32::consts::FRAC_PI_2 {
+            if distance < ahead_range && ahead.is_none_or(|(d, _)| distance < d) {
+                ahead = Some((distance, angle * -side));
+            }
+        } else if distance < behind_range && behind.is_none_or(|(d, _)| distance < d) {
+            behind = Some((distance, (std::f32::consts::PI - angle) * side));
+        }
+    }
+    (ahead, behind)
+}
+
+/// Every bot writes its kart's input for this tick: its driving, and its item button (issue
+/// #16). The other karts and the boxes are gathered once in buffers kept between ticks (no
+/// allocation per tick).
 fn drive_bots(
     time: Res<Time>,
     line: Res<RacingLine>,
     tuning: Res<BotTuning>,
     kart_tuning: Res<KartTuning>,
+    item_tuning: Option<Res<ItemTuning>>,
+    croquette_tuning: Option<Res<CroquetteTuning>>,
     race: Option<Res<Race>>,
     mut neighbors: Local<Vec<Neighbor>>,
+    mut boxes: Local<Vec<Vec3>>,
     karts: Query<(Entity, &Transform, &Velocity), With<Kart>>,
+    item_boxes: Query<(&Transform, &ItemBox)>,
     mut bots: Query<(
         Entity,
         &Bot,
-        &mut BotBrain,
+        (&mut BotBrain, &mut BotItemBrain),
         &Transform,
         &Velocity,
         &KartState,
@@ -260,6 +326,11 @@ fn drive_bots(
         &StatEffects,
         &TrickTracker,
         &Boost,
+        (
+            Option<&ItemSlots>,
+            Option<&RaceProgress>,
+            Option<&Croquettes>,
+        ),
         &mut KartInput,
     )>,
 ) {
@@ -277,10 +348,21 @@ fn drive_bots(
         position: transform.translation,
         velocity: velocity.linear,
     }));
+    let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled);
+    boxes.clear();
+    if items_on {
+        boxes.extend(
+            item_boxes
+                .iter()
+                .filter(|(_, item_box)| item_box.available())
+                .map(|(transform, _)| transform.translation),
+        );
+    }
+    let max_croquettes = croquette_tuning.map_or(10, |t| t.max_held);
     for (
         entity,
         bot,
-        mut brain,
+        (mut brain, mut item_brain),
         transform,
         velocity,
         state,
@@ -289,9 +371,11 @@ fn drive_bots(
         effects,
         tricks,
         boost,
+        (slots, progress, croquettes),
         mut input,
     ) in &mut bots
     {
+        let has_room = slots.is_some_and(|s| s.has_room());
         let senses = Senses {
             entity,
             position: transform.translation,
@@ -308,16 +392,70 @@ fn drive_bots(
             trick_window: tricks.window_open(trick_window),
             dt: time.delta_secs(),
             neighbors: &neighbors,
+            item_box: if has_room {
+                item_box_ahead(
+                    &boxes,
+                    transform.translation,
+                    *transform.forward(),
+                    *transform.right(),
+                    tuning.item_box_range,
+                )
+            } else {
+                None
+            },
         };
         // The bot knows its own kart: its stats applied (drift radii, tiers, steering).
-        let new = drive(
+        let skill = tuning.skill(bot.difficulty);
+        let mut new = drive(
             &mut brain,
-            tuning.skill(bot.difficulty),
+            skill,
             &tuning,
             &effects.tuning(&kart_tuning),
             &line,
             &senses,
         );
+        // Its items (issue #16): its item button, after its driving.
+        if let Some(slots) = slots.filter(|_| items_on) {
+            let (ahead, behind) = karts_around(
+                entity,
+                transform.translation,
+                *transform.forward(),
+                &neighbors,
+                tuning.item_ahead_range,
+                tuning.item_behind_range,
+            );
+            let straight = brain
+                .sample
+                .and_then(|index| {
+                    let look = (tuning.item_piment_straight / line.step()).ceil() as usize;
+                    line.turn_ahead(index, look)
+                })
+                .map_or(f32::MAX, |(_, samples)| samples as f32 * line.step());
+            let hand = match slots.hand {
+                Slot::Ready { item, count } => Some((item, count)),
+                _ => None,
+            };
+            let senses = ItemSenses {
+                hand,
+                held_out: slots.held_out(),
+                dragging: slots.dragging.is_some(),
+                ahead,
+                behind,
+                rank: progress.map_or(0, |p| p.rank),
+                croquettes: croquettes.map_or(0, |c| c.count),
+                max_croquettes,
+                straight,
+                boosting: boost.is_active(),
+                can_act: racing
+                    && !state.is_hit()
+                    && *state != KartState::Respawning
+                    && !progress.is_some_and(|p| p.finished()),
+                dt: time.delta_secs(),
+            };
+            let buttons = item_buttons(&mut item_brain, skill, &tuning, &senses);
+            new.item = buttons.item;
+            new.look_back = buttons.back;
+        }
         input.set_if_neq(new);
     }
 }

@@ -226,8 +226,9 @@ impl DriftMotion {
     ) {
         self.previous_slip = self.slip;
         match *state {
-            KartState::Respawning => {
-                // Carried by the pelican: dropped straight, nothing left of the drift.
+            KartState::Respawning | KartState::Hit { .. } => {
+                // Carried by the pelican: dropped straight, nothing left of the drift. Hit by an
+                // item: the drift is lost, the spin or tumble shows instead (issue #16).
                 *self = Self::default();
                 return;
             }
@@ -321,6 +322,8 @@ pub struct StateStep {
     pub boost: Option<MiniTurbo>,
     /// A trick landed this tick: fire the trick boost (GD § 5).
     pub trick_landed: bool,
+    /// An item hit's spin or tumble ended this tick: the kart's invincibility starts (GD § 8).
+    pub hit_ended: bool,
 }
 
 impl StateStep {
@@ -330,12 +333,13 @@ impl StateStep {
             hop: false,
             boost: None,
             trick_landed: false,
+            hit_ended: false,
         }
     }
 }
 
 /// Next driving state (docs/ARCHITECTURE.md: `Grounded`, `Hop`, `Drifting`, `Airborne`,
-/// `Trick`, `Respawning`).
+/// `Trick`, `Hit`, `Respawning`).
 pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> StateStep {
     // Ground contact with the usual grace period against bumps.
     let base = next_state(
@@ -352,6 +356,27 @@ pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> 
         // The tow pelican carries the kart: nothing the driver does matters until the race rules
         // drop it back on the track.
         KartState::Respawning => StateStep::to(KartState::Respawning),
+        // Hit by an item (GD § 8): deaf to the driver until the spin or tumble ends, then
+        // invincible for a while.
+        KartState::Hit {
+            reaction,
+            elapsed,
+            duration,
+        } => {
+            let elapsed = elapsed.saturating_add(1);
+            if elapsed >= duration {
+                StateStep {
+                    hit_ended: true,
+                    ..StateStep::to(base)
+                }
+            } else {
+                StateStep::to(KartState::Hit {
+                    reaction,
+                    elapsed,
+                    duration,
+                })
+            }
+        }
         // Pressed in the trick window after leaving a trick ramp (the kart may still count as
         // grounded for the short grace period): a trick, not a hop.
         KartState::Grounded | KartState::Airborne | KartState::Hop { .. }

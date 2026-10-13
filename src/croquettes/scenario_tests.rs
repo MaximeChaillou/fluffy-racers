@@ -32,6 +32,15 @@ struct Arena {
 
 impl Arena {
     fn new() -> Self {
+        Self::build(false)
+    }
+
+    /// With the item rules too (issue #16: an item hit goes through them).
+    fn with_items() -> Self {
+        Self::build(true)
+    }
+
+    fn build(items: bool) -> Self {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -40,6 +49,9 @@ impl Arena {
             CroquettePlugin,
         ))
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        if items {
+            app.add_plugins(crate::items::ItemPlugin);
+        }
         app.finish();
         app.cleanup();
         let world = app.world_mut();
@@ -686,9 +698,14 @@ mod game {
 /// Issue #15 (GD § 8): hit by an item, a kart is invincible for 1 to 2 s depending on its
 /// Invincibility stat (1.5 s in the middle): another item hit meanwhile costs no croquette, and
 /// does not extend the protection. Bumps are not concerned (their own 1 s grace, GD § 15).
+///
+/// Issue #16 moved the protection into the item rules: the hit goes through them (`ItemHit`,
+/// the victim decides), the kart spins out first (1 s, immune), then its invincibility starts
+/// (1, 1.5 or 2 s with its stat). Same three karts and the same checks, on that timeline.
 #[test]
 fn after_an_item_hit_the_invincibility_stat_protects_the_kart() {
-    let mut arena = Arena::new();
+    use crate::items::{ItemHit, ItemKind};
+    let mut arena = Arena::with_items();
     let middle = arena.kart;
     let fragile = arena.other_kart(Transform::from_xyz(20.0, 0.55, 0.0));
     let sturdy = arena.other_kart(Transform::from_xyz(-20.0, 0.55, 0.0));
@@ -707,16 +724,16 @@ fn after_an_item_hit_the_invincibility_stat_protects_the_kart() {
     }
     let hit_all = |arena: &mut Arena| {
         for kart in karts {
-            arena.app.world_mut().write_message(LoseCroquettes {
+            arena.app.world_mut().write_message(ItemHit {
                 kart,
-                cause: LossCause::ItemHit,
+                by: Entity::PLACEHOLDER,
+                item: ItemKind::Pelure,
             });
         }
         arena.tick(KartInput::default());
         karts.map(|kart| arena.held(kart))
     };
-    // t = 0: everybody loses 3 and is invincible for 1, 1.5 and 2 s.
-    assert_eq!(hit_all(&mut arena), [7, 7, 7]);
+    let spinning = |arena: &Arena, kart| arena.app.world().get::<KartState>(kart).unwrap().is_hit();
     let remaining = |arena: &Arena, kart| {
         arena
             .app
@@ -725,16 +742,29 @@ fn after_an_item_hit_the_invincibility_stat_protects_the_kart() {
             .unwrap()
             .remaining
     };
+    // t = 0: everybody loses 3 and spins out for 1 s.
+    assert_eq!(hit_all(&mut arena), [7, 7, 7]);
+    assert!(karts.iter().all(|k| spinning(&arena, *k)));
+    // t = 0.5 s: spinning, nobody is hit again.
+    arena.run(0.5 - 2.0 / TICKS_PER_SECOND, KartInput::default());
+    assert_eq!(hit_all(&mut arena), [7, 7, 7]);
+    // The spin ends (60 ticks): invincible for 1, 1.5 and 2 s.
+    let mut ticks = 30;
+    while spinning(&arena, middle) {
+        arena.tick(KartInput::default());
+        ticks += 1;
+    }
+    assert_eq!(ticks, 60);
     assert!((remaining(&arena, fragile) - 1.0).abs() < 1e-6);
     assert!((remaining(&arena, middle) - 1.5).abs() < 1e-6);
     assert!((remaining(&arena, sturdy) - 2.0).abs() < 1e-6);
-    // t = 1.2 s: only the fragile one is hit again (protected until 2.2 s now).
+    // 1.2 s later: only the fragile one is hit again (it spins until 2.2 s).
     arena.run(1.2 - 1.0 / TICKS_PER_SECOND, KartInput::default());
     assert_eq!(hit_all(&mut arena), [4, 7, 7]);
-    // t = 1.7 s: the middle one (protected until 3.2 s now).
+    // 1.7 s: the middle one.
     arena.run(0.5 - 1.0 / TICKS_PER_SECOND, KartInput::default());
     assert_eq!(hit_all(&mut arena), [4, 4, 7]);
-    // t = 2.3 s: the sturdy one, and the fragile one again.
-    arena.run(0.6 - 1.0 / TICKS_PER_SECOND, KartInput::default());
-    assert_eq!(hit_all(&mut arena), [1, 4, 4]);
+    // 2.1 s: the sturdy one (the other two still spin).
+    arena.run(0.4 - 1.0 / TICKS_PER_SECOND, KartInput::default());
+    assert_eq!(hit_all(&mut arena), [4, 4, 4]);
 }
