@@ -42,13 +42,22 @@ impl AssetLoader for TrackLoader {
 #[derive(Resource)]
 pub struct TrackHandle(pub Handle<TrackData>);
 
-/// A trick ramp (GD § 5): jumping off it will allow a trick (issue #13).
+/// On the collider of a trick ramp (GD § 5, issue #13): pressing jump/drift as the kart leaves
+/// it starts a trick (`crate::kart`, `trick.rs`).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct TrickRamp;
 
-/// Where a boost pad goes (GD § 2). Not active yet (issue #13).
-#[derive(Component, Clone, Copy, Debug)]
-pub struct BoostPadSpot;
+/// A boost pad on the road (GD § 2, issue #13): a wheel touching the ground over it gets the
+/// pad's boost (`KartTuning::boost_pad_*`). The entity's `Transform` is the pad itself, local
+/// -Z along the track and local Y up from the road; `half_size` is its half width (x) and half
+/// length (y).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct BoostPad {
+    pub half_size: Vec2,
+}
+
+/// Size of a boost pad on the road: width across the track, length along it (m).
+pub const BOOST_PAD_SIZE: Vec2 = Vec2::new(3.0, 4.0);
 
 /// Where an item box goes (GD § 8). Not active yet (issue #16).
 #[derive(Component, Clone, Copy, Debug)]
@@ -216,6 +225,13 @@ fn spawn_trick_ramps(
     data: &TrackData,
 ) {
     let material = materials.add(Color::srgb(0.98, 0.72, 0.25));
+    // White stripes mark a trick ramp and its lip, where to press the jump/drift button.
+    let stripe_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::rgb(0.5, 0.5, 0.5),
+        ..default()
+    });
+    let stripe_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let half_thickness = 0.5;
     for ramp in &data.trick_ramps {
         let sample = layout.center.at(layout.center.param_to_distance(ramp.at));
@@ -230,16 +246,40 @@ fn spawn_trick_ramps(
         );
         let half = Vec3::new(ramp.width / 2.0, half_thickness, ramp.length / 2.0);
         let entity = super::spawn_static_box(commands, transform, half, Surface::Road, 0.0);
-        commands.entity(entity).insert((
-            TrickRamp,
-            Mesh3d(meshes.add(Cuboid::from_size(half * 2.0))),
-            MeshMaterial3d(material.clone()),
-        ));
+        commands
+            .entity(entity)
+            .insert((
+                TrickRamp,
+                Mesh3d(meshes.add(Cuboid::from_size(half * 2.0))),
+                MeshMaterial3d(material.clone()),
+            ))
+            .with_children(|ramp| {
+                // The lip (top end, local -Z) and two chevrons pointing up the ramp.
+                let top = half_thickness + 0.02;
+                let stripes = [
+                    (
+                        Vec3::new(0.0, top, -half.z + 0.35),
+                        0.0,
+                        Vec3::new(half.x * 2.0, 0.04, 0.7),
+                    ),
+                    (Vec3::new(-0.62, top, 0.6), -0.6, Vec3::new(0.35, 0.04, 2.2)),
+                    (Vec3::new(0.62, top, 0.6), 0.6, Vec3::new(0.35, 0.04, 2.2)),
+                ];
+                for (at, yaw, size) in stripes {
+                    ramp.spawn((
+                        Mesh3d(stripe_mesh.clone()),
+                        MeshMaterial3d(stripe_material.clone()),
+                        Transform::from_translation(at)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(size),
+                    ));
+                }
+            });
     }
 }
 
-/// Placeholders for the gameplay spots of the file, so the layout can be seen. They do
-/// nothing yet: no collider, no pickup.
+/// The gameplay spots of the file. Boost pads are active (issue #13, the kart reads
+/// [`BoostPad`]); item boxes and croquettes are placeholders that do nothing yet (#16, #14).
 fn spawn_spots(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -253,19 +293,42 @@ fn spawn_spots(
         sample.transform(offset * sample.half_width, height)
     };
 
-    let pad_mesh = meshes.add(Cuboid::new(3.0, 0.04, 4.0));
+    let pad_mesh = meshes.add(Cuboid::new(BOOST_PAD_SIZE.x, 0.04, BOOST_PAD_SIZE.y));
     let pad_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.55, 0.1),
         emissive: LinearRgba::rgb(0.6, 0.25, 0.0),
         ..default()
     });
+    // Two yellow chevrons on each pad, pointing down the track.
+    let chevron_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let chevron_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.95, 0.4),
+        emissive: LinearRgba::rgb(0.9, 0.8, 0.2),
+        ..default()
+    });
     for pad in &data.boost_pads {
-        commands.spawn((
-            BoostPadSpot,
-            Mesh3d(pad_mesh.clone()),
-            MeshMaterial3d(pad_material.clone()),
-            place(&at(pad.at), pad.offset, 0.03),
-        ));
+        commands
+            .spawn((
+                BoostPad {
+                    half_size: BOOST_PAD_SIZE / 2.0,
+                },
+                Mesh3d(pad_mesh.clone()),
+                MeshMaterial3d(pad_material.clone()),
+                place(&at(pad.at), pad.offset, 0.03),
+            ))
+            .with_children(|pad| {
+                for z in [-0.9, 0.7] {
+                    for side in [-1.0f32, 1.0] {
+                        pad.spawn((
+                            Mesh3d(chevron_mesh.clone()),
+                            MeshMaterial3d(chevron_material.clone()),
+                            Transform::from_xyz(side * 0.45, 0.03, z + 0.35)
+                                .with_rotation(Quat::from_rotation_y(side * 0.8))
+                                .with_scale(Vec3::new(0.3, 0.02, 1.3)),
+                        ));
+                    }
+                }
+            });
     }
 
     let box_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));

@@ -1,4 +1,4 @@
-//! Headless driving scenarios (acceptance criteria of issues #1 and #4): the real
+//! Headless driving scenarios (acceptance criteria of issues #1, #4 and #13): the real
 //! `SimulationPlugin` (Rapier + kart systems) at 60 Hz, one fixed tick per `app.update()`.
 
 use bevy::time::TimeUpdateStrategy;
@@ -6,7 +6,10 @@ use bevy_rapier3d::prelude::Velocity;
 
 use super::*;
 use crate::SimulationPlugin;
-use crate::track::{Surface, WALL_RESTITUTION, ramp_transform, spawn_static_box};
+use crate::track::{
+    BOOST_PAD_SIZE, BoostPad, Surface, TrickRamp, WALL_RESTITUTION, ramp_transform,
+    spawn_static_box,
+};
 use drift::{DriftSide, MiniTurbo};
 
 const TICKS_PER_SECOND: f32 = 60.0;
@@ -716,4 +719,345 @@ fn max_speed_scale_changes_the_top_speed() {
     scenario.run(2.0, FULL_THROTTLE);
     let slow = scenario.forward_speed();
     assert!((slow - 0.97 * max).abs() < 0.05, "{slow} vs {}", 0.97 * max);
+}
+
+// --- Issue #13: stall, tricks, slipstream, boost pads -------------------------------------------
+
+impl Scenario {
+    /// Another kart on the arena at `position`, with the same heading as the first one.
+    fn spawn_other_kart(&mut self, position: Vec3) -> Entity {
+        let tuning = self.tuning();
+        let rotation = self.transform().rotation;
+        self.app
+            .world_mut()
+            .spawn(kart_body(
+                &tuning,
+                Transform::from_translation(position).with_rotation(rotation),
+            ))
+            .id()
+    }
+
+    fn tricks(&self) -> TrickTracker {
+        *self.app.world().get::<TrickTracker>(self.kart).unwrap()
+    }
+
+    fn slipstream(&self) -> Slipstream {
+        *self.app.world().get::<Slipstream>(self.kart).unwrap()
+    }
+
+    /// Drives at full throttle until the first tick in the air after leaving a trick ramp;
+    /// returns the number of ticks it took.
+    fn drive_off_the_trick_ramp(&mut self) -> u32 {
+        let mut ticks = 0;
+        while self.tricks().ticks_since_takeoff() != Some(1) {
+            ticks += 1;
+            assert!(ticks < 400, "never took off from the trick ramp");
+            self.tick(FULL_THROTTLE);
+        }
+        ticks
+    }
+
+    /// Ticks (with `input`) until the kart lands; returns the ticks spent in the air and
+    /// whether a boost was active at any point before the landing.
+    fn until_landing(&mut self, input: KartInput) -> (u32, bool) {
+        let mut ticks = 0;
+        let mut boosted = false;
+        while self.wheels().wheels_on_ground() == 0 {
+            ticks += 1;
+            assert!(ticks < 200, "never landed");
+            boosted |= self.boost().is_active();
+            self.tick(input);
+        }
+        (ticks, boosted)
+    }
+}
+
+/// A flat slab with a trick ramp (8 m long, 12°) 40 m ahead of the kart.
+fn trick_ramp_scenario() -> Scenario {
+    Scenario::new(|commands| {
+        spawn_static_box(
+            commands,
+            Transform::from_xyz(0.0, -0.5, 0.0),
+            Vec3::new(500.0, 0.5, 500.0),
+            Surface::Road,
+            0.0,
+        );
+        let ramp = spawn_static_box(
+            commands,
+            ramp_transform(Vec3::new(0.0, 0.0, -40.0), 8.0, 12f32.to_radians(), 0.5),
+            Vec3::new(4.0, 0.5, 4.0),
+            Surface::Road,
+            0.0,
+        );
+        commands.entity(ramp).insert(TrickRamp);
+    })
+}
+
+/// Issue #13 acceptance: pressing jump/drift right after leaving a trick ramp starts a trick,
+/// and the landing gives the trick boost (0.5 to 0.8 s, GD § 5).
+#[test]
+fn a_trick_off_a_ramp_gives_a_boost_on_landing() {
+    let mut scenario = trick_ramp_scenario();
+    let tuning = scenario.tuning();
+    scenario.drive_off_the_trick_ramp();
+    scenario.tick(KartInput {
+        jump_drift: true,
+        ..FULL_THROTTLE
+    });
+    assert_eq!(scenario.state(), KartState::Trick);
+    assert!(!scenario.boost().is_active());
+    let (air_ticks, boosted_in_the_air) = scenario.until_landing(FULL_THROTTLE);
+    assert!(air_ticks > 10, "{air_ticks} ticks in the air");
+    assert!(!boosted_in_the_air, "the boost comes on landing");
+    assert_eq!(scenario.state(), KartState::Grounded);
+    let boost = scenario.boost();
+    assert_eq!(boost.strength, tuning.trick_boost_strength);
+    assert!(
+        (boost.remaining - tuning.trick_boost_duration).abs() < 1e-5,
+        "{boost:?}"
+    );
+    assert!((0.5..=0.8).contains(&tuning.trick_boost_duration));
+    // It lasts its full duration, to the tick.
+    let mut active_ticks = 1;
+    while scenario.boost().is_active() {
+        scenario.tick(FULL_THROTTLE);
+        if scenario.boost().is_active() {
+            active_ticks += 1;
+        }
+        assert!(active_ticks < 120);
+    }
+    let seconds = active_ticks as f32 / TICKS_PER_SECOND;
+    assert!(
+        (seconds - tuning.trick_boost_duration).abs() <= 1.0 / TICKS_PER_SECOND,
+        "{seconds} s"
+    );
+    // The kart landed on its wheels.
+    scenario.run(0.5, FULL_THROTTLE);
+    assert!(scenario.uprightness() > 0.98);
+}
+
+/// Issue #13 acceptance: a missed trick (no press) gives no boost; pressing too late (well
+/// after the window) neither, and does not hop in the air.
+#[test]
+fn a_missed_trick_gives_no_boost() {
+    let mut scenario = trick_ramp_scenario();
+    scenario.drive_off_the_trick_ramp();
+    let mut tricked = false;
+    let mut ticks = 0;
+    while scenario.wheels().wheels_on_ground() == 0 {
+        ticks += 1;
+        assert!(ticks < 200);
+        scenario.tick(FULL_THROTTLE);
+        tricked |= scenario.state() == KartState::Trick;
+    }
+    assert!(!tricked);
+    scenario.run(1.0, FULL_THROTTLE);
+    assert!(!scenario.boost().is_active(), "no trick, no boost");
+
+    // Too late: 14 ticks after the takeoff, the window (12 ticks) is closed.
+    let mut scenario = trick_ramp_scenario();
+    let window = (scenario.tuning().trick_window * TICKS_PER_SECOND).round() as u32;
+    assert_eq!(window, 12);
+    scenario.drive_off_the_trick_ramp();
+    scenario.run(12.0 / TICKS_PER_SECOND, FULL_THROTTLE);
+    assert_eq!(scenario.tricks().ticks_since_takeoff(), Some(13));
+    scenario.tick(KartInput {
+        jump_drift: true,
+        ..FULL_THROTTLE
+    });
+    assert_ne!(scenario.state(), KartState::Trick);
+    assert!(!matches!(scenario.state(), KartState::Hop { .. }));
+    let (_, boosted) = scenario.until_landing(FULL_THROTTLE);
+    assert!(!boosted);
+    scenario.run(1.0, FULL_THROTTLE);
+    assert!(!scenario.boost().is_active());
+}
+
+/// Issue #13: pressing just before the lip, still on the ramp, does not hop off the ramp: the
+/// trick starts on the first tick in the air.
+#[test]
+fn pressing_on_the_lip_of_the_ramp_starts_the_trick_at_the_takeoff() {
+    // Same run without pressing: when the kart takes off.
+    let takeoff = trick_ramp_scenario().drive_off_the_trick_ramp();
+    let mut scenario = trick_ramp_scenario();
+    // Pressed 4 ticks before the first tick in the air (on the ramp), then held.
+    scenario.run((takeoff - 4) as f32 / TICKS_PER_SECOND, FULL_THROTTLE);
+    assert!(scenario.tricks().on_ramp(), "not on the ramp yet");
+    let held = KartInput {
+        jump_drift: true,
+        ..FULL_THROTTLE
+    };
+    for _ in 0..3 {
+        scenario.tick(held);
+        assert_eq!(scenario.state(), KartState::Grounded, "no hop on the ramp");
+    }
+    scenario.tick(held);
+    assert_eq!(scenario.tricks().ticks_since_takeoff(), Some(1));
+    assert_eq!(scenario.state(), KartState::Trick);
+    scenario.until_landing(FULL_THROTTLE);
+    assert!(scenario.boost().is_active());
+}
+
+/// Issue #13 acceptance: right behind a kart at constant speed, the slipstream gauge charges
+/// and gives a 1 s boost after 1.2 s (GD § 6); the kart in front gets nothing.
+#[test]
+fn slipstream_behind_a_kart_at_constant_speed_boosts_after_1_2_s() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let tuning = scenario.tuning();
+    // 4 m ahead: the kart looks down -Z.
+    let leader = scenario.spawn_other_kart(Vec3::new(0.0, 0.55, -4.0));
+    scenario.run(0.5, KartInput::default());
+    // Both at top speed, full throttle: constant speed, constant gap.
+    let cruise = Vec3::NEG_Z * tuning.max_speed;
+    for kart in [scenario.kart, leader] {
+        let world = scenario.app.world_mut();
+        world.get_mut::<Velocity>(kart).unwrap().linear = cruise;
+        *world.get_mut::<KartInput>(kart).unwrap() = FULL_THROTTLE;
+    }
+    let mut boosted_at = None;
+    for tick in 1..=90 {
+        scenario.tick(FULL_THROTTLE);
+        let world = scenario.app.world();
+        assert!(!world.get::<Boost>(leader).unwrap().is_active());
+        assert!(!world.get::<Slipstream>(leader).unwrap().charging);
+        if scenario.boost().is_active() {
+            boosted_at = Some(tick);
+            break;
+        }
+        assert!(scenario.slipstream().charging, "tick {tick}");
+        let gap =
+            world.get::<Transform>(leader).unwrap().translation - scenario.transform().translation;
+        assert!((gap.length() - 4.0).abs() < 0.1, "gap {gap}");
+    }
+    // 1.2 s = 72 ticks.
+    assert_eq!(boosted_at, Some(72));
+    let boost = scenario.boost();
+    assert_eq!(boost.strength, tuning.slipstream_boost_strength);
+    assert!((boost.remaining - tuning.slipstream_boost_duration).abs() < 1e-5);
+    assert_eq!(scenario.slipstream().charge, 0.0, "the gauge starts again");
+}
+
+/// Issue #13: below 60 % of its top speed, a kart right behind another does not charge.
+#[test]
+fn no_slipstream_when_too_slow() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let tuning = scenario.tuning();
+    let leader = scenario.spawn_other_kart(Vec3::new(0.0, 0.55, -4.0));
+    scenario.run(0.5, KartInput::default());
+    let slow = Vec3::NEG_Z * tuning.max_speed * 0.5;
+    let coast = KartInput::default();
+    for kart in [scenario.kart, leader] {
+        let world = scenario.app.world_mut();
+        world.get_mut::<Velocity>(kart).unwrap().linear = slow;
+        *world.get_mut::<KartInput>(kart).unwrap() = coast;
+    }
+    // Coasting from half speed, 4 m behind: never fast enough.
+    scenario.run_with(2.0, coast, |s| {
+        assert!(!s.slipstream().charging);
+        assert!(!s.boost().is_active());
+    });
+}
+
+/// Issue #13: rolling over a boost pad gives a boost that lasts about 1 s after the pad
+/// (GD § 2); driving past it, beside it, gives nothing.
+/// A flat slab with a boost pad 30 m ahead of the kart, `x` meters to its right.
+fn pad_arena(commands: &mut Commands, x: f32) {
+    spawn_static_box(
+        commands,
+        Transform::from_xyz(0.0, -0.5, 0.0),
+        Vec3::new(500.0, 0.5, 500.0),
+        Surface::Road,
+        0.0,
+    );
+    commands.spawn((
+        Transform::from_xyz(x, 0.03, -30.0),
+        BoostPad {
+            half_size: BOOST_PAD_SIZE / 2.0,
+        },
+    ));
+}
+
+#[test]
+fn a_boost_pad_gives_a_boost_of_about_one_second() {
+    let mut scenario = Scenario::new(|commands| pad_arena(commands, 0.0));
+    let tuning = scenario.tuning();
+    let max = tuning.max_speed;
+    let mut on_pad_ticks = 0;
+    let mut after_pad_ticks = 0;
+    let mut top = 0.0f32;
+    for _ in 0..(4.0 * TICKS_PER_SECOND) as usize {
+        scenario.tick(FULL_THROTTLE);
+        let boost = scenario.boost();
+        top = top.max(scenario.forward_speed());
+        if (boost.remaining - tuning.boost_pad_duration).abs() < 1e-5 {
+            // Refreshed this tick: a wheel is on the pad.
+            assert_eq!(boost.strength, tuning.boost_pad_strength);
+            on_pad_ticks += 1;
+            after_pad_ticks = 0;
+        } else if boost.is_active() {
+            after_pad_ticks += 1;
+        }
+    }
+    assert!(
+        (3..20).contains(&on_pad_ticks),
+        "{on_pad_ticks} ticks on the 4 m pad"
+    );
+    // About 1 s after the last tick on the pad (60 ticks; the last one counted on the pad).
+    assert!((58..=60).contains(&after_pad_ticks), "{after_pad_ticks}");
+    assert!(top > 1.1 * max, "top speed {top} (max {max})");
+
+    // Beside the pad (4 m to the right; the pad is 3 m wide): nothing.
+    let mut scenario = Scenario::new(|commands| pad_arena(commands, 4.0));
+    scenario.run_with(4.0, FULL_THROTTLE, |s| assert!(!s.boost().is_active()));
+    assert!(scenario.transform().translation.z < -40.0, "drove past it");
+}
+
+/// Issue #13: a stalled engine (rocket start pressed too early) keeps the kart still for its
+/// duration, whatever the driver does, then it drives off.
+#[test]
+fn a_stalled_engine_keeps_the_kart_still_then_lets_it_go() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let start = scenario.transform().translation;
+    let stall = scenario.tuning().rocket_start_stall;
+    scenario
+        .app
+        .world_mut()
+        .get_mut::<Stall>(scenario.kart)
+        .unwrap()
+        .remaining = stall;
+    let pressing = KartInput {
+        jump_drift: true,
+        ..FULL_THROTTLE
+    };
+    let mut still_ticks = 0;
+    while scenario
+        .app
+        .world()
+        .get::<Stall>(scenario.kart)
+        .unwrap()
+        .is_active()
+    {
+        scenario.tick(pressing);
+        still_ticks += 1;
+        assert!(still_ticks <= 61);
+        let moved = (scenario.transform().translation - start)
+            .with_y(0.0)
+            .length();
+        // (The last tick may already push off: the stall ends at the start of a tick.)
+        assert!(moved < 0.02, "moved {moved} m while stalled");
+        assert_eq!(
+            scenario.state(),
+            KartState::Grounded,
+            "no hop while stalled"
+        );
+    }
+    // Set between two ticks, the stall is counted down before the first one drives: 59
+    // stalled ticks here (on GO, the race sets it after the countdown: 60).
+    assert_eq!(still_ticks, 60, "the 60th tick already drives");
+    scenario.run(0.5, FULL_THROTTLE);
+    assert!(
+        scenario.forward_speed() > 8.0,
+        "{}",
+        scenario.forward_speed()
+    );
 }

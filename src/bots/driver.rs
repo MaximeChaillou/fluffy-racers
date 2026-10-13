@@ -16,7 +16,10 @@
 //!    sparks). In the drift it feathers the stick (inward / outward each tick) to follow its
 //!    lane while charging as fast as the curve allows, and it releases when the turn ends, when
 //!    it is about to hit a wall or when it gets too slow;
-//! 6. backs up when it is stuck against something.
+//! 6. backs up when it is stuck against something;
+//! 7. driving techniques (issue #13): accelerates a little after the "2" of the countdown for a
+//!    rocket start (never before: no stall), and presses jump/drift right after leaving a trick
+//!    ramp for a trick, both with its difficulty's skill.
 
 use bevy::prelude::*;
 
@@ -76,6 +79,8 @@ const WIDE_ROOM: f32 = 1.5;
 const WIDE_MIN_SPEED: f32 = 12.0;
 /// Karts further apart than this vertically do not see each other (ramp, raised turn) (m).
 const NEIGHBOUR_HEIGHT: f32 = 3.0;
+/// Mixed into a bot's seed for its technique draws (rocket start, tricks).
+const TECHNIQUE_SEED: u64 = 0x7EC4_1C0E_5EED_0013;
 
 /// Another kart, as the bot sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,6 +107,11 @@ pub struct Senses<'a> {
     pub speed_scale: f32,
     /// The race has started (or there is no race): the bot may drive.
     pub racing: bool,
+    /// Seconds since the "2" of the countdown, before GO (`None` otherwise): for the rocket
+    /// start (GD § 4).
+    pub since_two: Option<f32>,
+    /// A press of jump/drift now would start a trick: the kart just left a trick ramp (GD § 5).
+    pub trick_window: bool,
     /// Tick duration (s).
     pub dt: f32,
     /// Every kart, the bot's own included.
@@ -162,6 +172,14 @@ pub struct BotBrain {
     last_jump: bool,
     slow_ticks: u32,
     reverse_ticks: u32,
+    /// Draws for the driving techniques (issue #13), apart from the main generator so that they
+    /// do not shift the bot's other choices.
+    technique_rng: BotRng,
+    /// When it accelerates after the "2" for this start (s), drawn once per start.
+    start_delay: Option<f32>,
+    /// Whether it goes for a trick off the ramp it just left (drawn once per jump); `Some(false)`
+    /// also once it pressed.
+    trick_roll: Option<bool>,
 }
 
 impl BotBrain {
@@ -194,6 +212,9 @@ impl BotBrain {
             last_jump: false,
             slow_ticks: 0,
             reverse_ticks: 0,
+            technique_rng: BotRng::new(seed ^ TECHNIQUE_SEED),
+            start_delay: None,
+            trick_roll: None,
         }
     }
 
@@ -438,8 +459,27 @@ pub fn drive(
     brain.lateral = here.lateral;
     if !senses.racing {
         brain.settle();
-        return KartInput::default();
+        // Rocket start (GD § 4): accelerate a little after the "2", never before it.
+        let Some(since_two) = senses.since_two else {
+            brain.start_delay = None;
+            return KartInput::default();
+        };
+        let delay = match brain.start_delay {
+            Some(delay) => delay,
+            None => {
+                let delay = brain
+                    .technique_rng
+                    .range(skill.start_delay_min, skill.start_delay_max);
+                brain.start_delay = Some(delay);
+                delay
+            }
+        };
+        return KartInput {
+            throttle: if since_two >= delay { 1.0 } else { 0.0 },
+            ..default()
+        };
     }
+    brain.start_delay = None;
 
     let dt = senses.dt.max(1e-4);
     let speed = senses.velocity.dot(senses.forward);
@@ -778,6 +818,20 @@ pub fn drive(
         brain.slow_ticks = 0;
     }
 
+    // --- Trick (GD § 5): one press right after leaving a trick ramp, when not drifting.
+    if senses.trick_window {
+        if brain.trick_roll.is_none() {
+            brain.trick_roll = Some(brain.technique_rng.chance(skill.trick_chance));
+        }
+        let free = matches!(brain.drift, DriftPlan::Idle | DriftPlan::Cooldown { .. });
+        if brain.trick_roll == Some(true) && free && !jump && !brain.last_jump {
+            jump = true;
+            brain.trick_roll = Some(false);
+        }
+    } else {
+        brain.trick_roll = None;
+    }
+
     brain.last_jump = jump;
     KartInput {
         throttle,
@@ -1044,6 +1098,8 @@ mod tests {
             assisted: false,
             speed_scale: 1.0,
             racing: true,
+            since_two: None,
+            trick_window: false,
             dt: DT,
             neighbors,
         }
@@ -1253,6 +1309,79 @@ mod tests {
             drive(&mut brain, &skill, &t, &k, &line, &senses).throttle,
             1.0
         );
+    }
+
+    /// Issue #13: during the countdown a bot accelerates once its delay after the "2" is over
+    /// (drawn in its skill's range, never before the "2": no stall); Hard always gets the
+    /// perfect start.
+    #[test]
+    fn bots_go_for_the_rocket_start_after_the_two() {
+        let (_, line) = prairie_line();
+        let k = kart();
+        let t = BotTuning::default();
+        for difficulty in BotDifficulty::ALL {
+            let skill = *t.skill(difficulty);
+            for seed in 0..12 {
+                let mut brain = BotBrain::new(seed, &t);
+                let mut senses = senses_at(&line, -10.0, 2.0, 0.0, KartState::Grounded, &[]);
+                senses.racing = false;
+                // On the grid and during the "3": nothing.
+                assert_eq!(
+                    drive(&mut brain, &skill, &t, &k, &line, &senses),
+                    KartInput::default()
+                );
+                let mut first = None;
+                for tick in 0..120 {
+                    senses.since_two = Some(tick as f32 * DT);
+                    let input = drive(&mut brain, &skill, &t, &k, &line, &senses);
+                    assert_eq!(
+                        (input.brake, input.steer, input.jump_drift),
+                        (0.0, 0.0, false)
+                    );
+                    if input.throttle > 0.0 {
+                        first.get_or_insert(tick as f32 * DT);
+                    } else {
+                        assert!(first.is_none(), "it keeps the accelerator pressed");
+                    }
+                }
+                let first = first.expect("never accelerated");
+                assert!(
+                    first >= skill.start_delay_min - DT && first <= skill.start_delay_max + DT,
+                    "{difficulty:?}: {first} s"
+                );
+                if difficulty == BotDifficulty::Hard {
+                    assert!(first <= k.rocket_start_perfect, "{first}");
+                }
+            }
+        }
+    }
+
+    /// Issue #13: right after leaving a trick ramp, a bot presses jump/drift once (Hard always).
+    #[test]
+    fn bots_press_for_a_trick_off_the_ramp() {
+        let (_, line) = prairie_line();
+        let k = kart();
+        let t = BotTuning::default();
+        let skill = *t.skill(BotDifficulty::Hard);
+        assert_eq!(skill.trick_chance, 1.0);
+        let mut brain = BotBrain::new(3, &t);
+        let mut senses = senses_at(&line, 60.0, 0.0, 26.0, KartState::Grounded, &[]);
+        assert!(!drive(&mut brain, &skill, &t, &k, &line, &senses).jump_drift);
+        senses.trick_window = true;
+        senses.state = KartState::Airborne;
+        let presses: Vec<bool> = (0..8)
+            .map(|_| drive(&mut brain, &skill, &t, &k, &line, &senses).jump_drift)
+            .collect();
+        assert!(presses[0]);
+        assert!(
+            presses[1..].iter().all(|p| !p),
+            "one press only: {presses:?}"
+        );
+        // Never on Easy with no chance at all.
+        let mut never = *t.skill(BotDifficulty::Easy);
+        never.trick_chance = 0.0;
+        let mut brain = BotBrain::new(3, &t);
+        assert!(!drive(&mut brain, &never, &t, &k, &line, &senses).jump_drift);
     }
 
     #[test]

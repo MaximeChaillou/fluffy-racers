@@ -1,5 +1,5 @@
-//! Headless race scenarios (issue #5): the whole game (`GamePlugin`) on Prairie Pompon with
-//! `MinimalPlugins`, one fixed tick per `app.update()`.
+//! Headless race scenarios (issues #5 and #13): the whole game (`GamePlugin`) on Prairie Pompon
+//! with `MinimalPlugins`, one fixed tick per `app.update()`.
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -7,9 +7,13 @@ use bevy_rapier3d::prelude::Velocity;
 
 use super::*;
 use crate::TICK_HZ;
-use crate::kart::{DriftSide, KartState};
+use crate::kart::{
+    BoostFlame, DriftSide, KartState, KartTuning, Stall, StallSmoke, TrickTracker, flame_size,
+};
 use crate::tests::{app_on, follow_centerline, hold_keys, player};
-use crate::track::{Surface, TrackChoice, spawn_static_box};
+use crate::track::{
+    BoostPad, Surface, TrackChoice, TrackData, TrackHandle, TrickRamp, spawn_static_box,
+};
 use crate::ui::{HudText, ResultsScreen};
 
 /// The game on the test circuit, once the race exists.
@@ -147,9 +151,12 @@ fn the_countdown_holds_the_karts_then_go_releases_them() {
     // 1 s of grid + 3 s of countdown: GO is the 241st tick.
     assert_eq!(race(&app).flow.tick, RaceFlow::go_tick(&timings));
     assert_eq!(RaceFlow::go_tick(&timings), 241);
-    // The kart moved on the GO tick itself.
+    // Issue #13: the accelerator was held since the grid, before the "2": the engine stalls
+    // (GD § 4), the kart stays on the grid one more second. A kart pressing after the "2" (or
+    // not at all) leaves on the GO tick itself: see the rocket start tests below.
+    assert!(app.world().get::<Stall>(kart).unwrap().is_active());
     let speed = app.world().get::<Velocity>(kart).unwrap().linear.length();
-    assert!(speed > 0.1, "speed {speed} on GO");
+    assert!(speed < 0.2, "speed {speed} on GO, stalled");
     // HUD before anything happens: pole, alone, lap 1.
     assert_eq!(hud_text(&mut app, HudText::Rank), "1er");
     assert_eq!(hud_text(&mut app, HudText::RacerCount), "/ 1");
@@ -158,12 +165,21 @@ fn the_countdown_holds_the_karts_then_go_releases_them() {
         hud_text(&mut app, HudText::BestLap),
         "Meilleur tour -:--.--"
     );
-    // One second later the kart is well on its way.
+    // One second later the stall is over: the kart did not move meanwhile.
     for _ in 0..60 {
+        let moved = (transform(&app, kart).translation - grid.translation)
+            .with_y(0.0)
+            .length();
+        assert!(moved < 0.05, "moved {moved} m while stalled");
         app.update();
     }
     assert_eq!(hud_text(&mut app, HudText::Banner), "");
     assert_eq!(hud_text(&mut app, HudText::Chrono), "0:01.01");
+    assert!(!app.world().get::<Stall>(kart).unwrap().is_active());
+    // One more second: the kart is well on its way.
+    for _ in 0..60 {
+        app.update();
+    }
     let moved = transform(&app, kart).translation.distance(grid.translation);
     assert!(moved > 5.0, "{moved}");
 }
@@ -488,4 +504,246 @@ fn the_test_ground_has_no_race() {
     assert!(app.world().get::<crate::kart::SpawnPoint>(kart).is_some());
     let world = app.world_mut();
     assert_eq!(world.query::<&crate::ui::HudRoot>().iter(world).count(), 0);
+}
+
+// --- Issue #13: rocket start, the circuit's boost pads and trick ramp -----------------------------
+
+/// Runs the countdown with the accelerator first pressed `press` ticks after the "2" (negative:
+/// before it; `None`: never) and held, until GO (the first racing tick has run).
+fn start_pressing(app: &mut App, kart: Entity, press: Option<i64>) {
+    let two = RaceFlow::two_tick(&race(app).timings) as i64;
+    while !race(app).started() {
+        // The tick about to run.
+        let tick = race(app).flow.tick as i64 + 1;
+        let throttle = if press.is_some_and(|p| tick >= two + p) {
+            1.0
+        } else {
+            0.0
+        };
+        *app.world_mut().get_mut::<KartInput>(kart).unwrap() = KartInput {
+            throttle,
+            ..default()
+        };
+        app.update();
+        assert!(race(app).flow.tick < 600, "no GO");
+    }
+}
+
+/// Visible entities with the visual marker `T`.
+fn shown<T: Component>(app: &mut App) -> usize {
+    let world = app.world_mut();
+    world
+        .query_filtered::<&Visibility, With<T>>()
+        .iter(world)
+        .filter(|v| **v != Visibility::Hidden)
+        .count()
+}
+
+/// Issue #13 acceptance: accelerating 0.1 s, 0.6 s and 1.2 s after the "2" gives a rocket start
+/// boost of 2.5 s, of about 1.6 s, then none (GD § 4). The kart leaves on the GO tick every
+/// time; the exhaust flames are bigger for a better start.
+#[test]
+fn rocket_start_pressed_0_1_0_6_and_1_2_s_after_the_two() {
+    let tuning = KartTuning::default();
+    let mut flames = Vec::new();
+    let cases: [(f32, Option<f32>); 3] = [(0.1, Some(2.5)), (0.6, Some(1.567)), (1.2, None)];
+    for (seconds, expected) in cases {
+        let (mut app, kart) = race_app();
+        take_the_wheel(&mut app, kart);
+        let grid = transform(&app, kart).translation;
+        let press = (seconds as f64 * TICK_HZ).round() as i64;
+        start_pressing(&mut app, kart, Some(press));
+        assert_eq!(race(&app).flow.tick, RaceFlow::go_tick(&race(&app).timings));
+        let boost = *app.world().get::<Boost>(kart).unwrap();
+        assert!(!app.world().get::<Stall>(kart).unwrap().is_active());
+        match expected {
+            Some(duration) => {
+                assert!(
+                    (boost.remaining - duration).abs() < 0.01,
+                    "{seconds} s: {boost:?}"
+                );
+                assert_eq!(boost.strength, tuning.rocket_start_strength);
+            }
+            None => assert!(!boost.is_active(), "{seconds} s: {boost:?}"),
+        }
+        // It leaves on the GO tick itself.
+        let speed = app.world().get::<Velocity>(kart).unwrap().linear.length();
+        assert!(speed > 0.1, "{seconds} s: speed {speed} on GO");
+        // Exhaust flames during the boost only, sized by the start.
+        let flame_count = shown::<BoostFlame>(&mut app);
+        assert_eq!(flame_count, if expected.is_some() { 2 } else { 0 });
+        flames.push(flame_size(&tuning, &boost));
+        assert_eq!(shown::<StallSmoke>(&mut app), 0);
+        // The boost counts down normally and pushes past the top speed. (1.5 s only: further
+        // on, the kart would reach the boost pad of the start straight.)
+        let mut top = 0.0f32;
+        for tick in 1..=(1.5 * TICK_HZ) as usize {
+            app.update();
+            let velocity = app.world().get::<Velocity>(kart).unwrap().linear;
+            top = top.max(velocity.length());
+            let now = *app.world().get::<Boost>(kart).unwrap();
+            if let Some(duration) = expected {
+                let left = duration - tick as f32 / TICK_HZ as f32;
+                if left > 0.02 {
+                    assert!((now.remaining - left).abs() < 0.01, "{seconds} s: {now:?}");
+                }
+            } else {
+                assert!(!now.is_active(), "{seconds} s: {now:?}");
+            }
+        }
+        if expected.is_some() {
+            assert!(top > 1.15 * tuning.max_speed, "{seconds} s: top {top}");
+        } else {
+            assert!(top <= tuning.max_speed * 1.01, "{top}");
+        }
+        let moved = transform(&app, kart).translation.distance(grid);
+        assert!(moved > 15.0, "{seconds} s: {moved} m in 1.5 s");
+    }
+    assert!(flames[0] > flames[1] && flames[1] > flames[2], "{flames:?}");
+    assert_eq!(flames[2], 0.0);
+}
+
+/// Issue #13 acceptance: accelerating before the "2" stalls the engine: the kart stays still
+/// for 1 s after GO, with grey puffs at the exhaust, then drives off. Holding the accelerator
+/// from the very first tick on the grid does the same; never pressing is a normal start.
+#[test]
+fn accelerating_before_the_two_stalls_the_engine_for_one_second() {
+    for press in [Some(-30), Some(-1000), None] {
+        let (mut app, kart) = race_app();
+        take_the_wheel(&mut app, kart);
+        let grid = transform(&app, kart).translation;
+        start_pressing(&mut app, kart, press);
+        assert!(!app.world().get::<Boost>(kart).unwrap().is_active());
+        if press.is_none() {
+            // Never pressed: nothing special; it does not move without throttle.
+            assert!(!app.world().get::<Stall>(kart).unwrap().is_active());
+            assert_eq!(shown::<StallSmoke>(&mut app), 0);
+            continue;
+        }
+        let stall = *app.world().get::<Stall>(kart).unwrap();
+        assert!((stall.remaining - 1.0).abs() < 1e-5, "{press:?}: {stall:?}");
+        assert_eq!(shown::<StallSmoke>(&mut app), 2);
+        // Stalled ticks: GO, then every tick that still has the stall once it ran.
+        let mut stalled_ticks = 1;
+        loop {
+            let moved = (transform(&app, kart).translation - grid)
+                .with_y(0.0)
+                .length();
+            assert!(moved < 0.05, "{press:?}: moved {moved} m while stalled");
+            app.update();
+            if !app.world().get::<Stall>(kart).unwrap().is_active() {
+                break;
+            }
+            stalled_ticks += 1;
+            assert!(stalled_ticks < 100);
+        }
+        // GO plus 59 ticks: one second.
+        assert_eq!(stalled_ticks, 60, "{press:?}");
+        assert_eq!(shown::<StallSmoke>(&mut app), 0);
+        for _ in 0..60 {
+            app.update();
+        }
+        let moved = transform(&app, kart).translation.distance(grid);
+        assert!(moved > 5.0, "{press:?}: {moved} m");
+        assert!(!app.world().get::<Boost>(kart).unwrap().is_active());
+    }
+}
+
+/// Issue #13: the boost pads and trick ramp of the circuit file are on the track and work: the
+/// kart rolls over the start straight's pad and gets its boost; then the autopilot takes off
+/// from the trick ramp of the back straight, a press makes a trick and the landing gives the
+/// trick boost.
+#[test]
+fn the_circuit_boost_pads_and_trick_ramp_work() {
+    let (mut app, kart) = race_app();
+    take_the_wheel(&mut app, kart);
+    let tuning = KartTuning::default();
+    let handle = app.world().resource::<TrackHandle>().0.clone();
+    let data = app
+        .world()
+        .resource::<Assets<TrackData>>()
+        .get(&handle)
+        .unwrap()
+        .clone();
+    let world = app.world_mut();
+    let pads: Vec<Transform> = world
+        .query_filtered::<&Transform, With<BoostPad>>()
+        .iter(world)
+        .copied()
+        .collect();
+    assert_eq!(pads.len(), data.boost_pads.len());
+    assert!(pads.len() >= 3, "{} pads", pads.len());
+    let ramps = world
+        .query_filtered::<(), With<TrickRamp>>()
+        .iter(world)
+        .count();
+    assert_eq!(ramps, data.trick_ramps.len());
+
+    // The pad of the start straight: the closest one ahead of the grid.
+    until_go(&mut app);
+    let start = transform(&app, kart);
+    let pad = pads
+        .iter()
+        .filter(|p| (p.translation - start.translation).dot(*start.forward()) > 0.0)
+        .min_by(|a, b| {
+            let d = |p: &Transform| p.translation.distance(start.translation);
+            d(a).total_cmp(&d(b))
+        })
+        .copied()
+        .unwrap();
+    let mut on_pad = false;
+    for _ in 0..(6.0 * TICK_HZ) as usize {
+        let t = transform(&app, kart);
+        let to_pad = pad.translation - t.translation;
+        let angle = to_pad.dot(*t.right()).atan2(to_pad.dot(*t.forward()));
+        *app.world_mut().get_mut::<KartInput>(kart).unwrap() = KartInput {
+            throttle: 1.0,
+            steer: (angle * 3.0).clamp(-1.0, 1.0),
+            ..default()
+        };
+        app.update();
+        let boost = *app.world().get::<Boost>(kart).unwrap();
+        if (boost.remaining - tuning.boost_pad_duration).abs() < 1e-5 {
+            assert_eq!(boost.strength, tuning.boost_pad_strength);
+            on_pad = true;
+            break;
+        }
+        assert!(!boost.is_active(), "{boost:?}");
+    }
+    assert!(on_pad, "never boosted by the pad");
+
+    // The autopilot to the trick ramp; press jump/drift on the first tick in the air.
+    let layout = app.world().resource::<TrackLayout>().clone();
+    let mut ticks = 0;
+    while app
+        .world()
+        .get::<TrickTracker>(kart)
+        .unwrap()
+        .ticks_since_takeoff()
+        != Some(1)
+    {
+        ticks += 1;
+        assert!(
+            ticks < (40.0 * TICK_HZ) as u32,
+            "never took off from the ramp"
+        );
+        autopilot_tick(&mut app, kart);
+    }
+    let t = transform(&app, kart);
+    let speed = app.world().get::<Velocity>(kart).unwrap().linear.length();
+    let mut input = follow_centerline(&layout, &t, speed);
+    input.jump_drift = true;
+    *app.world_mut().get_mut::<KartInput>(kart).unwrap() = input;
+    app.update();
+    assert_eq!(state(&app, kart), KartState::Trick);
+    while state(&app, kart) == KartState::Trick {
+        ticks += 1;
+        assert!(ticks < (45.0 * TICK_HZ) as u32, "never landed");
+        autopilot_tick(&mut app, kart);
+    }
+    let boost = *app.world().get::<Boost>(kart).unwrap();
+    assert_eq!(state(&app, kart), KartState::Grounded);
+    assert_eq!(boost.strength, tuning.trick_boost_strength);
+    assert!((boost.remaining - tuning.trick_boost_duration).abs() < 1e-5);
+    assert!(!tow(&app, kart).is_carrying());
 }

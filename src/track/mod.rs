@@ -10,7 +10,7 @@ pub mod test_ground;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-pub use circuit::{BoostPadSpot, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp};
+pub use circuit::{BOOST_PAD_SIZE, BoostPad, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp};
 pub use data::{OffroadZone, TrackData};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
 

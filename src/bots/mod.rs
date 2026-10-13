@@ -10,7 +10,8 @@
 //! Three difficulties ([`BotDifficulty`]): trajectory precision, drift tier aimed for and
 //! anticipation of the turns, all in [`BotTuning`]. Each bot also has its own lane, pace and
 //! random choices from a deterministic generator seeded by its grid slot (variety, no single
-//! file, reproducible tests). Using items comes with the item system (issue #16).
+//! file, reproducible tests). They also try the rocket start and the tricks (issue #13), through
+//! their `KartInput` like a player. Using items comes with the item system (issue #16).
 
 mod driver;
 mod line;
@@ -28,9 +29,10 @@ pub use tuning::{BotDifficulty, BotSkill, BotTuning};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
+use crate::TICK_HZ;
 use crate::kart::{
     Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
-    MaxSpeedScale, PlayerKart, kart_body, spawn_kart_visual,
+    MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceProgress, Racer};
 use crate::track::TrackLayout;
@@ -184,17 +186,26 @@ fn drive_bots(
         &KartState,
         &KartAssists,
         &MaxSpeedScale,
+        &TrickTracker,
         &mut KartInput,
     )>,
 ) {
-    let racing = race.is_none_or(|race| race.started());
+    let racing = race.as_ref().is_none_or(|race| race.started());
+    // The countdown, for the rocket start: seconds since the "2", until GO.
+    let since_two = race
+        .as_ref()
+        .filter(|race| !race.started())
+        .and_then(|race| race.flow.ticks_since_two(&race.timings))
+        .map(|ticks| ticks as f32 / TICK_HZ as f32);
+    let trick_window = (kart_tuning.trick_window * TICK_HZ as f32).round() as u32;
     neighbors.clear();
     neighbors.extend(karts.iter().map(|(entity, transform, velocity)| Neighbor {
         entity,
         position: transform.translation,
         velocity: velocity.linear,
     }));
-    for (entity, bot, mut brain, transform, velocity, state, assists, scale, mut input) in &mut bots
+    for (entity, bot, mut brain, transform, velocity, state, assists, scale, tricks, mut input) in
+        &mut bots
     {
         let senses = Senses {
             entity,
@@ -206,6 +217,8 @@ fn drive_bots(
             assisted: assists.assisted_steering,
             speed_scale: scale.0,
             racing,
+            since_two,
+            trick_window: tricks.window_open(trick_window),
             dt: time.delta_secs(),
             neighbors: &neighbors,
         };

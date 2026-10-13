@@ -49,7 +49,7 @@ impl Boost {
     }
 }
 
-/// Driving state of a kart. Trick and hit states come with their issues
+/// Driving state of a kart. The hit state comes with the items (issue #16)
 /// (docs/ARCHITECTURE.md § « Le kart »). Transitions: `drift::step_state`.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub enum KartState {
@@ -68,6 +68,9 @@ pub enum KartState {
         charge: f32,
     },
     Airborne,
+    /// Doing a trick in the air after a trick ramp (GD § 5, issue #13, `trick.rs`): air control
+    /// like `Airborne`; the landing gives the trick boost.
+    Trick,
     /// Carried by the tow pelican (GD § 2, issue #5): the kart does not drive, its drift and
     /// charge are gone and the race rules move it. Only the race rules leave this state.
     Respawning,
