@@ -693,3 +693,27 @@ fn assisted_steering_charges_slower_and_never_reaches_purple() {
     let duration = scenario.tuning().mini_turbo_durations[MiniTurbo::Orange.index()];
     assert!((scenario.boost().remaining - duration).abs() < 1e-5);
 }
+
+/// Issue #6: the top speed multiplier of the bots' catch-up (`MaxSpeedScale`) scales the top
+/// speed, up and down.
+#[test]
+fn max_speed_scale_changes_the_top_speed() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let max = scenario.tuning().max_speed;
+    let set_scale = |scenario: &mut Scenario, scale: f32| {
+        scenario
+            .app
+            .world_mut()
+            .get_mut::<MaxSpeedScale>(scenario.kart)
+            .unwrap()
+            .0 = scale;
+    };
+    set_scale(&mut scenario, 1.03);
+    scenario.run(4.0, FULL_THROTTLE);
+    let fast = scenario.forward_speed();
+    assert!((fast - 1.03 * max).abs() < 0.05, "{fast} vs {}", 1.03 * max);
+    set_scale(&mut scenario, 0.97);
+    scenario.run(2.0, FULL_THROTTLE);
+    let slow = scenario.forward_speed();
+    assert!((slow - 0.97 * max).abs() < 0.05, "{slow} vs {}", 0.97 * max);
+}

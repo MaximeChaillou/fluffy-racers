@@ -1,5 +1,6 @@
 //! Fluffy Racers: game logic lives here so it can be unit-tested without a window.
 
+pub mod bots;
 pub mod camera;
 pub mod interpolation;
 pub mod kart;
@@ -11,15 +12,16 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
 use interpolation::InterpolationPlugin;
 use kart::{
-    KartInputPlugin, KartPlugin, KartTuning, KartVisualPlugin, PlayerKart, SpawnPoint, kart_body,
-    spawn_kart_visual,
+    KartInputPlugin, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin, PlayerKart,
+    SpawnPoint, kart_body, spawn_kart_visual,
 };
-use race::{PelicanPlugin, RacePlugin, Racer};
+use race::{PelicanPlugin, RaceGrid, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
-use ui::HudPlugin;
+use ui::{DebugOverlayPlugin, HudPlugin};
 
 /// Simulation tick rate (CLAUDE.md: the simulation runs in `FixedUpdate` at 60 Hz).
 pub const TICK_HZ: f64 = 60.0;
@@ -41,10 +43,12 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// The whole game: simulation, track, race rules, player kart, visuals, camera and HUD.
+/// The whole game: simulation, track, race rules, player kart, bots, visuals, camera, HUD and
+/// debug overlay.
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
-/// without a countdown. It only starts on a circuit, not on the flat test ground.
+/// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
+/// the bots (`BotPlugin`) fill the grid: 11 of them by default (`RaceGrid`), the player behind.
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -56,42 +60,47 @@ impl Plugin for GamePlugin {
                 RacePlugin,
                 KartInputPlugin,
                 KartVisualPlugin,
+                BotPlugin,
                 PelicanPlugin,
                 CameraPlugin,
                 HudPlugin,
+                DebugOverlayPlugin,
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
     }
 }
 
+/// Body color of the player's kart.
+pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
+
 /// Spawns the player's kart and camera once, when the track says where to start. On a circuit
-/// the player is a racer on the pole (bots fill the other slots with issue #6); on the test
-/// ground it just drives, and falls back to its spawn point.
+/// the player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without
+/// bots); on the test ground it just drives, and falls back to its spawn point.
 fn spawn_player(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
+    visuals: Res<KartVisualAssets>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     tuning: Res<KartTuning>,
     camera_tuning: Res<CameraTuning>,
     start: Res<PlayerStart>,
     circuit: Option<Res<TrackLayout>>,
+    grid: Res<RaceGrid>,
 ) {
-    let spawn = start.0;
+    let slot = circuit
+        .as_ref()
+        .map(|layout| grid.player_slot().min(layout.grid.len() - 1));
+    let spawn = match (&circuit, slot) {
+        (Some(layout), Some(slot)) => layout.grid[slot],
+        _ => start.0,
+    };
     let mut kart = commands.spawn((kart_body(&tuning, spawn), PlayerKart, CameraLean::default()));
-    if circuit.is_some() {
-        kart.insert(Racer::new(0));
-    } else {
-        kart.insert(SpawnPoint(spawn));
-    }
+    match slot {
+        Some(slot) => kart.insert(Racer::new(slot)),
+        None => kart.insert(SpawnPoint(spawn)),
+    };
     let body = kart.id();
-    let visual = spawn_kart_visual(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        body,
-        Color::srgb(0.95, 0.45, 0.65),
-    );
+    let visual = spawn_kart_visual(&mut commands, &visuals, &mut materials, body, PLAYER_COLOR);
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -131,9 +140,22 @@ mod tests {
     };
     use track::TrackChoice;
 
-    /// The whole game headless on `track`: player kart, keyboard input, one fixed tick per
-    /// update. Returns once the track is built and the player kart spawned.
+    /// The whole game headless on `track`, the player alone on the grid (the tests of #1 to #5):
+    /// player kart, keyboard input, one fixed tick per update. Returns once the track is built
+    /// and the player kart spawned.
     pub(crate) fn app_on(track: TrackChoice) -> App {
+        app_with_bots(track, 0)
+    }
+
+    /// Same with `bots` bots on the grid (issue #6; the game has 11).
+    pub(crate) fn app_with_bots(track: TrackChoice, bots: usize) -> App {
+        let mut app = game_app_unloaded(track, bots);
+        wait_for_the_player(&mut app);
+        app
+    }
+
+    /// The whole game headless on `track` with `bots` bots, before its first update.
+    pub(crate) fn game_app_unloaded(track: TrackChoice, bots: usize) -> App {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -144,9 +166,15 @@ mod tests {
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
         .insert_resource(track)
+        .insert_resource(RaceGrid { bots })
         .add_plugins(GamePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
-        // Circuit files load asynchronously.
+        app
+    }
+
+    /// Runs updates until the track is built and the player kart spawned (circuit files load
+    /// asynchronously).
+    pub(crate) fn wait_for_the_player(app: &mut App) {
         for _ in 0..2000 {
             app.update();
             let world = app.world_mut();
@@ -156,7 +184,7 @@ mod tests {
                 .next()
                 .is_some()
             {
-                return app;
+                return;
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }

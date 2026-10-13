@@ -57,39 +57,71 @@ pub struct KartVisualPlugin;
 
 impl Plugin for KartVisualPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            PostUpdate,
-            (place_wheels, slip_into_drifts, show_drift_sparks)
-                .after(InterpolationSystems)
-                .before(TransformSystems::Propagate),
-        );
+        app.add_systems(Startup, create_kart_visual_assets)
+            .add_systems(
+                PostUpdate,
+                (place_wheels, slip_into_drifts, show_drift_sparks)
+                    .after(InterpolationSystems)
+                    .before(TransformSystems::Propagate),
+            );
     }
 }
 
-/// Spawns the visual of the kart `body` (pink box, fluffy ball driver, 4 wheels, drift sparks).
+/// Meshes and materials shared by every kart visual: 12 karts on the grid reuse the same assets
+/// (fewer GPU resources, better batching); only the body color differs per kart.
+#[derive(Resource, Clone, Debug)]
+pub struct KartVisualAssets {
+    body: Handle<Mesh>,
+    driver: Handle<Mesh>,
+    ear: Handle<Mesh>,
+    wheel: Handle<Mesh>,
+    spark: Handle<Mesh>,
+    driver_material: Handle<StandardMaterial>,
+    wheel_material: Handle<StandardMaterial>,
+    spark_materials: [Handle<StandardMaterial>; 3],
+}
+
+impl KartVisualAssets {
+    pub fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
+        Self {
+            body: meshes.add(Cuboid::new(1.2, 0.45, 2.0)),
+            driver: meshes.add(Sphere::new(0.45)),
+            ear: meshes.add(Sphere::new(0.16)),
+            wheel: meshes.add(Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH)),
+            // A unit cube scaled per frame; unlit so the sparks glow in the shade too.
+            spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+            driver_material: materials.add(Color::srgb(0.98, 0.92, 0.80)),
+            wheel_material: materials.add(Color::srgb(0.15, 0.15, 0.18)),
+            spark_materials: SPARK_COLORS.map(|color| {
+                materials.add(StandardMaterial {
+                    base_color: color,
+                    unlit: true,
+                    ..default()
+                })
+            }),
+        }
+    }
+}
+
+fn create_kart_visual_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(KartVisualAssets::new(&mut meshes, &mut materials));
+}
+
+/// Spawns the visual of the kart `body` (colored box, fluffy ball driver, 4 wheels, drift
+/// sparks). Only the body material is new; everything else comes from `assets`.
 pub fn spawn_kart_visual(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
+    assets: &KartVisualAssets,
     materials: &mut Assets<StandardMaterial>,
     body: Entity,
     color: Color,
 ) -> Entity {
-    let body_mesh = meshes.add(Cuboid::new(1.2, 0.45, 2.0));
     let body_material = materials.add(color);
-    let driver_mesh = meshes.add(Sphere::new(0.45));
-    let driver_material = materials.add(Color::srgb(0.98, 0.92, 0.80));
-    let ear_mesh = meshes.add(Sphere::new(0.16));
-    let wheel_mesh = meshes.add(Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH));
-    let wheel_material = materials.add(Color::srgb(0.15, 0.15, 0.18));
-    // A unit cube scaled per frame; unlit so the sparks glow in the shade too.
-    let spark_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let spark_materials = SPARK_COLORS.map(|color| {
-        materials.add(StandardMaterial {
-            base_color: color,
-            unlit: true,
-            ..default()
-        })
-    });
+    let assets = assets.clone();
 
     commands
         .spawn((
@@ -105,27 +137,27 @@ pub fn spawn_kart_visual(
             ))
             .with_children(|pivot| {
                 pivot.spawn((
-                    Mesh3d(body_mesh),
+                    Mesh3d(assets.body.clone()),
                     MeshMaterial3d(body_material),
                     Transform::default(),
                 ));
                 pivot.spawn((
-                    Mesh3d(driver_mesh),
-                    MeshMaterial3d(driver_material.clone()),
+                    Mesh3d(assets.driver.clone()),
+                    MeshMaterial3d(assets.driver_material.clone()),
                     Transform::from_xyz(0.0, 0.6, 0.15),
                 ));
                 for x in [-0.25, 0.25] {
                     pivot.spawn((
-                        Mesh3d(ear_mesh.clone()),
-                        MeshMaterial3d(driver_material.clone()),
+                        Mesh3d(assets.ear.clone()),
+                        MeshMaterial3d(assets.driver_material.clone()),
                         Transform::from_xyz(x, 1.0, 0.15),
                     ));
                 }
                 for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
                     pivot.spawn((
                         WheelVisual(i),
-                        Mesh3d(wheel_mesh.clone()),
-                        MeshMaterial3d(wheel_material.clone()),
+                        Mesh3d(assets.wheel.clone()),
+                        MeshMaterial3d(assets.wheel_material.clone()),
                         Transform::from_xyz(anchor.x.signum() * WHEEL_X, anchor.y, anchor.z)
                             .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                     ));
@@ -137,8 +169,8 @@ pub fn spawn_kart_visual(
                                 tier,
                                 phase: x + tier.index() as f32 * 2.1,
                             },
-                            Mesh3d(spark_mesh.clone()),
-                            MeshMaterial3d(spark_materials[tier.index()].clone()),
+                            Mesh3d(assets.spark.clone()),
+                            MeshMaterial3d(assets.spark_materials[tier.index()].clone()),
                             Transform::from_translation(SPARK_OFFSET + Vec3::X * x),
                             Visibility::Hidden,
                         ));
