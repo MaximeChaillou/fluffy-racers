@@ -44,8 +44,8 @@ use bevy_rapier3d::prelude::{PhysicsSet, Velocity};
 use crate::TICK_HZ;
 use crate::interpolation::PhysicsPose;
 use crate::kart::{
-    Boost, Kart, KartInput, KartState, KartSystems, KartTuning, PlayerKart, Stall, StartOutcome,
-    StartPress, start_outcome,
+    Boost, Invincibility, Kart, KartInput, KartState, KartSystems, KartTuning, PlayerKart, Stall,
+    StartOutcome, StartPress, start_outcome,
 };
 use crate::track::TrackLayout;
 
@@ -286,6 +286,7 @@ fn advance_race(
             &mut KartState,
             &mut Boost,
             &mut PhysicsPose,
+            &mut Invincibility,
         ),
         With<Kart>,
     >,
@@ -313,6 +314,7 @@ fn advance_race(
         mut state,
         mut boost,
         mut pose,
+        mut invincibility,
     ) in &mut racers
     {
         let spawn = course.grid[racer.grid_slot.min(course.grid.len() - 1)];
@@ -320,6 +322,7 @@ fn advance_race(
         *velocity = Velocity::zero();
         *state = KartState::default();
         *boost = Boost::default();
+        invincibility.set_if_neq(Invincibility::default());
         pose.snap(spawn);
         progress.reset(&course, spawn.translation);
         tow.reset(spawn.translation);

@@ -49,8 +49,19 @@ impl Boost {
     }
 }
 
-/// Driving state of a kart. The hit state comes with the items (issue #16)
-/// (docs/ARCHITECTURE.md § « Le kart »). Transitions: `drift::step_state`.
+/// How a kart reacts to an item hit (GD § 8): a spin out for light items, a tumble for heavy
+/// ones.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum HitReaction {
+    /// Tête-à-queue (GD § 8: about 1 s): pelure, abeille.
+    #[default]
+    Spin,
+    /// Culbute (GD § 8: about 1.6 s): pelote (later the explosions and big items).
+    Tumble,
+}
+
+/// Driving state of a kart (docs/ARCHITECTURE.md § « Le kart »). Transitions:
+/// `drift::step_state`.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub enum KartState {
     #[default]
@@ -71,6 +82,15 @@ pub enum KartState {
     /// Doing a trick in the air after a trick ramp (GD § 5, issue #13, `trick.rs`): air control
     /// like `Airborne`; the landing gives the trick boost.
     Trick,
+    /// Hit by an item (GD § 8, issue #16): the kart spins out or tumbles for `duration` ticks
+    /// (`elapsed` so far), slowing down hard, deaf to its driver; its drift was lost. The item
+    /// rules put it in this state (the victim's own kart: docs/ARCHITECTURE.md); when it ends,
+    /// the kart is invincible for a while (its Invincibility stat, [`super::Invincibility`]).
+    Hit {
+        reaction: HitReaction,
+        elapsed: u32,
+        duration: u32,
+    },
     /// Carried by the tow pelican (GD § 2, issue #5): the kart does not drive, its drift and
     /// charge are gone and the race rules move it. Only the race rules leave this state.
     Respawning,
@@ -83,6 +103,20 @@ impl KartState {
             KartState::Drifting { charge, .. } => mini_turbo_tier(tuning, charge, assisted),
             _ => None,
         }
+    }
+
+    /// A kart hit by an item: `reaction` for `seconds` (at least one tick at `tick_hz`).
+    pub fn hit(reaction: HitReaction, seconds: f32, tick_hz: f32) -> Self {
+        KartState::Hit {
+            reaction,
+            elapsed: 0,
+            duration: ((seconds * tick_hz).round() as u32).max(1),
+        }
+    }
+
+    /// Whether the kart is spinning out or tumbling.
+    pub fn is_hit(&self) -> bool {
+        matches!(self, KartState::Hit { .. })
     }
 }
 
@@ -135,6 +169,16 @@ fn approach(value: f32, target: f32, max_delta: f32) -> f32 {
     } else {
         (value - max_delta).max(target)
     }
+}
+
+/// Forward speed after one tick of `dt` seconds of a kart hit by an item (`KartState::Hit`): it
+/// slows down toward a standstill, whatever its driver does, boost or not (GD § 8).
+pub fn hit_forward_speed(tuning: &KartTuning, speed: f32, reaction: HitReaction, dt: f32) -> f32 {
+    let decel = match reaction {
+        HitReaction::Spin => tuning.hit_spin_decel,
+        HitReaction::Tumble => tuning.hit_tumble_decel,
+    };
+    approach(speed, 0.0, decel.max(0.0) * dt)
 }
 
 /// Forward speed after one tick of `dt` seconds.
@@ -269,6 +313,36 @@ mod tests {
     use super::*;
 
     const DT: f32 = 1.0 / 60.0;
+
+    /// Issue #16: a kart hit by an item slows down hard toward a standstill, whatever its driver
+    /// does; a tumble harder than a spin; never past zero, backwards either.
+    #[test]
+    fn a_hit_kart_slows_down_to_a_standstill() {
+        let t = KartTuning::default();
+        let after = |reaction, seconds: f32| {
+            let mut speed = t.max_speed;
+            for _ in 0..(seconds / DT).round() as usize {
+                speed = hit_forward_speed(&t, speed, reaction, DT);
+            }
+            speed
+        };
+        let spin = after(HitReaction::Spin, 1.0);
+        let tumble = after(HitReaction::Tumble, 1.0);
+        assert!(spin > 0.0 && spin < 0.35 * t.max_speed, "{spin}");
+        assert!(tumble < spin, "{tumble} {spin}");
+        assert_eq!(after(HitReaction::Tumble, 1.6), 0.0);
+        assert_eq!(hit_forward_speed(&t, -3.0, HitReaction::Spin, 1.0), 0.0);
+        // The state lasts whole ticks, at least one.
+        assert_eq!(
+            KartState::hit(HitReaction::Tumble, 1.6, 60.0),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                elapsed: 0,
+                duration: 96
+            }
+        );
+        assert!(KartState::hit(HitReaction::Spin, 0.0, 60.0).is_hit());
+    }
 
     fn input(throttle: f32, brake: f32, steer: f32) -> KartInput {
         KartInput {

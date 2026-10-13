@@ -100,6 +100,34 @@ D'après MK8DX :
 - **La distribution dépend de la distance au leader, pas de la position** (MK8DX). Plus on est loin du 1er, plus les objets sont puissants. MK8 utilise 10 tranches de distance.
 - **Touché** : **tête-à-queue** (≈ 1 s, objets légers) ou **culbute** (≈ 1,6 s, explosions et gros objets). Ensuite, une **invincibilité** de 1 à 2 s, qui dépend de la stat Invincibilité (MK8DX : 1,5 s environ en Bataille).
 
+### Notre implémentation (phase 1, #16)
+
+Toutes les valeurs sont dans la Resource `ItemTuning` (panneau d'admin), la table de distribution dans `assets/data/items.ron`.
+
+- **Boîtes** : un kart qui touche une boîte la casse et tire un objet par emplacement libre (deux pour une double boîte). Les deux emplacements pris, la boîte casse sans rien donner (MK8DX). Elle revient 2 s plus tard. Un kart transporté par le pélican ou arrivé ne prend rien.
+- **Tirage** : décidé au moment de la boîte, selon la distance au leader à cet instant ; déterministe (graine de course, place de grille, nombre de tirages du kart).
+- **Utiliser** (bouton Objet) : à l'appui. Une **pelure** ou une **pelote** seule sort derrière le kart tant qu'on maintient le bouton, et part au relâchement. Une fois sortie, elle libère son emplacement : la réserve passe en main et on peut prendre une boîte en la traînant (MK8DX). Un **« x3 »** de pelures, pelotes ou abeilles sort au premier appui : les pelures en file derrière le kart, les pelotes et les abeilles en tournant autour. Il reste en main, et chaque appui suivant en lâche ou en lance une. Un **piment x3**, c'est trois appuis, trois boosts.
+- **Lancer derrière** : Objet avec la direction arrière, Bas/S (le frein) ou C (regarder derrière). À la manette, B ou X/Y. Une pelure est toujours posée derrière : le clavier n'a pas de touche « vers l'avant » libre, puisque Haut accélère.
+- **Pelure** : posée au sol derrière le kart. Celui qui roule dessus fait un tête-à-queue. Elle disparaît après 90 s.
+- **Pelote** : roule tout droit à 42 m/s, plus vite qu'un kart en boost. Elle rebondit 5 fois sur les murets, casse au suivant et disparaît après 8 s.
+- **Abeille** : elle vise le kart **juste devant** son lanceur au classement. Elle suit la ligne centrale de la piste au-dessus des karts, à 50 m/s, puis plonge sur sa cible à moins de 12 m. Le leader n'a pas de cible : son abeille plonge sur le premier kart qu'elle approche. Lancée derrière, elle roule tout droit et casse sur le premier muret.
+- **Abeille = tête-à-queue** : c'est un objet léger (piqûre). La culbute reste pour la pelote, objet lourd.
+- **Bouclier** : deux objets de karts différents qui se touchent cassent tous les deux. Une pelure ou une pelote traînée (ou un « x3 » sorti) arrête donc le premier objet qui l'atteint : projectile, ou pelure au sol. Les objets d'un même kart ne se touchent jamais. Sa propre pelote ou pelure peut toucher son lanceur 0,5 s après être partie ; sa propre abeille, jamais.
+- **Touché** : la victime décide (voir `docs/ARCHITECTURE.md`). Elle ne prend rien pendant un tête-à-queue ou une culbute, avec le pélican, après l'arrivée, ni pendant son invincibilité. Sinon :
+  - le kart freine fort sans écouter le pilote ;
+  - son drift, son boost et ce qu'il tenait dehors sont perdus ;
+  - il perd 3 croquettes (§ 7).
+
+  L'invincibilité (1 à 2 s selon la stat) commence à la fin du tête-à-queue ou de la culbute ; le kart clignote. Un objet qui touche un kart immunisé casse quand même.
+- **Piment** : boost de 1,2 s, +30 %. **Croquette dorée** : +2 croquettes (10 au plus), avec le mini-boost d'une croquette.
+- **Bots** : ils font un léger écart vers une boîte proche sur les lignes droites quand un emplacement est libre. Ils utilisent leurs objets avec un délai qui dépend de leur niveau (`BotSkill::item_delay`) :
+  - le piment en ligne droite ;
+  - la croquette dorée dès qu'elle sert ;
+  - la pelure ou la pelote traînée en bouclier, puis lâchée ;
+  - la pelote sur un kart en ligne de mire, ou derrière sur un kart qui suit de près ;
+  - l'abeille dès qu'un kart est devant au classement.
+- **Sans objets** : `ItemTuning::enabled` les retire de la course (ni boîtes, ni objets). Les tests de conduite des bots tournent ainsi.
+
 ### Nos objets (originaux)
 
 Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un nom et un visuel à nous.
@@ -186,7 +214,7 @@ Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osie
 | Freiner / reculer | Bas / S | B |
 | Diriger | Gauche/Droite, A/D, Q/D | Stick gauche |
 | Saut / drift / figure | Espace | RT |
-| Objet (maintenir = traîner) | Shift ou E | LB ou LT |
+| Objet (maintenir = traîner ; avec Bas/S ou C = lancer derrière) | Shift ou E | LB ou LT (avec B ou X/Y = derrière) |
 | Interaction (appui court = coup de patte, maintien = attraper, § 15) | X ou F | RB |
 | Regarder derrière | C | X / Y |
 | Pause | Échap | Start |

@@ -13,6 +13,9 @@
 //! start), grey puffs while the engine stalls, wind lines around the kart while its slipstream
 //! gauge charges, and a barrel roll of the body during a trick.
 //!
+//! Hit by an item (issue #16), the body spins out (two turns) or is thrown in a forward flip,
+//! then blinks while the kart is invincible.
+//!
 //! The driver (issue #15) is the character: a fluffy ball whose size shows its weight class and
 //! whose color and ears show the animal ([`DriverLook`]). Every character has one shared
 //! material; only the body material is the kart's own.
@@ -24,8 +27,10 @@ use bevy::transform::TransformSystems;
 use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
+use super::physics::HitReaction;
 use super::rocket::Stall;
 use super::slipstream::Slipstream;
+use super::stats::Invincibility;
 use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, StatEffects, WHEEL_ANCHORS};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 
@@ -72,6 +77,11 @@ const WIND_SPEED: f32 = 14.0;
 const WIND_THICKNESS: f32 = 0.035;
 /// A trick is a full barrel roll of the body taking this long (s).
 const TRICK_SPIN_SECONDS: f32 = 0.45;
+/// A kart tumbling after an item hit is thrown this high (m, visual only: the body stays on the
+/// ground).
+const TUMBLE_HEIGHT: f32 = 1.1;
+/// A kart invincible after an item hit blinks this many times per second (GD § 8).
+const INVINCIBLE_BLINK_HZ: f32 = 10.0;
 /// The driver's ball: radius at size 1 (m), and where it sits on the body (its bottom on the
 /// seat, whatever its size).
 const DRIVER_RADIUS: f32 = 0.45;
@@ -117,6 +127,8 @@ pub struct KartBodyPivot {
     pub spin: f32,
     /// The body was doing a trick on the last frame (a new trick starts a new roll).
     tricking: bool,
+    /// The body was spinning out or tumbling on the last frame (issue #16).
+    hit: bool,
 }
 
 /// An exhaust flame, shown during a boost (GD § 4 and 14).
@@ -301,6 +313,7 @@ pub fn spawn_kart_visual_with_driver(
                     slip: 0.0,
                     spin: TRICK_SPIN_SECONDS,
                     tricking: false,
+                    hit: false,
                 },
                 Transform::default(),
                 Visibility::default(),
@@ -410,21 +423,58 @@ fn place_wheels(
     }
 }
 
+/// The body's spin out or tumble after an item hit (issue #16), `t` from 0 (the hit) to 1 (the
+/// end): its rotation (two turns around its vertical axis for a spin out, a forward flip for a
+/// tumble) and how high it is thrown (m). Both start fast and settle.
+pub fn hit_pose(reaction: HitReaction, t: f32) -> (Quat, f32) {
+    let t = t.clamp(0.0, 1.0);
+    let settle = 1.0 - (1.0 - t) * (1.0 - t);
+    match reaction {
+        HitReaction::Spin => (Quat::from_rotation_y(-2.0 * TAU * settle), 0.0),
+        HitReaction::Tumble => (
+            Quat::from_rotation_x(-TAU * settle),
+            TUMBLE_HEIGHT * (std::f32::consts::PI * t).sin(),
+        ),
+    }
+}
+
+/// Whether a kart invincible after an item hit is shown at `now` (s): it blinks (GD § 8).
+pub fn shown_while_invincible(invincibility: &Invincibility, now: f32) -> bool {
+    !invincibility.is_active() || (now * INVINCIBLE_BLINK_HZ).fract() < 0.6
+}
+
 /// Turns the body by the drift's slip angle around the front axle (the simulation's
 /// `DriftMotion`, interpolated between the last two ticks like the pose); rolls the body once
-/// when a trick starts; shakes it while the engine stalls.
+/// when a trick starts; shakes it while the engine stalls; spins or flips it after an item hit
+/// and makes it blink while it is invincible (issue #16).
 fn pose_bodies(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
-    karts: Query<(&KartState, &DriftMotion, &Stall)>,
-    mut pivots: Query<(&mut KartBodyPivot, &mut Transform)>,
+    karts: Query<(&KartState, &DriftMotion, &Stall, &Invincibility)>,
+    mut pivots: Query<(&mut KartBodyPivot, &mut Transform, &mut Visibility)>,
 ) {
     let dt = time.delta_secs();
     let alpha = fixed_time.overstep_fraction();
     let now = time.elapsed_secs();
-    for (mut pivot, mut transform) in &mut pivots {
-        let Ok((state, motion, stall)) = karts.get(pivot.body) else {
+    for (mut pivot, mut transform, mut visibility) in &mut pivots {
+        let Ok((state, motion, stall, invincibility)) = karts.get(pivot.body) else {
             continue;
+        };
+        visibility.set_if_neq(if shown_while_invincible(invincibility, now) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        let hit = match *state {
+            KartState::Hit {
+                reaction,
+                elapsed,
+                duration,
+            } => Some(hit_pose(
+                reaction,
+                (elapsed as f32 + alpha) / duration.max(1) as f32,
+            )),
+            _ => None,
         };
         let slip = motion.interpolated_slip(alpha);
         // Trick: a new roll when it starts; a roll in progress finishes even after landing.
@@ -441,20 +491,28 @@ fn pose_bodies(
         } else {
             0.0
         };
-        if slip != pivot.slip || spin != pivot.spin || tricking != pivot.tricking {
+        let (hit_rotation, lift) = hit.unwrap_or((Quat::IDENTITY, 0.0));
+        let height = shake + lift;
+        if slip != pivot.slip
+            || spin != pivot.spin
+            || tricking != pivot.tricking
+            || hit.is_some()
+            || pivot.hit
+        {
             pivot.slip = slip;
             pivot.spin = spin;
             pivot.tricking = tricking;
+            pivot.hit = hit.is_some();
             let t = spin / TRICK_SPIN_SECONDS;
             // Ease in and out; a full turn is the same as none.
             let roll = TAU * t * t * (3.0 - 2.0 * t);
             // The roll turns the body around its center, the slip around the front axle.
             let (yaw, offset) = slip_pose(slip);
-            transform.rotation = yaw * Quat::from_rotation_z(roll);
-            transform.translation = offset.with_y(shake);
+            transform.rotation = hit_rotation * yaw * Quat::from_rotation_z(roll);
+            transform.translation = offset.with_y(height);
         }
-        if transform.translation.y != shake {
-            transform.translation.y = shake;
+        if transform.translation.y != height {
+            transform.translation.y = height;
         }
     }
 }

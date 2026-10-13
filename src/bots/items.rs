@@ -1,0 +1,458 @@
+//! A bot's items (GD § 8 and 12, issue #16): pure logic, no ECS. Unit-tested.
+//!
+//! The bot presses its item button through its `KartInput` (`item`, and `look_back` to throw
+//! backwards), like a player. Simple but believable:
+//! - it waits a little once an item is ready (`BotSkill::item_delay`: an Easy bot is slow to use
+//!   its items, a Hard one quick);
+//! - **piment**: on a straight (no turn close ahead), not already boosted;
+//! - **croquette dorée**: as soon as it has room for the croquettes;
+//! - **pelure**: dragged behind as a shield (`BotSkill::item_shield`: how often), then dropped
+//!   after a few seconds, or at once in front of a kart close behind;
+//! - **pelote**: thrown at a kart ahead in its sights (`BotSkill::item_aim`), backwards at a kart
+//!   close behind, dragged as a shield meanwhile; thrown ahead anyway after a while;
+//! - **abeille**: thrown as soon as a kart is ahead of it in the race (the leader keeps it, or
+//!   throws it back at a kart close behind);
+//! - an **"x3"**: out at once, then one at a time with the same rules (the abeilles about once a
+//!   second, the pelures behind it when a kart follows close or every few seconds).
+//!
+//! The bots also go for the item boxes a little (`driver.rs`, `Senses::item_box`).
+
+use super::rng::BotRng;
+use super::tuning::{BotSkill, BotTuning};
+use crate::items::ItemKind;
+
+/// Mixed into a bot's seed for its item draws: apart from its driving draws.
+const ITEM_SEED: u64 = 0x17E3_5EED_0016;
+
+/// What the bot knows about its items and the karts around this tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ItemSenses {
+    /// The item ready in its hand, and how many (not while its roulette spins).
+    pub hand: Option<(ItemKind, u8)>,
+    /// What it holds out: a dragged pelure or pelote, or an "x3" out (`ItemSlots::held_out`).
+    pub held_out: Option<(ItemKind, u8)>,
+    /// It drags one item behind (button held).
+    pub dragging: bool,
+    /// The closest kart ahead within `BotTuning::item_ahead_range`: distance (m) and angle off
+    /// the kart's heading (rad).
+    pub ahead: Option<(f32, f32)>,
+    /// The closest kart behind within `BotTuning::item_behind_range`: distance and angle off the
+    /// straight-back direction.
+    pub behind: Option<(f32, f32)>,
+    /// Its place in the race (1 = leader; 0 off a race).
+    pub rank: u32,
+    /// Croquettes held, and the most it can hold.
+    pub croquettes: u8,
+    pub max_croquettes: u8,
+    /// Straight track ahead before the next turn (m).
+    pub straight: f32,
+    /// Its kart is boosted.
+    pub boosting: bool,
+    /// It may use items (racing, not spinning or towed).
+    pub can_act: bool,
+    /// Tick duration (s).
+    pub dt: f32,
+}
+
+/// The item button the bot presses this tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItemButtons {
+    /// `KartInput::item`.
+    pub item: bool,
+    /// `KartInput::look_back`: throws backwards.
+    pub back: bool,
+}
+
+/// A bot's memory of its items between ticks.
+#[derive(bevy::prelude::Component, Clone, Debug)]
+pub struct BotItemBrain {
+    rng: BotRng,
+    /// How long the item in its hand has been ready (s).
+    pub ready_for: f32,
+    /// The item it waited for (a new one restarts `ready_for`).
+    waiting_for: Option<(ItemKind, u8)>,
+    /// Keeps the dragged item behind this long more (s).
+    pub drag_left: f32,
+    /// Next shot of an "x3" in this long (s).
+    pub next_shot: f32,
+    /// The button last tick: a press needs it released first.
+    last: ItemButtons,
+}
+
+impl BotItemBrain {
+    /// A fresh bot: `seed` is its bot seed (`bots::bot_seed`).
+    pub fn new(seed: u64) -> Self {
+        Self {
+            rng: BotRng::new(seed ^ ITEM_SEED),
+            ready_for: 0.0,
+            waiting_for: None,
+            drag_left: 0.0,
+            next_shot: 0.0,
+            last: ItemButtons::default(),
+        }
+    }
+
+    /// A press this tick (the button down after a tick up), `back` to throw backwards.
+    fn tap(&self, back: bool) -> ItemButtons {
+        if self.last.item {
+            ItemButtons::default()
+        } else {
+            ItemButtons { item: true, back }
+        }
+    }
+}
+
+/// Whether a kart is in its sights ahead: close enough, within `cone` of its heading.
+fn in_sights(ahead: Option<(f32, f32)>, cone: f32) -> bool {
+    ahead.is_some_and(|(_, angle)| angle.abs() <= cone)
+}
+
+/// Whether a kart follows close behind, right in its wake.
+fn followed_close(behind: Option<(f32, f32)>) -> bool {
+    behind.is_some_and(|(_, angle)| angle.abs() <= 0.35)
+}
+
+/// One tick of the bot's item button.
+pub fn item_buttons(
+    brain: &mut BotItemBrain,
+    skill: &BotSkill,
+    tuning: &BotTuning,
+    senses: &ItemSenses,
+) -> ItemButtons {
+    let buttons = decide(brain, skill, tuning, senses);
+    brain.last = buttons;
+    buttons
+}
+
+fn decide(
+    brain: &mut BotItemBrain,
+    skill: &BotSkill,
+    tuning: &BotTuning,
+    senses: &ItemSenses,
+) -> ItemButtons {
+    let dt = senses.dt;
+    if !senses.can_act {
+        brain.ready_for = 0.0;
+        brain.drag_left = 0.0;
+        return ItemButtons::default();
+    }
+    brain.next_shot = (brain.next_shot - dt).max(0.0);
+
+    // Dragging a pelure or pelote: hold it, then let it go (at a kart behind, at a kart in its
+    // sights, or when the time is up).
+    if senses.dragging {
+        brain.drag_left -= dt;
+        let pelote = senses
+            .held_out
+            .is_some_and(|(item, _)| item == ItemKind::Pelote);
+        let back = followed_close(senses.behind);
+        let release =
+            back || brain.drag_left <= 0.0 || (pelote && in_sights(senses.ahead, skill.item_aim));
+        return if release {
+            ItemButtons {
+                item: false,
+                back: back && pelote,
+            }
+        } else {
+            ItemButtons {
+                item: true,
+                back: false,
+            }
+        };
+    }
+
+    // An "x3" out: one at a time.
+    if let Some((item, _)) = senses.held_out {
+        if brain.next_shot > 0.0 {
+            return ItemButtons::default();
+        }
+        let shot = match item {
+            ItemKind::Pelote if in_sights(senses.ahead, skill.item_aim) => Some(false),
+            ItemKind::Pelote | ItemKind::Abeille if followed_close(senses.behind) => Some(true),
+            ItemKind::Abeille if senses.rank > 1 => Some(false),
+            ItemKind::Pelure if followed_close(senses.behind) => Some(false),
+            ItemKind::Pelure => {
+                (brain.rng.chance(dt / tuning.item_drop_period.max(dt))).then_some(false)
+            }
+            _ => None,
+        };
+        return match shot {
+            Some(back) => {
+                let buttons = brain.tap(back);
+                if buttons.item {
+                    brain.next_shot = tuning.item_shot_period;
+                }
+                buttons
+            }
+            None => ItemButtons::default(),
+        };
+    }
+
+    // An item ready in the hand: after a moment's thought.
+    let Some((item, count)) = senses.hand else {
+        brain.waiting_for = None;
+        brain.ready_for = 0.0;
+        return ItemButtons::default();
+    };
+    if brain.waiting_for != Some((item, count)) {
+        brain.waiting_for = Some((item, count));
+        brain.ready_for = 0.0;
+    }
+    brain.ready_for += dt;
+    if brain.ready_for < skill.item_delay {
+        return ItemButtons::default();
+    }
+    let patience_over = brain.ready_for >= skill.item_delay + tuning.item_patience;
+    let behind = followed_close(senses.behind);
+    let press = match (item, count) {
+        (ItemKind::CroquetteDoree, _) => {
+            (senses.croquettes < senses.max_croquettes || patience_over).then_some(false)
+        }
+        (ItemKind::Piment, _) => {
+            ((senses.straight >= tuning.item_piment_straight && !senses.boosting) || patience_over)
+                .then_some(false)
+        }
+        // An "x3" comes out at once.
+        (ItemKind::Pelure | ItemKind::Pelote | ItemKind::Abeille, 2..) => Some(false),
+        (ItemKind::Abeille, _) if senses.rank > 1 => Some(false),
+        (ItemKind::Abeille, _) if behind => Some(true),
+        (ItemKind::Abeille, _) => patience_over.then_some(false),
+        (ItemKind::Pelote, _) if in_sights(senses.ahead, skill.item_aim) => Some(false),
+        (ItemKind::Pelote, _) if behind => Some(true),
+        (ItemKind::Pelure | ItemKind::Pelote, _) => {
+            // Dragged as a shield (held), or dropped / thrown ahead after a while.
+            if brain.rng.chance(skill.item_shield) {
+                brain.drag_left = brain
+                    .rng
+                    .range(tuning.item_shield_time[0], tuning.item_shield_time[1]);
+                return brain.tap(false);
+            }
+            (item == ItemKind::Pelure || patience_over).then_some(false)
+        }
+    };
+    match press {
+        Some(back) => brain.tap(back),
+        None => ItemButtons::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bots::BotDifficulty;
+
+    const DT: f32 = 1.0 / 60.0;
+
+    fn senses(hand: Option<(ItemKind, u8)>) -> ItemSenses {
+        ItemSenses {
+            hand,
+            rank: 5,
+            max_croquettes: 10,
+            straight: 100.0,
+            can_act: true,
+            dt: DT,
+            ..Default::default()
+        }
+    }
+
+    /// Runs `ticks` ticks with `senses`; the ticks the button went down (a press) and how.
+    fn run(
+        brain: &mut BotItemBrain,
+        skill: &BotSkill,
+        tuning: &BotTuning,
+        senses: &ItemSenses,
+        ticks: usize,
+    ) -> Vec<(usize, ItemButtons)> {
+        let mut presses = Vec::new();
+        let mut last = false;
+        for tick in 0..ticks {
+            let buttons = item_buttons(brain, skill, tuning, senses);
+            if buttons.item && !last {
+                presses.push((tick, buttons));
+            }
+            last = buttons.item;
+        }
+        presses
+    }
+
+    /// The first press within `ticks` ticks (the kart would then change: the test stops there).
+    fn first_press(
+        brain: &mut BotItemBrain,
+        skill: &BotSkill,
+        tuning: &BotTuning,
+        senses: &ItemSenses,
+        ticks: usize,
+    ) -> Option<(usize, ItemButtons)> {
+        (0..ticks).find_map(|tick| {
+            let buttons = item_buttons(brain, skill, tuning, senses);
+            buttons.item.then_some((tick, buttons))
+        })
+    }
+
+    /// A bot thinks a moment before using an item: an Easy bot longer than a Hard one.
+    #[test]
+    fn harder_bots_use_their_items_sooner() {
+        let tuning = BotTuning::default();
+        let first_use = |difficulty: BotDifficulty| {
+            let mut brain = BotItemBrain::new(1);
+            first_press(
+                &mut brain,
+                tuning.skill(difficulty),
+                &tuning,
+                &senses(Some((ItemKind::Piment, 1))),
+                600,
+            )
+            .map(|(tick, _)| tick)
+        };
+        let (easy, normal, hard) = (
+            first_use(BotDifficulty::Easy).unwrap(),
+            first_use(BotDifficulty::Normal).unwrap(),
+            first_use(BotDifficulty::Hard).unwrap(),
+        );
+        assert!(hard < normal && normal < easy, "{hard} {normal} {easy}");
+    }
+
+    /// The piment on a straight, not on the way into a turn, and not on top of a boost (unless
+    /// it waited too long); a croquette dorée as soon as there is room for it.
+    #[test]
+    fn a_piment_on_a_straight_a_croquette_doree_when_there_is_room() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Hard);
+        let mut turn = senses(Some((ItemKind::Piment, 1)));
+        turn.straight = 10.0;
+        let ticks = ((skill.item_delay + tuning.item_patience) / DT) as usize - 2;
+        let press = |senses: &ItemSenses| {
+            first_press(&mut BotItemBrain::new(2), skill, &tuning, senses, ticks).is_some()
+        };
+        assert!(!press(&turn));
+        let mut boosted = senses(Some((ItemKind::Piment, 1)));
+        boosted.boosting = true;
+        assert!(!press(&boosted));
+        assert!(press(&senses(Some((ItemKind::Piment, 1)))));
+        let mut full = senses(Some((ItemKind::CroquetteDoree, 1)));
+        full.croquettes = 10;
+        assert!(!press(&full));
+        full.croquettes = 7;
+        assert!(press(&full));
+    }
+
+    /// A pelote goes at a kart in its sights ahead, backwards at a kart close behind; an abeille
+    /// as soon as a kart is ahead in the race, and the leader throws it back at a follower.
+    #[test]
+    fn projectiles_go_at_a_kart_ahead_or_back_at_a_follower() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Normal);
+        let ticks = (skill.item_delay / DT) as usize + 5;
+        let press = |senses: &ItemSenses, seed| {
+            first_press(&mut BotItemBrain::new(seed), skill, &tuning, senses, ticks)
+                .map(|(_, buttons)| buttons)
+        };
+        let mut aimed = senses(Some((ItemKind::Pelote, 1)));
+        aimed.ahead = Some((15.0, 0.02));
+        assert_eq!(
+            press(&aimed, 3),
+            Some(ItemButtons {
+                item: true,
+                back: false
+            })
+        );
+        let mut chased = senses(Some((ItemKind::Pelote, 1)));
+        chased.behind = Some((6.0, 0.1));
+        assert_eq!(
+            press(&chased, 3),
+            Some(ItemButtons {
+                item: true,
+                back: true
+            })
+        );
+
+        let bee = senses(Some((ItemKind::Abeille, 1)));
+        assert_eq!(
+            press(&bee, 4),
+            Some(ItemButtons {
+                item: true,
+                back: false
+            })
+        );
+        let mut leader = senses(Some((ItemKind::Abeille, 1)));
+        leader.rank = 1;
+        assert_eq!(press(&leader, 4), None);
+        leader.behind = Some((5.0, -0.2));
+        assert_eq!(
+            press(&leader, 4),
+            Some(ItemButtons {
+                item: true,
+                back: true
+            })
+        );
+    }
+
+    /// A pelure dragged as a shield is held, then dropped after a while, or at once when a kart
+    /// follows close; a pelote dragged goes at a kart that comes into its sights.
+    #[test]
+    fn a_shield_is_held_then_let_go() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Hard);
+        assert!(skill.item_shield > 0.5);
+        // Find a seed that shields (Hard: most of the time): pressed, and kept down.
+        let ticks = (skill.item_delay / DT) as usize + 3;
+        let mut brain = (0..20)
+            .map(BotItemBrain::new)
+            .find_map(|mut b| {
+                let pelure = senses(Some((ItemKind::Pelure, 1)));
+                first_press(&mut b, skill, &tuning, &pelure, ticks)?;
+                (b.drag_left > 0.0).then_some(b)
+            })
+            .expect("a Hard bot shields");
+        assert!(brain.last.item, "pressed and held");
+        let mut dragging = senses(None);
+        dragging.dragging = true;
+        dragging.held_out = Some((ItemKind::Pelure, 1));
+        assert!(item_buttons(&mut brain, skill, &tuning, &dragging).item);
+        // A kart close behind: dropped in its way.
+        let mut followed = dragging;
+        followed.behind = Some((4.0, 0.0));
+        assert!(!item_buttons(&mut brain, skill, &tuning, &followed).item);
+        // Otherwise held until its time is up.
+        let mut held_brain = brain.clone();
+        held_brain.drag_left = 1.0;
+        held_brain.last.item = true;
+        let mut held_ticks = 0;
+        while item_buttons(&mut held_brain, skill, &tuning, &dragging).item {
+            held_ticks += 1;
+            assert!(held_ticks < 120);
+        }
+        assert!((55..=61).contains(&held_ticks), "{held_ticks}");
+        // A dragged pelote goes at a kart in its sights.
+        let mut aiming = dragging;
+        aiming.held_out = Some((ItemKind::Pelote, 1));
+        aiming.ahead = Some((20.0, 0.0));
+        let mut pelote_brain = brain.clone();
+        pelote_brain.drag_left = 5.0;
+        let buttons = item_buttons(&mut pelote_brain, skill, &tuning, &aiming);
+        assert!(!buttons.item && !buttons.back);
+    }
+
+    /// An "x3" comes out at once, then goes one shot at a time, no faster than the shot period.
+    #[test]
+    fn an_x3_goes_one_shot_at_a_time() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Hard);
+        let mut brain = BotItemBrain::new(5);
+        let ticks = (skill.item_delay / DT) as usize + 3;
+        let x3 = senses(Some((ItemKind::Abeille, 3)));
+        assert!(first_press(&mut brain, skill, &tuning, &x3, ticks).is_some());
+        let mut orbit = senses(None);
+        orbit.held_out = Some((ItemKind::Abeille, 3));
+        let shots = run(&mut brain, skill, &tuning, &orbit, 180);
+        assert!(shots.len() >= 2, "{shots:?}");
+        for pair in shots.windows(2) {
+            let gap = (pair[1].0 - pair[0].0) as f32 * DT;
+            assert!(gap >= tuning.item_shot_period - 1e-3, "{gap}");
+        }
+        // Spinning or towed: nothing.
+        let mut idle = orbit;
+        idle.can_act = false;
+        assert!(run(&mut brain, skill, &tuning, &idle, 120).is_empty());
+    }
+}

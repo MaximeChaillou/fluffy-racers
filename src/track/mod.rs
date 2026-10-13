@@ -13,7 +13,8 @@ use bevy_rapier3d::prelude::*;
 use crate::level::LevelScoped;
 
 pub use circuit::{
-    BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, ItemBoxSpot, TrackHandle, TrickRamp,
+    BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, ITEM_BOX_HEIGHT, ItemBoxSpot,
+    TrackHandle, TrickRamp,
 };
 pub use data::{OffroadZone, TrackData};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};

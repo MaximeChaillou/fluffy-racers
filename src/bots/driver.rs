@@ -138,6 +138,9 @@ pub struct Senses<'a> {
     pub dt: f32,
     /// Every kart, the bot's own included.
     pub neighbors: &'a [Neighbor],
+    /// An item box worth going for (issue #16: a slot free, the box there): how far ahead and
+    /// how far to the right of the kart (m). `None` without items.
+    pub item_box: Option<(f32, f32)>,
 }
 
 /// What the bot is doing with the jump/drift button.
@@ -549,8 +552,19 @@ pub fn drive(
     let aim = skill.aim_base + skill.aim_per_speed * speed.max(0.0);
     let aim_distance = here.distance + aim;
     let limits = line.limits_at(aim_distance);
-    let wanted = (line.offset_at(aim_distance) * skill.line_fidelity + brain.lane + brain.wobble)
-        .clamp(limits[0], limits[1]);
+    let mut wanted =
+        (line.offset_at(aim_distance) * skill.line_fidelity + brain.lane + brain.wobble)
+            .clamp(limits[0], limits[1]);
+    // Issue #16: a little detour for an item box ahead, on a straight, when not drifting.
+    if let Some((_, side)) = senses.item_box
+        && matches!(brain.drift, DriftPlan::Idle | DriftPlan::Cooldown { .. })
+        && matches!(senses.state, KartState::Grounded)
+        && line.turn_at(here.index).is_none()
+    {
+        let pull =
+            (here.lateral + side - wanted).clamp(-tuning.item_box_pull, tuning.item_box_pull);
+        wanted = (wanted + pull).clamp(limits[0], limits[1]);
+    }
 
     // --- Avoidance: move aside to overtake the kart in front, or stay behind it.
     let ahead = kart_ahead(
@@ -921,6 +935,7 @@ pub fn drive(
     }
 
     brain.last_jump = jump;
+    // The item button is the bot's item brain's (`items.rs`).
     KartInput {
         throttle,
         brake,
@@ -1233,6 +1248,7 @@ mod tests {
             trick_window: false,
             dt: DT,
             neighbors,
+            item_box: None,
         }
     }
 
@@ -1465,6 +1481,37 @@ mod tests {
             brain.sample, None,
             "searches the whole track after the drop"
         );
+    }
+
+    /// Issue #16: on a straight, a bot with a free slot leans toward an item box ahead (by at
+    /// most `item_box_pull`: here a large one, so that the road edges are the only limit), and not
+    /// at all while drifting.
+    #[test]
+    fn a_bot_leans_toward_an_item_box_on_a_straight() {
+        let (_, line) = prairie_line();
+        let k = kart();
+        let t = BotTuning {
+            item_box_pull: 20.0,
+            ..default()
+        };
+        let skill = *t.skill(BotDifficulty::Hard);
+        let steer = |item_box: Option<(f32, f32)>, state: KartState| {
+            let mut brain = BotBrain::new(1, &t);
+            let mut senses = senses_at(&line, 30.0, 0.0, 25.0, state, &[]);
+            senses.item_box = item_box;
+            (0..20)
+                .map(|_| drive(&mut brain, &skill, &t, &k, &line, &senses).steer)
+                .last()
+                .unwrap()
+        };
+        let right = steer(Some((20.0, 3.0)), KartState::Grounded);
+        let left = steer(Some((20.0, -3.0)), KartState::Grounded);
+        assert!(right > left + 0.1, "{left} {right}");
+        let drifting = KartState::Drifting {
+            side: DriftSide::Right,
+            charge: 100.0,
+        };
+        assert_eq!(steer(Some((20.0, 3.0)), drifting), steer(None, drifting));
     }
 
     #[test]

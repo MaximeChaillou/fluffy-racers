@@ -390,7 +390,8 @@ fn closed_the_panel_has_no_egui_context() {
 }
 
 /// The tunings registered for the panel are the game's resources, and every one of them is
-/// found by reflection. Issue #15 added `StatsTuning` (the bounds of the stats' effects).
+/// found by reflection. Issue #15 added `StatsTuning` (the bounds of the stats' effects), issue
+/// #16 `ItemTuning` (the items, and the switch that takes them out of the races).
 #[test]
 fn every_tuning_resource_is_in_the_panel() {
     let mut app = app_on(TrackChoice::TestGround);
@@ -409,7 +410,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "BotTuning",
             "CameraTuning",
             "RaceTuning",
-            "StatsTuning"
+            "StatsTuning",
+            "ItemTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {
@@ -422,6 +424,11 @@ fn every_tuning_resource_is_in_the_panel() {
         tunings
             .set(world, "BotTuning.grid_difficulty", Value::Variant("Hard"))
             .unwrap();
+        // Issue #16: the items are on by default, and the panel switches them off.
+        assert!(world.resource::<crate::items::ItemTuning>().enabled);
+        tunings
+            .set(world, "ItemTuning.enabled", Value::Bool(false))
+            .unwrap();
     });
     assert_eq!(
         app.world()
@@ -429,5 +436,6 @@ fn every_tuning_resource_is_in_the_panel() {
             .grid_difficulty,
         crate::bots::BotDifficulty::Hard
     );
+    assert!(!app.world().resource::<crate::items::ItemTuning>().enabled);
     let _ = app.world().resource::<KartTuning>();
 }

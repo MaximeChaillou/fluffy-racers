@@ -61,11 +61,17 @@ pub struct BoostPad {
 /// Size of a boost pad on the road: width across the track, length along it (m).
 pub const BOOST_PAD_SIZE: Vec2 = Vec2::new(3.0, 4.0);
 
-/// Where an item box goes (GD § 8). Not active yet (issue #16).
+/// Where an item box of the circuit file stands (GD § 8): the entity's `Transform` is the box's
+/// center, `ITEM_BOX_HEIGHT` above the road. `crate::items` makes it a real box (break, draw,
+/// respawn, visual). A double box gives two items.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ItemBoxSpot {
     pub double: bool,
 }
+
+/// Height of an item box's center above the road (m): a bit above a kart's body center, so that
+/// a kart drives through it and a kart flying over it on a jump does not.
+pub const ITEM_BOX_HEIGHT: f32 = 0.9;
 
 /// Where a croquette of the circuit file lies (GD § 7): the entity's `Transform` is the
 /// croquette's center, `CROQUETTE_HEIGHT` above the road. `crate::croquettes` makes it a real
@@ -288,8 +294,8 @@ fn spawn_trick_ramps(
 }
 
 /// The gameplay spots of the file. Boost pads are active (issue #13, the kart reads
-/// [`BoostPad`]), croquettes too (issue #14, `crate::croquettes`); item boxes are placeholders
-/// that do nothing yet (#16).
+/// [`BoostPad`]), croquettes too (issue #14, `crate::croquettes`), and the item boxes (issue #16,
+/// `crate::items`, which also dresses them).
 fn spawn_spots(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -342,32 +348,19 @@ fn spawn_spots(
             });
     }
 
-    let box_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let box_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.4, 0.8, 1.0, 0.6),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    let double_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.85, 0.3, 0.6),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
     for row in &data.item_boxes {
         let sample = at(row.at);
         for offset in &row.offsets {
-            let material = if row.double {
-                &double_material
-            } else {
-                &box_material
-            };
             commands.spawn((
                 LevelScoped,
+                Name::new(if row.double {
+                    "Double item box"
+                } else {
+                    "Item box"
+                }),
                 ItemBoxSpot { double: row.double },
-                Mesh3d(box_mesh.clone()),
-                MeshMaterial3d(material.clone()),
-                place(&sample, *offset, 1.0)
-                    .with_rotation(Quat::from_rotation_y(0.6) * Quat::from_rotation_x(0.6)),
+                place(&sample, *offset, ITEM_BOX_HEIGHT),
+                Visibility::default(),
             ));
         }
     }

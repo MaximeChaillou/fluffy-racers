@@ -3,6 +3,61 @@
 _Mis à jour par Claude à chaque PR._
 
 ## Ce qui marche
+- **Objets 1/2** (#16, GD § 8 ; logique pure testée dans `src/items/table.rs`, `slots.rs` et `objects.rs`, systèmes dans `src/items/mod.rs`, visuels dans `visual.rs` ; réglages `ItemTuning` ; table `assets/data/items.ron`) :
+  - **boîtes** : les lignes `item_boxes` du circuit deviennent des boîtes (`ItemBox`). Un kart qui en touche une la casse (à 0,8 m de sa boîte de collision) et tire un objet par emplacement libre (deux pour une double boîte). Avec les deux emplacements pris, la boîte casse sans rien donner. Elle revient 2 s après (120 ticks pile). Cube translucide bleu (doré pour une double) qui tourne, avec un cœur blanc ; cassée, elle disparaît, puis revient en « pop » ;
+  - **tirage** : selon la distance au leader (`RaceProgress::gap_to_leader`), dans la table du GD en RON. La table reste complète : le code retire les objets de phase 2 et redistribue leur poids proportionnellement dans la ligne. Ligne du leader : pelure 35 %, pelote 29 %, croquette dorée 24 %, pelures x3 12 %. Au-delà de 250 m : piment x3 seul. Le tirage est déterministe : `draw_unit(graine de course, place de grille, n° du tirage)` ;
+  - **roulette** de 1,5 s (90 ticks) dans l'emplacement ; on ne peut pas utiliser l'objet avant qu'elle s'arrête. **Deux emplacements** : la main et la réserve, qui passe en main quand la main est vide ;
+  - **bouton Objet** (Shift ou E, LB/LT) :
+    - pelure ou pelote seule : elle sort derrière le kart tant qu'on maintient le bouton (bouclier) et part au relâchement. Une fois sortie, elle libère son emplacement ;
+    - « x3 » : au premier appui, les pelures se mettent en file derrière le kart, les pelotes et les abeilles tournent autour à 1,9 m. Chaque appui suivant en lâche ou en lance une ;
+    - abeille, piment et croquette dorée s'utilisent à l'appui. **Lancer derrière** : avec Bas/S (le frein) ou C tenu ;
+  - **objets** (ni corps Rapier, ni allocation par tick) :
+    - **pelure** : posée au sol derrière le kart, sur le sol trouvé dessous. Tête-à-queue pour qui roule dessus, le lanceur compris après 0,5 s ;
+    - **pelote** : roule tout droit à 42 m/s en suivant le sol (pentes, tremplin, chute). Elle rebondit 5 fois sur les murets (réflexion miroir), casse au suivant, culbute ;
+    - **abeille** : vise le kart juste devant son lanceur au classement. Elle suit la ligne centrale à 1,4 m au-dessus de la route (au-dessus des karts), à 50 m/s, en glissant vers la voie de sa cible, puis plonge sur elle à 12 m : tête-à-queue. Lancée derrière, elle roule tout droit et casse sur le premier muret ;
+    - **piment** : boost de 1,2 s, +30 %, par `Boost`. **Croquette dorée** : +2 croquettes (10 au plus) et le mini-boost d'une croquette ;
+    - deux objets de karts différents qui se touchent cassent tous les deux : ce qu'on traîne ou fait tourner est un **bouclier**. Les contacts sont balayés entre deux ticks ;
+  - **touché** : la victime décide (`ItemHit`, entrée réseau prévue) :
+    - rien pendant un tête-à-queue, une culbute, le pélican, après l'arrivée ou pendant l'invincibilité ;
+    - sinon, état `KartState::Hit` : tête-à-queue de 1 s ou culbute de 1,6 s. Le kart n'écoute plus son pilote et freine fort ; son drift, son boost et ce qu'il tenait dehors sont perdus ; il perd 3 croquettes ;
+    - ensuite, l'invincibilité de sa stat (1 à 2 s), pendant laquelle il clignote ;
+    - visuel : la carrosserie fait deux tours sur elle-même (tête-à-queue), ou un salto vers l'avant à 1,1 m de haut (culbute) ;
+  - **HUD** : les deux cases en haut à gauche montrent l'objet (une forme et une couleur par objet : pelure jaune inclinée, pelote rose cerclée, abeille jaune cerclée de noir, piment rouge à bout vert, anneau doré) et « x3 », « x2 » pour un triple. Pendant la roulette, la case fait défiler les objets et son bord clignote en or ;
+  - **bots** :
+    - un léger écart (2,5 m au plus) vers une boîte devant eux, sur une ligne droite, hors drift, avec un emplacement libre ;
+    - l'usage des objets se règle par niveau dans `BotSkill` : délai avant d'utiliser un objet prêt 2,5 / 1,2 / 0,5 s, angle de visée de la pelote 0,18 / 0,1 / 0,06 rad, bouclier 20 / 60 / 90 % ;
+    - le piment en ligne droite (45 m sans virage), la croquette dorée dès qu'elle sert ;
+    - la pelure ou la pelote traînée en bouclier 2 à 6 s, puis lâchée, ou lâchée tout de suite devant un kart qui suit de près ;
+    - la pelote lancée sur un kart en ligne de mire, ou derrière sur un kart qui suit ; l'abeille dès qu'un kart est devant au classement ; les « x3 » un par seconde au plus ;
+  - **interrupteur** `ItemTuning::enabled` (panneau d'admin, immédiat) ; les tests de course de bots existants tournent sans objets ;
+  - **panneau d'admin** : `ItemTuning` (28 valeurs) et les réglages d'objets de `BotTuning`. La télémétrie montre la main, la réserve, ce qui est dehors, l'invincibilité, l'état « touché », et les compteurs (boîtes, objets utilisés, touché, coups réussis) ;
+  - **course de bots avec objets** (nouveau test `bots_race_with_items`, grille Normal du jeu, 12 karts, 3 tours de Prairie Pompon, 8 graines). Sur les graines 0 à 7 :
+    - les 12 finissent ; arrivée la plus lente 63,5 à 67,9 s (65,1 en moyenne), la plus rapide 53,5 à 57,6 s ;
+    - 24 à 34 boîtes cassées par course (30 en moyenne) ; 10 à 12 karts en prennent et utilisent des objets ; 38 à 61 objets utilisés ; 14 à 22 karts touchés ;
+    - 0 à 2 pélicans par course, tous après un incident, **aucun en conduite libre**.
+
+    Seuils vérifiés sur 60 autres graines (100–119, 200–219, 300–319), jamais utilisées pour les fixer : tout passe, aucun pélican en conduite libre sur les 68 courses ;
+  - **coût** (course de 12 karts, 60 s, exécuteur mono-thread du navigateur, profil de test, graine 0, deux passages) : 0,98 à 1,08 ms par mise à jour en moyenne sans objets, 1,13 à 1,18 ms avec (médiane 0,93–0,96 → 1,00 ms ; p95 1,4–1,7 → 1,8–2,2 ms, les ticks où des objets partent) ;
+  - vu dans Chromium headless (build trunk de debug, WebGL logiciel, environ une image par seconde) :
+    - au départ, flèche haut seule : le kart casse une boîte de la première ligne ;
+    - la case de la main fait défiler les objets (anneau doré, puis abeille avec le bord doré qui clignote), puis s'arrête sur « Piment x3 » ;
+    - E maintenu : flammes du boost, « x2 » ;
+    - console : seulement les avertissements habituels (rendu logiciel, attribut `integrity` de trunk) et le 404 de `favicon.ico` ;
+    - pas vus à l'écran : les objets des bots en vol, le tête-à-queue, la culbute. Les appuis brefs (moins d'une image) ne passent pas à une image par seconde, comme pour toutes les touches ; ils passent à 60 images par seconde ;
+  - tests : 25 de logique pure et 14 scénarios headless.
+    - Logique pure :
+      - table : la table du GD complète, la redistribution (85 points dans la ligne du leader), les lignes par distance, **10 000 tirages par ligne conformes à la table à 4 écarts-types près**, tirages déterministes et uniformes, table invalide refusée ;
+      - emplacements : boîte → main puis réserve, rien quand les deux sont pris, double boîte, roulette de 90 ticks, la réserve qui passe en main, traîner puis lâcher (et lancer derrière), un « x3 » sorti puis un par appui, ce qu'on perd quand on est touché ;
+      - pelote : roule, **rebondit sur un mur** puis casse au dernier rebond, suit une pente et tombe d'un bord ; contacts balayés ; position des objets tenus ;
+      - réglages ; kart touché qui freine ;
+      - bots : délai selon le niveau, piment en ligne droite, croquette dorée, pelote sur un kart en ligne de mire ou derrière, abeille, bouclier tenu puis lâché, « x3 » un par un, écart vers une boîte ;
+    - scénarios headless :
+      - **boîte → roulette de 90 ticks → objet, boîte revenue au 120e tick**, double boîte, boîte cassée pour rien ;
+      - **une pelure traînée bloque une pelote venue de l'arrière** (et sans elle, la pelote touche : culbute) ;
+      - **tête-à-queue de 60 ticks, culbute de 96 ticks**, drift cassé, freinage, 3 croquettes perdues, rien pendant le touché, **invincibilité de 1,5 s puis plus aucun objet ne touche, clignotement**, puis touché à nouveau ;
+      - pelure au sol ; **lancers devant et derrière** (frein, C, abeille) ; **pelote qui rebondit sur un muret** ; **piment de 1,2 s** ; **croquette dorée +2 jusqu'à 10** ; pelotes x3 qui tournent et touchent ; objets coupés ;
+      - jeu complet sur Prairie Pompon : **l'abeille touche le kart juste devant** (pas le leader), sur la ligne droite et après l'épingle, en restant au-dessus de la piste ; au clavier, une boîte de la première ligne, la roulette qui défile dans le HUD, puis E ; le redémarrage de la course qui reprend tout ;
+      - `after_an_item_hit_the_invincibility_stat_protects_the_kart` (#15), adapté (voir les décisions), et l'interrupteur dans le panneau.
 - **Tests de course de bots robustes aux graines** (#40, `src/bots/scenario_tests.rs` ; graine dans `race::RaceGrid` et `bots::bot_seed`) :
   - **graine de course** : `RaceGrid::seed`. Chaque bot tire tout de `bot_seed(graine de course, place de grille)` : sa conduite (couloir, rythme, flottement, drifter ou non un virage), son départ fusée et ses figures, les pièces de son kart (#15). Le jeu garde la graine 0 (`RaceGrid::GAME_SEED`), qui redonne les graines d'avant : mêmes bots, même course (vérifié : la course de la graine 0 donne au centième près les chiffres des anciens tests) ;
   - **8 graines par test de course** (0 à 7, celle du jeu comprise, aucune choisie pour ses résultats). Chaque course tourne dans son propre thread, avec l'exécuteur mono-thread de Bevy (celui du navigateur) : 1 ms par tick au lieu de 4, et un ordre des systèmes fixe (mêmes tableaux, au centième près, seul ou pendant toute la suite de tests) ;
@@ -337,6 +392,37 @@ _Mis à jour par Claude à chaque PR._
   - **validation**, pour être honnête sur le chemin : le premier ensemble de validation (graines 100 à 119) a fait échouer la grille mélangée sur une graine (4 accidents de peloton dans une course, d'où des Facile à 22,4 s au tour) ; le pire cas des pélicans et des fenêtres de temps au tour par course a été élargi (le temps au tour se compte hors temps du pélican), les moyennes non. Le deuxième (200 à 219) : un pélican après l'arrivée, sur un accrochage ; la vérification « aucun pélican après l'arrivée » vise le bug de #6 (le pélican croyait hors piste un kart arrivé), donc elle ne compte plus que la conduite libre. Le troisième (300 à 319) : à la graine 308, trois Difficile coincés derrière des karts plus lents finissent 0,25 s après les Normal ; l'ordre des niveaux se vérifie maintenant en moyenne (écarts de 3 s et 2,5 s) et dans 75 % des courses. Le quatrième (400 à 419), jamais vu avant : tout passe, et les trois premiers aussi ;
   - **tests modifiés** (aucun supprimé) : les 4 tests de course (seuils : tableau du commit) ; `every_kart_has_its_own_color_and_seed` et `bots_get_varied_and_deterministic_loadouts` passent la graine 0 ; `the_bots_race_with_their_own_characters_and_parts` (#15) lit la graine de la grille. Nouveaux : `the_race_seed_draws_the_bots` (graine 0 = graines d'avant, graines toutes différentes, même graine = mêmes bots) et `tows_are_sorted_by_cause`.
 
+- 2026-10-13 (#11, #19) : Max veut des **biomes variés** pour les circuits, avec les packs Kenney (CC0). Plusieurs circuits peuvent partager un pack, et un circuit peut mélanger plusieurs packs si ça a du sens. Le RON du circuit déclare son biome. Voir les commentaires de #11 et #19.
+
+- 2026-10-13 (#16) : **objets 1/2**. Choix faits (le détail est dans le GD § 8, « Notre implémentation ») :
+  - **pas de corps Rapier** pour les objets : une pelote fait deux rayons par tick contre la piste (muret devant, sol dessous), l'abeille suit la ligne centrale (`Course`) puis plonge en ligne droite, et les contacts sont balayés (segment entre deux ticks contre une sphère ou la boîte d'un kart). C'est déterministe, sans coût de physique, et rien ne traverse un kart à 42 m/s ;
+  - **position simulée à part** (`ItemObject::position` et `previous`) : le `Transform` d'un objet n'est que son visuel, interpolé entre deux ticks. Une seule entité par objet, rien à nettoyer ;
+  - **la victime décide** : un objet qui touche un kart casse et envoie `ItemHit`. Le système de la victime applique le coup à son propre kart, ou l'ignore si le kart est immunisé (touché, pélican, invincible, arrivé). C'est l'entrée réseau prévue par l'architecture ;
+  - **état `KartState::Hit`** dans la machine à états du kart (déjà prévu par l'architecture) :
+    - tête-à-queue de 60 ticks (pelure, abeille), culbute de 96 ticks (pelote) ;
+    - le kart n'écoute plus son pilote et freine fort (`KartTuning::hit_spin_decel` 21 m/s², `hit_tumble_decel` 26 m/s²), son drift est perdu ;
+    - le tête-à-queue et la culbute ne sont que visuels (la carrosserie tourne deux fois ou se retourne) : le corps garde son cap, la caméra ne tourne pas ;
+    - **l'invincibilité commence à la fin** du tête-à-queue ou de la culbute (GD § 8 : « Ensuite, une invincibilité ») et le kart clignote. Elle part de `drive_karts` (`StepState::hit_ended`) ;
+    - durées dans `ItemTuning` (GD § 8), décélérations dans `KartTuning` (c'est la conduite du kart) ;
+  - **abeille = tête-à-queue** : le GD réserve la culbute aux « explosions et gros objets ». L'abeille est un objet léger, et sa tête chercheuse la rend déjà sûre de toucher ;
+  - **un objet qui touche un kart immunisé casse quand même**, sans effet (comme dans MK8DX) ;
+  - **boost perdu** quand on est touché, comme les objets tenus dehors (traîné, « x3 ») ; les emplacements gardent leurs objets ;
+  - **boîte avec les deux emplacements pris** : elle casse sans rien donner (MK8DX). La consigne parlait de « pas de ramassage » : c'est le cas pour l'objet, pas pour la boîte. Laisser la boîte bloquerait la ligne de boîtes pour les karts derrière ;
+  - **boîtes généreuses** : touchées à 0,8 m de la boîte du kart (`box_reach`). Les boîtes d'une ligne de Prairie Pompon sont à 2,8 m l'une de l'autre : à 0,5 m, un kart au milieu passait entre deux sans en prendre ;
+  - **tirage au moment de la boîte**, avec la distance au leader à cet instant, et déterministe : `draw_unit(graine de course, place de grille, nombre de tirages du kart)`. En réseau, chaque pair peut refaire le tirage d'un autre kart ;
+  - **traîner** : l'objet traîné quitte son emplacement (la réserve passe en main, on peut prendre une boîte en le traînant, comme dans MK8DX). Un **« x3 »** sort au premier appui et reste en main jusqu'au dernier ;
+  - **lancer derrière** : Objet avec Bas/S (le frein) ou C (regarder derrière). À la manette, B ou X/Y. Pas de nouveau champ dans `KartInput` : la direction arrière du clavier est le frein, et `look_back` existe déjà. Une pelure est toujours posée derrière : vers l'avant, il faudrait une touche « direction avant » libre, et Haut accélère (voir « Questions pour Max ») ;
+  - **abeille lancée derrière** : elle roule tout droit vers l'arrière et casse sur le premier muret (sans tête chercheuse, comme dans MK8DX). L'abeille du leader n'a pas de cible : elle suit la piste et plonge sur le premier kart qu'elle approche ;
+  - **sa propre pelote ou pelure** peut toucher son lanceur 0,5 s après être partie (une pelote qui revient d'un rebond) ; **sa propre abeille**, jamais ; les objets d'un même kart ne se touchent jamais entre eux ;
+  - **croquette dorée** : +2 croquettes avec le mini-boost d'une croquette (comme chaque croquette du GD § 7) ;
+  - **après l'arrivée** : un kart ne prend plus de boîte, n'utilise plus d'objet, perd ce qu'il tenait dehors et ne peut plus être touché (GD § 15 : « après l'arrivée, ne peut pas recevoir de coup ») ;
+  - **pelure au sol** : elle disparaît après 90 s (à régler) si personne ne roule dessus, pour borner le nombre d'objets sur la piste ;
+  - **interrupteur** : `ItemTuning::enabled`, dans le panneau d'admin (case à cocher, immédiate : tout disparaît, les boîtes se cachent). Les tests de course de bots existants tournent **sans objets** (ils mesurent la conduite), avec les mêmes seuils ; une nouvelle course de bots tourne avec ;
+  - **bots** : un cerveau d'objets à part (`bots::items`, son propre générateur, sans toucher aux tirages de conduite) et trois réglages par niveau dans `BotSkill` (`item_delay`, `item_aim`, `item_shield`). Le léger écart vers une boîte ne se fait que sur une ligne droite, hors drift, avec un emplacement libre, et vaut 2,5 m au plus ;
+  - **classement des pélicans** dans les tests de course : un kart touché par un objet compte comme un incident, comme un contact avec un autre kart. Dans les courses sans objets, ça ne change rien ;
+  - **test existant modifié** : `after_an_item_hit_the_invincibility_stat_protects_the_kart` (#15) envoyait `LoseCroquettes { cause: ItemHit }`, qui démarrait l'invincibilité. Comme la note de #15 le prévoyait, l'invincibilité est passée dans le système des coups : le test envoie maintenant `ItemHit` (même nom, mêmes trois karts, mêmes durées de 1 / 1,5 / 2 s), et vérifie en plus qu'aucun objet ne touche pendant le tête-à-queue. `LoseCroquettes { cause: ItemHit }` ne fait plus que retirer 3 croquettes. `every_tuning_resource_is_in_the_panel` attend `ItemTuning` dans la liste, et vérifie que l'interrupteur se coupe depuis le panneau ;
+  - **aucune nouvelle crate**. Sons des objets non faits (voir « Prochaines étapes »).
+
 ## Comment ajouter une vérification de course
 - Pars d'une course existante (`src/bots/scenario_tests.rs`) : chaque test fait déjà courir 8 graines, et une course de 12 karts coûte environ 4 s de CPU par graine. Une mesure qui se suit tick par tick va dans `KartLog` et `RaceLog::record` ; le reste se lit à la fin dans `RaceResult` (ou dans le `Run` du test, calculé dans le thread de la course).
 - Une valeur par graine (`per_race`), puis `checks.at_least`, `at_most`, `above` ou `below` (nom, valeurs, pire cas, moyenne). `f32::NAN` : la vérification ne s'applique pas à cette course (« - » dans le tableau). Les pélicans passent par `tow_checks`.
@@ -346,23 +432,35 @@ _Mis à jour par Claude à chaque PR._
 
 ## Prochaines étapes
 - Milestone 1 « Ça roule » (solo) :
-  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), ~~drift à 3 paliers~~ (#4), ~~course~~ (#5), ~~bots~~ (#6), ~~départ fusée, figures, aspiration, panneaux~~ (#13), ~~croquettes~~ (#14), ~~game design des interactions entre karts~~ (#33), ~~drift fluide~~ (#30), ~~panneau d'admin~~ (#36), ~~statistiques et gabarits~~ (#15), ~~tests de course robustes aux graines~~ (#40) ;
+  - ~~kart~~ (#1), ~~caméra de poursuite~~ (#2), ~~circuit~~ (#3), ~~drift à 3 paliers~~ (#4), ~~course~~ (#5), ~~bots~~ (#6), ~~départ fusée, figures, aspiration, panneaux~~ (#13), ~~croquettes~~ (#14), ~~game design des interactions entre karts~~ (#33), ~~drift fluide~~ (#30), ~~panneau d'admin~~ (#36), ~~statistiques et gabarits~~ (#15), ~~tests de course robustes aux graines~~ (#40), ~~objets 1/2~~ (#16) ;
   - **ordre prévu pour la suite** :
-    1. objets 1/2 (#16) ;
-    2. aides de conduite (#17 : brancher `KartAssists`) ;
-    3. muret escaladable (#27) ;
-    4. interactions entre karts (#34 : coup de patte et attrape, GD § 15), la dernière du milestone 1, **avant le réseau**.
+    1. aides de conduite (#17 : brancher `KartAssists`, et « regarder derrière », C, qui sert déjà à lancer un objet derrière) ;
+    2. muret escaladable (#27) ;
+    3. interactions entre karts (#34 : coup de patte et attrape, GD § 15), la dernière du milestone 1, **avant le réseau** ;
+    4. puis le réseau (#7 à #10).
   - Panneau d'admin (#36, fait) : les valeurs que Max enverra (texte « Copier mes réglages ») deviennent les nouvelles valeurs par défaut des Resources de réglage, une issue par envoi. Les réglages du drift de #30 sont dans `KartTuning` (`drift_radius_*`, `drift_curve_*_time`, `hop_steer_response`, `drift_slip_*`), lus à chaque tick.
   - Panneau d'admin, pour chaque nouvelle fonctionnalité : une nouvelle Resource de réglage s'ajoute dans `AdminPlugin` (une ligne) ; un nouveau circuit, dans `assets/tracks/index.ron` (le test le réclame) ; une nouvelle entité de niveau doit porter `LevelScoped` (ou l'avoir en composant requis, voir `LevelPlugin`), sinon elle survivrait à « Relancer » (le test sans fuite le verra) ; une valeur lue seulement à la construction du niveau va dans `ON_RESTART` (`src/admin/ui.rs`). Les stats de #15 pourront y prendre un sélecteur de personnage et de kart.
   - Grand Prix et menus (#19) : `LoadLevel` sert déjà à enchaîner les circuits.
   - Réseau (#8) : `DriftMotion` (courbe et angle de glisse du drift, #30) n'est pas à diffuser : chaque pair peut le recalculer pour un kart distant à partir de son état de drift, de son lacet et de son stick (ou du seul état de drift, stick au neutre).
   - Stats (#15, fait) : un nouveau kart s'apparaît avec `kart::kart_body_with_stats` (ses niveaux, sa masse, son facteur de vitesse) ; `kart_body` seul donne le niveau du milieu. Tout ce qui lit un réglage du kart pour **un kart donné** doit passer par `StatEffects::tuning(&kart_tuning)` (seuils de drift, rayons, durées des mini-turbos…), pas par `KartTuning` directement.
-  - Objets (#16), ce qu'il faut lire dans les stats : un kart touché vérifie `Invincibility::is_active()` (immunisé) puis démarre la protection avec `StatEffects::invincibility` (1 à 2 s). Aujourd'hui c'est `lose_croquettes` (croquettes) qui le fait sur `LossCause::ItemHit` : à déplacer dans le système des coups quand il existera, en gardant le test `after_an_item_hit_the_invincibility_stat_protects_the_kart`. Le boost du piment n'est pas modulé par les stats (le GD ne le dit pas).
   - Interactions (#34), ce qu'il faut lire dans les stats : le Poids de chaque kart (`KartStats::weight()` ou `StatEffects::weight`, 0 à 20), `strike_push_factor(&StatsTuning, frappeur, cible)` pour la poussée du coup et du jet, `tether_force_scale(&StatsTuning, poids)` pour la part de la force du lien que reçoit chaque kart. L'immunité « Invincible » du tableau du GD § 15, c'est `Invincibility::is_active()`.
   - ~~Tests de courses de bots robustes aux graines~~ (#40). Les objets (#16), les aides (#17), le muret (#27) et les interactions (#34) vont changer les courses : relance les tests de course avec `--nocapture` et regarde les marges (voir « Comment ajouter une vérification de course »). Les objets et les interactions feront des chocs entre karts : le classement des pélicans (accident de peloton ou conduite libre) les range déjà du bon côté. Le muret escaladable (#27) : tous les pélicans observés suivent un contact, souvent un kart éjecté par-dessus le muret dans la mêlée du départ ; un bot qui vise le muret en ligne droite le franchit seul (régression volontaire de #40).
   - Réseau (#7 à #9) : l'hôte tire une graine de course et l'envoie avec le départ ; `RaceGrid::seed` fait tirer à chaque pair les mêmes bots (pièces, conduite).
   - Observé pendant #40, pas corrigé (à confirmer) : sur une course mélangée (graine 308), trois bots Difficile restent derrière des bots plus lents pendant deux tours et finissent derrière les Normal. L'évitement ne trouve pas toujours de place pour doubler. Et sur le circuit rond des tests (un seul virage sans fin), un bot ne tire qu'une fois « drifter ce virage » (`drift_chance`) : un Facile y drifte toute la course ou jamais. Aucun circuit du jeu n'est un cercle.
-  - Objets (#16) : un objet qui touche un kart écrit `LoseCroquettes { kart, cause: LossCause::ItemHit }` (3 croquettes, éparpillées) ; la croquette dorée appelle `Croquettes::gain(2, max_held)`. `KartBump` peut servir au super câlin (karts percutés renversés). L'état Touché et l'invincibilité serviront aussi d'immunités aux interactions (#34, tableau du GD § 15).
+  - **Objets 2/2 (#18)**, ce qu'il faut savoir des objets de #16 :
+    - un nouvel objet : une variante de `ItemKind`, et sa ligne dans `Prize::item` (`src/items/table.rs`). La table `assets/data/items.ron` contient déjà les objets de phase 2 : les marquer implémentés suffit, la redistribution se fait toute seule ;
+    - un coup passe toujours par `ItemHit` (la victime décide, `immune_to_items`), avec sa réaction (`reaction_to` : tête-à-queue ou culbute ; la bombe et l'oreiller géant seront des culbutes). Un objet en zone (bombe, klaxon-canard) envoie un `ItemHit` par kart dans la zone, et casse les `ItemObject` proches (le klaxon) ;
+    - les boosts (piment doré, super câlin) passent par `Boost` ; le super câlin pose `Invincibility` et peut renverser les karts percutés avec `KartBump` ;
+    - l'oreiller géant vise `Race::standings[0]` ; l'abeille montre comment suivre la piste (`Flight::Track`, `Course::center`) ;
+    - la touche de debug pour forcer un objet demandée par #18 : `ItemSlots::give(item, count, 0)` sur le kart du joueur ;
+    - l'immunité « Invincible » vaut pour tous les objets (`Invincibility`). Le super câlin devra aussi la prolonger sans casser le clignotement de `kart::shown_while_invincible`.
+  - **Interactions (#34)**, ce qu'il faut savoir des objets : l'état « Touché » du tableau du GD § 15 est `KartState::Hit` (`is_hit()`), l'état « Invincible » `Invincibility::is_active()`. « Le lien casse si l'un des deux karts est touché par un objet » : c'est dans `apply_item_hits` (`src/items/mod.rs`), là où le kart passe en `Hit`. Les bots ont déjà deux cerveaux (`BotBrain`, `BotItemBrain`) : un troisième pour les interactions, avec son propre générateur, ne changera pas leurs tirages de conduite. Un coup de patte ne fait pas lâcher un objet traîné (GD § 15 : « la cible garde le contrôle »).
+  - **Réseau (#9)**, ce qu'il faut savoir des objets (voir `docs/ARCHITECTURE.md` § « Objets ») :
+    - le tirage d'une boîte est déterministe (`draw_unit(graine, place de grille, ItemSlots::draws)`) : l'hôte n'arbitre que « qui a cassé la boîte » (`ItemBox`) ;
+    - un objet lancé : un événement fiable avec son `ItemObject` (objet, propriétaire, mouvement, position, vitesse, tick). Chaque pair le simule (rayons contre la piste statique, ligne centrale) ;
+    - les objets tenus autour d'un kart se déduisent de ses `ItemSlots` (`held_out`) : à mettre dans l'état diffusé du kart (main, réserve, traîné, « x3 » sorti) ;
+    - `ItemHit` est l'entrée de la victime : elle seule juge le contact de son kart avec un objet distant, puis répond « touché » ou « ignoré » ;
+    - `KartState::Hit { reaction, elapsed, duration }` et `Invincibility` sont dans l'état du kart.
   - Interactions (#34) : champ `interact` dans `KartInput` (et dans `combine`) ; X ou F au clavier, RB à la manette, en retirant RB du saut/drift (`gamepad_input`). Le calage (`Stall`) et l'arrivée doivent aussi ignorer `interact`. La croquette d'un coup passe par la même protection d'1 s que les chocs (`Croquettes::bump_grace`). La poussée latérale et le lien s'appliquent dans la conduite, après le grip ; pas de joint Rapier.
   - Personnages mous (#12) : le mini-ragdoll se déclenche aussi sur un coup de patte reçu ; la patte et le bras élastique de #34 (en primitives) seront à reprendre.
   - Bots : ils ne visent pas les croquettes (ils ne les prennent que si elles sont sur leur trajectoire). Un léger écart de couloir vers une ligne de croquettes proche sur les lignes droites serait un plus (non fait : risque de dégrader leur conduite, à faire avec un test de non-régression des courses).
@@ -372,7 +470,11 @@ _Mis à jour par Claude à chaque PR._
     - #8 : l'historique de 30 ticks de ses propres positions, le tick de l'état affiché pour chaque proxy (`tick_vu`) et la position extrapolée de l'autre kart pour le lien ;
     - #9 : la victime qui s'applique le coup et perd sa croquette, la rupture du lien quand un pair se déconnecte ou quand l'hôte change.
   - Bots : en Normal et en Facile (vitesse de croisière 97 % et 92 %), un bot freine dès qu'un boost l'emmène au-dessus de sa vitesse de croisière + 1,5 m/s, et en perd donc une partie. C'était déjà le cas pour les mini-turbos depuis #6 ; ça vaut aussi pour le départ fusée, l'aspiration, les panneaux et le mini-boost des croquettes (#14), et maintenant pour leurs oranges (#30). Essayé dans #30 sans le garder : laisser courir les boosts rend les Normal presque aussi rapides que les Difficile (54,9 s contre 54,0 s sur 10 courses) et double les pélicans. Voir « Questions pour Max ».
-  - Objets (#16) : les bots ramasseront et utiliseront les objets ; `BotSkill` aura un réglage d'usage des objets (GD § 12) ; la distance au leader est prête (`RaceProgress::gap_to_leader`).
+  - Objets, suite possible (non fait ici, pas dans le GD) :
+    - **sons** des objets (boîte, roulette, lancer, touché), avec le synthétiseur de `src/audio/` ;
+    - les **bots n'évitent pas les pelures** au sol : un écart de couloir comme pour les karts devant (`kart_ahead`) les rendrait moins naïfs ;
+    - une pelure **lancée devant** (MK8DX : stick vers l'avant), s'il y a une touche pour ça (voir « Questions pour Max »).
+  - Courses de bots (#40) et objets (#16) : les quatre tests de course existants tournent **sans objets** (`ItemTuning::enabled = false` dans `seeded_app`). Une course avec objets se lance avec `seeded_app_with(bots, graine, true)`, comme `bots_race_with_items`. Un kart touché par un objet compte comme un incident dans le classement des pélicans.
   - Un menu (difficulté des bots, nombre de bots, aides) viendra avec #17 ou #19 ; en attendant, le panneau d'admin (#36) règle le nombre et le niveau des bots.
 - Milestone 2 « À plusieurs » : réseau 1/3 à 3/3, signalisation (attend un compte Cloudflare), objets 2/2.
 - Milestone 3 « Contenu » : vrais modèles (attend les assets), personnages mous, Grand Prix et classes, anti-gravité / planeur / eau, objets de phase 3 et Bataille.
@@ -380,6 +482,19 @@ _Mis à jour par Claude à chaque PR._
 Le gameplay de référence est décrit dans `docs/GAME_DESIGN.md` (inspiré de Mario Kart 8 Deluxe). Les textes des issues sont dans `.github/backlog/`.
 
 ## Questions pour Max
+- **Objets (#16)**, à essayer :
+  - roule dans une boîte (la première ligne est sur la ligne droite de départ) ; la case en haut à gauche fait défiler les objets pendant 1,5 s, puis montre le tien ;
+  - E (ou Shift) pour l'utiliser. Maintiens E avec une pelure ou une pelote : elle reste derrière toi et te protège, et part quand tu lâches. Bas/S ou C en même temps : le lancer part derrière ;
+  - les valeurs sont dans le panneau d'admin (P, `ItemTuning`), et la case `ItemTuning.enabled` retire les objets.
+
+  Questions :
+  - **pelure lancée devant** (MK8DX : stick vers l'avant + Objet) : au clavier, Haut est l'accélérateur, donc je n'ai pas de direction « avant » libre ; pour l'instant, une pelure est toujours posée derrière. Veux-tu une touche pour ça, par exemple Objet + Haut quand on lâche une pelure traînée ?
+  - **lancer derrière avec Bas/S (le frein) ou C** : ça te va ? À la manette, c'est B ou X/Y avec LB/LT (le stick vers le bas n'est pas lu) ;
+  - **une boîte touchée avec les deux emplacements pris** casse sans rien donner (comme MK8DX). Préfères-tu qu'elle reste pour les suivants ?
+  - **l'abeille fait un tête-à-queue** (objet léger d'après le GD) ; la culbute est pour la pelote. D'accord ?
+  - **réglages à juger** : pelote 42 m/s et 5 rebonds ; abeille 50 m/s, qui plonge à 12 m ; tête-à-queue 1 s et culbute 1,6 s, avec 21 et 26 m/s² de freinage ; pelure qui disparaît après 90 s ; boîtes « larges » (touchées à 0,8 m du kart) ;
+  - **les bots** utilisent beaucoup leurs objets : 14 à 22 karts touchés par course de 12. Ça te paraît bien, ou faut-il les calmer (`BotSkill::item_delay` : 2,5 / 1,2 / 0,5 s) ?
+  - **pas de son** pour les objets pour l'instant. On les fait avec les vrais sons (#11), ou des sons synthétisés tout de suite, comme les croquettes ?
 - **Graine des bots (#40)** : en jeu, les bots ont toujours les mêmes pièces et les mêmes tirages d'une course à l'autre (graine 0) ; ta conduite suffit à changer la course. Préfères-tu une graine nouvelle à chaque « Relancer » (autres karts, roues et ailes pour les bots), ou seulement en réseau et en Grand Prix ?
 - **Statistiques et gabarits (#15)**, à essayer : au lancement, l'écran « Pilote et kart » ; compare la **souris** (panier en osier, bobines de fil, plume) et l'**ours** (baignoire, pneus de tracteur, taie d'oreiller) : départ, vitesse de pointe sur la ligne droite, drift dans l'épingle, et les chocs avec les bots. G y revient pendant la course. Les bornes se règlent dans le panneau d'admin (P, `StatsTuning`, au prochain « Relancer »). Questions :
   - les écarts te conviennent-ils ? Vitesse ±8 % (le GD), accélération 0,8 à 1,25, masse 105 à 195 kg, rayons du drift ±10 %, seuils des mini-turbos ±10 %, hors-piste 47 à 63 % ;
@@ -434,6 +549,8 @@ Le gameplay de référence est décrit dans `docs/GAME_DESIGN.md` (inspiré de M
   - **idée non retenue sans ton avis** : un petit boost « fronde » pour l'attrapeur quand il lâche (pour l'instant, le lien ne donne jamais de boost).
 
 ## Métriques
+- **Temps de `cargo test`** (#16 ; debug comme la CI, binaires déjà compilés, machine de la session à 4 cœurs, suite complète) : **78,5 à 81,6 s** (3 lancements, 330 tests) contre 65,8 à 68,3 s après #40 : **+13 s environ**, surtout la nouvelle course de bots avec objets (8 courses) et les scénarios d'objets. Les tests de course de bots seuls, un par un (`--test-threads=1`) : 22 → 38 s.
+- **Coût des objets** (#16) : voir « Ce qui marche » (+0,05 à 0,2 ms par mise à jour en moyenne avec 12 karts qui s'en servent, exécuteur mono-thread). Taille du wasm de release non mesurée (pas de crate ajoutée ; quelques milliers de lignes de Rust).
 - **Temps de `cargo test`** (#40 ; debug comme la CI, binaires déjà compilés, machine de la session à 4 cœurs, suite complète) : **55,5 à 57,8 s avant** (3 lancements) → **65,8 à 68,3 s après** (3 lancements), soit **+10 s environ**, pour 8 courses par test au lieu d'une. Les 4 tests de course seuls : 46 s avant (17,5 + 15,9 + 6,0 + 6,4 s, une course chacun) → 26 à 29 s pour 32 courses. Une course de 12 karts : 4,0 ms par tick avec l'exécuteur multi-thread, 1,0 ms en mono-thread. La compilation ne change pas (code de test seulement, aucun profil modifié). Le temps sur la machine de la CI (GitHub) n'est pas mesuré.
 - **Navigateur** : 120 fps sur Chrome / Mac (retour de Max, 2026-10-13, build de `dev` après #13).
 - Coût des croquettes (#14), binaires de test lancés en alternance (`measure_tick_cost_with_twelve_karts`, 12 karts, 60 s de course), comparé à `dev` : avec l'exécuteur **multi-thread** de Bevy (celui des tests natifs), médiane 3,0 à 3,6 ms par mise à jour sur `dev`, 3,5 à 4,1 ms avec les croquettes ; mais la même différence existe avec un circuit **sans aucune croquette** (3,5 à 3,7 ms) : c'est le coût d'ordonnancement des systèmes en plus sur cette machine (4 cœurs virtuels), pas leur travail. Avec l'exécuteur **mono-thread** (celui du navigateur, réglé à la main pour la mesure) : médiane 0,85 à 0,89 ms sans les croquettes, 0,85 à 0,89 ms avec les règles des croquettes et des chocs, 0,90 à 0,96 ms avec en plus leurs visuels et le son, soit **+0,05 à 0,1 ms** (les croquettes qui tournent et les gerbes). À noter : sur cette machine, une mise à jour est 3,5 fois plus rapide en mono-thread qu'en multi-thread. Recherche des croquettes à ramasser (12 karts, 60 croquettes, profil de test : `cargo test --lib measure_pickup_cost -- --ignored --nocapture`) : 1,7 µs par tick avec la grille (23 croquettes testées au lieu de 720), 8,7 µs en testant toutes les paires.

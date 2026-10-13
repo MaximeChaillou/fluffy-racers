@@ -6,8 +6,10 @@
 //! the physics step, the bumps between karts. The kart only reads its `KartInput`, never the
 //! keyboard.
 //!
-//! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, croquette, later
-//! the items) goes through the one `Boost` component (GD § 2). Every top speed multiplier
+//! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, croquette, piment)
+//! goes through the one `Boost` component (GD § 2). Hit by an item (issue #16), the kart spins
+//! out or tumbles (`KartState::Hit`: deaf to its driver, slowing down hard), then starts its
+//! invincibility. Every top speed multiplier
 //! (bots' catch-up, croquettes, stats) goes through `MaxSpeedFactors`.
 //!
 //! The stats of the kart (GD § 9, issue #15, `stats.rs`) are converted once when it spawns into
@@ -28,7 +30,7 @@ mod visual;
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
-pub use physics::{Boost, KartState, max_speed, target_yaw_rate};
+pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
 pub use rocket::{
     Stall, StartOutcome, StartPress, THROTTLE_PRESSED, rocket_start_duration, start_outcome,
 };
@@ -41,8 +43,8 @@ pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
     BoostFlame, DriftSpark, DriverEars, DriverLook, DriverVisual, KartBodyPivot, KartVisualAssets,
-    KartVisualPlugin, StallSmoke, WindLine, flame_size, spawn_kart_visual,
-    spawn_kart_visual_with_driver,
+    KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose, shown_while_invincible,
+    spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;
@@ -513,7 +515,7 @@ fn drive_karts(
             (&MaxSpeedScale, &StatEffects),
             &Stall,
             &mut TrickTracker,
-            &mut Boost,
+            (&mut Boost, &mut Invincibility),
             &mut KartState,
             &mut DriftMotion,
             &mut KartWheels,
@@ -544,7 +546,7 @@ fn drive_karts(
         (speed_scale, effects),
         stall,
         mut tricks,
-        mut boost,
+        (mut boost, mut invincibility),
         mut state,
         mut motion,
         mut wheels,
@@ -577,9 +579,19 @@ fn drive_karts(
             continue;
         }
         // A stalled engine (rocket start pressed too early, GD § 4) ignores the accelerator,
-        // the brake and the jump button; the button edges still follow the real input.
+        // the brake and the jump button; a kart hit by an item (GD § 8) ignores everything. The
+        // button edges still follow the real input.
         let driver = *input;
-        let effective = if stall.is_active() {
+        let hit = match *state {
+            KartState::Hit { reaction, .. } => Some(reaction),
+            _ => None,
+        };
+        let effective = if hit.is_some() {
+            KartInput {
+                look_back: driver.look_back,
+                ..default()
+            }
+        } else if stall.is_active() {
             KartInput {
                 steer: driver.steer,
                 look_back: driver.look_back,
@@ -684,6 +696,11 @@ fn drive_karts(
         if step.trick_landed {
             boost.add(tuning.trick_boost_strength, tuning.trick_boost_duration);
         }
+        if step.hit_ended {
+            // After the spin or tumble, protected from the items for a while (GD § 8: its
+            // Invincibility stat, 1 to 2 s).
+            invincibility.start(effects.invincibility);
+        }
         if step.hop {
             // Hop: at least `hop_speed` along the ground normal (never stacks on a bump).
             linvel += normal * (tuning.hop_speed - linvel.dot(normal)).max(0.0);
@@ -707,21 +724,25 @@ fn drive_karts(
         ) == KartState::Grounded;
         let ground_handling = match *state {
             KartState::Grounded | KartState::Hop { .. } => true,
-            KartState::Drifting { .. } => on_ground,
+            KartState::Drifting { .. } | KartState::Hit { .. } => on_ground,
             KartState::Airborne | KartState::Trick | KartState::Respawning => false,
         };
         if ground_handling {
             let forward_speed = linvel.dot(ahead);
             let top_speed =
                 max_speed(tuning, wheels.offroad_ratio, &boost) * speed_scale.0.max(0.0);
-            let new_forward = next_forward_speed(
-                tuning,
-                forward_speed,
-                input,
-                top_speed,
-                boost.is_active(),
-                dt,
-            );
+            // Hit by an item: it slows down hard, boost or not (GD § 8).
+            let new_forward = match hit {
+                Some(reaction) => hit_forward_speed(tuning, forward_speed, reaction, dt),
+                None => next_forward_speed(
+                    tuning,
+                    forward_speed,
+                    input,
+                    top_speed,
+                    boost.is_active(),
+                    dt,
+                ),
+            };
             let new_lateral = next_lateral_speed(tuning, linvel.dot(right), dt);
 
             let yaw = angvel.dot(normal);

@@ -1,6 +1,7 @@
-//! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, empty slots
-//! for the items (issue #16), the croquettes held (issue #14: the counter pops at each pick-up,
-//! shakes when some are lost, turns gold at 10), and the results screen.
+//! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, the two item
+//! slots (issue #16: hand and reserve, each item a shape and a color of its own, the roulette
+//! flashing through them, "x3" for a triple), the croquettes held (issue #14: the counter pops at
+//! each pick-up, shakes when some are lost, turns gold at 10), and the results screen.
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
@@ -15,6 +16,7 @@ pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationC
 use bevy::prelude::*;
 
 use crate::croquettes::{CroquetteTuning, Croquettes};
+use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::PlayerKart;
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer};
 use format::{
@@ -59,11 +61,100 @@ impl Default for CroquetteCounterAnimation {
     }
 }
 
-/// An empty item slot (GD § 8: one in hand, one in reserve). Filled by issue #16.
+/// An item slot (GD § 8: one in hand, one in reserve).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ItemSlot {
     /// 0 = in hand (big), 1 = reserve.
     pub index: usize,
+}
+
+/// The item shown in a slot (issue #16): a shape and a color per item.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ItemIcon {
+    pub index: usize,
+}
+
+/// "x3", "x2" under the item of a slot (an "x3" of the table).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ItemCount {
+    pub index: usize,
+}
+
+/// What a HUD slot shows: the item (`None`: empty), how many, and whether the roulette spins.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlotView {
+    pub item: Option<ItemKind>,
+    pub count: u8,
+    pub spinning: bool,
+}
+
+impl SlotView {
+    /// What `slot` shows at `now` (s): a spinning roulette flashes through the items.
+    pub fn of(slot: &Slot, now: f32) -> Self {
+        match *slot {
+            Slot::Empty => Self::default(),
+            Slot::Spinning { .. } => Self {
+                item: Some(ItemKind::ALL[(now / ROULETTE_FLASH) as usize % ItemKind::ALL.len()]),
+                count: 1,
+                spinning: true,
+            },
+            Slot::Ready { item, count } => Self {
+                item: Some(item),
+                count,
+                spinning: false,
+            },
+        }
+    }
+}
+
+/// The roulette shows another item this often (s).
+const ROULETTE_FLASH: f32 = 0.08;
+
+/// The shape of an item's icon in a slot: size (px), fill, border color and width, rotation
+/// (degrees). Each item has its own shape and color (GD § 14: recognized at once).
+pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
+    match item {
+        // A yellow peel, slanted.
+        ItemKind::Pelure => (
+            Vec2::new(46.0, 18.0),
+            Color::srgb(1.0, 0.86, 0.15),
+            Color::srgb(0.6, 0.45, 0.05),
+            3.0,
+            -35.0,
+        ),
+        // A pink ball of yarn.
+        ItemKind::Pelote => (
+            Vec2::splat(42.0),
+            Color::srgb(0.95, 0.35, 0.6),
+            Color::srgb(0.65, 0.12, 0.38),
+            6.0,
+            0.0,
+        ),
+        // A yellow ball ringed in black.
+        ItemKind::Abeille => (
+            Vec2::splat(38.0),
+            Color::srgb(1.0, 0.8, 0.1),
+            Color::srgb(0.1, 0.08, 0.05),
+            7.0,
+            0.0,
+        ),
+        // A red chili, a green tip.
+        ItemKind::Piment => (
+            Vec2::new(18.0, 48.0),
+            Color::srgb(0.9, 0.12, 0.08),
+            Color::srgb(0.2, 0.65, 0.2),
+            3.0,
+            30.0,
+        ),
+        // A golden ring.
+        ItemKind::CroquetteDoree => (
+            Vec2::splat(40.0),
+            Color::srgba(0.0, 0.0, 0.0, 0.0),
+            Color::srgb(1.0, 0.78, 0.15),
+            10.0,
+            0.0,
+        ),
+    }
 }
 
 /// The results screen.
@@ -91,6 +182,7 @@ impl Plugin for HudPlugin {
                 (
                     spawn_hud.run_if(not(any_with_component::<HudRoot>)),
                     update_hud,
+                    update_item_slots,
                     animate_croquette_counter,
                     show_results,
                 )
@@ -126,7 +218,7 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
             },
         ))
         .with_children(|hud| {
-            // Top left: the two item slots (empty until issue #16).
+            // Top left: the two item slots (issue #16): hand, then reserve.
             hud.spawn(Node {
                 position_type: PositionType::Absolute,
                 left: px(24),
@@ -137,18 +229,47 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
             })
             .with_children(|slots| {
                 for (index, size) in [(0, 76), (1, 50)] {
-                    slots.spawn((
-                        ItemSlot { index },
-                        Node {
-                            width: px(size),
-                            height: px(size),
-                            border: UiRect::all(px(4)),
-                            border_radius: BorderRadius::all(px(14)),
-                            ..default()
-                        },
-                        BackgroundColor(PANEL_COLOR),
-                        BorderColor::all(SLOT_BORDER),
-                    ));
+                    slots
+                        .spawn((
+                            ItemSlot { index },
+                            Node {
+                                width: px(size),
+                                height: px(size),
+                                border: UiRect::all(px(4)),
+                                border_radius: BorderRadius::all(px(14)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(PANEL_COLOR),
+                            BorderColor::all(SLOT_BORDER),
+                        ))
+                        .with_children(|slot| {
+                            // The reserve's icon is smaller.
+                            let scale = if index == 0 { 1.0 } else { 0.62 };
+                            slot.spawn((
+                                ItemIcon { index },
+                                Node {
+                                    border_radius: BorderRadius::MAX,
+                                    ..default()
+                                },
+                                UiTransform {
+                                    scale: Vec2::splat(scale),
+                                    ..default()
+                                },
+                                Visibility::Hidden,
+                            ));
+                            slot.spawn((
+                                ItemCount { index },
+                                text("", if index == 0 { 20.0 } else { 14.0 }, TEXT_COLOR),
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    right: px(2),
+                                    bottom: px(0),
+                                    ..default()
+                                },
+                            ));
+                        });
                 }
             });
 
@@ -337,6 +458,80 @@ fn update_hud(
         }
     }
     shown.0 = Some(values);
+}
+
+/// The two item slots of the followed racer (issue #16): each item's icon, "x3" for a triple,
+/// the roulette flashing through the items. Rewritten only when what a slot shows changes.
+fn update_item_slots(
+    time: Res<Time>,
+    mut shown: Local<[SlotView; 2]>,
+    racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
+    held: Query<&ItemSlots>,
+    mut slots: Query<(&ItemSlot, &mut BorderColor)>,
+    mut icons: Query<
+        (
+            &ItemIcon,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut UiTransform,
+            &mut Visibility,
+        ),
+        Without<ItemSlot>,
+    >,
+    mut counts: Query<(&ItemCount, &mut Text)>,
+) {
+    let now = time.elapsed_secs();
+    let items = followed(racers.iter()).and_then(|(entity, _)| held.get(entity).ok());
+    let views = match items {
+        Some(items) => [
+            SlotView::of(&items.hand, now),
+            SlotView::of(&items.reserve, now),
+        ],
+        None => [SlotView::default(); 2],
+    };
+    if *shown == views {
+        return;
+    }
+    for (slot, mut border) in &mut slots {
+        let view = views[slot.index.min(1)];
+        // The slot's border flashes gold while its roulette spins.
+        let color = if view.spinning && ((now / ROULETTE_FLASH) as u32).is_multiple_of(2) {
+            RANK_COLOR
+        } else {
+            SLOT_BORDER
+        };
+        border.set_if_neq(BorderColor::all(color));
+    }
+    for (icon, mut node, mut fill, mut border, mut transform, mut visibility) in &mut icons {
+        let view = views[icon.index.min(1)];
+        if view == shown[icon.index.min(1)] {
+            continue;
+        }
+        let Some(item) = view.item else {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let (size, color, edge, width, degrees) = icon_shape(item);
+        node.width = px(size.x);
+        node.height = px(size.y);
+        node.border = UiRect::all(px(width));
+        fill.set_if_neq(BackgroundColor(color));
+        border.set_if_neq(BorderColor::all(edge));
+        transform.rotation = Rot2::degrees(degrees);
+        visibility.set_if_neq(Visibility::Inherited);
+    }
+    for (count, mut text) in &mut counts {
+        let view = views[count.index.min(1)];
+        let wanted = match view.count {
+            n if n > 1 && !view.spinning => format!("x{n}"),
+            _ => String::new(),
+        };
+        if text.0 != wanted {
+            text.0 = wanted;
+        }
+    }
+    *shown = views;
 }
 
 /// The croquette counter's pop (scale) and shake (offset), every frame.

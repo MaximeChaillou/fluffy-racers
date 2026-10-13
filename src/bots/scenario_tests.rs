@@ -9,6 +9,12 @@
 //! mean threshold, with the margins printed. The tows of the pelican are sorted by cause
 //! ([`TowCause`]): a pack incident is not a bot missing a turn. To try the thresholds on other
 //! seeds: `FLUFFY_RACE_SEEDS=100-109 cargo test --lib bots::scenario_tests -- --nocapture`.
+//!
+//! **Without items (issue #16).** These races measure the bots' driving: they run with the items
+//! switched off (`ItemTuning::enabled`), so that a spin out or a tumble does not blur what they
+//! measure, with the same thresholds as before the items. One more race test runs with the
+//! items, as in the game ([`bots_race_with_items`]): every race ends, the bots take boxes and use
+//! their items, karts get hit, and no bot gets towed in free driving.
 
 use bevy::ecs::schedule::SingleThreadedExecutor;
 use bevy::input::ButtonState;
@@ -21,6 +27,7 @@ use bevy_rapier3d::prelude::{
 use super::*;
 use crate::TICK_HZ;
 use crate::croquettes::Croquettes;
+use crate::items::{ItemStats, ItemTuning};
 use crate::kart::{
     KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, StatEffects,
 };
@@ -106,8 +113,9 @@ const PACK_WINDOW_SECONDS: f32 = 3.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TowCause {
     /// **Pack incident**: the kart touched another kart (their bodies in contact in Rapier, at
-    /// any speed, a scrape included) within [`PACK_WINDOW_SECONDS`] before its trouble began: a
-    /// pile-up at the start, a shunt in the pack. The trouble begins when the pelican starts
+    /// any speed, a scrape included), or was hit by an item (issue #16: it spun out or
+    /// tumbled), within [`PACK_WINDOW_SECONDS`] before its trouble began: a pile-up at the
+    /// start, a shunt in the pack, an item. The trouble begins when the pelican starts
     /// counting: `outside_seconds` before the pick-up for a kart out of the track,
     /// `stuck_seconds` before it for a stuck kart, at the pick-up for a kart that fell.
     Pack,
@@ -319,6 +327,10 @@ impl RaceLog {
             }
 
             let state = *world.get::<KartState>(*entity).unwrap();
+            // Issue #16: hit by an item is an incident too (never in the races without items).
+            if state.is_hit() {
+                log.last_contact = Some(self.ticks);
+            }
             let input = *world.get::<KartInput>(*entity).unwrap();
             let progress = world.get::<RaceProgress>(*entity).unwrap();
             let drifting = matches!(state, KartState::Drifting { .. });
@@ -421,6 +433,17 @@ impl RaceLog {
                 log.croquettes_held,
                 ticks_to_seconds(log.contact_ticks),
             );
+            if let Some(items) = app
+                .world()
+                .get::<ItemStats>(*entity)
+                .filter(|items| items.boxes > 0)
+            {
+                let _ = writeln!(
+                    out,
+                    "    items: {} boxes, {} used, hit {} times, {} hits landed, {} blocked",
+                    items.boxes, items.used, items.hits_taken, items.hits_landed, items.blocked
+                );
+            }
             for tow in &log.tows {
                 let _ = writeln!(
                     out,
@@ -693,10 +716,17 @@ fn wait_for_the_bots(app: &mut App, bots: usize) {
     panic!("the bots or the race never came");
 }
 
-/// The game on `track` with `bots` bots and the race seed `seed`, before its first update.
+/// The game on `track` with `bots` bots and the race seed `seed`, before its first update,
+/// without items (issue #16: these races measure the driving).
 fn seeded_app(bots: usize, seed: u64) -> App {
+    seeded_app_with(bots, seed, false)
+}
+
+/// The same, with or without the items.
+fn seeded_app_with(bots: usize, seed: u64, items: bool) -> App {
     let mut app = game_app_unloaded(TrackChoice::default(), bots);
     app.world_mut().resource_mut::<RaceGrid>().seed = seed;
+    app.world_mut().resource_mut::<ItemTuning>().enabled = items;
     single_threaded(&mut app);
     app
 }
@@ -804,6 +834,8 @@ struct KartResult {
     laps_without_pelican: Vec<f32>,
     /// Its own mini-turbo thresholds (issue #15: its Mini-turbo stat).
     thresholds: [f32; 3],
+    /// Its items (issue #16): boxes, items used, hits taken and landed.
+    items: ItemStats,
 }
 
 impl KartResult {
@@ -856,6 +888,11 @@ impl RaceResult {
                         .unwrap()
                         .tuning(base)
                         .mini_turbo_thresholds,
+                    items: app
+                        .world()
+                        .get::<ItemStats>(*entity)
+                        .copied()
+                        .unwrap_or_default(),
                 }
             })
             .collect();
@@ -1517,6 +1554,108 @@ fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
     );
     tow_checks(&mut checks, &runs.iter().collect::<Vec<_>>(), 3.0, 1.25);
     checks.finish();
+}
+
+/// Issue #16 acceptance: the game's grid (11 Normal bots, the player's kart driven by a bot too)
+/// races 3 laps of Prairie Pompon **with the items**, as in the game. Every race ends, in a
+/// bounded time; the bots take boxes and use their items (most of them); karts get hit; and the
+/// items never send a bot off by itself (no tow in free driving: a kart hit by an item counts as
+/// an incident, like a kart touched by another). The driving itself is measured without items
+/// (the other race tests).
+#[test]
+fn bots_race_with_items() {
+    struct Run {
+        race: RaceResult,
+        over: bool,
+    }
+    let seeds = race_seeds();
+    let runs = for_each_seed(&seeds, |seed| {
+        let mut app = seeded_app_with(11, seed, true);
+        wait_for_the_player(&mut app);
+        wait_for_the_bots(&mut app, 11);
+        player_becomes_a_bot(&mut app, BotDifficulty::Normal);
+        let mut log = RaceLog::new(&mut app);
+        run_race(&mut app, &mut log, 150.0);
+        let race = RaceResult::of(&app, &log, "12 karts, Normal, with items");
+        app.update();
+        let over = race_phase(&app) == RacePhase::Finished;
+        Run { race, over }
+    });
+    print_reports(&seeds, runs.iter().map(|r| &r.race));
+
+    let mut checks = Checks::new("12 karts, Normal grid, with items", &seeds);
+    checks.every_race(
+        "every kart finishes",
+        runs.iter().map(|r| r.race.all_finished()),
+    );
+    checks.every_race(
+        "the race is over once all have finished",
+        runs.iter().map(|r| r.over),
+    );
+    let finishes = |r: &Run| r.race.finishes();
+    checks.below(
+        "slowest finish (s)",
+        &per_race(&runs, |r| highest(&finishes(r))),
+        Some(85.0),
+        Some(70.0),
+    );
+    checks.at_least(
+        "fastest finish (s)",
+        &per_race(&runs, |r| lowest(&finishes(r))),
+        Some(50.0),
+        None,
+    );
+    let items = |r: &Run| r.race.karts.iter().map(|k| k.items).collect::<Vec<_>>();
+    let count =
+        |r: &Run, f: fn(&ItemStats) -> bool| items(r).iter().filter(|i| f(i)).count() as f32;
+    let sum = |r: &Run, f: fn(&ItemStats) -> u32| items(r).iter().map(f).sum::<u32>() as f32;
+    checks.at_least(
+        "karts that took a box",
+        &per_race(&runs, |r| count(r, |i| i.boxes > 0)),
+        Some(5.0),
+        Some(9.0),
+    );
+    checks.at_least(
+        "boxes taken",
+        &per_race(&runs, |r| sum(r, |i| i.boxes)),
+        Some(15.0),
+        Some(25.0),
+    );
+    checks.at_least(
+        "karts that used an item",
+        &per_race(&runs, |r| count(r, |i| i.used > 0)),
+        Some(5.0),
+        Some(9.0),
+    );
+    checks.at_least(
+        "items used",
+        &per_race(&runs, |r| sum(r, |i| i.used)),
+        Some(20.0),
+        Some(35.0),
+    );
+    checks.at_least(
+        "hits (spins and tumbles)",
+        &per_race(&runs, |r| sum(r, |i| i.hits_taken)),
+        Some(5.0),
+        Some(10.0),
+    );
+    checks.at_most(
+        "tows (every cause)",
+        &per_race(&runs, |r| r.race.tows() as f32),
+        Some(5.0),
+        Some(2.0),
+    );
+    checks.at_most(
+        "tows in free driving",
+        &per_race(&runs, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+        Some(0.0),
+        None,
+    );
+    checks.finish();
+}
+
+fn race_phase(app: &App) -> RacePhase {
+    race(app).phase()
 }
 
 /// Issue #6: the game's grid is 1 player and 11 bots; the player starts last, nobody moves

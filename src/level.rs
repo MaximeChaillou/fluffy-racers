@@ -2,9 +2,10 @@
 //! admin panel's « Relancer » and circuit choice).
 //!
 //! A level is the track and everything on it: the karts and their visuals, the croquettes, the
-//! pelicans, the HUD. Each of its root entities carries [`LevelScoped`]: the track builders put it
-//! on their pieces, and it is a required component of the karts, of their visuals (and the
-//! pelicans: anything following a simulated body), of the scattered croquettes and their bursts,
+//! items (boxes and items out, issue #16), the pelicans, the HUD. Each of its root entities
+//! carries [`LevelScoped`]: the track builders put it on their pieces, and it is a required
+//! component of the karts, of their visuals (and the pelicans: anything following a simulated
+//! body), of the scattered croquettes and their bursts, of the items out (`items::ItemObject`),
 //! and of the HUD. [`LoadLevel`] despawns all of them, removes the resources built for the level
 //! (`TrackLayout`, `PlayerStart`, `Course`, `Race`, `RacingLine`), and lets the usual path build
 //! it again, as at startup: the track (its file stays loaded, so a restart is immediate), then the
