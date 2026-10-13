@@ -224,7 +224,13 @@ pub fn target_yaw_rate(tuning: &KartTuning, steer: f32, forward_speed: f32) -> f
 
 /// Moves the current yaw rate toward the target one, smoothed by `steer_response`.
 pub fn next_yaw_rate(tuning: &KartTuning, current: f32, target: f32, dt: f32) -> f32 {
-    let blend = 1.0 - (-tuning.steer_response * dt).exp();
+    approach_yaw_rate(current, target, tuning.steer_response, dt)
+}
+
+/// Moves the current yaw rate toward the target one at `response` (1/s, frame-rate independent
+/// exponential smoothing).
+pub fn approach_yaw_rate(current: f32, target: f32, response: f32, dt: f32) -> f32 {
+    let blend = 1.0 - (-response.max(0.0) * dt).exp();
     current + (target - current) * blend
 }
 

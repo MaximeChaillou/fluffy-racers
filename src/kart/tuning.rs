@@ -126,20 +126,41 @@ pub struct KartTuning {
     /// Boost strengths (max speed increase) of the blue, orange and purple mini-turbos. Our own
     /// starting points, à régler: +20 %, +25 %, +30 % (the purple one is as strong as a chili).
     pub mini_turbo_strengths: [f32; 3],
-    /// Radius of a drift steered fully inward, at `max_speed` (m). Tighter than the normal
-    /// steering (≈ 17 m at top speed): the hairpin (12 m) can be taken flat out.
+    /// Radius of a drift steered fully inward, at `max_speed` (m). Issue #30 (Max: "sans angle
+    /// serré"): 17.5 m, about as tight as the normal steering at full lock (≈ 17 m at top
+    /// speed), instead of 10 m. The yaw rate is fixed by the radii, so the curve is tighter
+    /// when slower: the hairpin (15 m on the racing line) wants about 25 m/s.
     pub drift_radius_tight: f32,
-    /// Radius of a drift steered fully outward, at `max_speed` (m). Neutral steering sits in
-    /// between (≈ 15 m by default). The yaw rate is fixed by these radii, so the curve is
-    /// tighter when slower and wider while boosting.
+    /// Radius of a drift steered fully outward, at `max_speed` (m): 55 m (was 32 m). Neutral
+    /// steering sits in between (≈ 26 m by default, was 15 m). The mini-turbo charges per radian
+    /// of drift, so wider drifts charge more per turn: an orange fits in the big turns of
+    /// Prairie Pompon (issue #30).
     pub drift_radius_wide: f32,
-    /// Visual slip angle of a drift steered fully inward: the nose points this far inside the
-    /// curve (rad, 0.45 ≈ 26°). Visual only, the simulated body keeps its grip.
+    /// Time for the drift's curve to set in after the landing (s, issue #30): the yaw rate goes
+    /// from the one the kart had on landing to the drift's along an eased ramp (smoothstep),
+    /// then follows `steer_response` like the normal steering. No jolt on landing.
+    pub drift_curve_in_time: f32,
+    /// Time for the drift's curve to fade back to the normal steering once the drift ends
+    /// (release, with or without mini-turbo, or broken) (s): no snap on the way out either.
+    pub drift_curve_out_time: f32,
+    /// How fast the yaw rate follows the steering during the hop (1/s, issue #30): in the air
+    /// the kart mostly keeps the rotation it had; half the ground's `steer_response`, so that
+    /// hopping with the stick to the side starts the turn gently.
+    pub hop_steer_response: f32,
+    /// Slip angle of a drift steered fully inward: the body points this far inside the
+    /// direction of travel, the rear swung out (rad, 0.3 ≈ 17°; 26° before issue #30). The
+    /// simulated body keeps its grip and follows the trajectory: the angle is shown by the
+    /// visual, pivoting around the front axle (the front follows the trajectory, the rear
+    /// slides out).
     pub drift_slip_angle_tight: f32,
-    /// Visual slip angle of a drift steered fully outward (rad, 0.2 ≈ 11°).
+    /// Slip angle of a drift steered fully outward (rad, 0.12 ≈ 7°; 11° before issue #30).
     pub drift_slip_angle_wide: f32,
-    /// How fast the visual slip angle follows its target (1/s).
-    pub drift_slip_response: f32,
+    /// The slip angle follows its target (scaled by how much of the drift's curve is set in)
+    /// like a damped spring: natural frequency (rad/s)...
+    pub drift_slip_frequency: f32,
+    /// ...and damping ratio (1 = no overshoot; below, the rear wobbles a little, light and
+    /// slippery).
+    pub drift_slip_damping: f32,
 
     // --- Rocket start (GD § 4, issue #13) -------------------------------------------------------
     /// `t` = time from the "2" of the countdown to the first press of the accelerator. Up to
@@ -261,11 +282,15 @@ impl Default for KartTuning {
             mini_turbo_thresholds: [270.0, 570.0, 870.0],
             mini_turbo_durations: [0.62, 1.67, 2.63],
             mini_turbo_strengths: [0.2, 0.25, 0.3],
-            drift_radius_tight: 10.0,
-            drift_radius_wide: 32.0,
-            drift_slip_angle_tight: 0.45,
-            drift_slip_angle_wide: 0.2,
-            drift_slip_response: 10.0,
+            drift_radius_tight: 17.5,
+            drift_radius_wide: 55.0,
+            drift_curve_in_time: 0.35,
+            drift_curve_out_time: 0.3,
+            hop_steer_response: 4.0,
+            drift_slip_angle_tight: 0.3,
+            drift_slip_angle_wide: 0.12,
+            drift_slip_frequency: 9.0,
+            drift_slip_damping: 0.7,
 
             rocket_start_perfect: 0.25,
             rocket_start_max_duration: 2.5,

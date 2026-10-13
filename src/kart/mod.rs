@@ -21,7 +21,7 @@ mod tuning;
 mod visual;
 
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
-pub use drift::{DriftSide, MiniTurbo, drift_yaw_rate};
+pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
 pub use physics::{Boost, KartState, target_yaw_rate};
 pub use rocket::{
@@ -42,8 +42,8 @@ use crate::interpolation::PhysicsPose;
 use crate::track::{BoostPad, Surface, TrickRamp};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
-    max_speed, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
-    righting_angular_velocity, suspension_accel,
+    approach_yaw_rate, max_speed, next_forward_speed, next_lateral_speed, next_state,
+    next_yaw_rate, righting_angular_velocity, suspension_accel,
 };
 
 /// What a driver (player, bot, network) asks the kart to do this tick.
@@ -71,6 +71,7 @@ pub struct KartInput {
     PreviousInput,
     KartAssists,
     KartState,
+    DriftMotion,
     Boost,
     KartWheels,
     MaxSpeedScale,
@@ -464,6 +465,7 @@ fn drive_karts(
             &mut TrickTracker,
             &mut Boost,
             &mut KartState,
+            &mut DriftMotion,
             &mut KartWheels,
             &mut Velocity,
             &mut ExternalForce,
@@ -494,6 +496,7 @@ fn drive_karts(
         mut tricks,
         mut boost,
         mut state,
+        mut motion,
         mut wheels,
         mut velocity,
         mut force,
@@ -501,6 +504,9 @@ fn drive_karts(
     ) in &mut karts
     {
         if *state == KartState::Respawning {
+            if *motion != DriftMotion::default() {
+                *motion = DriftMotion::default();
+            }
             // Carried by the tow pelican: no suspension, engine or gravity; the race rules move
             // the body (issue #5).
             force.force = Vec3::ZERO;
@@ -631,6 +637,11 @@ fn drive_karts(
         if gravity.0 != tuning.gravity_scale {
             gravity.0 = tuning.gravity_scale;
         }
+        // The drift's curve and slip set in and fade out progressively (issue #30), from the
+        // rotation the kart has now.
+        let mut drift_motion = *motion;
+        drift_motion.step(tuning, &state, angvel.dot(normal), input.steer, dt);
+        motion.set_if_neq(drift_motion);
 
         // --- Driving: rewrite the velocity from our curves. A hop keeps the ground handling
         // (full steering, engine) for its short flight; a drift in the air (longer than the
@@ -662,21 +673,28 @@ fn drive_karts(
             let yaw = angvel.dot(normal);
             let tilt = angvel - normal * yaw;
             // A drift always turns toward its side; the steering only tightens or widens it.
-            let target = match *state {
-                KartState::Drifting { side, .. } => {
-                    drift_yaw_rate(tuning, side, input.steer, new_forward)
-                }
-                _ => target_yaw_rate(tuning, input.steer, new_forward),
+            // Its curve sets in from the rotation the kart had on landing and fades back to the
+            // normal steering after it (`DriftMotion`, issue #30).
+            let steering = target_yaw_rate(tuning, input.steer, new_forward);
+            let target = match drift_motion.side {
+                Some(side) => drift_motion.yaw_target(
+                    steering,
+                    drift_yaw_rate(tuning, side, input.steer, new_forward),
+                ),
+                None => steering,
             };
-            let new_yaw = next_yaw_rate(tuning, yaw, target, dt);
+            // In the air of a hop the kart mostly keeps its rotation: the stick acts slower.
+            let response = match *state {
+                KartState::Hop { .. } => tuning.hop_steer_response,
+                _ => tuning.steer_response,
+            };
+            let new_yaw = approach_yaw_rate(yaw, target, response, dt);
             // A drift slides around the curve without losing speed: the velocity aims where
             // the heading will be at the end of this step, so the grip finds no sideways speed
             // to scrub on the next tick. The normal steering keeps the plain grip model, which
-            // scrubs a little speed in tight turns.
-            let travel = match *state {
-                KartState::Drifting { .. } => Quat::from_axis_angle(normal, new_yaw * dt) * ahead,
-                _ => ahead,
-            };
+            // scrubs a little speed in tight turns. In between (the drift setting in or fading
+            // out), the same blend as the curve: the direction of travel never jumps.
+            let travel = Quat::from_axis_angle(normal, drift_motion.blend() * new_yaw * dt) * ahead;
             velocity.linear =
                 travel * new_forward + right * new_lateral + normal * linvel.dot(normal);
             velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();

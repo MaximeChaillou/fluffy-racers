@@ -2,10 +2,11 @@
 //!
 //! The visual is a separate entity that follows the simulated body with interpolation
 //! (`crate::interpolation`). Under it, a pivot ([`KartBodyPivot`]) carries the body, driver and
-//! wheels: it turns the kart's nose inside the curve while drifting (the slip angle is purely
-//! visual, the simulated body keeps its grip and the camera keeps following the direction of
-//! travel). The wheels follow the suspension, so the kart visibly hugs the ground and bounces
-//! on landings. Drift sparks at the rear wheels show the mini-turbo tier (GD § 14).
+//! wheels: while drifting it turns the body by the drift's slip angle around the front axle, so
+//! the rear slides out of the turn while the front follows the trajectory (issue #30; the slip
+//! angle is only shown, the simulated body keeps its grip and the camera keeps following the
+//! direction of travel). The wheels follow the suspension, so the kart visibly hugs the ground
+//! and bounces on landings. Drift sparks at the rear wheels show the mini-turbo tier (GD § 14).
 //!
 //! Driving techniques (issue #13), all primitives sharing a handful of unlit materials:
 //! exhaust flames during a boost (bigger for a stronger and longer boost: a better rocket
@@ -17,10 +18,10 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-use super::drift::{MiniTurbo, drift_slip_angle};
+use super::drift::{DriftMotion, MiniTurbo, slip_pose};
 use super::rocket::Stall;
 use super::slipstream::Slipstream;
-use super::{Boost, KartAssists, KartInput, KartState, KartTuning, KartWheels, WHEEL_ANCHORS};
+use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, WHEEL_ANCHORS};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 
 const WHEEL_RADIUS: f32 = 0.28;
@@ -333,29 +334,23 @@ fn place_wheels(
     }
 }
 
-/// Turns the kart's nose inside the curve while drifting, smoothly (frame-rate independent);
-/// rolls the body once when a trick starts; shakes it while the engine stalls.
+/// Turns the body by the drift's slip angle around the front axle (the simulation's
+/// `DriftMotion`, interpolated between the last two ticks like the pose); rolls the body once
+/// when a trick starts; shakes it while the engine stalls.
 fn pose_bodies(
     time: Res<Time>,
-    tuning: Res<KartTuning>,
-    karts: Query<(&KartState, &KartInput, &Stall)>,
+    fixed_time: Res<Time<Fixed>>,
+    karts: Query<(&KartState, &DriftMotion, &Stall)>,
     mut pivots: Query<(&mut KartBodyPivot, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-    let blend = 1.0 - (-tuning.drift_slip_response * dt).exp();
+    let alpha = fixed_time.overstep_fraction();
     let now = time.elapsed_secs();
     for (mut pivot, mut transform) in &mut pivots {
-        let Ok((state, input, stall)) = karts.get(pivot.body) else {
+        let Ok((state, motion, stall)) = karts.get(pivot.body) else {
             continue;
         };
-        let target = match *state {
-            KartState::Drifting { side, .. } => drift_slip_angle(&tuning, side, input.steer),
-            _ => 0.0,
-        };
-        let mut slip = pivot.slip + (target - pivot.slip) * blend;
-        if (target - slip).abs() < 1e-4 {
-            slip = target;
-        }
+        let slip = motion.interpolated_slip(alpha);
         // Trick: a new roll when it starts; a roll in progress finishes even after landing.
         let tricking = *state == KartState::Trick;
         let mut spin = pivot.spin;
@@ -364,6 +359,12 @@ fn pose_bodies(
         } else if spin < TRICK_SPIN_SECONDS {
             spin = (spin + dt).min(TRICK_SPIN_SECONDS);
         }
+        // The stalled engine coughs: the body shakes a little.
+        let shake = if stall.is_active() {
+            0.03 * (now * 55.0).sin()
+        } else {
+            0.0
+        };
         if slip != pivot.slip || spin != pivot.spin || tricking != pivot.tricking {
             pivot.slip = slip;
             pivot.spin = spin;
@@ -371,15 +372,11 @@ fn pose_bodies(
             let t = spin / TRICK_SPIN_SECONDS;
             // Ease in and out; a full turn is the same as none.
             let roll = TAU * t * t * (3.0 - 2.0 * t);
-            // Nose to the right = clockwise seen from above = negative rotation around Y.
-            transform.rotation = Quat::from_rotation_y(-slip) * Quat::from_rotation_z(roll);
+            // The roll turns the body around its center, the slip around the front axle.
+            let (yaw, offset) = slip_pose(slip);
+            transform.rotation = yaw * Quat::from_rotation_z(roll);
+            transform.translation = offset.with_y(shake);
         }
-        // The stalled engine coughs: the body shakes a little.
-        let shake = if stall.is_active() {
-            0.03 * (now * 55.0).sin()
-        } else {
-            0.0
-        };
         if transform.translation.y != shake {
             transform.translation.y = shake;
         }
