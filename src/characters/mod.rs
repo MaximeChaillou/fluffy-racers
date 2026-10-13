@@ -11,10 +11,12 @@
 //! - **Selection screen** ([`SelectionScreen`]): character, kart, wheels and wing, with the stat
 //!   bars `(level + 3) / 4`. It opens when the game starts (with a renderer: not in the headless
 //!   tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
-//!   Mac). Arrows (or W/S and A/D, i.e. Z/S and Q/D in AZERTY) move through it, **Entrée** races
-//!   with the choice (the level is rebuilt by `LoadLevel`), **Échap** or G closes it unchanged.
-//!   While it is open the game is paused. Its egui interface (`ui.rs`) only exists with a
-//!   renderer; the keys and the actions ([`SelectionAction`]) are headless and tested.
+//!   Mac). Arrows (or the player's layout's letters: Z/S and Q/D in AZERTY, W/S and A/D in
+//!   QWERTY, issue #17) move through it, **Entrée** races with the choice (the level is rebuilt
+//!   by `LoadLevel`), **Échap** or G closes it unchanged. While it is open the game is paused (as
+//!   while the options menu of issue #17 is: `crate::options`, which takes the keys while open).
+//!   Its egui interface (`ui.rs`) only exists with a renderer; the keys and the actions
+//!   ([`SelectionAction`]) are headless and tested.
 
 mod roster;
 mod ui;
@@ -30,20 +32,18 @@ pub use ui::CharacterUiPlugin;
 
 use bevy::prelude::*;
 
-use crate::kart::DriverLook;
+use crate::kart::{DriverLook, KeyboardLayout};
 use crate::level::LoadLevel;
+use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::RaceMode;
 
 /// Opens (and closes) the selection screen: « G » for garage, a letter at the same place and
 /// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
 pub const SELECTION_KEY: KeyCode = KeyCode::KeyG;
 
-/// Keys of the selection screen. Physical positions: W/A/S/D are Z/Q/S/D on an AZERTY keyboard,
-/// like for driving.
-const UP_KEYS: [KeyCode; 2] = [KeyCode::ArrowUp, KeyCode::KeyW];
-const DOWN_KEYS: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::KeyS];
-const LEFT_KEYS: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::KeyA];
-const RIGHT_KEYS: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::KeyD];
+/// Keys of the selection screen. The directions are the driving keys of the player's keyboard
+/// layout (`KeyboardLayout`, issue #17): physical positions, W/A/S/D being Z/Q/S/D on an AZERTY
+/// keyboard.
 const CONFIRM_KEYS: [KeyCode; 2] = [KeyCode::Enter, KeyCode::NumpadEnter];
 const CANCEL_KEYS: [KeyCode; 2] = [KeyCode::Escape, SELECTION_KEY];
 
@@ -118,9 +118,13 @@ impl Plugin for CharacterPlugin {
             .add_systems(
                 Update,
                 (
-                    selection_keys.run_if(resource_exists::<ButtonInput<KeyCode>>),
+                    // Before the options menu's keys: a key that closes the menu does not also act
+                    // on this screen below it (issue #17).
+                    selection_keys
+                        .run_if(resource_exists::<ButtonInput<KeyCode>>)
+                        .before(OptionsSystems),
                     apply_selection_actions,
-                    pause_while_choosing,
+                    pause_in_menus.after(OptionsSystems),
                 )
                     .chain(),
             );
@@ -154,12 +158,19 @@ fn create_driver_looks(
     commands.insert_resource(DriverLooks(looks));
 }
 
-/// The keys of the selection screen (see the module's documentation).
+/// The keys of the selection screen (see the module's documentation). None while the options
+/// menu is open over it: the keys are the menu's.
 fn selection_keys(
     keys: Res<ButtonInput<KeyCode>>,
     screen: Res<SelectionScreen>,
+    layout: Option<Res<KeyboardLayout>>,
+    options: Option<Res<OptionsMenu>>,
     mut actions: MessageWriter<SelectionAction>,
 ) {
+    if options.is_some_and(|menu| menu.open) {
+        return;
+    }
+    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
     if !screen.open {
         if keys.just_pressed(SELECTION_KEY) {
             actions.write(SelectionAction::Open);
@@ -167,18 +178,18 @@ fn selection_keys(
         return;
     }
     let kind = screen.kind();
-    let pressed = |set: [KeyCode; 2]| keys.any_just_pressed(set);
-    if pressed(CONFIRM_KEYS) {
+    let pressed = |set: &[KeyCode]| keys.any_just_pressed(set.iter().copied());
+    if pressed(&CONFIRM_KEYS) {
         actions.write(SelectionAction::Confirm);
-    } else if pressed(CANCEL_KEYS) {
+    } else if pressed(&CANCEL_KEYS) {
         actions.write(SelectionAction::Cancel);
-    } else if pressed(UP_KEYS) {
+    } else if pressed(layout.up_keys()) {
         actions.write(SelectionAction::Row(-1));
-    } else if pressed(DOWN_KEYS) {
+    } else if pressed(layout.down_keys()) {
         actions.write(SelectionAction::Row(1));
-    } else if pressed(LEFT_KEYS) {
+    } else if pressed(layout.left_keys()) {
         actions.write(SelectionAction::Change(kind, -1));
-    } else if pressed(RIGHT_KEYS) {
+    } else if pressed(layout.right_keys()) {
         actions.write(SelectionAction::Change(kind, 1));
     }
 }
@@ -227,17 +238,20 @@ fn apply_selection_actions(
     }
 }
 
-/// The game waits while the player chooses: virtual time is paused while the screen is open
-/// (the fixed 60 Hz simulation does not run), and runs again once it closes.
-fn pause_while_choosing(
+/// The game waits while the player chooses: virtual time is paused while the screen or the
+/// options menu (issue #17) is open (the fixed 60 Hz simulation does not run), and runs again
+/// once both are closed.
+fn pause_in_menus(
     screen: Res<SelectionScreen>,
+    options: Option<Res<OptionsMenu>>,
     mut was_open: Local<bool>,
     mut time: ResMut<Time<Virtual>>,
 ) {
-    if screen.open && !time.is_paused() {
+    let open = screen.open || options.is_some_and(|menu| menu.open);
+    if open && !time.is_paused() {
         time.pause();
-    } else if !screen.open && *was_open && time.is_paused() {
+    } else if !open && *was_open && time.is_paused() {
         time.unpause();
     }
-    *was_open = screen.open;
+    *was_open = open;
 }

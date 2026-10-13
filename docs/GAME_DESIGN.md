@@ -47,7 +47,7 @@ D'après MK8DX :
 2. **En drift**, le kart garde un angle de glisse. La direction **resserre ou élargit** la courbe, mais on ne peut pas changer de côté.
 3. **Charge du mini-turbo**, comptée à chaque tick (60 Hz) :
    - en braquant **vers l'intérieur** (≥ 0,5) : **+5 unités/tick** ; sinon **+2 unités/tick** (MK8DX) ;
-   - en direction assistée (« auto-drift ») : 2 et 0,8 unités/tick (MK8DX).
+   - en direction assistée (« auto-drift ») : 2 et 0,8 unités/tick (MK8DX). Les aides ne sont pas prévues pour l'instant (§ 11) : ces valeurs restent dans les réglages, inutilisées en jeu.
 4. **Paliers et étincelles** (MK8DX) :
 
 | Palier | Seuil (à régler, modulé par la stat MT) | Durée au plus vite | Étincelles | Durée du boost (MK8DX) |
@@ -58,7 +58,7 @@ D'après MK8DX :
 
    Les seuils 270 et 570 sont ceux de MK8 sur Wii U. Dans MK8DX, ils dépendent de la stat MT ; 870 est notre extrapolation pour le 3e palier.
 5. **Relâcher le bouton** déclenche le boost du palier atteint. Relâcher avant le premier palier ne donne rien.
-6. L'ultra mini-turbo est **désactivé quand la direction assistée est active** (MK8DX).
+6. L'ultra mini-turbo est **désactivé quand la direction assistée est active** (MK8DX). Sans objet tant que les aides ne sont pas prévues (§ 11).
 7. **En 200cc**, freiner pendant un drift resserre la courbe sans casser le drift.
 
 ## 4. Départ fusée
@@ -196,9 +196,18 @@ Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osie
 
 ## 11. Aides et accessibilité (MK8DX)
 
+**Les aides à la conduite ne sont pas prévues pour l'instant** (décision de Max du 2026-10-13, #17). Pour mémoire, ce que fait MK8DX :
+
 - **Direction assistée** : garde le kart sur la piste dans les virages difficiles, avec un témoin visible sur le kart. Elle désactive l'ultra mini-turbo.
 - **Accélération automatique**.
 - Les deux se règlent par joueur. Elles sont désactivées par défaut en ligne, mais restent autorisées.
+
+Ce qui reste dans le code : la charge réduite du drift et le violet désactivé (§ 3), derrière un interrupteur par kart (`KartAssists`) que rien n'active en jeu.
+
+Le confort qui existe déjà (#17) :
+
+- **Options** (touche **O**, voir § 13) : un menu simple, mémorisé dans le navigateur, prévu pour accueillir d'autres options. Pour l'instant, la disposition du clavier (AZERTY ou QWERTY).
+- **Regarder derrière** (§ 13).
 
 ## 12. Bots
 
@@ -216,10 +225,16 @@ Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osie
 | Saut / drift / figure | Espace | RT |
 | Objet (maintenir = traîner ; avec Bas/S ou C = lancer derrière) | Shift ou E | LB ou LT (avec B ou X/Y = derrière) |
 | Interaction (appui court = coup de patte, maintien = attraper, § 15) | X ou F | RB |
-| Regarder derrière | C | X / Y |
+| Regarder derrière (tenir) | C | X / Y |
+| Options | O | — |
 | Pause | Échap | Start |
 
 - Les touches sont des **positions physiques** : W/A/S/D se lisent Z/Q/S/D sur un clavier AZERTY. X, F, E et C portent la même lettre en AZERTY et en QWERTY.
+- **Disposition du clavier** (#17, menu Options) : **AZERTY** (par défaut, le jeu est en français) ou **QWERTY**. Les touches restent les mêmes sous les doigts dans les deux cas. Le choix change :
+  - les **lettres affichées** (menu Options, écran de sélection) : Z/Q/S/D ou W/A/S/D ;
+  - en AZERTY, le jeu lit **en plus** les positions Z (accélérer, haut) et Q (gauche). C'est ce que certains navigateurs envoient quand ils donnent les lettres au lieu des positions (Firefox qui résiste au pistage, bureaux à distance, machines virtuelles). Sur un vrai clavier AZERTY, ces positions sont les touches W et A, que le jeu n'utilise pas : aucun conflit. En QWERTY, Z (à côté de X) et Q ne font rien.
+- **Regarder derrière** (#17) : la caméra passe devant le kart et regarde en arrière **tant que** C (ou X / Y à la manette) est maintenu, d'un coup, comme dans MK8DX ; au relâchement, elle revient exactement à la caméra de poursuite. Ça marche aussi sur la grille et après l'arrivée. Avec le bouton Objet, C lance aussi l'objet derrière (§ 8) : on voit où il part.
+- **Options** (#17) : **O** ouvre et ferme le menu (même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac), en course comme depuis l'écran de sélection, par-dessus lequel il s'ouvre. Haut / Bas : la ligne ; Gauche / Droite (ou Entrée, Espace) : changer ; **Échap** ou O : fermer. Le jeu est en pause tant qu'il est ouvert, et un changement s'applique tout de suite. Le menu liste aussi les commandes, avec les lettres du clavier choisi.
 - **Interaction** : X se tient de la main gauche à côté de Shift et d'Espace quand on conduit aux flèches ; F est l'équivalent de E pour qui conduit avec W/A/S/D (Z/Q/S/D). À la manette, RB se tient à l'index pendant que le pouce garde A (accélérer) : RB quitte donc le saut/drift, qui reste sur RT.
 - **Ni Ctrl ni Alt** : Ctrl + W (Cmd + W sur Mac) ferme l'onglet et le navigateur ne laisse pas la page l'empêcher ; Alt ouvre les menus de certains navigateurs.
 - Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay) ; Entrée et Espace relancent la course depuis le classement.

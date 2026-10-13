@@ -1,6 +1,12 @@
 //! Local player input: keyboard and gamepad → `KartInput` (GD § 13), plus debug keys.
+//!
+//! Keys are physical positions (`KeyCode`): W/A/S/D is Z/Q/S/D on an AZERTY keyboard, the same
+//! keys under the fingers. The player's keyboard layout ([`KeyboardLayout`], issue #17, chosen in
+//! the options menu) names them as printed on the keyboard, and in AZERTY also reads the Z and Q
+//! positions: the keys a browser reports when it gives letters instead of positions.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::{Boost, KartInput, KartState, KartSystems};
 use crate::interpolation::PhysicsPose;
@@ -31,14 +37,77 @@ pub const FALL_RESET_HEIGHT: f32 = -30.0;
 /// Stick dead zone: smaller deflections are ignored.
 const STICK_DEAD_ZONE: f32 = 0.15;
 
-/// Keys are physical positions (`KeyCode`), so W/A/S/D is also Z/Q/S/D on an AZERTY keyboard.
-const THROTTLE_KEYS: [KeyCode; 2] = [KeyCode::ArrowUp, KeyCode::KeyW];
-const BRAKE_KEYS: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::KeyS];
-const LEFT_KEYS: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::KeyA];
-const RIGHT_KEYS: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::KeyD];
-const JUMP_KEYS: [KeyCode; 1] = [KeyCode::Space];
-const ITEM_KEYS: [KeyCode; 3] = [KeyCode::ShiftLeft, KeyCode::ShiftRight, KeyCode::KeyE];
-const LOOK_BACK_KEYS: [KeyCode; 1] = [KeyCode::KeyC];
+/// The player's keyboard layout (GD § 13, issue #17): which letters the driving keys carry, and
+/// which keys are read.
+///
+/// - Both read the **physical positions** W/A/S/D (`KeyCode` is a position, not a letter): on an
+///   AZERTY keyboard they are the keys printed Z/Q/S/D. Same keys under the fingers, whatever the
+///   choice.
+/// - **AZERTY** also reads the positions Z (accelerator, up) and Q (left). A browser that reports
+///   letters instead of positions (Firefox resisting fingerprinting, some remote desktops and
+///   virtual machines) gives those for the keys printed Z and Q. On a real AZERTY keyboard they
+///   are the keys printed W and A, which the game does not use: no conflict.
+/// - **QWERTY** leaves Z (next to X, the Interaction key) and Q alone.
+/// - The labels shown (options menu, selection screen) are the letters printed on the keyboard:
+///   Z/Q/S/D or W/A/S/D.
+///
+/// Every other key (Espace, Shift, E, C, X, F, G, P, O...) carries the same letter at the same
+/// place in both layouts.
+#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeyboardLayout {
+    /// The French layout, the game's language: the default.
+    #[default]
+    Azerty,
+    Qwerty,
+}
+
+impl KeyboardLayout {
+    pub const ALL: [Self; 2] = [KeyboardLayout::Azerty, KeyboardLayout::Qwerty];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyboardLayout::Azerty => "AZERTY",
+            KeyboardLayout::Qwerty => "QWERTY",
+        }
+    }
+
+    /// Accelerator, and up in the menus.
+    pub fn up_keys(self) -> &'static [KeyCode] {
+        match self {
+            KeyboardLayout::Azerty => &[KeyCode::ArrowUp, KeyCode::KeyW, KeyCode::KeyZ],
+            KeyboardLayout::Qwerty => &[KeyCode::ArrowUp, KeyCode::KeyW],
+        }
+    }
+
+    /// Brake / reverse, and down in the menus.
+    pub fn down_keys(self) -> &'static [KeyCode] {
+        &[KeyCode::ArrowDown, KeyCode::KeyS]
+    }
+
+    pub fn left_keys(self) -> &'static [KeyCode] {
+        match self {
+            KeyboardLayout::Azerty => &[KeyCode::ArrowLeft, KeyCode::KeyA, KeyCode::KeyQ],
+            KeyboardLayout::Qwerty => &[KeyCode::ArrowLeft, KeyCode::KeyA],
+        }
+    }
+
+    pub fn right_keys(self) -> &'static [KeyCode] {
+        &[KeyCode::ArrowRight, KeyCode::KeyD]
+    }
+
+    /// The letters printed on the up, left, down and right keys: Z/Q/S/D or W/A/S/D.
+    pub fn letters(self) -> [&'static str; 4] {
+        match self {
+            KeyboardLayout::Azerty => ["Z", "Q", "S", "D"],
+            KeyboardLayout::Qwerty => ["W", "A", "S", "D"],
+        }
+    }
+}
+
+/// The other driving keys: the same letter at the same place in AZERTY and QWERTY.
+pub const JUMP_KEYS: [KeyCode; 1] = [KeyCode::Space];
+pub const ITEM_KEYS: [KeyCode; 3] = [KeyCode::ShiftLeft, KeyCode::ShiftRight, KeyCode::KeyE];
+pub const LOOK_BACK_KEYS: [KeyCode; 1] = [KeyCode::KeyC];
 
 /// Reads the keyboard and every connected gamepad for the player kart. Not part of the
 /// headless simulation: bots and network peers produce `KartInput` their own way.
@@ -51,13 +120,14 @@ impl Plugin for KartInputPlugin {
     }
 }
 
-/// Keyboard state → kart input.
-pub fn keyboard_input(keys: &ButtonInput<KeyCode>) -> KartInput {
+/// Keyboard state → kart input, with the keys of `layout`.
+pub fn keyboard_input(keys: &ButtonInput<KeyCode>, layout: KeyboardLayout) -> KartInput {
     let axis = |on: bool| if on { 1.0 } else { 0.0 };
+    let held = |set: &[KeyCode]| keys.any_pressed(set.iter().copied());
     KartInput {
-        throttle: axis(keys.any_pressed(THROTTLE_KEYS)),
-        brake: axis(keys.any_pressed(BRAKE_KEYS)),
-        steer: axis(keys.any_pressed(RIGHT_KEYS)) - axis(keys.any_pressed(LEFT_KEYS)),
+        throttle: axis(held(layout.up_keys())),
+        brake: axis(held(layout.down_keys())),
+        steer: axis(held(layout.right_keys())) - axis(held(layout.left_keys())),
         jump_drift: keys.any_pressed(JUMP_KEYS),
         item: keys.any_pressed(ITEM_KEYS),
         look_back: keys.any_pressed(LOOK_BACK_KEYS),
@@ -99,10 +169,12 @@ pub fn combine(a: KartInput, b: KartInput) -> KartInput {
 
 fn read_player_input(
     keys: Res<ButtonInput<KeyCode>>,
+    layout: Option<Res<KeyboardLayout>>,
     gamepads: Query<&Gamepad>,
     mut karts: Query<&mut KartInput, With<PlayerKart>>,
 ) {
-    let mut input = keyboard_input(&keys);
+    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
+    let mut input = keyboard_input(&keys, layout);
     for gamepad in &gamepads {
         input = combine(input, gamepad_input(gamepad));
     }
@@ -152,7 +224,7 @@ mod tests {
         keys.press(KeyCode::KeyW);
         keys.press(KeyCode::ArrowLeft);
         keys.press(KeyCode::Space);
-        let input = keyboard_input(&keys);
+        let input = keyboard_input(&keys, KeyboardLayout::Qwerty);
         assert_eq!(input.throttle, 1.0);
         assert_eq!(input.brake, 0.0);
         assert_eq!(input.steer, -1.0);
@@ -160,7 +232,63 @@ mod tests {
         assert!(!input.item);
 
         keys.press(KeyCode::KeyD);
-        assert_eq!(keyboard_input(&keys).steer, 0.0, "left + right cancel out");
+        assert_eq!(
+            keyboard_input(&keys, KeyboardLayout::Qwerty).steer,
+            0.0,
+            "left + right cancel out"
+        );
+    }
+
+    /// Issue #17: both layouts read the physical positions W/A/S/D (printed Z/Q/S/D on an AZERTY
+    /// keyboard); AZERTY also reads the positions Z and Q (the letters a browser may report
+    /// instead of positions), QWERTY does not.
+    #[test]
+    fn both_layouts_drive_with_the_same_keys_and_azerty_also_reads_z_and_q() {
+        let press = |codes: &[KeyCode]| {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            for code in codes {
+                keys.press(*code);
+            }
+            keys
+        };
+        for layout in KeyboardLayout::ALL {
+            // The physical W/A/S/D (Z/Q/S/D under an AZERTY player's fingers).
+            assert_eq!(
+                keyboard_input(&press(&[KeyCode::KeyW]), layout).throttle,
+                1.0
+            );
+            assert_eq!(keyboard_input(&press(&[KeyCode::KeyS]), layout).brake, 1.0);
+            assert_eq!(keyboard_input(&press(&[KeyCode::KeyA]), layout).steer, -1.0);
+            assert_eq!(keyboard_input(&press(&[KeyCode::KeyD]), layout).steer, 1.0);
+            // The arrows, Espace, E, Shift and C, whatever the layout.
+            let all = keyboard_input(
+                &press(&[
+                    KeyCode::ArrowUp,
+                    KeyCode::ArrowRight,
+                    KeyCode::Space,
+                    KeyCode::KeyE,
+                    KeyCode::KeyC,
+                ]),
+                layout,
+            );
+            assert_eq!((all.throttle, all.steer), (1.0, 1.0));
+            assert!(all.jump_drift && all.item && all.look_back);
+            assert!(keyboard_input(&press(&[KeyCode::ShiftLeft]), layout).item);
+        }
+        let azerty = KeyboardLayout::Azerty;
+        assert_eq!(
+            keyboard_input(&press(&[KeyCode::KeyZ]), azerty).throttle,
+            1.0
+        );
+        assert_eq!(keyboard_input(&press(&[KeyCode::KeyQ]), azerty).steer, -1.0);
+        let qwerty = KeyboardLayout::Qwerty;
+        assert_eq!(
+            keyboard_input(&press(&[KeyCode::KeyZ, KeyCode::KeyQ]), qwerty),
+            KartInput::default()
+        );
+        assert_eq!(KeyboardLayout::default(), azerty);
+        assert_eq!(azerty.letters(), ["Z", "Q", "S", "D"]);
+        assert_eq!(qwerty.letters(), ["W", "A", "S", "D"]);
     }
 
     #[test]

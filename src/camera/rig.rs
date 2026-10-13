@@ -158,6 +158,22 @@ impl CameraRig {
     }
 }
 
+impl CameraRig {
+    /// Looking behind (issue #17): in front of the kart, looking back at the track behind it, at
+    /// the rig's smoothed height and field of view (bumps stay soft). Call it after
+    /// [`CameraRig::update`] of the same frame; it does not touch the rig's springs, so the chase
+    /// camera is exactly where it would have been when the button is released.
+    pub fn look_back(&self, tuning: &CameraTuning, input: &RigInput) -> RigPose {
+        let ahead = Vec3::new(input.heading.x, 0.0, input.heading.z).normalize_or(Vec3::NEG_Z);
+        let base = Vec3::new(input.position.x, self.height, input.position.z);
+        RigPose {
+            eye: base + ahead * tuning.look_back_distance + Vec3::Y * tuning.look_back_height,
+            look_at: base - ahead * tuning.look_back_target + Vec3::Y * tuning.look_height,
+            fov_degrees: self.fov,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +338,33 @@ mod tests {
         });
         let fov = frames.last().unwrap().1.fov_degrees;
         assert!(fov > tuning.max_speed_fov + 0.8 * tuning.boost_fov, "{fov}");
+    }
+
+    /// Issue #17: looking behind puts the camera in front of the kart, above it, looking back
+    /// over it: a cut, far from the chase camera, at 30, 60 and 144 fps. `look_back` only reads
+    /// the rig, whose chase springs run on (end to end in the game:
+    /// `holding_c_looks_behind_then_the_chase_camera_is_back`).
+    #[test]
+    fn looking_behind_cuts_to_the_front_of_the_kart() {
+        let tuning = CameraTuning::default();
+        for fps in [30.0, 60.0, 144.0] {
+            let mut rig = CameraRig::default();
+            let frames = (3.0 * fps) as usize;
+            for i in 0..=frames {
+                let t = i as f32 / fps;
+                let dt = if i == 0 { 0.0 } else { 1.0 / fps };
+                let at = straight_then_turn(t, 26.0, 1.0, -1.9);
+                let chase = rig.update(&tuning, &at, dt);
+                let back = rig.look_back(&tuning, &at);
+                let ahead = at.heading.with_y(0.0).normalize();
+                let eye = back.eye - at.position;
+                assert!((eye.dot(ahead) - tuning.look_back_distance).abs() < 1e-3);
+                assert!(eye.y > 1.0, "{eye}");
+                assert!((back.look_at - back.eye).dot(ahead) < -10.0);
+                assert_eq!(back.fov_degrees, chase.fov_degrees);
+                assert!(back.eye.distance(chase.eye) > 8.0, "a cut, not a pan");
+            }
+        }
     }
 
     #[test]

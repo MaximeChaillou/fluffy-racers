@@ -10,6 +10,7 @@ pub mod interpolation;
 pub mod items;
 pub mod kart;
 pub mod level;
+pub mod options;
 pub mod race;
 pub mod track;
 pub mod ui;
@@ -31,6 +32,7 @@ use kart::{
     SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
+use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
 use ui::{DebugOverlayPlugin, HudPlugin};
@@ -56,9 +58,9 @@ impl Plugin for SimulationPlugin {
 }
 
 /// The whole game: simulation, track, race rules, croquettes, items, characters and their
-/// selection screen, player kart, bots, visuals, sounds, camera, HUD, debug overlay and admin
-/// panel (the egui parts only with a renderer). `LevelPlugin` restarts the level or switches tracks
-/// (issue #36).
+/// selection screen, player kart, bots, visuals, sounds, camera, HUD, debug overlay, the
+/// player's options (issue #17) and admin panel (the egui parts only with a renderer).
+/// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
@@ -84,8 +86,7 @@ impl Plugin for GamePlugin {
                 HudPlugin,
                 DebugOverlayPlugin,
                 SoundPlugin,
-                LevelPlugin,
-                AdminPlugin,
+                (LevelPlugin, OptionsPlugin, AdminPlugin),
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
@@ -449,6 +450,62 @@ mod tests {
             "camera behind the wall: {}",
             camera.translation
         );
+    }
+
+    /// Issue #17: holding C looks behind. The camera cuts to the front of the kart and looks
+    /// back over it, for as long as C is held; released, it is exactly where the chase camera of
+    /// a game that never looked back is (its springs ran on underneath). The kart does not care.
+    #[test]
+    fn holding_c_looks_behind_then_the_chase_camera_is_back() {
+        let (mut looking, mut chasing) = (game_app(), game_app());
+        // Accelerating, then a left turn while looking back, then straight on.
+        for app in [&mut looking, &mut chasing] {
+            hold_keys(app, &[KeyCode::ArrowUp]);
+            run(app, 1.0, |_| {});
+        }
+        hold_keys(&mut chasing, &[KeyCode::ArrowUp, KeyCode::ArrowLeft]);
+        hold_keys(
+            &mut looking,
+            &[KeyCode::ArrowUp, KeyCode::ArrowLeft, KeyCode::KeyC],
+        );
+        let tuning = CameraTuning::default();
+        for _ in 0..(0.75 * TICK_HZ) as usize {
+            looking.update();
+            chasing.update();
+            let (camera, kart) = camera_and_kart_visual(&mut looking);
+            let ahead = kart.forward().with_y(0.0).normalize();
+            let eye = camera.translation - kart.translation;
+            // In front of the kart, above it, looking back.
+            assert!(
+                (eye.dot(ahead) - tuning.look_back_distance).abs() < 0.3,
+                "{eye}"
+            );
+            assert!(eye.y > 1.0, "{eye}");
+            assert!(camera.forward().dot(ahead) < -0.5);
+            let (chase, _) = camera_and_kart_visual(&mut chasing);
+            assert!(chase.translation.distance(camera.translation) > 8.0);
+        }
+        for app in [&mut looking, &mut chasing] {
+            hold_keys(app, &[KeyCode::ArrowUp]);
+        }
+        for _ in 0..(0.5 * TICK_HZ) as usize {
+            looking.update();
+            chasing.update();
+            let (camera, kart) = camera_and_kart_visual(&mut looking);
+            let (chase, chase_kart) = camera_and_kart_visual(&mut chasing);
+            assert!(
+                kart.translation.distance(chase_kart.translation) < 1e-3,
+                "the kart ignores the look-back button"
+            );
+            assert!(
+                camera.translation.distance(chase.translation) < 1e-3
+                    && camera.forward().distance(*chase.forward()) < 1e-4,
+                "back to the chase camera at once: {} vs {}",
+                camera.translation,
+                chase.translation
+            );
+            assert!((kart.translation - camera.translation).dot(*camera.forward()) > 0.0);
+        }
     }
 
     /// Issue #3: the circuit file loads, the track is built and the player starts on the grid

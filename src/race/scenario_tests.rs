@@ -108,6 +108,45 @@ fn until_go(app: &mut App) {
     panic!("the race never started");
 }
 
+/// Issue #17: looking behind works on the grid too: the gate holds every other input before GO,
+/// but lets the look-back button through (only the camera reads it). The kart stays put, and
+/// it neither stalls nor gets a rocket start from it.
+#[test]
+fn looking_behind_works_during_the_countdown() {
+    let (mut app, kart) = race_app();
+    let grid = transform(&app, kart);
+    hold_keys(&mut app, &[KeyCode::KeyC]);
+    for _ in 0..(1.5 * TICK_HZ) as usize {
+        app.update();
+    }
+    assert!(!race(&app).started());
+    let input = *app.world().get::<KartInput>(kart).unwrap();
+    assert_eq!(
+        input,
+        KartInput {
+            look_back: true,
+            ..default()
+        }
+    );
+    let world = app.world_mut();
+    let camera = world
+        .query_filtered::<&Transform, With<crate::camera::ChaseCamera>>()
+        .single(world)
+        .unwrap();
+    // In front of the kart, looking back over it.
+    let ahead = *grid.forward();
+    assert!((camera.translation - grid.translation).dot(ahead) > 2.0);
+    assert!(camera.forward().dot(ahead) < -0.5);
+    hold_keys(&mut app, &[]);
+    until_go(&mut app);
+    for _ in 0..30 {
+        app.update();
+    }
+    assert!(transform(&app, kart).translation.distance(grid.translation) < 0.05);
+    assert!(!app.world().get::<Stall>(kart).unwrap().is_active());
+    assert!(!app.world().get::<Boost>(kart).unwrap().is_active());
+}
+
 #[test]
 fn the_countdown_holds_the_karts_then_go_releases_them() {
     let (mut app, kart) = race_app();

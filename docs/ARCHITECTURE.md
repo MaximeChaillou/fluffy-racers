@@ -43,10 +43,12 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 
 `KartInput { throttle: f32, brake: f32, steer: f32, jump_drift: bool, item: bool, look_back: bool, interact: bool }` est produit chaque tick par une source. `jump_drift` sert à la fois au saut, au drift et aux figures ; `item` maintenu permet de traîner un objet derrière soi, et un objet part derrière si `brake` ou `look_back` est tenu au moment du lancer (#16).
 
+`look_back` ne sert qu'à la caméra (« regarder derrière », #17) et au lancer d'un objet derrière : le verrou du départ et la roue libre d'après l'arrivée le laissent passer. La caméra le lit sur le kart qu'elle suit, après la simulation ; elle passe devant le kart sans toucher aux ressorts de la caméra de poursuite, qui continuent de tourner.
+
 `interact` est l'état du bouton Interaction (`docs/GAME_DESIGN.md` § 15). Les règles du kart en déduisent l'appui court (coup de patte, au relâchement) et le maintien (attraper), comme elles distinguent saut et drift sur `jump_drift`. Le côté visé quand il y a des karts des deux côtés, et le côté d'un jet, viennent de `steer`. Le verrou du départ met déjà tout le `KartInput` à zéro avant le GO ; le calage et l'arrivée ignorent aussi `interact`.
 
 Les sources possibles :
-- clavier / manette (joueur local), avec en option la direction assistée et l'accélération automatique (`docs/GAME_DESIGN.md` § 11) ;
+- clavier / manette (joueur local). Les touches sont des positions physiques ; la disposition choisie dans les options (`KeyboardLayout`, AZERTY ou QWERTY, #17) donne les lettres affichées, et en AZERTY lit en plus les positions Z et Q. Les aides à la conduite (`docs/GAME_DESIGN.md` § 11) ne sont pas prévues pour l'instant ;
 - bot (suit la ligne de course du circuit) ;
 - réseau : on ne l'utilise pas pour les karts distants (voir plus bas).
 

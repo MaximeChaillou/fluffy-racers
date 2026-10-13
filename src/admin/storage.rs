@@ -6,6 +6,9 @@
 //!   (`~/.config/fluffy-racers/admin-tuning.ron`, `%APPDATA%\fluffy-racers\...` on Windows).
 //!   Nothing modified: nothing stored.
 //! - Opening the panel at startup: `?admin` in the page address, `--admin` natively.
+//!
+//! The same storage keeps other texts under their own key ([`load_key`], [`save_key`]): the
+//! player's options (issue #17, `crate::options`).
 
 /// Local storage key (web) / file name (native).
 pub const STORAGE_KEY: &str = "fluffy-racers/admin-tuning";
@@ -25,27 +28,25 @@ pub fn query_requests_admin(query: &str) -> bool {
 
 #[cfg(target_arch = "wasm32")]
 mod platform {
-    use super::STORAGE_KEY;
-
     fn storage() -> Option<web_sys::Storage> {
         web_sys::window()?.local_storage().ok()?
     }
 
-    pub fn load() -> Option<String> {
-        storage()?.get_item(STORAGE_KEY).ok()?
+    pub fn load(key: &str) -> Option<String> {
+        storage()?.get_item(key).ok()?
     }
 
-    pub fn save(text: &str) {
+    pub fn save(key: &str, text: &str) {
         let Some(storage) = storage() else {
             return;
         };
         let result = if text.is_empty() {
-            storage.remove_item(STORAGE_KEY)
+            storage.remove_item(key)
         } else {
-            storage.set_item(STORAGE_KEY, text)
+            storage.set_item(key, text)
         };
         if result.is_err() {
-            bevy::log::warn!("admin panel: could not write the browser's local storage");
+            bevy::log::warn!("could not write {key} in the browser's local storage");
         }
     }
 
@@ -60,23 +61,21 @@ mod platform {
 mod platform {
     use std::path::PathBuf;
 
-    use super::STORAGE_KEY;
-
-    fn path() -> Option<PathBuf> {
+    fn path(key: &str) -> Option<PathBuf> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-        let name = STORAGE_KEY.replace('/', "-");
+        let name = key.replace('/', "-");
         Some(base.join("fluffy-racers").join(format!("{name}.ron")))
     }
 
-    pub fn load() -> Option<String> {
-        std::fs::read_to_string(path()?).ok()
+    pub fn load(key: &str) -> Option<String> {
+        std::fs::read_to_string(path(key)?).ok()
     }
 
-    pub fn save(text: &str) {
-        let Some(path) = path() else {
+    pub fn save(key: &str, text: &str) {
+        let Some(path) = path(key) else {
             return;
         };
         let result = if text.is_empty() {
@@ -90,7 +89,7 @@ mod platform {
                 .and_then(|()| std::fs::write(&path, text))
         };
         if let Err(error) = result {
-            bevy::log::warn!("admin panel: could not write {}: {error}", path.display());
+            bevy::log::warn!("could not write {}: {error}", path.display());
         }
     }
 
@@ -99,14 +98,24 @@ mod platform {
     }
 }
 
-/// The stored text, if any.
+/// The stored tunings, if any.
 pub fn load() -> Option<String> {
-    platform::load()
+    load_key(STORAGE_KEY)
 }
 
-/// Stores `text` (an empty text removes what was stored).
+/// Stores the tunings' `text` (an empty text removes what was stored).
 pub fn save(text: &str) {
-    platform::save(text);
+    save_key(STORAGE_KEY, text);
+}
+
+/// The text stored under `key` (`fluffy-racers/...`), if any.
+pub fn load_key(key: &str) -> Option<String> {
+    platform::load(key)
+}
+
+/// Stores `text` under `key` (an empty text removes what was stored).
+pub fn save_key(key: &str, text: &str) {
+    platform::save(key, text);
 }
 
 /// Whether the panel should be open at startup (`?admin`, `--admin`).
