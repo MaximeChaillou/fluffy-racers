@@ -1,13 +1,16 @@
 //! The arcade kart (GD § 2, docs/ARCHITECTURE.md § « Le kart »).
 //!
 //! Rapier handles collisions and gravity; the feel comes from our own curves. Every fixed tick:
-//! boost timers → boost pads and slipstream → 4 suspension raycasts → driving state (hop, drift,
-//! trick) → engine, grip and steering written to the velocity. The kart only reads its
-//! `KartInput`, never the keyboard.
+//! boost timers → top speed factors → boost pads and slipstream → 4 suspension raycasts →
+//! driving state (hop, drift, trick) → engine, grip and steering written to the velocity; after
+//! the physics step, the bumps between karts. The kart only reads its `KartInput`, never the
+//! keyboard.
 //!
-//! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, later the items)
-//! goes through the one `Boost` component (GD § 2).
+//! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, croquette, later
+//! the items) goes through the one `Boost` component (GD § 2). Every top speed multiplier
+//! (bots' catch-up, croquettes, later the stats) goes through `MaxSpeedFactors`.
 
+mod bump;
 mod drift;
 mod input;
 mod physics;
@@ -17,6 +20,7 @@ mod trick;
 mod tuning;
 mod visual;
 
+pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftSide, MiniTurbo, drift_yaw_rate};
 pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
 pub use physics::{Boost, KartState, target_yaw_rate};
@@ -70,6 +74,8 @@ pub struct KartInput {
     Boost,
     KartWheels,
     MaxSpeedScale,
+    MaxSpeedFactors,
+    StepVelocity,
     Stall,
     TrickTracker,
     Slipstream
@@ -90,15 +96,40 @@ pub struct KartAssists {
     pub assisted_steering: bool,
 }
 
-/// Multiplier on this kart's top speed, boosted or not (1 = unchanged). The bots' light
-/// catch-up writes it (GD § 12, issue #6: within ±3 %); the croquettes (#14) and the stats (#15)
-/// will have to combine their own factors into it.
+/// Multiplier on this kart's top speed, boosted or not (1 = unchanged): what the driving, the
+/// slipstream and the bots read. It is the product of the kart's [`MaxSpeedFactors`], refreshed
+/// before the karts drive whenever one of them changes: write the factors, not this.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct MaxSpeedScale(pub f32);
 
 impl Default for MaxSpeedScale {
     fn default() -> Self {
         Self(1.0)
+    }
+}
+
+/// The multipliers of a kart's top speed, one per source (1 = unchanged). Each source writes
+/// only its own; [`MaxSpeedScale`] is their product. The stats (issue #15) will add theirs.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct MaxSpeedFactors {
+    /// The bots' light catch-up (GD § 12, issue #6): within ±3 %.
+    pub catch_up: f32,
+    /// The croquettes held (GD § 7, issue #14): +1 % each, up to 10.
+    pub croquettes: f32,
+}
+
+impl Default for MaxSpeedFactors {
+    fn default() -> Self {
+        Self {
+            catch_up: 1.0,
+            croquettes: 1.0,
+        }
+    }
+}
+
+impl MaxSpeedFactors {
+    pub fn product(&self) -> f32 {
+        self.catch_up * self.croquettes
     }
 }
 
@@ -155,8 +186,11 @@ pub enum KartSystems {
     Timers,
     /// Input sources write `KartInput` (player, bots, replays).
     Input,
-    /// Boost pads, slipstream, suspension, state machine, engine, grip, steering.
+    /// Top speed factors, boost pads, slipstream, suspension, state machine, engine, grip,
+    /// steering.
     Drive,
+    /// After the physics step: the bumps between karts of that step ([`KartBump`]).
+    Bumps,
 }
 
 pub struct KartPlugin;
@@ -164,19 +198,30 @@ pub struct KartPlugin;
 impl Plugin for KartPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KartTuning>()
+            .add_message::<KartBump>()
             .configure_sets(
                 FixedUpdate,
-                (KartSystems::Timers, KartSystems::Input, KartSystems::Drive)
-                    .chain()
-                    .before(PhysicsSet::SyncBackend),
+                (
+                    (KartSystems::Timers, KartSystems::Input, KartSystems::Drive)
+                        .chain()
+                        .before(PhysicsSet::SyncBackend),
+                    KartSystems::Bumps.after(PhysicsSet::Writeback),
+                ),
             )
             .add_systems(FixedUpdate, tick_timers.in_set(KartSystems::Timers))
             .add_systems(
                 FixedUpdate,
-                (boost_pads, charge_slipstreams, drive_karts)
+                (
+                    combine_max_speed_factors,
+                    boost_pads,
+                    charge_slipstreams,
+                    drive_karts,
+                    record_step_velocities,
+                )
                     .chain()
                     .in_set(KartSystems::Drive),
-            );
+            )
+            .add_systems(FixedUpdate, detect_bumps.in_set(KartSystems::Bumps));
     }
 }
 
@@ -226,6 +271,93 @@ fn tick_timers(time: Res<Time>, mut boosts: Query<&mut Boost>, mut stalls: Query
     for mut stall in &mut stalls {
         if stall.is_active() {
             stall.tick(dt);
+        }
+    }
+}
+
+/// `MaxSpeedScale` = the product of the `MaxSpeedFactors`, for the karts whose factors changed
+/// (their sources wrote them earlier in the tick).
+fn combine_max_speed_factors(
+    mut karts: Query<(&MaxSpeedFactors, &mut MaxSpeedScale), Changed<MaxSpeedFactors>>,
+) {
+    for (factors, mut scale) in &mut karts {
+        scale.set_if_neq(MaxSpeedScale(factors.product()));
+    }
+}
+
+/// The velocity each kart hands to the physics step, before its collisions (`bump.rs`).
+fn record_step_velocities(mut karts: Query<(&Velocity, &mut StepVelocity), With<Kart>>) {
+    for (velocity, mut step) in &mut karts {
+        step.0 = velocity.linear;
+    }
+}
+
+/// After the physics step: every pair of karts the solver pushed apart in that step, hitting
+/// each other fast enough, is a bump (GD § 7, `bump.rs`). Read from Rapier's contact graph
+/// (each kart's own contact pairs, a few per kart): no extra physics query.
+fn detect_bumps(
+    tuning: Res<KartTuning>,
+    rapier: ReadRapierContext,
+    karts: Query<(Entity, &Transform, &StepVelocity, &KartState), With<Kart>>,
+    mut bumps: MessageWriter<KartBump>,
+) {
+    let Ok(context) = rapier.single() else {
+        return;
+    };
+    for (a, a_transform, a_velocity, a_state) in &karts {
+        if *a_state == KartState::Respawning {
+            continue;
+        }
+        for pair in context.contact_pairs_with(a) {
+            let (Some(c1), Some(c2)) = (pair.collider1(), pair.collider2()) else {
+                continue;
+            };
+            let b = if c1 == a { c2 } else { c1 };
+            // Each pair once; only karts.
+            if b <= a {
+                continue;
+            }
+            let Ok((_, b_transform, b_velocity, b_state)) = karts.get(b) else {
+                continue;
+            };
+            if *b_state == KartState::Respawning
+                || !pair.has_any_active_contact()
+                || pair.total_impulse_magnitude() <= 0.0
+            {
+                continue;
+            }
+            // The contact normal, pointing from A toward B.
+            let between = b_transform.translation - a_transform.translation;
+            let normal = pair
+                .manifolds()
+                .next()
+                .map(|manifold| manifold.normal())
+                .unwrap_or(between);
+            let normal = if normal.dot(between) < 0.0 {
+                -normal
+            } else {
+                normal
+            };
+            let Some((a_bumped, b_bumped)) =
+                bump_victims(&tuning, a_velocity.0, b_velocity.0, normal)
+            else {
+                continue;
+            };
+            let closing_speed = closing_speed(a_velocity.0, b_velocity.0, normal);
+            if a_bumped {
+                bumps.write(KartBump {
+                    kart: a,
+                    by: b,
+                    closing_speed,
+                });
+            }
+            if b_bumped {
+                bumps.write(KartBump {
+                    kart: b,
+                    by: a,
+                    closing_speed,
+                });
+            }
         }
     }
 }

@@ -195,6 +195,16 @@ pub struct KartTuning {
     pub boost_pad_duration: f32,
     /// Max speed increase of a boost pad. Our own starting point, à régler: +30 %, like a chili.
     pub boost_pad_strength: f32,
+
+    // --- Bumps between karts (GD § 7, issue #14) ------------------------------------------------
+    /// Two karts hitting each other at least this fast (closing speed along the contact normal,
+    /// m/s) is a bump: the bumped kart loses a croquette. Our own starting point, à régler: a
+    /// boosted kart rear-ending another one, or a swerve of about 10° into its side at full
+    /// speed. Rubbing along a kart or pushing it stays below.
+    pub bump_min_speed: f32,
+    /// The kart that brought at least this share of the closing speed is the bumper, the other
+    /// one is bumped. When neither did (head on), both are bumped.
+    pub bump_bumper_share: f32,
 }
 
 impl Default for KartTuning {
@@ -278,6 +288,9 @@ impl Default for KartTuning {
 
             boost_pad_duration: 1.0,
             boost_pad_strength: 0.3,
+
+            bump_min_speed: 5.0,
+            bump_bumper_share: 0.6,
         }
     }
 }

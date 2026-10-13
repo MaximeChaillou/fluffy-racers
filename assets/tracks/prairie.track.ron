@@ -60,11 +60,19 @@
         (at: 11.2, offsets: [-0.5, 0.0, 0.5]),
         (at: 19.5, offsets: [-0.75], double: true),
     ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road (go and get
+    // them), never on the grid. Each one is +1 % of top speed (10 at most) and a mini-boost; they
+    // come back 10 s after being picked up.
     croquettes: [
-        (from: 0.8, count: 6, offset: 0.3),
-        (from: 10.0, count: 5, offset: -0.5),
-        (from: 13.0, count: 4, offset: 0.0),
-        (from: 20.2, count: 5, offset: -0.6),
+        // Start straight: on the right after the start line, then on the left after the left
+        // boost pad.
+        (from: 0.55, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 1.8, count: 4, spacing: 3.0, offset: -0.45),
+        // Back straight, after the landing of the trick ramp: two lines side by side.
+        (from: 10.2, count: 5, spacing: 3.0, offset: 0.4),
+        (from: 10.3, count: 4, spacing: 3.0, offset: -0.4),
+        // Out of the chicane, before the raised turn, on the left.
+        (from: 15.2, count: 4, spacing: 3.0, offset: -0.35),
     ],
     respawns: [],
 )

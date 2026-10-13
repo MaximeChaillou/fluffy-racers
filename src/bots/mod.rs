@@ -5,7 +5,7 @@
 //! from what it sees: its position on the racing line of the circuit (`line.rs`), the turns
 //! ahead, its drift charge and the karts around. It never touches the kart otherwise: the kart
 //! rules, the race rules and the tow pelican treat it like any racer. The only extra is the
-//! light catch-up of GD § 12, a top speed multiplier (`MaxSpeedScale`) within ±3 %.
+//! light catch-up of GD § 12, a top speed factor (`MaxSpeedFactors::catch_up`) within ±3 %.
 //!
 //! Three difficulties ([`BotDifficulty`]): trajectory precision, drift tier aimed for and
 //! anticipation of the turns, all in [`BotTuning`]. Each bot also has its own lane, pace and
@@ -32,7 +32,7 @@ use bevy_rapier3d::prelude::Velocity;
 use crate::TICK_HZ;
 use crate::kart::{
     Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
-    MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
+    MaxSpeedFactors, MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceProgress, Racer};
 use crate::track::TrackLayout;
@@ -139,11 +139,12 @@ fn spawn_bots(
 
 /// GD § 12: bots far behind the reference get a little more top speed, bots far ahead a little
 /// less. The reference is the best placed local player; with no player (a race of bots only),
-/// the field's average race distance.
+/// the field's average race distance. It is the catch-up factor of the kart's top speed; the
+/// kart combines it with the others (croquettes...) into its `MaxSpeedScale`.
 fn catch_up(
     tuning: Res<BotTuning>,
     racers: Query<(&RaceProgress, Has<PlayerKart>), With<Racer>>,
-    mut bots: Query<(&RaceProgress, &mut MaxSpeedScale), With<Bot>>,
+    mut bots: Query<(&RaceProgress, &mut MaxSpeedFactors), With<Bot>>,
 ) {
     let (mut player, mut sum, mut count) = (None::<f32>, 0.0, 0);
     for (progress, is_player) in &racers {
@@ -157,13 +158,15 @@ fn catch_up(
         return;
     }
     let reference = player.unwrap_or(sum / count as f32);
-    for (progress, mut scale) in &mut bots {
+    for (progress, mut factors) in &mut bots {
         let s = if progress.finished() {
             1.0
         } else {
             catch_up_scale(reference - progress.distance, &tuning)
         };
-        scale.set_if_neq(MaxSpeedScale(s));
+        if factors.catch_up != s {
+            factors.catch_up = s;
+        }
     }
 }
 
