@@ -12,16 +12,21 @@
 //! exhaust flames during a boost (bigger for a stronger and longer boost: a better rocket
 //! start), grey puffs while the engine stalls, wind lines around the kart while its slipstream
 //! gauge charges, and a barrel roll of the body during a trick.
+//!
+//! The driver (issue #15) is the character: a fluffy ball whose size shows its weight class and
+//! whose color and ears show the animal ([`DriverLook`]). Every character has one shared
+//! material; only the body material is the kart's own.
 
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
+use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
 use super::rocket::Stall;
 use super::slipstream::Slipstream;
-use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, WHEEL_ANCHORS};
+use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, StatEffects, WHEEL_ANCHORS};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 
 const WHEEL_RADIUS: f32 = 0.28;
@@ -67,6 +72,39 @@ const WIND_SPEED: f32 = 14.0;
 const WIND_THICKNESS: f32 = 0.035;
 /// A trick is a full barrel roll of the body taking this long (s).
 const TRICK_SPIN_SECONDS: f32 = 0.45;
+/// The driver's ball: radius at size 1 (m), and where it sits on the body (its bottom on the
+/// seat, whatever its size).
+const DRIVER_RADIUS: f32 = 0.45;
+const DRIVER_SEAT: Vec3 = Vec3::new(0.0, 0.15, 0.15);
+
+/// The ears of a driver (issue #15), primitives until the real models (#11).
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum DriverEars {
+    /// Two balls (mouse, hamster, bear, cow).
+    #[default]
+    Round,
+    /// Two long ones standing up (rabbit).
+    Long,
+    /// Two cones (cat, fox).
+    Pointy,
+    /// None (chick, walrus).
+    None,
+}
+
+/// How a kart's driver looks (issue #15): its size (1 = medium; the weight class shows), its
+/// shared material (one per character: its color) and its ears.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DriverLook {
+    pub size: f32,
+    pub material: Handle<StandardMaterial>,
+    pub ears: DriverEars,
+}
+
+/// The driver under a kart visual's pivot: its size (scale) shows the character's weight class.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DriverVisual {
+    pub size: f32,
+}
 
 /// The pivot under a kart visual that carries every visible part. `slip` is the current visual
 /// slip angle (radians, positive = nose to the right); `spin` the time into the current trick's
@@ -153,6 +191,8 @@ pub struct KartVisualAssets {
     body: Handle<Mesh>,
     driver: Handle<Mesh>,
     ear: Handle<Mesh>,
+    long_ear: Handle<Mesh>,
+    pointy_ear: Handle<Mesh>,
     wheel: Handle<Mesh>,
     spark: Handle<Mesh>,
     driver_material: Handle<StandardMaterial>,
@@ -167,8 +207,10 @@ impl KartVisualAssets {
     pub fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         Self {
             body: meshes.add(Cuboid::new(1.2, 0.45, 2.0)),
-            driver: meshes.add(Sphere::new(0.45)),
+            driver: meshes.add(Sphere::new(DRIVER_RADIUS)),
             ear: meshes.add(Sphere::new(0.16)),
+            long_ear: meshes.add(Capsule3d::new(0.08, 0.32)),
+            pointy_ear: meshes.add(Cone::new(0.14, 0.3)),
             wheel: meshes.add(Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH)),
             // A unit cube scaled per frame; unlit so the sparks glow in the shade too.
             spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
@@ -210,7 +252,7 @@ fn create_kart_visual_assets(
 
 /// Spawns the visual of the kart `body` (colored box, fluffy ball driver, 4 wheels, drift
 /// sparks, boost flames, stall puffs, wind lines). Only the body material is new; everything
-/// else comes from `assets`.
+/// else comes from `assets`. The driver is the default one (medium, cream, round ears).
 pub fn spawn_kart_visual(
     commands: &mut Commands,
     assets: &KartVisualAssets,
@@ -218,8 +260,24 @@ pub fn spawn_kart_visual(
     body: Entity,
     color: Color,
 ) -> Entity {
+    spawn_kart_visual_with_driver(commands, assets, materials, body, color, None)
+}
+
+/// Same with the driver of a character (issue #15; `None`: the default one).
+pub fn spawn_kart_visual_with_driver(
+    commands: &mut Commands,
+    assets: &KartVisualAssets,
+    materials: &mut Assets<StandardMaterial>,
+    body: Entity,
+    color: Color,
+    driver: Option<&DriverLook>,
+) -> Entity {
     let body_material = materials.add(color);
     let assets = assets.clone();
+    let (size, driver_material, ears) = match driver {
+        Some(look) => (look.size, look.material.clone(), look.ears),
+        None => (1.0, assets.driver_material.clone(), DriverEars::Round),
+    };
 
     commands
         .spawn((
@@ -253,18 +311,36 @@ pub fn spawn_kart_visual(
                     MeshMaterial3d(body_material),
                     Transform::default(),
                 ));
-                pivot.spawn((
-                    Mesh3d(assets.driver.clone()),
-                    MeshMaterial3d(assets.driver_material.clone()),
-                    Transform::from_xyz(0.0, 0.6, 0.15),
-                ));
-                for x in [-0.25, 0.25] {
-                    pivot.spawn((
-                        Mesh3d(assets.ear.clone()),
-                        MeshMaterial3d(assets.driver_material.clone()),
-                        Transform::from_xyz(x, 1.0, 0.15),
-                    ));
-                }
+                // The driver: its bottom on the seat, scaled with its size (ears included).
+                pivot
+                    .spawn((
+                        DriverVisual { size },
+                        Transform::from_translation(DRIVER_SEAT).with_scale(Vec3::splat(size)),
+                        Visibility::default(),
+                    ))
+                    .with_children(|driver| {
+                        driver.spawn((
+                            Mesh3d(assets.driver.clone()),
+                            MeshMaterial3d(driver_material.clone()),
+                            Transform::from_xyz(0.0, DRIVER_RADIUS, 0.0),
+                        ));
+                        let ear = match ears {
+                            DriverEars::Round => Some((assets.ear.clone(), 0.85, 0.0)),
+                            DriverEars::Long => Some((assets.long_ear.clone(), 1.0, 0.12)),
+                            DriverEars::Pointy => Some((assets.pointy_ear.clone(), 0.9, 0.25)),
+                            DriverEars::None => None,
+                        };
+                        if let Some((mesh, height, tilt)) = ear {
+                            for x in [-0.25f32, 0.25] {
+                                driver.spawn((
+                                    Mesh3d(mesh.clone()),
+                                    MeshMaterial3d(driver_material.clone()),
+                                    Transform::from_xyz(x, height, 0.0)
+                                        .with_rotation(Quat::from_rotation_z(-tilt * x.signum())),
+                                ));
+                            }
+                        }
+                    });
                 for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
                     pivot.spawn((
                         WheelVisual(i),
@@ -387,7 +463,7 @@ fn pose_bodies(
 fn show_drift_sparks(
     time: Res<Time>,
     tuning: Res<KartTuning>,
-    karts: Query<(&KartState, &KartAssists)>,
+    karts: Query<(&KartState, &KartAssists, &StatEffects)>,
     pivots: Query<&KartBodyPivot>,
     mut sparks: Query<(&DriftSpark, &ChildOf, &mut Visibility, &mut Transform)>,
 ) {
@@ -396,10 +472,13 @@ fn show_drift_sparks(
         let Ok(pivot) = pivots.get(child_of.parent()) else {
             continue;
         };
-        let Ok((state, assists)) = karts.get(pivot.body) else {
+        let Ok((state, assists, effects)) = karts.get(pivot.body) else {
             continue;
         };
-        let shown = state.mini_turbo(&tuning, assists.assisted_steering) == Some(spark.tier);
+        // The tiers of this kart (its Mini-turbo stat moves the thresholds).
+        let shown = matches!(state, KartState::Drifting { .. })
+            && state.mini_turbo(&effects.tuning(&tuning), assists.assisted_steering)
+                == Some(spark.tier);
         visibility.set_if_neq(if shown {
             Visibility::Inherited
         } else {

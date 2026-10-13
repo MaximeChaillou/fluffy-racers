@@ -5,7 +5,8 @@
 //!   « admin » button at the bottom of the screen; `?admin` in the page address (`--admin`
 //!   natively) opens it at startup.
 //! - **Réglages**: every tuning resource ([`Tunings`]: `KartTuning`, `CroquetteTuning`,
-//!   `BotTuning` with each difficulty's `BotSkill`, `CameraTuning`, `RaceTuning`), edited by
+//!   `BotTuning` with each difficulty's `BotSkill`, `CameraTuning`, `RaceTuning`, `StatsTuning`
+//!   of issue #15), edited by
 //!   reflection (`tuning.rs`): a field added later shows up with no extra code; a new tuning
 //!   resource is one line in [`AdminPlugin`]. Modified values stand out and each one, or each
 //!   resource, goes back to its default in a click.
@@ -37,7 +38,7 @@ use bevy::prelude::*;
 use crate::bots::BotTuning;
 use crate::camera::CameraTuning;
 use crate::croquettes::CroquetteTuning;
-use crate::kart::KartTuning;
+use crate::kart::{KartTuning, StatsTuning};
 use crate::race::{Race, RaceTuning, RocketStart};
 
 /// Opens and closes the panel: a letter at the same place and with the same name in AZERTY and
@@ -75,7 +76,8 @@ impl Plugin for AdminPlugin {
             .register::<CroquetteTuning>()
             .register::<BotTuning>()
             .register::<CameraTuning>()
-            .register::<RaceTuning>();
+            .register::<RaceTuning>()
+            .register::<StatsTuning>();
         app.insert_resource(tunings)
             .init_resource::<AdminPanel>()
             .init_resource::<AdminOptions>()

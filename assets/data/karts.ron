@@ -1,0 +1,23 @@
+// Karts (GD § 9, issue #15). Même format de stats que `characters.ron` (0 à 10 points chacune).
+// Le kart par défaut (« Caisse à savon ») est le standard : 3 partout.
+(
+    default: "Caisse à savon",
+    parts: [
+        // Léger et nerveux : accélération, maniabilité et mini-turbo, au prix de la vitesse et du
+        // poids.
+        (
+            name: "Panier en osier",
+            stats: (speed: 1, acceleration: 5, weight: 1, handling: 5, traction: 3, mini_turbo: 5, invincibility: 3),
+        ),
+        // Standard.
+        (
+            name: "Caisse à savon",
+            stats: (speed: 3, acceleration: 3, weight: 3, handling: 3, traction: 3, mini_turbo: 3, invincibility: 3),
+        ),
+        // Lourd : vitesse et poids, mais lent à lancer et pataud en virage.
+        (
+            name: "Baignoire",
+            stats: (speed: 5, acceleration: 1, weight: 5, handling: 1, traction: 3, mini_turbo: 1, invincibility: 3),
+        ),
+    ],
+)

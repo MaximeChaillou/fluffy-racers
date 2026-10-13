@@ -8,7 +8,11 @@
 //!
 //! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, croquette, later
 //! the items) goes through the one `Boost` component (GD § 2). Every top speed multiplier
-//! (bots' catch-up, croquettes, later the stats) goes through `MaxSpeedFactors`.
+//! (bots' catch-up, croquettes, stats) goes through `MaxSpeedFactors`.
+//!
+//! The stats of the kart (GD § 9, issue #15, `stats.rs`) are converted once when it spawns into
+//! multipliers ([`StatEffects`]); every tick the driving applies them to `KartTuning` for this
+//! kart. A kart spawned without stats is at the middle level: exactly `KartTuning`.
 
 mod bump;
 mod drift;
@@ -16,6 +20,7 @@ mod input;
 mod physics;
 mod rocket;
 mod slipstream;
+mod stats;
 mod trick;
 mod tuning;
 mod visual;
@@ -28,11 +33,16 @@ pub use rocket::{
     Stall, StartOutcome, StartPress, THROTTLE_PRESSED, rocket_start_duration, start_outcome,
 };
 pub use slipstream::{BOOST_PAD_REACH, Slipstream, fast_enough_for_slipstream, in_wake, over_pad};
+pub use stats::{
+    Invincibility, KartStats, MAX_LEVEL, MAX_PART_POINTS, MIDDLE_LEVEL, Stat, StatEffects,
+    StatPoints, StatRange, StatsTuning, display_level, strike_push_factor, tether_force_scale,
+};
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
-    BoostFlame, DriftSpark, KartBodyPivot, KartVisualAssets, KartVisualPlugin, StallSmoke,
-    WindLine, flame_size, spawn_kart_visual,
+    BoostFlame, DriftSpark, DriverEars, DriverLook, DriverVisual, KartBodyPivot, KartVisualAssets,
+    KartVisualPlugin, StallSmoke, WindLine, flame_size, spawn_kart_visual,
+    spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;
@@ -79,7 +89,10 @@ pub struct KartInput {
     StepVelocity,
     Stall,
     TrickTracker,
-    Slipstream
+    Slipstream,
+    KartStats,
+    StatEffects,
+    Invincibility
 )]
 pub struct Kart;
 
@@ -110,13 +123,16 @@ impl Default for MaxSpeedScale {
 }
 
 /// The multipliers of a kart's top speed, one per source (1 = unchanged). Each source writes
-/// only its own; [`MaxSpeedScale`] is their product. The stats (issue #15) will add theirs.
+/// only its own; [`MaxSpeedScale`] is their product.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct MaxSpeedFactors {
     /// The bots' light catch-up (GD § 12, issue #6): within ±3 %.
     pub catch_up: f32,
     /// The croquettes held (GD § 7, issue #14): +1 % each, up to 10.
     pub croquettes: f32,
+    /// The Speed stat (GD § 9, issue #15): `StatEffects::top_speed`, set when the kart spawns
+    /// (0.92 to 1.08 by default; 1 at the middle level).
+    pub stats: f32,
 }
 
 impl Default for MaxSpeedFactors {
@@ -124,13 +140,14 @@ impl Default for MaxSpeedFactors {
         Self {
             catch_up: 1.0,
             croquettes: 1.0,
+            stats: 1.0,
         }
     }
 }
 
 impl MaxSpeedFactors {
     pub fn product(&self) -> f32 {
-        self.catch_up * self.croquettes
+        self.catch_up * self.croquettes * self.stats
     }
 }
 
@@ -199,6 +216,7 @@ pub struct KartPlugin;
 impl Plugin for KartPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KartTuning>()
+            .init_resource::<StatsTuning>()
             .add_message::<KartBump>()
             .configure_sets(
                 FixedUpdate,
@@ -226,9 +244,31 @@ impl Plugin for KartPlugin {
     }
 }
 
+/// A kart body with these stats (GD § 9, issue #15), converted once here: its mass and inertia,
+/// its top speed factor ([`MaxSpeedFactors::stats`]) and the multipliers the driving applies to
+/// `tuning` every tick ([`StatEffects`]).
+pub fn kart_body_with_stats(
+    tuning: &KartTuning,
+    stats_tuning: &StatsTuning,
+    stats: KartStats,
+    transform: Transform,
+) -> impl Bundle {
+    let effects = StatEffects::new(&stats, stats_tuning);
+    (
+        kart_body(&effects.apply(tuning), transform),
+        stats,
+        effects,
+        MaxSpeedFactors {
+            stats: effects.top_speed,
+            ..default()
+        },
+    )
+}
+
 /// Everything a kart body needs: physics, driving components and pose recording for the
-/// visual interpolation. Add `PlayerKart` (or a bot / network driver) and a visual on top.
-pub fn kart_body(tuning: &KartTuning, transform: Transform) -> impl Bundle {
+/// visual interpolation. Add `PlayerKart` (or a bot / network driver) and a visual on top. Its
+/// stats are the middle level (exactly `tuning`); see [`kart_body_with_stats`].
+pub fn kart_body(tuning: &KartTuning, transform: Transform) -> impl Bundle + use<> {
     let rounding = 0.1;
     let half = KART_HALF_EXTENTS - Vec3::splat(rounding);
     (
@@ -262,8 +302,18 @@ pub fn kart_body(tuning: &KartTuning, transform: Transform) -> impl Bundle {
     )
 }
 
-fn tick_timers(time: Res<Time>, mut boosts: Query<&mut Boost>, mut stalls: Query<&mut Stall>) {
+fn tick_timers(
+    time: Res<Time>,
+    mut boosts: Query<&mut Boost>,
+    mut stalls: Query<&mut Stall>,
+    mut invincibilities: Query<&mut Invincibility>,
+) {
     let dt = time.delta_secs();
+    for mut invincibility in &mut invincibilities {
+        if invincibility.is_active() {
+            invincibility.tick(dt);
+        }
+    }
     for mut boost in &mut boosts {
         if boost.is_active() {
             boost.tick(dt);
@@ -460,7 +510,7 @@ fn drive_karts(
             &KartInput,
             &mut PreviousInput,
             &KartAssists,
-            &MaxSpeedScale,
+            (&MaxSpeedScale, &StatEffects),
             &Stall,
             &mut TrickTracker,
             &mut Boost,
@@ -481,9 +531,9 @@ fn drive_karts(
     let Ok(context) = rapier.single() else {
         return;
     };
-    let tuning = &*tuning;
+    let base = &*tuning;
     // The trick window in ticks (GD § 5: about 0.2 s).
-    let trick_window = (tuning.trick_window / dt).round() as u32;
+    let trick_window = (base.trick_window / dt).round() as u32;
 
     for (
         entity,
@@ -491,7 +541,7 @@ fn drive_karts(
         input,
         mut previous_input,
         assists,
-        speed_scale,
+        (speed_scale, effects),
         stall,
         mut tricks,
         mut boost,
@@ -503,6 +553,10 @@ fn drive_karts(
         mut gravity,
     ) in &mut karts
     {
+        // This kart's tuning: `KartTuning` with its stats applied (exactly `KartTuning` at the
+        // middle level).
+        let kart_tuning = effects.tuning(base);
+        let tuning = &*kart_tuning;
         if *state == KartState::Respawning {
             if *motion != DriftMotion::default() {
                 *motion = DriftMotion::default();

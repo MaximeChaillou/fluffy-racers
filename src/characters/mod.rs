@@ -1,0 +1,243 @@
+//! Characters and karts (GD § 9, issue #15): who drives which kart, and the selection screen.
+//!
+//! - **Roster** ([`Roster`], `roster.rs`): 9 animals in 3 weight classes, 3 karts, 3 sets of
+//!   wheels and 2 wings, read from the RON files of `assets/data/` (compiled into the game).
+//! - **Loadouts**: the player's choice ([`PlayerLoadout`], kept for the whole session: a restart
+//!   keeps it), and the bots' (`bots::bot_loadout`, from their grid slot). A kart's stats are the
+//!   sum of its four parts (`kart::KartStats`), converted once when it spawns
+//!   (`kart::kart_body_with_stats`).
+//! - **Looks**: one shared material per character ([`DriverLooks`]); the driver's size shows its
+//!   weight class, its color and ears the animal.
+//! - **Selection screen** ([`SelectionScreen`]): character, kart, wheels and wing, with the stat
+//!   bars `(level + 3) / 4`. It opens when the game starts (with a renderer: not in the headless
+//!   tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
+//!   Mac). Arrows (or W/S and A/D, i.e. Z/S and Q/D in AZERTY) move through it, **Entrée** races
+//!   with the choice (the level is rebuilt by `LoadLevel`), **Échap** or G closes it unchanged.
+//!   While it is open the game is paused. Its egui interface (`ui.rs`) only exists with a
+//!   renderer; the keys and the actions ([`SelectionAction`]) are headless and tested.
+
+mod roster;
+mod ui;
+
+#[cfg(test)]
+mod scenario_tests;
+
+pub use roster::{
+    CHARACTERS_RON, CharacterData, KARTS_RON, Loadout, PartData, PartKind, Roster, WHEELS_RON,
+    WINGS_RON, WeightClass, is_middle,
+};
+pub use ui::CharacterUiPlugin;
+
+use bevy::prelude::*;
+
+use crate::kart::DriverLook;
+use crate::level::LoadLevel;
+use crate::race::RaceMode;
+
+/// Opens (and closes) the selection screen: « G » for garage, a letter at the same place and
+/// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
+pub const SELECTION_KEY: KeyCode = KeyCode::KeyG;
+
+/// Keys of the selection screen. Physical positions: W/A/S/D are Z/Q/S/D on an AZERTY keyboard,
+/// like for driving.
+const UP_KEYS: [KeyCode; 2] = [KeyCode::ArrowUp, KeyCode::KeyW];
+const DOWN_KEYS: [KeyCode; 2] = [KeyCode::ArrowDown, KeyCode::KeyS];
+const LEFT_KEYS: [KeyCode; 2] = [KeyCode::ArrowLeft, KeyCode::KeyA];
+const RIGHT_KEYS: [KeyCode; 2] = [KeyCode::ArrowRight, KeyCode::KeyD];
+const CONFIRM_KEYS: [KeyCode; 2] = [KeyCode::Enter, KeyCode::NumpadEnter];
+const CANCEL_KEYS: [KeyCode; 2] = [KeyCode::Escape, SELECTION_KEY];
+
+/// The local player's four parts, kept for the whole session: restarts and new levels use it.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Deref, DerefMut)]
+pub struct PlayerLoadout(pub Loadout);
+
+impl FromWorld for PlayerLoadout {
+    fn from_world(world: &mut World) -> Self {
+        Self(
+            world
+                .get_resource::<Roster>()
+                .map(Roster::default_loadout)
+                .unwrap_or_default(),
+        )
+    }
+}
+
+/// How each character's driver looks (by roster index): one shared material per character,
+/// created once. Absent without a renderer's materials.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct DriverLooks(pub Vec<DriverLook>);
+
+impl DriverLooks {
+    pub fn get(&self, character: usize) -> Option<&DriverLook> {
+        self.0.get(character)
+    }
+}
+
+/// The selection screen: whether it is open, the line being changed (0 = character, 1 = kart,
+/// 2 = wheels, 3 = wing) and the parts chosen on it (applied by « Course ! »).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SelectionScreen {
+    pub open: bool,
+    pub row: usize,
+    pub choice: Loadout,
+}
+
+impl SelectionScreen {
+    /// The part of the line being changed.
+    pub fn kind(&self) -> PartKind {
+        PartKind::ALL[self.row.min(PartKind::ALL.len() - 1)]
+    }
+}
+
+/// What the player does on the selection screen, from the keyboard or from the egui buttons.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionAction {
+    /// Opens it on the current loadout.
+    Open,
+    /// Moves to the line above (-1) or below (+1).
+    Row(i32),
+    /// Picks the previous (-1) or next (+1) entry of a part.
+    Change(PartKind, i32),
+    /// Picks this entry of a part.
+    Pick(PartKind, usize),
+    /// « Course ! »: the choice becomes the player's loadout and the race starts over with it.
+    Confirm,
+    /// Closes it, the loadout unchanged.
+    Cancel,
+}
+
+pub struct CharacterPlugin;
+
+impl Plugin for CharacterPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(Roster::embedded())
+            .init_resource::<PlayerLoadout>()
+            .init_resource::<SelectionScreen>()
+            .add_message::<SelectionAction>()
+            .add_systems(Startup, create_driver_looks)
+            .add_systems(
+                Update,
+                (
+                    selection_keys.run_if(resource_exists::<ButtonInput<KeyCode>>),
+                    apply_selection_actions,
+                    pause_while_choosing,
+                )
+                    .chain(),
+            );
+        if app.is_plugin_added::<bevy::render::RenderPlugin>() {
+            app.add_plugins(CharacterUiPlugin);
+        }
+    }
+}
+
+/// One material per character (its color), shared by every kart it drives.
+fn create_driver_looks(
+    mut commands: Commands,
+    roster: Res<Roster>,
+    materials: Option<ResMut<Assets<StandardMaterial>>>,
+) {
+    let Some(mut materials) = materials else {
+        return;
+    };
+    let looks = roster
+        .characters
+        .iter()
+        .map(|character| {
+            let (r, g, b) = character.color;
+            DriverLook {
+                size: character.size,
+                material: materials.add(Color::srgb(r, g, b)),
+                ears: character.ears,
+            }
+        })
+        .collect();
+    commands.insert_resource(DriverLooks(looks));
+}
+
+/// The keys of the selection screen (see the module's documentation).
+fn selection_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    screen: Res<SelectionScreen>,
+    mut actions: MessageWriter<SelectionAction>,
+) {
+    if !screen.open {
+        if keys.just_pressed(SELECTION_KEY) {
+            actions.write(SelectionAction::Open);
+        }
+        return;
+    }
+    let kind = screen.kind();
+    let pressed = |set: [KeyCode; 2]| keys.any_just_pressed(set);
+    if pressed(CONFIRM_KEYS) {
+        actions.write(SelectionAction::Confirm);
+    } else if pressed(CANCEL_KEYS) {
+        actions.write(SelectionAction::Cancel);
+    } else if pressed(UP_KEYS) {
+        actions.write(SelectionAction::Row(-1));
+    } else if pressed(DOWN_KEYS) {
+        actions.write(SelectionAction::Row(1));
+    } else if pressed(LEFT_KEYS) {
+        actions.write(SelectionAction::Change(kind, -1));
+    } else if pressed(RIGHT_KEYS) {
+        actions.write(SelectionAction::Change(kind, 1));
+    }
+}
+
+/// Applies the actions of this frame. « Course ! » rebuilds the level (`LoadLevel`) with the new
+/// loadout: every kart spawns again, the race starts over from the grid.
+fn apply_selection_actions(
+    mut actions: MessageReader<SelectionAction>,
+    roster: Res<Roster>,
+    mode: Res<RaceMode>,
+    mut screen: ResMut<SelectionScreen>,
+    mut loadout: ResMut<PlayerLoadout>,
+    mut levels: MessageWriter<LoadLevel>,
+) {
+    for action in actions.read() {
+        match *action {
+            SelectionAction::Open => {
+                *screen = SelectionScreen {
+                    open: true,
+                    row: 0,
+                    choice: loadout.0,
+                };
+            }
+            _ if !screen.open => {}
+            SelectionAction::Row(step) => {
+                let rows = PartKind::ALL.len() as i32;
+                screen.row = (screen.row as i32 + step).rem_euclid(rows) as usize;
+            }
+            SelectionAction::Change(kind, step) => {
+                screen.choice = roster.cycle(screen.choice, kind, step);
+                screen.row = kind.index();
+            }
+            SelectionAction::Pick(kind, index) => {
+                if index < roster.count(kind) {
+                    screen.choice.set(kind, index);
+                    screen.row = kind.index();
+                }
+            }
+            SelectionAction::Confirm => {
+                loadout.set_if_neq(PlayerLoadout(screen.choice));
+                screen.open = false;
+                levels.write(LoadLevel::restart(*mode));
+            }
+            SelectionAction::Cancel => screen.open = false,
+        }
+    }
+}
+
+/// The game waits while the player chooses: virtual time is paused while the screen is open
+/// (the fixed 60 Hz simulation does not run), and runs again once it closes.
+fn pause_while_choosing(
+    screen: Res<SelectionScreen>,
+    mut was_open: Local<bool>,
+    mut time: ResMut<Time<Virtual>>,
+) {
+    if screen.open && !time.is_paused() {
+        time.pause();
+    } else if !screen.open && *was_open && time.is_paused() {
+        time.unpause();
+    }
+    *was_open = screen.open;
+}

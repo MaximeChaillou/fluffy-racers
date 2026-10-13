@@ -8,7 +8,10 @@ use bevy_rapier3d::prelude::Velocity;
 
 use super::*;
 use crate::SimulationPlugin;
-use crate::kart::{KartInput, KartTuning, MaxSpeedScale, kart_body};
+use crate::kart::{
+    Invincibility, KartInput, KartStats, KartTuning, MaxSpeedScale, Stat, StatEffects, StatsTuning,
+    kart_body,
+};
 use crate::track::{CROQUETTE_HEIGHT, Surface, WALL_RESTITUTION, spawn_static_box};
 
 const TICKS_PER_SECOND: f32 = 60.0;
@@ -678,4 +681,60 @@ mod game {
         );
         assert_eq!(hud_text(&mut app, HudText::Croquettes), "x 0");
     }
+}
+
+/// Issue #15 (GD § 8): hit by an item, a kart is invincible for 1 to 2 s depending on its
+/// Invincibility stat (1.5 s in the middle): another item hit meanwhile costs no croquette, and
+/// does not extend the protection. Bumps are not concerned (their own 1 s grace, GD § 15).
+#[test]
+fn after_an_item_hit_the_invincibility_stat_protects_the_kart() {
+    let mut arena = Arena::new();
+    let middle = arena.kart;
+    let fragile = arena.other_kart(Transform::from_xyz(20.0, 0.55, 0.0));
+    let sturdy = arena.other_kart(Transform::from_xyz(-20.0, 0.55, 0.0));
+    let tuning = StatsTuning::default();
+    for (kart, level) in [(fragile, 0), (sturdy, 20)] {
+        let stats = KartStats::default().with(Stat::Invincibility, level);
+        arena
+            .app
+            .world_mut()
+            .entity_mut(kart)
+            .insert((stats, StatEffects::new(&stats, &tuning)));
+    }
+    let karts = [fragile, middle, sturdy];
+    for kart in karts {
+        arena.set_held(kart, 10);
+    }
+    let hit_all = |arena: &mut Arena| {
+        for kart in karts {
+            arena.app.world_mut().write_message(LoseCroquettes {
+                kart,
+                cause: LossCause::ItemHit,
+            });
+        }
+        arena.tick(KartInput::default());
+        karts.map(|kart| arena.held(kart))
+    };
+    // t = 0: everybody loses 3 and is invincible for 1, 1.5 and 2 s.
+    assert_eq!(hit_all(&mut arena), [7, 7, 7]);
+    let remaining = |arena: &Arena, kart| {
+        arena
+            .app
+            .world()
+            .get::<Invincibility>(kart)
+            .unwrap()
+            .remaining
+    };
+    assert!((remaining(&arena, fragile) - 1.0).abs() < 1e-6);
+    assert!((remaining(&arena, middle) - 1.5).abs() < 1e-6);
+    assert!((remaining(&arena, sturdy) - 2.0).abs() < 1e-6);
+    // t = 1.2 s: only the fragile one is hit again (protected until 2.2 s now).
+    arena.run(1.2 - 1.0 / TICKS_PER_SECOND, KartInput::default());
+    assert_eq!(hit_all(&mut arena), [4, 7, 7]);
+    // t = 1.7 s: the middle one (protected until 3.2 s now).
+    arena.run(0.5 - 1.0 / TICKS_PER_SECOND, KartInput::default());
+    assert_eq!(hit_all(&mut arena), [4, 4, 7]);
+    // t = 2.3 s: the sturdy one, and the fragile one again.
+    arena.run(0.6 - 1.0 / TICKS_PER_SECOND, KartInput::default());
+    assert_eq!(hit_all(&mut arena), [1, 4, 4]);
 }

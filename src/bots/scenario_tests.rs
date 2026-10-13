@@ -8,7 +8,9 @@ use bevy::prelude::*;
 use super::*;
 use crate::TICK_HZ;
 use crate::croquettes::Croquettes;
-use crate::kart::{KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart};
+use crate::kart::{
+    KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, StatEffects,
+};
 use crate::race::{
     Course, DrivesOnAfterFinish, Race, RaceGrid, RacePhase, RaceProgress, Racer, Tow, TowReason,
     ticks_to_seconds,
@@ -116,11 +118,12 @@ impl RaceLog {
     }
 
     /// Records the tick that just ran: mini-turbos fired (a drift with a tier reached released
-    /// with the button), tows, lateral positions on the start straight.
+    /// with the button), tows, lateral positions on the start straight. The tier is read with
+    /// the kart's own thresholds (issue #15: its Mini-turbo stat moves them).
     fn record(&mut self, app: &App) {
         self.ticks += 1;
         let world = app.world();
-        let tuning = world.resource::<KartTuning>();
+        let base = world.resource::<KartTuning>();
         let course = world.resource::<Course>();
         for (entity, log) in &mut self.karts {
             let state = *world.get::<KartState>(*entity).unwrap();
@@ -133,7 +136,8 @@ impl RaceLog {
             if let Some(previous @ KartState::Drifting { .. }) = log.previous
                 && !drifting
             {
-                match (input.jump_drift, previous.mini_turbo(tuning, false)) {
+                let tuning = world.get::<StatEffects>(*entity).unwrap().tuning(base);
+                match (input.jump_drift, previous.mini_turbo(&tuning, false)) {
                     (true, _) => log.broken += 1,
                     (false, Some(tier)) => {
                         log.mini_turbos[tier.index()] += 1;
@@ -578,7 +582,7 @@ fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
     set_difficulties(&mut app, difficulty);
     player_becomes_a_bot(&mut app, difficulty(4));
     assert_eq!(app.world().resource::<TrackLayout>().name, "Rond-point");
-    let thresholds = app.world().resource::<KartTuning>().mini_turbo_thresholds;
+    let base = app.world().resource::<KartTuning>().clone();
     let mut log = RaceLog::new(&mut app);
     run_race(&mut app, &mut log, 60.0);
     log.print(&app, "round circuit, Hard and Easy");
@@ -588,6 +592,14 @@ fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
             "slot {} did not finish",
             kart.slot
         );
+        // Issue #15: each kart's own thresholds (its Mini-turbo stat); the default ones (270 /
+        // 570 / 870) for a kart at the middle level.
+        let thresholds = app
+            .world()
+            .get::<StatEffects>(*entity)
+            .unwrap()
+            .tuning(&base)
+            .mini_turbo_thresholds;
         match kart.difficulty.unwrap() {
             BotDifficulty::Hard => {
                 let chain = kart.longest_chain_charge(MiniTurbo::Orange, &thresholds);

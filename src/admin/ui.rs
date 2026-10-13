@@ -25,10 +25,11 @@ use super::tracks::{self, TEST_GROUND_LABEL, TrackEntry};
 use super::tuning::{Field, Value, fields};
 use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_now, storage};
 use crate::camera::ChaseCamera;
+use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
 use crate::kart::{
-    Boost, DriftSide, KartState, KartTuning, KartWheels, MaxSpeedScale, PlayerKart, Slipstream,
-    Stall, max_speed,
+    Boost, DriftSide, KartState, KartStats, KartTuning, KartWheels, MaxSpeedScale, PlayerKart,
+    Slipstream, Stall, Stat, StatEffects, max_speed,
 };
 use crate::level::LoadLevel;
 use crate::race::{Race, RaceGrid, RaceMode};
@@ -56,6 +57,8 @@ const ON_RESTART: &[&str] = &[
     "BotTuning.road_margin",
     "BotTuning.sand_margin",
     "BotTuning.line_margin",
+    // The stats are converted when the karts spawn (issue #15).
+    "StatsTuning.",
 ];
 
 /// What an index means, for the arrays of the tunings.
@@ -89,7 +92,9 @@ impl Plugin for AdminUiPlugin {
             attach_egui_context
                 .before(EguiPreUpdateSet::InitContexts)
                 .run_if(
-                    resource_changed::<AdminPanel>.or_else(any_match_filter::<Added<ChaseCamera>>),
+                    resource_changed::<AdminPanel>
+                        .or_else(resource_exists_and_changed::<SelectionScreen>)
+                        .or_else(any_match_filter::<Added<ChaseCamera>>),
                 ),
         )
         .add_systems(
@@ -100,7 +105,12 @@ impl Plugin for AdminUiPlugin {
             Last,
             browser_keys_while_typing.run_if(resource_changed::<KeyboardCapture>),
         )
-        .add_systems(EguiPrimaryContextPass, panel);
+        // The egui context also exists for the selection screen (issue #15): the panel only
+        // draws itself when it is open.
+        .add_systems(
+            EguiPrimaryContextPass,
+            panel.run_if(|panel: Res<AdminPanel>| panel.open),
+        );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(ExtractSchedule, unlink_closed_egui_views);
         }
@@ -184,9 +194,12 @@ fn open_if_asked(mut panel: ResMut<AdminPanel>) {
 
 /// Puts the egui context on the game's camera when the panel opens, removes it (with every egui
 /// component and the font texture) when it closes. Closing also gives the game back its normal
-/// speed and the keyboard.
+/// speed and the keyboard. The selection screen of issue #15 (`characters`) is egui too: the
+/// context stays while either of them is open, and the game stays paused while the selection
+/// screen is.
 pub(super) fn attach_egui_context(
     panel: Res<AdminPanel>,
+    selection: Option<Res<SelectionScreen>>,
     mut commands: Commands,
     cameras: Query<(Entity, Has<PrimaryEguiContext>), With<ChaseCamera>>,
     mut textures: Option<ResMut<EguiManagedTextures>>,
@@ -195,10 +208,12 @@ pub(super) fn attach_egui_context(
     mut state: Option<ResMut<PanelState>>,
     mut time: Option<ResMut<Time<Virtual>>>,
 ) {
+    let choosing = selection.is_some_and(|screen| screen.open);
+    let wanted = panel.open || choosing;
     for (camera, attached) in &cameras {
-        if panel.open && !attached {
+        if wanted && !attached {
             commands.entity(camera).insert(PrimaryEguiContext);
-        } else if !panel.open && attached {
+        } else if !wanted && attached {
             commands
                 .entity(camera)
                 .remove_with_requires::<PrimaryEguiContext>();
@@ -220,11 +235,13 @@ pub(super) fn attach_egui_context(
         if let Some(state) = state.as_mut() {
             state.export.clear();
         }
-        if let Some(time) = time.as_mut()
-            && (time.is_paused() || time.relative_speed() != 1.0)
-        {
-            time.unpause();
-            time.set_relative_speed(1.0);
+        if let Some(time) = time.as_mut() {
+            if time.relative_speed() != 1.0 {
+                time.set_relative_speed(1.0);
+            }
+            if time.is_paused() && !choosing {
+                time.unpause();
+            }
         }
     }
 }
@@ -563,15 +580,39 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         &MaxSpeedScale,
         &Slipstream,
         &KartWheels,
+        &KartStats,
+        &StatEffects,
         Option<&Croquettes>,
     ), With<PlayerKart>>();
-    let tuning = world.resource::<KartTuning>();
-    let Some((velocity, transform, state, boost, stall, scale, slipstream, wheels, croquettes)) =
-        karts.iter(world).next()
+    let base = world.resource::<KartTuning>();
+    let Some((
+        velocity,
+        transform,
+        state,
+        boost,
+        stall,
+        scale,
+        slipstream,
+        wheels,
+        stats,
+        effects,
+        croquettes,
+    )) = karts.iter(world).next()
     else {
         ui.label("Pas de kart joueur.");
         return;
     };
+    // The player's kart drives with its stats applied (issue #15).
+    let kart_tuning = effects.tuning(base);
+    let tuning = &*kart_tuning;
+    let loadout = world
+        .get_resource::<Roster>()
+        .zip(world.get_resource::<PlayerLoadout>())
+        .map(|(roster, loadout)| {
+            PartKind::ALL
+                .map(|kind| roster.name(kind, loadout.get(kind)).to_string())
+                .join(" · ")
+        });
     let kmh = |ms: f32| ms * 3.6;
     let speed = velocity.linear.length();
     let forward = velocity.linear.dot(*transform.forward());
@@ -612,6 +653,17 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
             row(
                 "Vitesse max",
                 format!("{:5.1} km/h  (×{:.3})", kmh(top), scale.0),
+            );
+            if let Some(loadout) = &loadout {
+                row("Pilote et kart", loadout.clone());
+            }
+            row(
+                "Stats (niveaux)",
+                Stat::ALL
+                    .iter()
+                    .map(|stat| stats.level(*stat).to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "),
             );
             row("État", state_text);
             row(
