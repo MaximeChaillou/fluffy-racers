@@ -216,7 +216,7 @@ mod tests {
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
         .insert_resource(track)
-        .insert_resource(RaceGrid { bots })
+        .insert_resource(RaceGrid { bots, ..default() })
         .add_plugins(GamePlugin)
         .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
         app
