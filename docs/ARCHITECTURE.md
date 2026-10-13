@@ -4,7 +4,7 @@
 
 - `FixedUpdate` à **60 Hz** pour toute la simulation : entrées, physique, règles de course, réseau.
 - `Update` pour le rendu : interpolation visuelle des transforms, caméra, UI, effets.
-- Le flux de chaque tick : `lecture entrées → KartInput → physique kart → règles (checkpoints, objets) → envoi réseau`.
+- Le flux de chaque tick : `lecture entrées → KartInput → physique kart → règles (checkpoints, objets, interactions) → envoi réseau`.
 
 ## Le kart (arcade, pas simulation)
 
@@ -20,10 +20,19 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 - **Boosts** : un seul composant `Boost { strength, remaining }` pour toutes les sources (mini-turbo, piment, départ, figure, aspiration, panneau).
 - **En l'air** : gravité renforcée pour des sauts courts, et redressement automatique.
 - **Stats** : `KartStats`, calculée une fois au spawn (personnage + kart + roues + aile), puis convertie en paramètres via `KartTuning`.
+- **Interactions entre karts** (coup de patte, attrape, `docs/GAME_DESIGN.md` § 15) : ce ne sont pas des états de la machine, puisqu'on frappe en drift. Un composant à part garde la recharge, la durée d'appui et le lien en cours. La conduite applique deux effets :
+  - une **poussée latérale** qui s'éteint d'elle-même. Le grip annule presque toute vitesse de côté en un dixième de seconde, et le drift réoriente la vitesse : ni l'un ni l'autre ne doit l'effacer ;
+  - l'**accélération du lien** élastique, un ressort amorti entre les deux karts.
+
+  Pas de joint Rapier : la conduite réécrit la vitesse à chaque tick, et en ligne l'autre kart n'est qu'un proxy kinématique.
 
 ## Entrées
 
-`KartInput { throttle: f32, brake: f32, steer: f32, jump_drift: bool, item: bool, look_back: bool }` est produit chaque tick par une source. `jump_drift` sert à la fois au saut, au drift et aux figures ; `item` maintenu permet de traîner un objet derrière soi. Les sources possibles :
+`KartInput { throttle: f32, brake: f32, steer: f32, jump_drift: bool, item: bool, look_back: bool, interact: bool }` est produit chaque tick par une source. `jump_drift` sert à la fois au saut, au drift et aux figures ; `item` maintenu permet de traîner un objet derrière soi.
+
+`interact` est l'état du bouton Interaction (`docs/GAME_DESIGN.md` § 15). Les règles du kart en déduisent l'appui court (coup de patte, au relâchement) et le maintien (attraper), comme elles distinguent saut et drift sur `jump_drift`. Le côté visé quand il y a des karts des deux côtés, et le côté d'un jet, viennent de `steer`. Le verrou du départ met déjà tout le `KartInput` à zéro avant le GO ; le calage et l'arrivée ignorent aussi `interact`.
+
+Les sources possibles :
 - clavier / manette (joueur local), avec en option la direction assistée et l'accélération automatique (`docs/GAME_DESIGN.md` § 11) ;
 - bot (suit la ligne de course du circuit) ;
 - réseau : on ne l'utilise pas pour les karts distants (voir plus bas).
@@ -37,7 +46,7 @@ Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur s
 - **Maillage complet WebRTC** via `matchbox_socket` : chaque navigateur est connecté à tous les autres (11 connexions max par joueur, que des petits paquets de données).
 - Deux canaux :
   - **non fiable** : états des karts à haute fréquence ;
-  - **fiable** : événements (lobby, départ, objets, touches, arrivée).
+  - **fiable** : événements (lobby, départ, objets, touches, interactions entre karts, arrivée).
 - **Hôte** = le pair au plus petit `PeerId`. Il arbitre l'état de la course : lobby, choix du circuit, compte à rebours et tick de départ, boîtes d'objets (qui a pris quoi), classement final. Si l'hôte part, le suivant prend le relais.
 
 ### Synchronisation
@@ -48,6 +57,32 @@ Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur s
 - **Collisions kart contre kart** : chaque pair calcule le choc sur *son* kart contre le proxy kinématique de l'autre. Le rendu est approximativement symétrique ; le fun passe avant l'exactitude.
 - **Croquettes et boîtes à objets** : l'hôte décide qui a ramassé quoi (événement fiable). La roulette est tirée localement par le ramasseur, avec la table du game design.
 - **Objets** : le lanceur fait autorité sur la trajectoire. C'est **la victime qui décide** si elle est touchée, puis elle l'annonce. On évite ainsi le sentiment d'injustice dû à la latence.
+
+### Interactions entre karts
+
+Un coup de patte ou une attrape (`docs/GAME_DESIGN.md` § 15) agit sur le kart d'un autre, alors que chacun fait autorité sur le sien. On suit la règle des objets : **la victime décide, et applique l'effet à son propre kart**. « La victime », c'est le pair qui fait autorité sur le kart visé : son joueur, ou le pair qui simule ce bot.
+
+- **Événements**, sur le canal fiable, envoyés à tous les pairs :
+  - `Coup { frappeur, cible, tick, tick_vu, position_du_frappeur, direction, jet }` : `direction` est la direction horizontale de la poussée, dans le repère du monde ; un jet est un coup avec `jet: true` ;
+  - `CoupReçu { cible, frappeur }` ou `CoupIgnoré { cible, frappeur }` : la réponse de la victime ;
+  - `Attrape { attrapeur, cible, tick, tick_vu, position_de_l_attrapeur }` ;
+  - `FinAttrape { attrapeur, cible, raison }`. Raisons : lâcher, jet, dégagé, durée écoulée, lien trop étiré, touché, pélican, arrivée, refus, déconnexion.
+- **Qui fait autorité** :
+  - **le frappeur** décide de sa cible (d'après ce qu'il voit), de sa recharge et de son coup dans le vide. Chez lui, la patte et le « pof » partent tout de suite : c'est un visuel prédit. Il ne déplace jamais le proxy de la cible ; l'écart arrive avec les états de la victime ;
+  - **la victime** décide si le coup la touche (immunités, protection d'1 s, portée vérifiée comme ci-dessous). Elle applique à son kart la poussée, la perte de vitesse et la croquette, au tick de réception, puis répond `CoupReçu`. Cette réponse déclenche chez tous les pairs le ragdoll, le « pof » et l'éparpillement de la croquette. Comme les autres croquettes éparpillées, celle-ci est déterministe, et l'hôte arbitre son ramassage.
+- **Latence et portée** : les karts distants sont affichés environ 100 ms dans le passé, soit 2,8 m derrière leur vraie place à 28 m/s. Le frappeur juge la portée **sur son écran**, contre le proxy qu'il voit : ce que le joueur voit toucher touche. Il envoie `tick_vu`, le tick de l'état de la cible qu'il affichait, avec sa propre position au tick du coup.
+  - La victime garde un historique de ses propres positions : 30 ticks (0,5 s), dans un tampon circulaire, sans allocation.
+  - Elle compare sa position à `tick_vu` avec la position du frappeur : à portée, plus 0,75 m de tolérance (à régler), elle applique le coup. Sinon, elle répond `CoupIgnoré` : le frappeur a vu sa patte frapper sans effet, comme un objet qui rate.
+  - Un événement vieux de plus de 0,3 s (à régler) est ignoré.
+  - Ce contrôle sert la cohérence (la cible a été ramassée par le pélican entre-temps, par exemple), pas l'anti-triche.
+- **Attrape** :
+  - l'attrapeur commence à se faire remorquer tout de suite (prédiction) et envoie `Attrape`. La cible vérifie comme pour un coup ; si elle refuse (immunisée, hors de portée), elle répond `FinAttrape { raison: refus }`, et l'attrapeur lâche avec le déséquilibre de la griffe dans le vide ;
+  - **chaque pair applique la force du lien à son propre kart**, vers la position de l'autre **extrapolée au tick courant** (dernier état reçu + vitesse × retard), pas vers le proxy affiché 100 ms dans le passé. Sinon, à pleine vitesse, chacun verrait l'autre 2,8 m trop en arrière : le lien tirerait trop peu l'attrapeur et freinerait trop la cible ;
+  - les deux pairs calculent la même formule (ressort amorti ; les stats de chaque kart sont connues de tous depuis le lobby), donc des forces à peu près opposées. Le fun passe avant l'exactitude, comme pour les chocs ;
+  - **fin du lien** : chacun la décide pour son côté et l'annonce par `FinAttrape`. L'attrapeur lâche, jette ou saute ; la cible se dégage, est touchée ou part avec le pélican ; l'un ou l'autre constate que le lien est trop étiré ou qu'il a franchi l'arrivée. Chacun applique aussi la **durée maximale de 2 s** à partir du tick de la prise : un lien ne dure jamais plus, même si un message tarde ;
+  - un jet est un `Coup` (`jet: true`) envoyé juste après la `FinAttrape` ; la victime le traite comme un coup.
+- **Déconnexion pendant une attrape** : le pair restant rompt le lien dès que `matchbox_socket` signale le départ de l'autre, ou après 0,5 s sans aucun état reçu de lui (à régler), et au plus tard au bout des 2 s. Pour lui, c'est un lâcher sans jet, sans pénalité ni effet. Un bot dont le simulateur change (l'hôte part) perd aussi son lien. Le reste (le kart du joueur parti, sa place au classement) relève de la course en ligne (#9).
+- **Rien de plus dans l'état diffusé à 30 Hz** : les autres pairs dessinent la patte, le bras élastique et le ragdoll à partir des événements. Le ragdoll reste purement visuel (voir « Personnages mous »).
 
 ### Mise en relation (signalisation)
 
@@ -63,6 +98,7 @@ WebRTC a besoin d'un petit service pour que les navigateurs se trouvent : il éc
 Effet de mollesse procédural, sans vraie simulation de tissus :
 - ressorts amortis sur la tête, les oreilles et la queue (os secondaires qui suivent avec du retard) ;
 - squash & stretch aux atterrissages et aux chocs ;
-- quand on est touché : mini-ragdoll de la tête et des bras pendant environ 1 s.
+- quand on est touché ou qu'on reçoit un coup de patte : mini-ragdoll de la tête et des bras pendant environ 1 s ;
+- la patte ou le bras qui frappe ou attrape (`docs/GAME_DESIGN.md` § 15) : animation procédurale. La patte se lève à l'appui puis frappe ; pendant une attrape, un bras élastique est tendu entre les deux karts, et il revient en « boing » au lâcher. La portée et le lien sont décidés par les règles du kart, jamais par la longueur du bras affiché.
 
-Tout ça est purement visuel. Ça ne touche jamais la physique du kart, donc ça n'a pas besoin d'être synchronisé en réseau.
+Tout ça est purement visuel. Ça ne touche jamais la physique du kart, donc ça n'a pas besoin d'être synchronisé en réseau : en ligne, les événements d'interaction suffisent à le déclencher chez chaque pair.
