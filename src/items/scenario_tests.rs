@@ -87,7 +87,7 @@ impl Arena {
             &mut commands,
             Transform::from_translation(at),
             half,
-            Surface::Road,
+            Surface::Wall,
             WALL_RESTITUTION,
         );
         world.flush();

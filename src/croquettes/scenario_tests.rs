@@ -483,7 +483,7 @@ fn hitting_a_wall_costs_no_croquette() {
         &mut commands,
         Transform::from_xyz(0.0, 1.0, -40.0),
         Vec3::new(10.0, 1.0, 0.5),
-        Surface::Road,
+        Surface::Wall,
         WALL_RESTITUTION,
     );
     world.flush();

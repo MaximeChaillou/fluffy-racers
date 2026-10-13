@@ -61,7 +61,13 @@ pub struct KartTuning {
     // --- Body ---------------------------------------------------------------------------------
     /// Kart mass in kg (the Weight stat will change it later).
     pub mass: f32,
-    /// Height of the center of mass in the kart's local frame. Low = hard to flip over.
+    /// Height of the center of mass in the kart's local frame (m, 0 = the middle of its
+    /// collision box). Keep it there (issue #27): a wall or another kart pushes on a side of the
+    /// box, around its middle height, so the push goes through the center of mass and does not
+    /// tip the kart. 0.15 m lower (the value of issues #1 to #40), every crash landed above it:
+    /// a hard hit kicked the side facing the wall up (or the nose, head on) by 20 to 30°, and
+    /// the kart then drove up onto the wall or the other kart. The driving rewrites the
+    /// velocities and the springs push along the kart's up axis: neither depends on this height.
     pub center_of_mass_height: f32,
     /// Rotational inertia around the kart's local (x = pitch, y = yaw, z = roll) axes,
     /// in kg·m². High pitch/roll inertia keeps the kart on its wheels.
@@ -79,8 +85,9 @@ pub struct KartTuning {
     pub suspension_damping: f32,
 
     /// Steepest surface a wheel can stand on, as the minimum `normal.y` of the hit
-    /// (0.5 = 60°). Steeper faces (walls, crate sides) do not count as ground, so a kart
-    /// lying against a wall falls back on its wheels instead of driving along it.
+    /// (0.5 = 60°). Steeper faces (the sides of a ramp, a steep bank) do not count as ground, so
+    /// a kart lying against them falls back on its wheels instead of driving along them. Walls
+    /// and obstacles are never ground, whatever their faces (`track::Surface::Wall`, issue #27).
     pub min_ground_normal_y: f32,
 
     // --- Air ----------------------------------------------------------------------------------
@@ -266,7 +273,7 @@ impl Default for KartTuning {
             tilt_damping: 4.0,
 
             mass: 150.0,
-            center_of_mass_height: -0.15,
+            center_of_mass_height: 0.0,
             inertia: Vec3::new(200.0, 120.0, 200.0),
             gravity_scale: 2.2,
 

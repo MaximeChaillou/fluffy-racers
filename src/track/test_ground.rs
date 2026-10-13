@@ -94,7 +94,7 @@ pub fn build(
             commands,
             Transform::from_xyz(x, 0.75, z),
             Vec3::splat(0.75),
-            Surface::Road,
+            Surface::Wall,
             WALL_RESTITUTION,
             crate_color,
         );
@@ -103,7 +103,7 @@ pub fn build(
         commands,
         Transform::from_xyz(30.0, 1.0, -40.0),
         Vec3::new(0.5, 1.0, 40.0),
-        Surface::Road,
+        Surface::Wall,
         WALL_RESTITUTION,
         Color::srgb(0.55, 0.50, 0.75),
     );

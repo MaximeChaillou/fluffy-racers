@@ -386,7 +386,7 @@ fn head_on_wall_bounces_without_tunneling_or_flipping() {
             commands,
             Transform::from_xyz(0.0, 1.0, -60.0),
             Vec3::new(10.0, 1.0, 0.5),
-            Surface::Road,
+            Surface::Wall,
             WALL_RESTITUTION,
         );
     });
@@ -1806,4 +1806,243 @@ fn a_light_kart_is_pushed_aside_further_than_a_heavy_one() {
     println!("pushed aside: light {light:.2} m, heavy {heavy:.2} m");
     assert!(light > 0.5, "{light}");
     assert!(light > 1.3 * heavy, "light {light} m, heavy {heavy} m");
+}
+
+// --- Issue #27: walls and other karts are never ground, and never tip the kart -----------------
+
+/// The height of the circuit's walls (Prairie Pompon, `TrackData::wall_height`).
+const WALL_HEIGHT: f32 = 0.8;
+
+impl Scenario {
+    /// Puts the kart at `position`, at rest, keeping its heading.
+    fn place(&mut self, kart: Entity, position: Vec3) {
+        let world = self.app.world_mut();
+        world.get_mut::<Transform>(kart).unwrap().translation = position;
+        *world.get_mut::<Velocity>(kart).unwrap() = Velocity::zero();
+    }
+
+    fn wheels_of(&self, kart: Entity) -> KartWheels {
+        *self.app.world().get::<KartWheels>(kart).unwrap()
+    }
+}
+
+/// Issue #27: the suspension rays only stand on the ground. A kart lowered onto a block as high
+/// as the circuit's walls stands on its wheels on a block of road, but finds no ground on a wall:
+/// it rests on its body there, its wheels in the air. Nor on the roof of another kart. Before the
+/// fix, a ray found ground on the flat top of a wall, or on another kart's roof, and its spring
+/// lifted that side of the kart further onto it.
+#[test]
+fn the_wheels_stand_on_the_ground_never_on_a_wall_or_another_kart() {
+    for (surface, wheels) in [(Surface::Road, 4), (Surface::Wall, 0)] {
+        let mut scenario = Scenario::new(|commands| {
+            spawn_static_box(
+                commands,
+                Transform::from_xyz(0.0, -0.5, 0.0),
+                Vec3::new(500.0, 0.5, 500.0),
+                Surface::Road,
+                0.0,
+            );
+            spawn_static_box(
+                commands,
+                Transform::from_xyz(0.0, WALL_HEIGHT / 2.0, -20.0),
+                Vec3::new(3.0, WALL_HEIGHT / 2.0, 3.0),
+                surface,
+                WALL_RESTITUTION,
+            );
+        });
+        let kart = scenario.kart;
+        scenario.place(kart, Vec3::new(0.0, WALL_HEIGHT + 0.6, -20.0));
+        scenario.run(0.5, KartInput::default());
+        let height = scenario.transform().translation.y;
+        assert_eq!(
+            scenario.wheels().wheels_on_ground(),
+            wheels,
+            "on a block of {surface:?}, at {height} m"
+        );
+        assert!(height > WALL_HEIGHT, "fell off the block: {height}");
+    }
+
+    // On another kart's roof, at rest: no ground either, and the kart below is not pushed down
+    // into the road by a spring.
+    let mut scenario = Scenario::flat(Surface::Road);
+    let below = scenario.spawn_other_kart(Vec3::new(0.0, 0.55, -20.0));
+    let above = scenario.kart;
+    scenario.run(0.3, KartInput::default());
+    scenario.place(above, Vec3::new(0.0, 0.55 + 0.6, -20.0));
+    for _ in 0..10 {
+        scenario.tick(KartInput::default());
+        assert_eq!(scenario.wheels_of(above).wheels_on_ground(), 0);
+        let compression = scenario.wheels_of(below).compression;
+        assert!(
+            compression.iter().all(|c| *c < 0.25),
+            "the kart below is pressed down: {compression:?}"
+        );
+    }
+}
+
+/// How a crash into a wall went (issue #27).
+#[derive(Clone, Copy, Debug)]
+struct WallCrash {
+    /// Speed at the impact (m/s).
+    speed: f32,
+    /// Highest point of the kart's center (m; 0.55 at rest).
+    highest: f32,
+    /// Lowest uprightness (1: wheels down; 0.94: tilted by 20°).
+    lowest_up: f32,
+    /// Closest the kart's center came to the face of the wall (m).
+    closest: f32,
+    /// Fastest the kart moved away from the wall after the impact (m/s).
+    bounce: f32,
+}
+
+/// Full throttle from a standstill into a wall as high as the circuit's (0.8 m), 40 m ahead,
+/// whose face makes `angle_deg` with the kart's line (90: head on). Steering stays straight: the
+/// kart keeps pushing against the wall once it has bounced.
+fn crash_into_a_low_wall(stats: KartStats, angle_deg: f32) -> WallCrash {
+    let normal = Quat::from_rotation_y((90.0 - angle_deg).to_radians()) * Vec3::Z;
+    let face = Vec3::new(0.0, 0.0, -40.0);
+    let half_thickness = 0.25;
+    let mut scenario = Scenario::new(|commands| {
+        spawn_static_box(
+            commands,
+            Transform::from_xyz(0.0, -0.5, 0.0),
+            Vec3::new(500.0, 0.5, 500.0),
+            Surface::Road,
+            0.0,
+        );
+        spawn_static_box(
+            commands,
+            Transform::from_translation(
+                face - normal * half_thickness + Vec3::Y * WALL_HEIGHT / 2.0,
+            )
+            .looking_to(normal, Vec3::Y),
+            Vec3::new(40.0, WALL_HEIGHT / 2.0, half_thickness),
+            Surface::Wall,
+            WALL_RESTITUTION,
+        );
+    });
+    let world = scenario.app.world_mut();
+    world.despawn(scenario.kart);
+    let tuning = world.resource::<KartTuning>().clone();
+    let stats_tuning = world.resource::<StatsTuning>().clone();
+    scenario.kart = world
+        .spawn(kart_body_with_stats(
+            &tuning,
+            &stats_tuning,
+            stats,
+            Transform::from_xyz(0.0, 0.55, 0.0),
+        ))
+        .id();
+    scenario.run(0.3, KartInput::default());
+    let mut crash = WallCrash {
+        speed: 0.0,
+        highest: 0.0,
+        lowest_up: 1.0,
+        closest: f32::MAX,
+        bounce: 0.0,
+    };
+    let mut previous_speed = 0.0;
+    let mut hit = false;
+    scenario.run_with(4.0, FULL_THROTTLE, |s| {
+        let position = s.transform().translation;
+        let away = s.velocity().linear.dot(normal);
+        crash.highest = crash.highest.max(position.y);
+        crash.lowest_up = crash.lowest_up.min(s.uprightness());
+        crash.closest = crash.closest.min((position - face).dot(normal));
+        if !hit && away > 0.0 {
+            hit = true;
+            crash.speed = previous_speed;
+        }
+        if hit {
+            crash.bounce = crash.bounce.max(away);
+        }
+        previous_speed = s.velocity().linear.length();
+    });
+    assert!(hit, "never reached the wall");
+    crash
+}
+
+/// Issue #27: a kart crashing into a low wall at full speed (27 to 28.5 m/s), at 30° to head on,
+/// light, middle or heavy, bounces off it without tipping by more than 15° nor rising, and stays
+/// on its side of the wall. Before the fix, the impact landed above its center of mass: 5 of
+/// these 12 crashes tipped the kart by 25 to 32° (the side facing the wall up, or the nose), and
+/// the light kart went over the wall at 60°.
+#[test]
+fn crashing_into_a_low_wall_neither_tips_nor_lifts_the_kart() {
+    let (light, heavy) = light_and_heavy();
+    let mut failures = Vec::new();
+    for (name, stats) in [
+        ("light", light),
+        ("middle", KartStats::default()),
+        ("heavy", heavy),
+    ] {
+        for angle in [30.0, 45.0, 60.0, 90.0] {
+            let crash = crash_into_a_low_wall(stats, angle);
+            println!("{name} kart, wall at {angle}°: {crash:?}");
+            if crash.speed < 25.0
+                || crash.bounce < 1.0
+                || crash.highest >= 0.7
+                || crash.lowest_up <= 15f32.to_radians().cos()
+                || crash.closest <= 0.6
+            {
+                failures.push(format!("{name} kart, wall at {angle}°: {crash:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #27: a kart rammed in the flank by a kart at full speed (about 26 m/s after a 25 m
+/// run-up, 29 m/s after 40 m) crossing its way at 60°, 90° or 120°, whether it is light, middle
+/// or heavy: neither kart rises nor tips by more than 10°; the rammer never climbs onto the other
+/// kart. Before the fix, all 18 shunts broke this: the impact landed above the centers of mass,
+/// the rammer's nose rose, its front wheels found ground on the other kart's roof and it drove
+/// onto it (its center up to 1.67 m high), or the kart rammed was tipped (by up to 59°).
+#[test]
+fn ramming_a_kart_in_the_flank_never_climbs_onto_it() {
+    let (light, heavy) = light_and_heavy();
+    let mut failures = Vec::new();
+    for (name, stats) in [
+        ("light", light),
+        ("middle", KartStats::default()),
+        ("heavy", heavy),
+    ] {
+        for angle in [60.0f32, 90.0, 120.0] {
+            for run_up in [25.0, 40.0] {
+                let mut scenario = Scenario::flat(Surface::Road);
+                let rammer = scenario.kart;
+                let heading = Quat::from_rotation_y(-angle.to_radians()) * Vec3::NEG_Z;
+                let rammed =
+                    scenario.spawn_kart_with_stats(Vec3::new(0.0, 0.55, -run_up), heading, stats);
+                scenario.run(0.3, KartInput::default());
+                let mut highest = [0.0f32; 2];
+                let mut lowest_up = [1.0f32; 2];
+                let mut bumped = false;
+                for _ in 0..(3.0 * TICKS_PER_SECOND) as usize {
+                    let bumps = scenario.bumps_while(
+                        1.0 / TICKS_PER_SECOND,
+                        &[(rammer, FULL_THROTTLE), (rammed, KartInput::default())],
+                    );
+                    bumped |= !bumps.is_empty();
+                    for (i, kart) in [rammer, rammed].into_iter().enumerate() {
+                        let transform = scenario.app.world().get::<Transform>(kart).unwrap();
+                        highest[i] = highest[i].max(transform.translation.y);
+                        lowest_up[i] = lowest_up[i].min(transform.up().y);
+                    }
+                }
+                let case = format!(
+                    "{name} kart rammed at {angle}° after {run_up} m: highest {highest:?}, \
+                     uprightness {lowest_up:?}, shunt {bumped}"
+                );
+                println!("{case}");
+                if !bumped
+                    || highest.iter().any(|h| *h >= 0.7)
+                    || lowest_up.iter().any(|up| *up <= 10f32.to_radians().cos())
+                {
+                    failures.push(case);
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
