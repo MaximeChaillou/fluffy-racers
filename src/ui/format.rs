@@ -48,6 +48,8 @@ pub struct HudValues {
     /// Best lap, in hundredths of a second.
     pub best_lap: Option<u32>,
     pub banner: Banner,
+    /// Croquettes held (GD § 7, issue #14).
+    pub croquettes: u32,
 }
 
 impl HudValues {
@@ -57,6 +59,7 @@ impl HudValues {
         tuning: &RaceTuning,
         progress: &RaceProgress,
         racers: usize,
+        croquettes: u32,
     ) -> Self {
         let race_ticks = race.race_ticks();
         Self {
@@ -67,6 +70,7 @@ impl HudValues {
             time: hundredths(progress.time(race_ticks)),
             best_lap: progress.best_lap().map(hundredths),
             banner: banner(race, course, tuning, progress),
+            croquettes,
         }
     }
 }
@@ -204,6 +208,8 @@ mod tests {
         assert_eq!(s, "Tour 2/3");
         write_croquettes(&mut s, 0);
         assert_eq!(s, "x 0");
+        write_croquettes(&mut s, 10);
+        assert_eq!(s, "x 10");
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! Fluffy Racers: game logic lives here so it can be unit-tested without a window.
 
+pub mod audio;
 pub mod bots;
 pub mod camera;
+pub mod croquettes;
 pub mod interpolation;
 pub mod kart;
 pub mod race;
@@ -12,8 +14,10 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use audio::SoundPlugin;
 use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
+use croquettes::{CroquettePlugin, CroquetteVisualPlugin};
 use interpolation::InterpolationPlugin;
 use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin, PlayerKart,
@@ -43,12 +47,13 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// The whole game: simulation, track, race rules, player kart, bots, visuals, camera, HUD and
-/// debug overlay.
+/// The whole game: simulation, track, race rules, croquettes, player kart, bots, visuals,
+/// sounds, camera, HUD and debug overlay.
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
 /// the bots (`BotPlugin`) fill the grid: 11 of them by default (`RaceGrid`), the player behind.
+/// The croquettes (`CroquettePlugin`) are not part of it either: a kart scenario has none.
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -58,13 +63,16 @@ impl Plugin for GamePlugin {
                 SimulationPlugin,
                 TrackPlugin,
                 RacePlugin,
+                CroquettePlugin,
                 KartInputPlugin,
                 KartVisualPlugin,
+                CroquetteVisualPlugin,
                 BotPlugin,
                 PelicanPlugin,
                 CameraPlugin,
                 HudPlugin,
                 DebugOverlayPlugin,
+                SoundPlugin,
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));

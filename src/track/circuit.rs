@@ -65,9 +65,14 @@ pub struct ItemBoxSpot {
     pub double: bool,
 }
 
-/// Where a croquette goes (GD § 7). Not active yet (issue #14).
-#[derive(Component, Clone, Copy, Debug)]
+/// Where a croquette of the circuit file lies (GD § 7): the entity's `Transform` is the
+/// croquette's center, `CROQUETTE_HEIGHT` above the road. `crate::croquettes` makes it a real
+/// croquette (pick-up, respawn, visual).
+#[derive(Component, Clone, Copy, Debug, Default)]
 pub struct CroquetteSpot;
+
+/// Height of a croquette's center above the road (m): about the middle of a kart's body.
+pub const CROQUETTE_HEIGHT: f32 = 0.6;
 
 /// If the circuit file is missing or invalid, say why and fall back to the test ground
 /// instead of leaving a blank screen.
@@ -279,7 +284,8 @@ fn spawn_trick_ramps(
 }
 
 /// The gameplay spots of the file. Boost pads are active (issue #13, the kart reads
-/// [`BoostPad`]); item boxes and croquettes are placeholders that do nothing yet (#16, #14).
+/// [`BoostPad`]), croquettes too (issue #14, `crate::croquettes`); item boxes are placeholders
+/// that do nothing yet (#16).
 fn spawn_spots(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -360,17 +366,15 @@ fn spawn_spots(
         }
     }
 
-    let croquette_mesh = meshes.add(Sphere::new(0.3));
-    let croquette_material = materials.add(Color::srgb(0.75, 0.45, 0.2));
     for line in &data.croquettes {
         let start = center.param_to_distance(line.from);
         for i in 0..line.count {
             let sample = center.at(start + i as f32 * line.spacing);
             commands.spawn((
+                Name::new("Croquette"),
                 CroquetteSpot,
-                Mesh3d(croquette_mesh.clone()),
-                MeshMaterial3d(croquette_material.clone()),
-                place(&sample, line.offset, 0.6),
+                place(&sample, line.offset, CROQUETTE_HEIGHT),
+                Visibility::default(),
             ));
         }
     }

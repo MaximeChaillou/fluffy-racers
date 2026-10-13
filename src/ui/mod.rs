@@ -1,16 +1,20 @@
 //! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, empty slots
-//! for the items (issue #16) and the croquettes (issue #14), and the results screen.
+//! for the items (issue #16), the croquettes held (issue #14: the counter pops at each pick-up,
+//! shakes when some are lost, turns gold at 10), and the results screen.
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
-//! race: `crate::race` never depends on it. Texts are rewritten only when their value changes.
+//! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
+//! their value changes.
 
 pub mod debug;
 pub mod format;
+pub mod pop;
 
 pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationCost};
 
 use bevy::prelude::*;
 
+use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::kart::PlayerKart;
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer};
 use format::{
@@ -32,6 +36,27 @@ pub enum HudText {
     BestLap,
     Banner,
     Croquettes,
+}
+
+/// The croquette counter (icon and number), which pops and shakes.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CroquetteCounter;
+
+/// Seconds since the followed racer last picked a croquette up, and since it last lost some
+/// (they drive the counter's pop and shake).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct CroquetteCounterAnimation {
+    pub since_gain: f32,
+    pub since_loss: f32,
+}
+
+impl Default for CroquetteCounterAnimation {
+    fn default() -> Self {
+        Self {
+            since_gain: f32::INFINITY,
+            since_loss: f32::INFINITY,
+        }
+    }
 }
 
 /// An empty item slot (GD § 8: one in hand, one in reserve). Filled by issue #16.
@@ -59,16 +84,19 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HudShown>().add_systems(
-            Update,
-            (
-                spawn_hud.run_if(not(any_with_component::<HudRoot>)),
-                update_hud,
-                show_results,
-            )
-                .chain()
-                .run_if(resource_exists::<Race>),
-        );
+        app.init_resource::<HudShown>()
+            .init_resource::<CroquetteCounterAnimation>()
+            .add_systems(
+                Update,
+                (
+                    spawn_hud.run_if(not(any_with_component::<HudRoot>)),
+                    update_hud,
+                    animate_croquette_counter,
+                    show_results,
+                )
+                    .chain()
+                    .run_if(resource_exists::<Race>),
+            );
     }
 }
 
@@ -149,11 +177,14 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
                 ..default()
             })
             .with_children(|left| {
-                left.spawn(Node {
-                    align_items: AlignItems::Center,
-                    column_gap: px(8),
-                    ..default()
-                })
+                left.spawn((
+                    CroquetteCounter,
+                    Node {
+                        align_items: AlignItems::Center,
+                        column_gap: px(8),
+                        ..default()
+                    },
+                ))
                 .with_children(|croquettes| {
                     croquettes.spawn((
                         Node {
@@ -212,39 +243,59 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
 
 /// The racer the HUD follows: the local player, or the pole sitter without one.
 fn followed<'a>(
-    racers: impl Iterator<Item = (&'a Racer, &'a RaceProgress, bool)>,
-) -> Option<&'a RaceProgress> {
-    let mut best: Option<(bool, usize, &RaceProgress)> = None;
-    for (racer, progress, player) in racers {
+    racers: impl Iterator<Item = (Entity, &'a Racer, &'a RaceProgress, bool)>,
+) -> Option<(Entity, &'a RaceProgress)> {
+    let mut best: Option<(bool, usize, Entity, &RaceProgress)> = None;
+    for (entity, racer, progress, player) in racers {
         let better = match best {
             None => true,
-            Some((best_player, best_slot, _)) => {
+            Some((best_player, best_slot, ..)) => {
                 (player, std::cmp::Reverse(racer.grid_slot))
                     > (best_player, std::cmp::Reverse(best_slot))
             }
         };
         if better {
-            best = Some((player, racer.grid_slot, progress));
+            best = Some((player, racer.grid_slot, entity, progress));
         }
     }
-    best.map(|(_, _, progress)| progress)
+    best.map(|(_, _, entity, progress)| (entity, progress))
 }
 
 fn update_hud(
     race: Res<Race>,
     course: Res<Course>,
     tuning: Res<RaceTuning>,
+    croquette_tuning: Option<Res<CroquetteTuning>>,
     mut shown: ResMut<HudShown>,
-    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>)>,
-    mut texts: Query<(&HudText, &mut Text)>,
+    mut animation: ResMut<CroquetteCounterAnimation>,
+    racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
+    held: Query<&Croquettes>,
+    mut texts: Query<(&HudText, &mut Text, &mut TextColor)>,
 ) {
-    let Some(progress) = followed(racers.iter()) else {
+    let Some((entity, progress)) = followed(racers.iter()) else {
         return;
     };
-    let values = HudValues::new(&race, &course, &tuning, progress, racers.iter().count());
+    let croquettes = held.get(entity).map_or(0, |held| held.count as u32);
+    let values = HudValues::new(
+        &race,
+        &course,
+        &tuning,
+        progress,
+        racers.iter().count(),
+        croquettes,
+    );
     let previous = shown.0;
     if previous == Some(values) {
         return;
+    }
+    // The counter pops at each pick-up and shakes when croquettes are lost (not when a restart
+    // empties the pockets).
+    if let Some(old) = previous {
+        if values.croquettes > old.croquettes {
+            animation.since_gain = 0.0;
+        } else if values.croquettes < old.croquettes && race.started() {
+            animation.since_loss = 0.0;
+        }
     }
     let changed = |field: HudText| {
         let Some(old) = previous else {
@@ -257,10 +308,13 @@ fn update_hud(
             HudText::Chrono => old.time != values.time,
             HudText::BestLap => old.best_lap != values.best_lap,
             HudText::Banner => old.banner != values.banner,
-            HudText::Croquettes => false,
+            HudText::Croquettes => old.croquettes != values.croquettes,
         }
     };
-    for (field, mut text) in &mut texts {
+    let full = croquette_tuning
+        .as_ref()
+        .is_some_and(|t| values.croquettes >= t.max_held as u32);
+    for (field, mut text, mut color) in &mut texts {
         if !changed(*field) {
             continue;
         }
@@ -275,10 +329,38 @@ fn update_hud(
             }
             HudText::BestLap => write_best_lap(out, values.best_lap),
             HudText::Banner => values.banner.write(out),
-            HudText::Croquettes => write_croquettes(out, 0),
+            HudText::Croquettes => {
+                write_croquettes(out, values.croquettes);
+                // Gold when full: more croquettes add no speed.
+                color.set_if_neq(TextColor(if full { RANK_COLOR } else { TEXT_COLOR }));
+            }
         }
     }
     shown.0 = Some(values);
+}
+
+/// The croquette counter's pop (scale) and shake (offset), every frame.
+fn animate_croquette_counter(
+    time: Res<Time>,
+    mut animation: ResMut<CroquetteCounterAnimation>,
+    mut counters: Query<&mut UiTransform, With<CroquetteCounter>>,
+) {
+    let dt = time.delta_secs();
+    if animation.since_gain.is_finite() || animation.since_loss.is_finite() {
+        animation.since_gain += dt;
+        animation.since_loss += dt;
+        if animation.since_gain > pop::POP_TIME && animation.since_loss > pop::SHAKE_TIME {
+            *animation = CroquetteCounterAnimation::default();
+        }
+    }
+    let wanted = UiTransform {
+        scale: Vec2::splat(pop::pop_scale(animation.since_gain)),
+        translation: Val2::px(pop::shake_offset(animation.since_loss), 0.0),
+        ..default()
+    };
+    for mut transform in &mut counters {
+        transform.set_if_neq(wanted);
+    }
 }
 
 /// Spawns the results screen when the results phase starts, removes it on restart.

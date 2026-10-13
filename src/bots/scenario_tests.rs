@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::*;
 use crate::TICK_HZ;
+use crate::croquettes::Croquettes;
 use crate::kart::{KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart};
 use crate::race::{
     Course, DrivesOnAfterFinish, Race, RaceGrid, RacePhase, RaceProgress, Racer, Tow, TowReason,
@@ -42,6 +43,11 @@ struct KartLog {
     broken: u32,
     tows: Vec<TowEvent>,
     previous: Option<KartState>,
+    /// Croquettes picked up and lost (issue #14), most held at once.
+    croquettes_picked: u32,
+    croquettes_lost: u32,
+    croquettes_most: u8,
+    croquettes_held: u8,
 }
 
 impl KartLog {
@@ -128,6 +134,14 @@ impl RaceLog {
                 });
             }
             log.previous = Some(state);
+            let held = world.get::<Croquettes>(*entity).map_or(0, |c| c.count);
+            if held > log.croquettes_held {
+                log.croquettes_picked += (held - log.croquettes_held) as u32;
+            } else {
+                log.croquettes_lost += (log.croquettes_held - held) as u32;
+            }
+            log.croquettes_held = held;
+            log.croquettes_most = log.croquettes_most.max(held);
 
             if progress.finished() || state == KartState::Respawning {
                 continue;
@@ -158,7 +172,8 @@ impl RaceLog {
                 .collect();
             println!(
                 "slot {:2} {:?}: finish {:?} s, laps {:?}, mini-turbos blue/orange/purple {:?}, \
-                 drifts without boost {}, broken {}",
+                 drifts without boost {}, broken {}, croquettes picked {} lost {} (at most {}, \
+                 {} at the end)",
                 log.slot,
                 log.difficulty,
                 progress.finish.map(ticks_to_seconds),
@@ -166,6 +181,10 @@ impl RaceLog {
                 log.mini_turbos,
                 log.wasted,
                 log.broken,
+                log.croquettes_picked,
+                log.croquettes_lost,
+                log.croquettes_most,
+                log.croquettes_held,
             );
             for tow in &log.tows {
                 println!(
@@ -370,6 +389,14 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
     // The bots release their drifts themselves: hardly any drift breaks (wall, too slow).
     let broken: u32 = log.karts.iter().map(|(_, k)| k.broken).sum();
     assert!(broken <= 3, "{broken} broken drifts");
+    // Issue #14: driving over them, the bots pick the croquettes of the circuit up (the leaders
+    // the most: the lines are empty for 10 s after them).
+    let picking = log
+        .karts
+        .iter()
+        .filter(|(_, k)| k.croquettes_picked > 0)
+        .count();
+    assert!(picking >= 4, "{picking} karts picked croquettes up");
     // No single file: spread across the straight, and spread at the finish.
     let lateral = spread(&log.straight_laterals);
     assert!(lateral > 1.0, "lateral spread {lateral} m");
@@ -545,15 +572,27 @@ fn the_game_fills_the_grid_with_eleven_bots() {
     }
     let tuning = app.world().resource::<BotTuning>().clone();
     let mut leader_scale = 1.0;
-    for (bot, slot, position) in &bots {
-        let now = app.world().get::<Transform>(*bot).unwrap().translation;
-        assert!(now.distance(*position) > 100.0, "slot {slot} barely moved");
+    for (bot, slot, _) in &bots {
         let p = progress(&app, *bot);
-        let scale = app.world().get::<MaxSpeedScale>(*bot).unwrap().0;
+        // Along the track from its grid slot (since issue #14 the croquettes make the leaders
+        // fast enough to be on the back straight by now, which runs back toward the grid: a
+        // straight line from the grid is no longer a measure of how far they went).
+        let course = app.world().resource::<Course>();
+        let moved = p.distance - course.project(0, layout.grid[*slot].translation).distance;
+        assert!(moved > 100.0, "slot {slot} barely moved ({moved} m)");
+        // The catch-up is one factor of the top speed; since issue #14 the croquettes held are
+        // another one, and `MaxSpeedScale` is their product.
+        let factors = *app.world().get::<MaxSpeedFactors>(*bot).unwrap();
+        let scale = factors.catch_up;
         let expected = catch_up_scale(progress(&app, me).distance - p.distance, &tuning);
         assert!(
             (scale - expected).abs() < 0.003,
             "slot {slot}: {scale} vs {expected}"
+        );
+        let combined = app.world().get::<MaxSpeedScale>(*bot).unwrap().0;
+        assert!(
+            (combined - factors.product()).abs() < 1e-6,
+            "slot {slot}: {combined} vs {factors:?}"
         );
         if p.rank == 1 {
             leader_scale = scale;

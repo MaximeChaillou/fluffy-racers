@@ -1061,3 +1061,106 @@ fn a_stalled_engine_keeps_the_kart_still_then_lets_it_go() {
         scenario.forward_speed()
     );
 }
+
+// --- Issue #14: bumps between karts ---------------------------------------------------------
+
+impl Scenario {
+    /// Every `KartBump` of the next `seconds`, `inputs` held on the given karts.
+    fn bumps_while(&mut self, seconds: f32, inputs: &[(Entity, KartInput)]) -> Vec<KartBump> {
+        let mut cursor = self
+            .app
+            .world()
+            .resource::<Messages<KartBump>>()
+            .get_cursor_current();
+        let mut bumps = Vec::new();
+        for _ in 0..(seconds * TICKS_PER_SECOND).round() as usize {
+            for (kart, input) in inputs {
+                *self.app.world_mut().get_mut::<KartInput>(*kart).unwrap() = *input;
+            }
+            self.app.update();
+            let messages = self.app.world().resource::<Messages<KartBump>>();
+            bumps.extend(cursor.read(messages).copied());
+        }
+        bumps
+    }
+}
+
+/// Issue #14: rear-ending a kart standing still is one bump, for the kart in front only, measured
+/// at the speed of the impact; pushing it along afterwards is no new bump.
+#[test]
+fn rear_ending_a_kart_bumps_it_once() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let bumper = scenario.kart;
+    let victim = scenario.spawn_other_kart(Vec3::new(0.0, 0.55, -12.0));
+    scenario.run(0.3, KartInput::default());
+    let bumps = scenario.bumps_while(
+        2.5,
+        &[(bumper, FULL_THROTTLE), (victim, KartInput::default())],
+    );
+    assert_eq!(bumps.len(), 1, "{bumps:?}");
+    assert_eq!((bumps[0].kart, bumps[0].by), (victim, bumper));
+    // About 10 m of run-up from a standstill: ≈ 17 m/s.
+    assert!(
+        (12.0..22.0).contains(&bumps[0].closing_speed),
+        "{}",
+        bumps[0].closing_speed
+    );
+    let pushed = scenario
+        .app
+        .world()
+        .get::<Transform>(victim)
+        .unwrap()
+        .translation
+        .z;
+    assert!(pushed < -20.0, "pushed along: {pushed}");
+}
+
+/// Issue #14: two karts driving side by side, one leaning gently into the other: rubbing, no
+/// bump.
+#[test]
+fn rubbing_side_by_side_is_no_bump() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let left = scenario.kart;
+    let right = scenario.spawn_other_kart(Vec3::new(1.6, 0.55, 0.0));
+    scenario.run(0.3, KartInput::default());
+    let lean = KartInput {
+        steer: 0.25,
+        ..FULL_THROTTLE
+    };
+    let bumps = scenario.bumps_while(3.0, &[(left, lean), (right, FULL_THROTTLE)]);
+    assert!(bumps.is_empty(), "{bumps:?}");
+    // They did touch: the right one was pushed aside.
+    let x = scenario
+        .app
+        .world()
+        .get::<Transform>(right)
+        .unwrap()
+        .translation
+        .x;
+    assert!(x > 1.8, "{x}");
+}
+
+/// Issue #14: head on, both karts are bumped.
+#[test]
+fn a_head_on_crash_bumps_both_karts() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let a = scenario.kart;
+    let tuning = scenario.tuning();
+    let b = scenario
+        .app
+        .world_mut()
+        .spawn(kart_body(
+            &tuning,
+            Transform::from_xyz(0.0, 0.55, -30.0).looking_to(Vec3::Z, Vec3::Y),
+        ))
+        .id();
+    scenario.run(0.3, KartInput::default());
+    let bumps = scenario.bumps_while(2.5, &[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
+    let mut bumped: Vec<Entity> = bumps.iter().map(|bump| bump.kart).collect();
+    bumped.sort();
+    bumped.dedup();
+    let mut both = vec![a, b];
+    both.sort();
+    assert_eq!(bumped, both, "{bumps:?}");
+    assert!(bumps[0].closing_speed > 20.0, "{bumps:?}");
+}
