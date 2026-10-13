@@ -15,7 +15,11 @@
 //!    as the tier it aims for is reached** (it reads the drift charge like a player sees the
 //!    sparks). In the drift it feathers the stick (inward / outward each tick) to follow its
 //!    lane while charging as fast as the curve allows, and it releases when the turn ends, when
-//!    it is about to hit a wall or when it gets too slow;
+//!    it is about to hit a wall or when it gets too slow. Since issue #30 the drift is wider and
+//!    its curve sets in progressively: the bot slows down before the turn-in to the speed its
+//!    drift can turn at (in a drift it only lifts off), steers knowing the curve is still
+//!    setting in, does not hop while a boost would push it too fast or while it points across
+//!    the track, and brakes lightly in a drift only to stop a boost pushing it;
 //! 6. backs up when it is stuck against something;
 //! 7. driving techniques (issue #13): accelerates a little after the "2" of the countdown for a
 //!    rocket start (never before: no stall), and presses jump/drift right after leaving a trick
@@ -26,7 +30,9 @@ use bevy::prelude::*;
 use super::line::RacingLine;
 use super::rng::BotRng;
 use super::tuning::{BotSkill, BotTuning};
-use crate::kart::{DriftSide, KartInput, KartState, KartTuning, MiniTurbo, drift_yaw_rate};
+use crate::kart::{
+    DriftMotion, DriftSide, KartInput, KartState, KartTuning, MiniTurbo, drift_yaw_rate,
+};
 
 /// In a drift, "inward" is the kart's threshold (0.5) plus this, so that rounding never turns
 /// it into "outward".
@@ -38,6 +44,13 @@ const HOP_STEER: f32 = 0.4;
 const HOP_LEAD_SECONDS: f32 = 0.3;
 /// Minimum speed margin above the kart's drift entry speed to start a drift (m/s).
 const DRIFT_SPEED_MARGIN: f32 = 3.0;
+/// No hop faster than the speed planned for the drift plus this (m/s): in the drift the bot
+/// only lifts off, so a kart much too fast (a boost pad just before the turn) would run wide.
+const DRIFT_ENTRY_EXCESS: f32 = 2.0;
+/// A boost pushes the kart even with the accelerator released: in a drift, while boosted and
+/// faster than planned by `BRAKE_BAND`, the bot brakes this much (the push stops while braking;
+/// the drift goes on above the kart's exit speed).
+const DRIFT_BOOST_BRAKE: f32 = 0.4;
 /// Releases the drift below the kart's drift exit speed plus this (m/s): it would break.
 const DRIFT_EXIT_MARGIN: f32 = 2.0;
 /// The widest drift turns more than needed below this tightness (over-rotation)...
@@ -51,20 +64,24 @@ const LONG_OVER_ROTATION_TICKS: u32 = 30;
 /// Releases when closer than this to the inside edge of its lane while turning tight (m).
 const INSIDE_ROOM: f32 = 0.3;
 /// Past the turn, drifts on for at most this many ticks to reach the next tier...
-const STRETCH_TICKS: u32 = 15;
+const STRETCH_TICKS: u32 = 25;
 /// ...while it has this much room toward the inside (m).
 const STRETCH_ROOM: f32 = 2.0;
 /// In a drift, the lane keeps this far from the inside edge of the lane limits (m).
 const DRIFT_INSIDE_MARGIN: f32 = 1.5;
 /// Hops only with at least this much room toward the inside of the turn (m).
 const HOP_INSIDE_ROOM: f32 = 1.5;
+/// Hops only when the kart points along the track within this angle (rad): never into a drift
+/// across the track (after a spin, or rejoining its lane).
+const HOP_MAX_ANGLE: f32 = 0.35;
 /// Hops only when the line at the landing point turns at least this share of the widest
 /// drift's turn rate.
 const DRIFT_ENTRY_SHARE: f32 = 0.8;
 /// Releases when even the tightest drift is this far from turning enough...
 const UNDER_ROTATION: f32 = 1.15;
-/// ...for this many ticks: it would go wide into the wall.
-const UNDER_ROTATION_TICKS: u32 = 8;
+/// ...for this many ticks once the drift's curve has set in: it would go wide into the wall
+/// (the outside edge check releases it before the wall anyway).
+const UNDER_ROTATION_TICKS: u32 = 20;
 /// No new drift for this many ticks after one.
 const DRIFT_COOLDOWN_TICKS: u32 = 12;
 /// A hop that did not happen (kart not on the ground) is forgotten after this many ticks.
@@ -100,6 +117,11 @@ pub struct Senses<'a> {
     pub forward: Vec3,
     pub right: Vec3,
     pub velocity: Vec3,
+    /// The kart's yaw rate (rad/s, right turns positive): the bot feels its rotation.
+    pub yaw_rate: f32,
+    /// Seconds left of the kart's boost, 0 without one (a player sees the flames shrink): a
+    /// boost pushes the kart even in a drift, where the bot only lifts off.
+    pub boost_left: f32,
     pub state: KartState,
     /// Assisted steering (no purple tier).
     pub assisted: bool,
@@ -163,6 +185,10 @@ pub struct BotBrain {
     feather: f32,
     over_ticks: u32,
     under_ticks: u32,
+    /// Ticks since the drift started: its curve sets in over `drift_curve_in_time` (issue #30),
+    /// from the yaw rate the kart had then (right positive).
+    drift_ticks: u32,
+    drift_entry_yaw: f32,
     /// Ticks drifted past the end of the turn to reach the next tier.
     stretch_ticks: u32,
     /// The turn the drift chance was rolled for, and the result.
@@ -206,6 +232,8 @@ impl BotBrain {
             feather: 0.0,
             over_ticks: 0,
             under_ticks: 0,
+            drift_ticks: 0,
+            drift_entry_yaw: 0.0,
             stretch_ticks: 0,
             decided_turn: None,
             drift_this_turn: false,
@@ -306,21 +334,36 @@ pub fn drift_tightness_needed(
     (yaw_right * side.sign() - wide) / (tight - wide).max(1e-3)
 }
 
-/// Stick position in a drift toward `side` that turns at `yaw_right` on average.
+/// How tight the drift must be to turn at `yaw_right` while its curve sets in (issue #30): the
+/// kart then turns at `(1 − blend) × entry + blend × the drift's rate`, `entry` being the yaw
+/// rate it had when the drift started (right positive). Early in the drift the stick acts less,
+/// so the bot can steer further in (and charge faster) without turning too much. `blend` = 1:
+/// [`drift_tightness_needed`].
+pub fn drift_tightness_while_setting_in(
+    kart: &KartTuning,
+    side: DriftSide,
+    yaw_right: f32,
+    speed: f32,
+    blend: f32,
+    entry: f32,
+) -> f32 {
+    let (wide, tight) = drift_rates(kart, side, speed);
+    let entry = entry * side.sign();
+    let blend = blend.clamp(0.0, 1.0);
+    let wide_now = entry + (wide - entry) * blend;
+    let tight_now = entry + (tight - entry) * blend;
+    (yaw_right * side.sign() - wide_now) / (tight_now - wide_now).max(1e-3)
+}
+
+/// Stick position in a drift toward `side` that must be `t` tight (see
+/// [`drift_tightness_needed`]).
 ///
 /// The charge only grows fast (+5 instead of +2) with the stick inward past the kart's
 /// threshold, which turns tighter than most curves need. So, like a skilled player, the bot
 /// alternates tick by tick between "just inward" and "full outward" in the proportion that gives
 /// the wanted turn rate (a sigma-delta in `feather`): the yaw rate, smoothed by the kart's
 /// steering response, follows the average while the charge grows as fast as the curve allows.
-pub fn drift_steer(
-    kart: &KartTuning,
-    side: DriftSide,
-    yaw_right: f32,
-    speed: f32,
-    feather: &mut f32,
-) -> f32 {
-    let t = drift_tightness_needed(kart, side, yaw_right, speed);
+pub fn feather_stick(kart: &KartTuning, side: DriftSide, t: f32, feather: &mut f32) -> f32 {
     let inward = (kart.drift_inner_steer + FEATHER_MARGIN).min(1.0);
     let inward_tightness = (inward + 1.0) / 2.0;
     let stick = if t >= inward_tightness {
@@ -576,6 +619,7 @@ pub fn drive(
         here.index,
         drifting_turn,
         senses.speed_scale,
+        speed.max(0.0) * senses.boost_left,
     );
     if let Some(follow) = follow_speed {
         target_speed = target_speed.min(follow.max(0.0));
@@ -618,7 +662,12 @@ pub fn drive(
                     && in_time
                     && curved_enough
                     && inside_room >= HOP_INSIDE_ROOM
+                    && senses
+                        .forward
+                        .dot(line.center().samples()[here.index].forward)
+                        >= HOP_MAX_ANGLE.cos()
                     && speed >= kart.drift_min_speed + DRIFT_SPEED_MARGIN
+                    && speed <= target_speed + DRIFT_ENTRY_EXCESS
                     && !traffic
                     && !brain.last_jump)
                     .then_some((t, side, remaining))
@@ -653,9 +702,20 @@ pub fn drive(
             brain.feather = 0.0;
             brain.over_ticks = 0;
             brain.under_ticks = 0;
+            brain.drift_ticks = 1;
+            brain.drift_entry_yaw = senses.yaw_rate;
             brain.stretch_ticks = 0;
             jump = true;
-            steer = drift_steer(kart, side, yaw_right, speed, &mut brain.feather);
+            let blend = DriftMotion::blend_after(kart, 2.0 * dt);
+            let t = drift_tightness_while_setting_in(
+                kart,
+                side,
+                yaw_right,
+                speed,
+                blend,
+                brain.drift_entry_yaw,
+            );
+            steer = feather_stick(kart, side, t, &mut brain.feather);
             DriftPlan::Drifting { target, turn }
         }
         (
@@ -692,13 +752,28 @@ pub fn drive(
             }
         }
         (DriftPlan::Drifting { target, turn }, KartState::Drifting { side, charge }) => {
+            // How tight the settled drift would have to be (the release rules), and how far to
+            // steer with the curve of the coming tick, as far as the bot can tell (issue #30).
             let t = drift_tightness_needed(kart, side, yaw_right, speed);
-            brain.over_ticks = if t < OVER_ROTATION {
+            let blend = DriftMotion::blend_after(kart, (brain.drift_ticks + 2) as f32 * dt);
+            let t_now = drift_tightness_while_setting_in(
+                kart,
+                side,
+                yaw_right,
+                speed,
+                blend,
+                brain.drift_entry_yaw,
+            );
+            // While the drift's curve sets in (issue #30), the kart does not turn like the drift
+            // will yet: that is no reason to give up.
+            brain.drift_ticks = brain.drift_ticks.saturating_add(1);
+            let curve_set = brain.drift_ticks as f32 * dt >= kart.drift_curve_in_time;
+            brain.over_ticks = if t < OVER_ROTATION && curve_set {
                 brain.over_ticks + 1
             } else {
                 0
             };
-            brain.under_ticks = if t > UNDER_ROTATION {
+            brain.under_ticks = if t > UNDER_ROTATION && curve_set {
                 brain.under_ticks + 1
             } else {
                 0
@@ -756,7 +831,7 @@ pub fn drive(
                 }
             } else {
                 jump = true;
-                steer = drift_steer(kart, side, yaw_right, speed, &mut brain.feather);
+                steer = feather_stick(kart, side, t_now, &mut brain.feather);
                 DriftPlan::Drifting { target, turn }
             }
         }
@@ -771,12 +846,25 @@ pub fn drive(
         },
     };
 
-    // --- Speed: lift or brake for the turns ahead; never brake in a drift.
+    // --- Speed: lift or brake for the turns ahead. In a drift, only lift off; brake lightly
+    // only when a boost pushes the kart too fast (lifting off does nothing against it).
     let in_drift = matches!(senses.state, KartState::Drifting { .. }) && jump;
-    let (mut throttle, mut brake) = if speed < target_speed - 0.3 {
+    // Even the tightest drift turns too little: lifting off tightens the curve (the drift's yaw
+    // rate does not depend on the speed).
+    let drift_too_wide = matches!(brain.drift, DriftPlan::Drifting { .. })
+        && matches!(senses.state, KartState::Drifting { side, .. }
+            if drift_tightness_needed(kart, side, yaw_right, speed) > 1.0);
+    let (mut throttle, mut brake) = if in_drift {
+        let lift = speed >= target_speed || drift_too_wide;
+        let pushed = senses.boost_left > 0.0 && speed > target_speed + BRAKE_BAND;
+        (
+            if lift { 0.0 } else { 1.0 },
+            if pushed { DRIFT_BOOST_BRAKE } else { 0.0 },
+        )
+    } else if speed < target_speed - 0.3 {
         (1.0, 0.0)
-    } else if speed < target_speed + BRAKE_BAND || in_drift {
-        (if in_drift { 1.0 } else { 0.0 }, 0.0)
+    } else if speed < target_speed + BRAKE_BAND {
+        (0.0, 0.0)
     } else {
         (0.0, ((speed - target_speed) / 4.0).clamp(0.3, 1.0))
     };
@@ -845,7 +933,10 @@ pub fn drive(
 
 /// The speed to drive at now (m/s): the slowest of what each turn ahead allows once the kart
 /// has slowed down for it at `planned_decel`, within `anticipation`; capped by the cruise
-/// speed. The turn `drifting_turn` is planned as a drift (faster).
+/// speed. The turn `drifting_turn` is planned as a drift: inside it the bot only lifts off
+/// (`coast_decel`), it does not count on braking in a drift (issue #30: the wider drift needs
+/// the right speed at the tightest point of the hairpin, so the bot slows down before hopping).
+/// A boost still pushes the kart for `boost_run` meters: no slowing down in the drift before.
 fn planned_speed(
     line: &RacingLine,
     kart: &KartTuning,
@@ -855,6 +946,7 @@ fn planned_speed(
     index: usize,
     drifting_turn: Option<usize>,
     speed_scale: f32,
+    boost_run: f32,
 ) -> f32 {
     let top = kart.max_speed * speed_scale;
     let cruise = if skill.cruise_speed >= 0.999 {
@@ -865,10 +957,16 @@ fn planned_speed(
     let margin = skill.corner_margin * pace;
     let samples = (skill.anticipation / line.step()).ceil() as usize;
     let mut speed = cruise;
+    // Distance to the start of the drifting turn (0 inside it).
+    let mut drift_from = None;
     for k in 0..=samples {
         let j = (index + k) % line.sample_count();
         let curvature = line.curvature(j, skill.line_fidelity);
         let drifting = drifting_turn.is_some() && line.turn_at(j).map(|(t, _)| t) == drifting_turn;
+        let distance = k as f32 * line.step();
+        if drifting && drift_from.is_none() {
+            drift_from = Some(distance);
+        }
         let corner = if drifting {
             drift_corner_speed(kart, curvature, tuning.drift_turn_margin)
         } else {
@@ -877,8 +975,13 @@ fn planned_speed(
         if corner >= speed {
             continue;
         }
-        let distance = k as f32 * line.step();
-        let allowed = (corner * corner + 2.0 * skill.planned_decel * distance).sqrt();
+        let allowed = match drift_from.filter(|_| drifting) {
+            Some(from) => (corner * corner
+                + 2.0 * kart.coast_decel * (distance - from.max(boost_run)).max(0.0)
+                + 2.0 * skill.planned_decel * from)
+                .sqrt(),
+            None => (corner * corner + 2.0 * skill.planned_decel * distance).sqrt(),
+        };
         speed = speed.min(allowed);
     }
     speed
@@ -936,8 +1039,27 @@ mod tests {
         // Gentle curves: flat out (above the top speed).
         assert!(corner_speed(&k, 1.0 / 25.0) > k.max_speed);
         assert_eq!(corner_speed(&k, 0.0), f32::MAX);
-        // A drift turns tighter than the normal steering.
-        assert!(drift_corner_speed(&k, 1.0 / 15.0, 0.9) > corner_speed(&k, 1.0 / 15.0));
+        // In a drift the bot counts on `margin` of the tightest drift's yaw rate, which does not
+        // depend on the speed: exactly its radius at top speed with no margin, tighter slower.
+        let tight = drift_yaw_rate(&k, DriftSide::Right, 1.0, k.max_speed).abs();
+        let at_tight = drift_corner_speed(&k, 1.0 / k.drift_radius_tight, 1.0);
+        assert!((at_tight - k.max_speed).abs() < 1e-3, "{at_tight}");
+        for radius in [12.0, 15.0, 25.0] {
+            let v = drift_corner_speed(&k, 1.0 / radius, 0.9);
+            assert!(
+                (v / radius - 0.9 * tight).abs() < 1e-4,
+                "radius {radius}: {v} m/s"
+            );
+        }
+        assert!(drift_corner_speed(&k, 1.0 / 25.0, 0.9) > k.max_speed);
+        // Issue #30 (Max: no tight angle): the tightest drift is about as tight as the normal
+        // steering at full lock at top speed, no longer much tighter (10 m against 17 m in #4).
+        let full_lock = k.max_speed / k.steer_rate_at_max_speed;
+        assert!(
+            (k.drift_radius_tight - full_lock).abs() < 2.0,
+            "{} vs {full_lock}",
+            k.drift_radius_tight
+        );
     }
 
     /// Feathering in a drift: the average turn rate is the wanted one, and the charge grows
@@ -954,7 +1076,8 @@ mod tests {
         let mut feather = 0.0;
         let (mut yaw, mut charge) = (0.0, 0.0);
         for _ in 0..600 {
-            let s = drift_steer(&k, side, wanted, speed, &mut feather);
+            let t = drift_tightness_needed(&k, side, wanted, speed);
+            let s = feather_stick(&k, side, t, &mut feather);
             assert!(s == -1.0 || s >= k.drift_inner_steer, "{s}");
             yaw += drift_yaw_rate(&k, side, s, speed).abs();
             charge += if s >= k.drift_inner_steer {
@@ -969,10 +1092,12 @@ mod tests {
         let steady = 600.0 * k.drift_charge_outer;
         assert!(charge > 1.4 * steady, "{charge} vs {steady}");
         // Tighter than the inward threshold: a steady inward stick.
-        let s = drift_steer(&k, side, tight * 0.95, speed, &mut feather);
+        let t = drift_tightness_needed(&k, side, tight * 0.95, speed);
+        let s = feather_stick(&k, side, t, &mut feather);
         assert!(s > k.drift_inner_steer && s < 1.0);
         // Left drift: mirrored.
-        let s = drift_steer(&k, DriftSide::Left, -tight * 0.95, speed, &mut feather);
+        let t = drift_tightness_needed(&k, DriftSide::Left, -tight * 0.95, speed);
+        let s = feather_stick(&k, DriftSide::Left, t, &mut feather);
         assert!(s < -k.drift_inner_steer);
     }
 
@@ -981,8 +1106,12 @@ mod tests {
         let k = kart();
         let t = BotTuning::default();
         let per_radian = charge_per_radian(&k, 60.0);
-        // With the default kart tuning a drift charges about 130 per radian at best.
-        assert!((110.0..150.0).contains(&per_radian), "{per_radian}");
+        // With the default kart tuning a drift charges about 220 per radian at best (issue #30;
+        // 130 with the tighter drift of #4): an orange fits in 160° of drift, less than the big
+        // turns of Prairie Pompon (176°); the purple needs more than a half turn (≈ 230°).
+        assert!((200.0..240.0).contains(&per_radian), "{per_radian}");
+        assert!(160f32.to_radians() * per_radian >= k.mini_turbo_thresholds[1]);
+        assert!(std::f32::consts::PI * per_radian < k.mini_turbo_thresholds[2]);
         let half_turn = std::f32::consts::PI;
         let easy = t.skill(BotDifficulty::Easy);
         let normal = t.skill(BotDifficulty::Normal);
@@ -1094,6 +1223,8 @@ mod tests {
             forward: *t.forward(),
             right: *t.right(),
             velocity: *t.forward() * speed,
+            yaw_rate: 0.0,
+            boost_left: 0.0,
             state,
             assisted: false,
             speed_scale: 1.0,
@@ -1105,8 +1236,13 @@ mod tests {
         }
     }
 
+    /// The bot slows down for the hairpin, more the easier it is, and sees it from further away
+    /// the harder it is. Drifting it, it plans the speed of its tightest drift at the apex; the
+    /// drift being wider since issue #30, that is slower than the normal steering there, and as
+    /// a bot only lifts off in a drift (never brakes), it slows down before the turn-in so as to
+    /// coast down to that speed. A boost still pushing the kart delays the coasting.
     #[test]
-    fn the_bot_slows_down_for_the_hairpin_unless_it_drifts_it() {
+    fn the_bot_slows_down_for_the_hairpin_and_plans_its_drift() {
         let (_, line) = prairie_line();
         let k = kart();
         let t = BotTuning::default();
@@ -1120,17 +1256,62 @@ mod tests {
         let before_apex = |meters: isize| line.wrap_index(apex as isize - meters);
         let [easy, normal, hard] = BotDifficulty::ALL.map(|d| *t.skill(d));
         let plan = |skill: &BotSkill, i: usize, drift: Option<usize>| {
-            planned_speed(&line, &k, skill, &t, 1.0, i, drift, 1.0)
+            planned_speed(&line, &k, skill, &t, 1.0, i, drift, 1.0, 0.0)
         };
-        // At the apex: below top speed with the normal steering, faster when drifting, and
-        // faster the harder the bot.
+        // At the apex: below top speed, faster the harder the bot; drifting, the speed of the
+        // tightest drift there with the bot's margin.
         let at = before_apex(0);
         for skill in [&easy, &normal, &hard] {
             assert!(plan(skill, at, None) < k.max_speed);
-            assert!(plan(skill, at, Some(hairpin)) > plan(skill, at, None));
+            let drift = plan(skill, at, Some(hairpin));
+            let corner = drift_corner_speed(
+                &k,
+                line.curvature(at, skill.line_fidelity),
+                t.drift_turn_margin,
+            );
+            assert!(
+                drift <= corner + 1e-3 && drift < k.max_speed,
+                "{drift} vs {corner}"
+            );
         }
+        let hard_corner = drift_corner_speed(&k, line.curvature(at, 1.0), t.drift_turn_margin);
+        assert!(plan(&hard, at, Some(hairpin)) > 0.9 * hard_corner);
         assert!(plan(&easy, at, None) < plan(&normal, at, None));
         assert!(plan(&normal, at, None) < plan(&hard, at, None));
+        // At the turn-in, drifting: no faster than what coasting brings down to the apex speed,
+        // slower than the normal driving (which can brake later).
+        let n = line.sample_count();
+        let to_apex = ((apex + n - turn.start) % n) as f32 * line.step();
+        assert!(to_apex > 10.0, "{to_apex}");
+        for skill in [&normal, &hard] {
+            let drift = plan(skill, turn.start, Some(hairpin));
+            let corner = drift_corner_speed(
+                &k,
+                line.curvature(apex, skill.line_fidelity),
+                t.drift_turn_margin,
+            );
+            let coasting = (corner * corner + 2.0 * k.coast_decel * to_apex).sqrt();
+            assert!(drift <= coasting + 0.01, "{drift} vs {coasting}");
+            // (Normal's cruise speed may cap both.)
+            assert!(drift <= plan(skill, turn.start, None) + 1e-3);
+        }
+        assert!(plan(&hard, turn.start, Some(hairpin)) < plan(&hard, turn.start, None) - 2.0);
+        // A boost pushing the kart for 20 more meters: it cannot lift off before, slower plan.
+        let boosted = planned_speed(
+            &line,
+            &k,
+            &hard,
+            &t,
+            1.0,
+            turn.start,
+            Some(hairpin),
+            1.0,
+            20.0,
+        );
+        assert!(
+            boosted < plan(&hard, turn.start, Some(hairpin)) - 1.0,
+            "{boosted}"
+        );
         // 50 m before the apex, Hard (60 m of anticipation) already sees it, Easy (30 m) not yet.
         let far = before_apex(50);
         assert!(plan(&hard, far, None) < f32::MAX);

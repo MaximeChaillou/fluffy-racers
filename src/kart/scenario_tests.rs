@@ -10,7 +10,7 @@ use crate::track::{
     BOOST_PAD_SIZE, BoostPad, Surface, TrickRamp, WALL_RESTITUTION, ramp_transform,
     spawn_static_box,
 };
-use drift::{DriftSide, MiniTurbo};
+use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 
 const TICKS_PER_SECOND: f32 = 60.0;
 const FULL_THROTTLE: KartInput = KartInput {
@@ -1163,4 +1163,294 @@ fn a_head_on_crash_bumps_both_karts() {
     both.sort();
     assert_eq!(bumped, both, "{bumps:?}");
     assert!(bumps[0].closing_speed > 20.0, "{bumps:?}");
+}
+
+// --- Issue #30: a fluid drift ------------------------------------------------------------------
+//
+// Max, after playing: "le drift est beaucoup trop brusque ; il doit être fluide par rapport au
+// mouvement déjà en cours, avec l'arrière beaucoup plus léger et glissant, sans prendre un angle
+// serré". In numbers, below. For reference, the drift of #4 jumped on landing: its yaw rate
+// target went straight to the 10 m drift's (2.85 rad/s), +0.17 rad/s in the landing tick, and the
+// visual slip angle went to 26° at 10 /s, so the body's turn rate jumped by about 4 rad/s in one
+// tick, on landing and again on release.
+
+/// Wraps an angle difference into `[-π, π]`.
+fn wrap(angle: f32) -> f32 {
+    (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// Angle of a horizontal direction, counter-clockwise from -Z like the yaw rate (rad).
+fn heading_of(direction: Vec3) -> f32 {
+    (-direction.x).atan2(-direction.z)
+}
+
+/// One tick of motion, as recorded by `Scenario::record`.
+#[derive(Clone, Copy, Debug)]
+struct Sample {
+    state: KartState,
+    /// Yaw rate of the simulated body (rad/s, counter-clockwise positive).
+    yaw: f32,
+    /// Turn rate of the direction of travel over the tick (rad/s).
+    travel_rate: f32,
+    /// Turn rate of the visible body (the simulated one turned by the slip angle) (rad/s).
+    body_rate: f32,
+    motion: DriftMotion,
+    speed: f32,
+}
+
+/// Largest change from one sample to the next of `value` (rad/s per tick).
+fn largest_step(samples: &[Sample], value: impl Fn(&Sample) -> f32) -> f32 {
+    samples
+        .windows(2)
+        .map(|pair| (value(&pair[1]) - value(&pair[0])).abs())
+        .fold(0.0, f32::max)
+}
+
+impl Scenario {
+    fn motion(&self) -> DriftMotion {
+        *self.app.world().get::<DriftMotion>(self.kart).unwrap()
+    }
+
+    /// Heading of the visible body: the simulated body turned by the slip angle (positive = nose
+    /// to the right, clockwise).
+    fn body_heading(&self) -> f32 {
+        heading_of(*self.transform().forward()) - self.motion().slip
+    }
+
+    /// Runs `ticks` ticks with `input(tick)`, recording each one.
+    fn record(&mut self, ticks: u32, input: impl Fn(u32) -> KartInput) -> Vec<Sample> {
+        let mut samples = Vec::new();
+        let mut travel = heading_of(self.velocity().linear);
+        let mut body = self.body_heading();
+        for tick in 0..ticks {
+            self.tick(input(tick));
+            let (new_travel, new_body) = (heading_of(self.velocity().linear), self.body_heading());
+            samples.push(Sample {
+                state: self.state(),
+                yaw: self.velocity().angular.y,
+                travel_rate: wrap(new_travel - travel) * TICKS_PER_SECOND,
+                body_rate: wrap(new_body - body) * TICKS_PER_SECOND,
+                motion: self.motion(),
+                speed: self.forward_speed(),
+            });
+            (travel, body) = (new_travel, new_body);
+        }
+        samples
+    }
+
+    /// World positions of the front and rear axles of the visible body (`slip_pose`).
+    fn visible_axles(&self) -> (Vec3, Vec3) {
+        let (rotation, offset) = slip_pose(self.motion().slip);
+        let body = self.transform() * Transform::from_translation(offset).with_rotation(rotation);
+        let front = body.transform_point(Vec3::Z * WHEEL_ANCHORS[0].z);
+        let rear = body.transform_point(Vec3::Z * WHEEL_ANCHORS[2].z);
+        (front, rear)
+    }
+}
+
+/// Issue #30: the hop and the drift set in from the motion in progress. Keyboard-like input at
+/// top speed: jump/drift pressed with the stick fully right, held, for 1.5 s. No tick-to-tick
+/// jump of the yaw rate, of the turn rate of the direction of travel or of the visible body, and
+/// the drift's curve takes a fraction of a second to set in.
+#[test]
+fn the_drift_sets_in_progressively_from_the_motion_in_progress() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let tuning = scenario.tuning();
+    scenario.run(2.5, FULL_THROTTLE);
+    let samples = scenario.record(90, |_| drifting(1.0));
+    let landing = samples
+        .iter()
+        .position(|s| matches!(s.state, KartState::Drifting { .. }))
+        .expect("never drifted");
+    assert!(
+        matches!(samples[landing - 1].state, KartState::Hop { .. }),
+        "{:?}",
+        samples[landing - 1]
+    );
+    // Bounds per tick (60 Hz), hop and landing included: 0.12 rad/s is 7 rad/s². The old drift
+    // jumped by 0.17 rad/s (yaw) and about 4 rad/s (visible body) on landing; the normal steering
+    // at full lock and top speed changes the yaw rate by 0.2 rad/s on the first tick.
+    let yaw_step = largest_step(&samples, |s| s.yaw);
+    let travel_step = largest_step(&samples, |s| s.travel_rate);
+    let body_step = largest_step(&samples, |s| s.body_rate);
+    assert!(
+        yaw_step <= 0.12,
+        "yaw rate jumped by {yaw_step} rad/s in a tick"
+    );
+    assert!(
+        travel_step <= 0.12,
+        "travel turn rate jumped by {travel_step}"
+    );
+    assert!(body_step <= 0.15, "body turn rate jumped by {body_step}");
+    // Landing: the drift starts from the rotation in progress (no step at all).
+    let landing_step = (samples[landing].yaw - samples[landing - 1].yaw).abs();
+    assert!(
+        landing_step <= 0.01,
+        "landing changed the yaw rate by {landing_step}"
+    );
+    // The curve sets in: on landing the kart turns clearly less than the drift will, then reaches
+    // 90 % of the drift's yaw rate after 0.2 s at the earliest and 0.8 s at the latest.
+    let drift = drift_yaw_rate(&tuning, DriftSide::Right, 1.0, samples[landing].speed);
+    assert!(
+        samples[landing].yaw.abs() < 0.85 * drift.abs(),
+        "{} vs {drift}",
+        samples[landing].yaw
+    );
+    let set_in = samples[landing..]
+        .iter()
+        .position(|s| s.yaw.abs() >= 0.9 * drift.abs())
+        .expect("the drift's curve never set in") as f32
+        / TICKS_PER_SECOND;
+    assert!((0.2..=0.8).contains(&set_in), "set in after {set_in} s");
+    let last = samples.last().unwrap();
+    assert!((last.yaw - drift).abs() < 0.02, "{} vs {drift}", last.yaw);
+    assert!(last.speed > 0.97 * tuning.max_speed, "{}", last.speed);
+}
+
+/// Issue #30: the rear breaks loose and slides out of the turn, progressively, like a damped
+/// spring; the front axle stays on the trajectory.
+#[test]
+fn the_rear_slides_out_progressively_while_the_front_follows_the_trajectory() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let tuning = scenario.tuning();
+    scenario.enter_right_drift(1.0);
+    let target = tuning.drift_slip_angle_tight;
+    let (mut front, mut rear) = scenario.visible_axles();
+    let mut slips = vec![scenario.motion().slip];
+    let mut settled_checks = 0;
+    for _ in 0..90 {
+        scenario.tick(drifting(1.0));
+        let slip = scenario.motion().slip;
+        slips.push(slip);
+        let (new_front, new_rear) = scenario.visible_axles();
+        // The front axle of the visible body is the simulated body's: on the trajectory.
+        let simulated_front = scenario
+            .transform()
+            .transform_point(Vec3::Z * WHEEL_ANCHORS[0].z);
+        assert!(new_front.distance(simulated_front) < 1e-3);
+        // Sideways speed of each axle across the visible body (right positive). A right drift:
+        // the outside of the turn is on the left.
+        let (rotation, _) = slip_pose(slip);
+        let right = scenario.transform().rotation * rotation * Vec3::X;
+        let front_lateral = (new_front - front).dot(right) * TICKS_PER_SECOND;
+        let rear_lateral = (new_rear - rear).dot(right) * TICKS_PER_SECOND;
+        if slip > 0.5 * target {
+            settled_checks += 1;
+            assert!(
+                rear_lateral < -1.0,
+                "the rear slides out: {rear_lateral} m/s"
+            );
+            assert!(
+                rear_lateral < front_lateral - 1.0,
+                "the rear slides more than the front: {rear_lateral} vs {front_lateral}"
+            );
+            // The rear swung out of the simulated body's track, to the left.
+            let simulated_rear = scenario
+                .transform()
+                .transform_point(Vec3::Z * WHEEL_ANCHORS[2].z);
+            let out = (new_rear - simulated_rear).dot(*scenario.transform().left());
+            assert!(out > 0.15, "rear only {out} m out");
+        }
+        (front, rear) = (new_front, new_rear);
+    }
+    assert!(settled_checks > 30, "{settled_checks}");
+    // Progressive: no more than 1° per tick, under 30 % of the angle after 0.1 s, 80 % between
+    // 0.25 s and 0.9 s; a light overshoot at most (damped spring), then settled.
+    let largest = slips
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(
+        largest < 1f32.to_radians(),
+        "{} ° in a tick",
+        largest.to_degrees()
+    );
+    assert!(slips[6] < 0.3 * target, "{}", slips[6]);
+    let eighty = slips.iter().position(|s| *s >= 0.8 * target).unwrap() as f32 / TICKS_PER_SECOND;
+    assert!((0.25..=0.9).contains(&eighty), "80 % after {eighty} s");
+    let highest = slips.iter().copied().fold(0.0, f32::max);
+    assert!(
+        highest <= 1.1 * target,
+        "overshoot to {}°",
+        highest.to_degrees()
+    );
+    assert!((slips.last().unwrap() - target).abs() < 0.01);
+}
+
+/// Issue #30: no tight angle. At top speed, the drift's radius is 16 to 20 m steered fully
+/// inward (about the normal steering at full lock, ≈ 17 m; #4 had 10 m), 22 to 32 m neutral
+/// (15 m) and 45 to 65 m fully outward (32 m); the body slips by 10° to 20° at most (26°).
+#[test]
+fn drift_radii_at_top_speed_are_wide() {
+    let tuning = KartTuning::default();
+    let settled = |steer: f32| {
+        let mut scenario = Scenario::flat(Surface::Road);
+        scenario.enter_right_drift(steer.max(0.0));
+        scenario.run(1.5, drifting(steer));
+        assert!(matches!(scenario.state(), KartState::Drifting { .. }));
+        let radius = scenario.forward_speed() / scenario.velocity().angular.y.abs();
+        (radius, scenario.motion().slip, scenario.forward_speed())
+    };
+    let (tight, tight_slip, speed) = settled(1.0);
+    let (neutral, _, _) = settled(0.0);
+    let (wide, wide_slip, _) = settled(-1.0);
+    assert!(speed > 0.98 * tuning.max_speed, "{speed}");
+    assert!((16.0..=20.0).contains(&tight), "tight {tight} m");
+    assert!((22.0..=32.0).contains(&neutral), "neutral {neutral} m");
+    assert!((45.0..=65.0).contains(&wide), "wide {wide} m");
+    let normal_steering = tuning.max_speed / tuning.steer_rate_at_max_speed;
+    assert!(
+        tight > normal_steering - 1.5,
+        "{tight} vs {normal_steering}"
+    );
+    assert!(
+        (10.0..=20.0).contains(&tight_slip.to_degrees()),
+        "{}°",
+        tight_slip.to_degrees()
+    );
+    assert!(wide_slip > 0.0 && wide_slip < tight_slip);
+}
+
+/// Issue #30: releasing the drift (here at orange, the stick back to neutral) does not snap the
+/// heading: the curve fades out and the body comes back in line with the trajectory without
+/// a jolt, and without swinging past it.
+#[test]
+fn releasing_the_drift_realigns_the_body_without_a_snap() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let tuning = scenario.tuning();
+    scenario.enter_right_drift(1.0);
+    scenario.drift_until(1.0, MiniTurbo::Orange);
+    let before = scenario.record(1, |_| drifting(1.0));
+    let after = scenario.record(90, |_| FULL_THROTTLE);
+    assert_eq!(after[0].state, KartState::Grounded);
+    assert!(scenario.boost().is_active() || after.iter().any(|s| s.speed > tuning.max_speed));
+    let samples: Vec<Sample> = before.iter().chain(&after).copied().collect();
+    // The entry's bounds for the yaw rate and the direction of travel, release tick included
+    // (the old drift jumped by 0.36 and 2.85 rad/s on release). The visible body gets 0.25 rad/s
+    // per tick: letting go of the stick on release also lowers the slip's target by 5° at once,
+    // which the spring turns into about 0.2 rad/s per tick (the old drift: about 4 rad/s).
+    let yaw_step = largest_step(&samples, |s| s.yaw);
+    let travel_step = largest_step(&samples, |s| s.travel_rate);
+    let body_step = largest_step(&samples, |s| s.body_rate);
+    assert!(
+        yaw_step <= 0.12,
+        "yaw rate jumped by {yaw_step} rad/s in a tick"
+    );
+    assert!(
+        travel_step <= 0.12,
+        "travel turn rate jumped by {travel_step}"
+    );
+    assert!(body_step <= 0.25, "body turn rate jumped by {body_step}");
+    // The heading keeps curving for a moment: the first tick still turns at 90 % of the drift.
+    assert!(after[0].yaw.abs() > 0.9 * before[0].yaw.abs());
+    // Back in line within 1.2 s, never more than 1.5° past it.
+    let lowest = after.iter().map(|s| s.motion.slip).fold(f32::MAX, f32::min);
+    assert!(lowest > -1.5f32.to_radians(), "{}°", lowest.to_degrees());
+    let aligned = after
+        .iter()
+        .position(|s| s.motion.slip.abs() < 1f32.to_radians())
+        .expect("the body never came back in line") as f32
+        / TICKS_PER_SECOND;
+    assert!(aligned <= 1.2, "{aligned} s");
+    assert_eq!(after.last().unwrap().motion.side, None);
 }

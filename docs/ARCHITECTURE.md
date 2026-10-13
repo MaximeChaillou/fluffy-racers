@@ -17,6 +17,7 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 - **Moteur** : courbe d'accélération vers une vitesse max qui dépend de la classe, des stats, des croquettes, du terrain (hors-piste) et des boosts actifs.
 - **Grip latéral** : on annule chaque tick une grande fraction de la vitesse de côté (sauf en drift).
 - **Direction** : on pilote directement la vitesse angulaire en lacet, selon la vitesse et la stat Maniabilité.
+- **Drift** (GD § 3) : la courbe du drift s'installe progressivement, à partir du lacet qu'avait le kart à l'atterrissage, et s'efface de même quand le drift se termine (`DriftMotion`, réglages dans `KartTuning`). L'angle de glisse suit un ressort amorti et reste visuel : le corps simulé suit la trajectoire (caméra, collisions et réseau inchangés), et la carrosserie pivote autour de l'essieu avant, ce qui fait glisser l'arrière vers l'extérieur. Un pair peut le recalculer pour un kart distant à partir de son état de drift et de son lacet.
 - **Boosts** : un seul composant `Boost { strength, remaining }` pour toutes les sources (mini-turbo, piment, départ, figure, aspiration, panneau).
 - **En l'air** : gravité renforcée pour des sauts courts, et redressement automatique.
 - **Stats** : `KartStats`, calculée une fois au spawn (personnage + kart + roues + aile), puis convertie en paramètres via `KartTuning`.

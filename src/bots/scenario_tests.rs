@@ -37,6 +37,10 @@ struct KartLog {
     /// Mini-turbos fired, per tier, and their sequence.
     mini_turbos: [u32; 3],
     sequence: Vec<MiniTurbo>,
+    /// Each mini-turbo fired, with where its drift started along the lap (m), and where the
+    /// current drift started (issue #30: which big turn gave it).
+    fired_at: Vec<(MiniTurbo, f32)>,
+    drift_from: Option<f32>,
     /// Drifts released before the blue tier (no boost), and drifts that broke with the button
     /// still held (wall, too slow, too long in the air).
     wasted: u32,
@@ -55,11 +59,25 @@ impl KartLog {
         self.mini_turbos.iter().sum()
     }
 
-    /// Longest run of consecutive mini-turbos of at least `tier`.
-    fn longest_chain(&self, tier: MiniTurbo) -> usize {
-        let (mut best, mut run) = (0, 0);
+    /// Mini-turbos of at least `tier` whose drift started between `from` and `to` along the
+    /// lap (m).
+    fn fired_between(&self, tier: MiniTurbo, from: f32, to: f32) -> usize {
+        self.fired_at
+            .iter()
+            .filter(|(t, at)| *t >= tier && (from..=to).contains(at))
+            .count()
+    }
+
+    /// Longest run of consecutive mini-turbos of at least `tier`, measured in charge: the sum
+    /// of their tiers' thresholds (`thresholds`, the kart's `mini_turbo_thresholds`).
+    fn longest_chain_charge(&self, tier: MiniTurbo, thresholds: &[f32; 3]) -> f32 {
+        let (mut best, mut run) = (0.0f32, 0.0);
         for t in &self.sequence {
-            run = if *t >= tier { run + 1 } else { 0 };
+            run = if *t >= tier {
+                run + thresholds[t.index()]
+            } else {
+                0.0
+            };
             best = best.max(run);
         }
         best
@@ -107,19 +125,24 @@ impl RaceLog {
         for (entity, log) in &mut self.karts {
             let state = *world.get::<KartState>(*entity).unwrap();
             let input = *world.get::<KartInput>(*entity).unwrap();
+            let progress = world.get::<RaceProgress>(*entity).unwrap();
+            let drifting = matches!(state, KartState::Drifting { .. });
+            if drifting && !matches!(log.previous, Some(KartState::Drifting { .. })) {
+                log.drift_from = Some(course.center.wrap(progress.distance));
+            }
             if let Some(previous @ KartState::Drifting { .. }) = log.previous
-                && !matches!(state, KartState::Drifting { .. })
+                && !drifting
             {
                 match (input.jump_drift, previous.mini_turbo(tuning, false)) {
                     (true, _) => log.broken += 1,
                     (false, Some(tier)) => {
                         log.mini_turbos[tier.index()] += 1;
                         log.sequence.push(tier);
+                        log.fired_at.push((tier, log.drift_from.unwrap_or(-1.0)));
                     }
                     (false, None) => log.wasted += 1,
                 }
             }
-            let progress = world.get::<RaceProgress>(*entity).unwrap();
             let tow = world.get::<Tow>(*entity).unwrap();
             if let Some(carry) = tow.carry
                 && log.previous != Some(KartState::Respawning)
@@ -279,6 +302,21 @@ fn roundabout() -> TrackData {
     data
 }
 
+/// The two big turns of Prairie Pompon, the hairpin then the banked turn, as the stretch along
+/// the lap where a drift for them starts (m): from a little before the turn (a bot hops just
+/// before it) to its end.
+fn big_turns(app: &App) -> Vec<(f32, f32)> {
+    let line = app.world().resource::<RacingLine>();
+    line.turns()
+        .iter()
+        .filter(|turn| turn.angle > 2.4)
+        .map(|turn| {
+            let start = turn.start as f32 * line.step();
+            (start - 20.0, start + turn.len as f32 * line.step())
+        })
+        .collect()
+}
+
 fn set_difficulties(app: &mut App, difficulty: impl Fn(usize) -> BotDifficulty) {
     let world = app.world_mut();
     for (mut bot, racer) in world.query::<(&mut Bot, &Racer)>().iter_mut(world) {
@@ -380,12 +418,26 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
     // Hardly ever towed (zero in our runs; the known wall climb #27 may cost one).
     let tows: Vec<_> = log.tows().collect();
     assert!(tows.len() <= 2, "{tows:?}");
-    // They drift: blue mini-turbos (the turns of Prairie Pompon are too short for orange, see
-    // `hard_bots_chain_orange_mini_turbos_in_a_long_turn`).
+    // They drift. Since issue #30 the big turns of Prairie Pompon are long enough for an orange,
+    // which the Normal bots aim for: most of their mini-turbos are orange, in both turns.
     let firing = log.karts.iter().filter(|(_, k)| k.fired() > 0).count();
     let total: u32 = log.karts.iter().map(|(_, k)| k.fired()).sum();
     assert!(firing >= 10, "{firing} bots fired a mini-turbo");
     assert!(total >= 24, "{total} mini-turbos");
+    let oranges: u32 = log.karts.iter().map(|(_, k)| k.mini_turbos[1]).sum();
+    println!("{oranges} orange mini-turbos out of {total}");
+    assert!(
+        oranges >= total / 2 && oranges >= 24,
+        "{oranges} of {total}"
+    );
+    for (from, to) in big_turns(&app) {
+        let here: usize = log
+            .karts
+            .iter()
+            .map(|(_, k)| k.fired_between(MiniTurbo::Orange, from, to))
+            .sum();
+        assert!(here >= 10, "{here} oranges in the turn at {from}..{to} m");
+    }
     // The bots release their drifts themselves: hardly any drift breaks (wall, too slow).
     let broken: u32 = log.karts.iter().map(|(_, k)| k.broken).sum();
     assert!(broken <= 3, "{broken} broken drifts");
@@ -431,6 +483,10 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
 /// Issue #6: the three difficulties drive differently. A mixed grid (Easy, Normal, Hard in
 /// turn): Hard finishes first on average, then Normal, then Easy; Easy releases its drifts at
 /// blue only; Hard fires a mini-turbo in most big turns.
+///
+/// Issue #30 acceptance: with the wider drift, the big turns of Prairie Pompon give an orange.
+/// Every Hard bot fires one in the hairpin and one in the banked turn (the drift of #4 gave blue
+/// only, see `charge_per_radian`), and Normal, which aims for orange too, fires some.
 #[test]
 fn the_three_difficulties_drive_differently() {
     let difficulty = |slot: usize| BotDifficulty::ALL[slot % 3];
@@ -471,10 +527,44 @@ fn the_three_difficulties_drive_differently() {
     );
     let tows: Vec<_> = log.tows().collect();
     assert!(tows.len() <= 2, "{tows:?}");
+
+    let turns = big_turns(&app);
+    assert_eq!(turns.len(), 2, "{turns:?}");
+    let (mut hard_oranges, mut normal_oranges) = (0, 0);
+    for (_, kart) in &log.karts {
+        let oranges = kart.mini_turbos[1] + kart.mini_turbos[2];
+        match kart.difficulty.unwrap() {
+            BotDifficulty::Hard => {
+                for (from, to) in &turns {
+                    let here = kart.fired_between(MiniTurbo::Orange, *from, *to);
+                    assert!(
+                        here >= 1,
+                        "slot {}, turn {from}..{to} m: {kart:?}",
+                        kart.slot
+                    );
+                }
+                // (Even after a tow on the first lap.)
+                assert!(oranges >= 3, "slot {}: {kart:?}", kart.slot);
+                hard_oranges += oranges;
+            }
+            BotDifficulty::Normal => normal_oranges += oranges,
+            BotDifficulty::Easy => {}
+        }
+    }
+    println!("oranges: Hard {hard_oranges}, Normal {normal_oranges}");
+    // 4 Hard bots, 2 big turns, 3 laps: an orange in two thirds of the big turns at least.
+    assert!(hard_oranges >= 16, "{hard_oranges}");
+    assert!(normal_oranges >= 8, "{normal_oranges}");
 }
 
 /// Issue #6 acceptance: at the highest difficulty the bots chain orange mini-turbos, in a turn
 /// long enough for it (one endless turn), while Easy bots release at blue.
+///
+/// Issue #30: with the wider drift, a Hard bot charges a purple in this endless turn (870 units,
+/// 174 ticks steering inward) rather than an orange (570, 114 ticks): fewer, longer mini-turbos
+/// in the same three laps. So the chain is measured in charge: at least three oranges' worth in
+/// a row (3 × 570), which is what "three oranges in a row" meant before; two purples are worth
+/// more.
 #[test]
 fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
     let mut app = race_on(roundabout(), 4);
@@ -488,6 +578,7 @@ fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
     set_difficulties(&mut app, difficulty);
     player_becomes_a_bot(&mut app, difficulty(4));
     assert_eq!(app.world().resource::<TrackLayout>().name, "Rond-point");
+    let thresholds = app.world().resource::<KartTuning>().mini_turbo_thresholds;
     let mut log = RaceLog::new(&mut app);
     run_race(&mut app, &mut log, 60.0);
     log.print(&app, "round circuit, Hard and Easy");
@@ -499,9 +590,12 @@ fn hard_bots_chain_orange_mini_turbos_in_a_long_turn() {
         );
         match kart.difficulty.unwrap() {
             BotDifficulty::Hard => {
-                let orange = kart.mini_turbos[1] + kart.mini_turbos[2];
-                assert!(orange >= 3, "slot {}: {kart:?}", kart.slot);
-                assert!(kart.longest_chain(MiniTurbo::Orange) >= 3, "{kart:?}");
+                let chain = kart.longest_chain_charge(MiniTurbo::Orange, &thresholds);
+                assert!(
+                    chain >= 3.0 * thresholds[MiniTurbo::Orange.index()],
+                    "slot {}: {chain} in a row, {kart:?}",
+                    kart.slot
+                );
             }
             _ => {
                 assert!(kart.mini_turbos[0] >= 3, "slot {}: {kart:?}", kart.slot);

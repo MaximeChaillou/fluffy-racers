@@ -7,8 +7,10 @@ use bevy_rapier3d::prelude::Velocity;
 
 use super::*;
 use crate::TICK_HZ;
+use crate::bots::RacingLine;
 use crate::kart::{
-    BoostFlame, DriftSide, KartState, KartTuning, Stall, StallSmoke, TrickTracker, flame_size,
+    BoostFlame, DriftSide, KartState, KartTuning, MiniTurbo, Stall, StallSmoke, TrickTracker,
+    flame_size,
 };
 use crate::tests::{app_on, follow_centerline, hold_keys, player};
 use crate::track::{
@@ -746,4 +748,178 @@ fn the_circuit_boost_pads_and_trick_ramp_work() {
     assert_eq!(boost.strength, tuning.trick_boost_strength);
     assert!((boost.remaining - tuning.trick_boost_duration).abs() < 1e-5);
     assert!(!tow(&app, kart).is_carrying());
+}
+
+// --- Issue #30: an orange mini-turbo in the big turns of Prairie Pompon ----------------------------
+
+/// A player on the keyboard: follows the racing line, hops a little before each big turn
+/// (`HOP_LEAD`), and in the drift only holds the inward key or lets go of the arrows (the two
+/// options of a keyboard, which charge +5 and +2), lifting off when running wide. It releases at
+/// orange, or gives up past the turn.
+#[derive(Default)]
+struct KeyboardDrifter {
+    sample: Option<usize>,
+    /// The big turn it hopped for, and whether the kart got into it.
+    turn: Option<usize>,
+    inside: bool,
+    last_jump: bool,
+}
+
+/// A drift released by the `KeyboardDrifter`: the big turn, where (m along the lap), the tier.
+#[derive(Clone, Copy, Debug)]
+struct Release {
+    turn: usize,
+    at: f32,
+    tier: Option<MiniTurbo>,
+}
+
+impl KeyboardDrifter {
+    /// Hops this long before a big turn (s): the drift starts on the approach, its curve setting
+    /// in as the turn begins, and goes on through the whole turn.
+    const HOP_LEAD: f32 = 0.7;
+
+    fn big_turn(line: &RacingLine, sample: usize) -> Option<usize> {
+        line.turn_at(sample)
+            .map(|(turn, _)| turn)
+            .filter(|turn| line.turns()[*turn].angle > 2.4)
+    }
+
+    fn input(
+        &mut self,
+        line: &RacingLine,
+        tuning: &KartTuning,
+        transform: &Transform,
+        velocity: Vec3,
+        state: KartState,
+    ) -> (KartInput, Option<Release>) {
+        let speed = velocity.dot(*transform.forward());
+        let here = line.locate(transform.translation, self.sample);
+        self.sample = Some(here.index);
+        let aim = here.distance + 5.0 + 0.35 * speed.max(0.0);
+        let target = line.center().at(aim).point(line.offset_at(aim), 0.0);
+        let to = target - transform.translation;
+        let angle = to
+            .dot(*transform.right())
+            .atan2(to.dot(*transform.forward()));
+        let mut input = KartInput {
+            throttle: 1.0,
+            steer: (angle * 3.0).clamp(-1.0, 1.0),
+            ..default()
+        };
+        let mut release = None;
+        match state {
+            KartState::Drifting { side, .. } => {
+                self.inside |= Self::big_turn(line, here.index).is_some();
+                let past = self.inside && Self::big_turn(line, here.index).is_none();
+                let tier = state.mini_turbo(tuning, false);
+                let inward = angle * side.sign();
+                if tier >= Some(MiniTurbo::Orange) || (past && inward < -0.15) {
+                    release = self.turn.map(|turn| Release {
+                        turn,
+                        at: here.distance,
+                        tier,
+                    });
+                } else {
+                    input.jump_drift = true;
+                    input.steer = if inward > 0.04 {
+                        side.sign()
+                    } else if inward < -0.12 {
+                        -side.sign()
+                    } else {
+                        0.0
+                    };
+                    if inward > 0.25 {
+                        input.throttle = 0.0;
+                    }
+                }
+            }
+            KartState::Hop { .. } => {
+                input.jump_drift = true;
+                if let Some(turn) = self.turn {
+                    input.steer = line.turns()[turn].side.sign();
+                }
+            }
+            _ => {
+                let lead = Self::HOP_LEAD * speed.max(0.0);
+                let ahead = line.turn_ahead(here.index, (lead / line.step()).ceil() as usize);
+                if let Some((turn, _)) = ahead
+                    && line.turns()[turn].angle > 2.4
+                    && self.turn != Some(turn)
+                    && !self.last_jump
+                {
+                    self.turn = Some(turn);
+                    self.inside = false;
+                    input.jump_drift = true;
+                    input.steer = line.turns()[turn].side.sign();
+                }
+            }
+        }
+        self.last_jump = input.jump_drift;
+        (input, release)
+    }
+}
+
+/// Issue #30 acceptance: on Prairie Pompon, the hairpin and the banked turn both give an orange
+/// mini-turbo to a player, on every lap, and well before the end of the turn (the drift of #4
+/// gave a blue at best: about 130 units per radian of turn, 176° turns). Driven like a keyboard
+/// player: full inward or the stick released, nothing in between.
+#[test]
+fn a_keyboard_player_gets_an_orange_in_both_big_turns() {
+    let (mut app, kart) = race_app();
+    take_the_wheel(&mut app, kart);
+    let line = app.world().resource::<RacingLine>().clone();
+    let tuning = app.world().resource::<KartTuning>().clone();
+    let big: Vec<usize> = (0..line.turns().len())
+        .filter(|t| line.turns()[*t].angle > 2.4)
+        .collect();
+    assert_eq!(big.len(), 2, "{:?}", line.turns());
+    until_go(&mut app);
+    let mut driver = KeyboardDrifter::default();
+    let mut releases = Vec::new();
+    let mut laps = 0;
+    for _ in 0..(70.0 * TICK_HZ) as usize {
+        let world = app.world();
+        let (input, release) = driver.input(
+            &line,
+            &tuning,
+            world.get::<Transform>(kart).unwrap(),
+            world.get::<Velocity>(kart).unwrap().linear,
+            state(&app, kart),
+        );
+        releases.extend(release);
+        *app.world_mut().get_mut::<KartInput>(kart).unwrap() = input;
+        app.update();
+        assert!(!tow(&app, kart).is_carrying(), "towed: {releases:?}");
+        let p = progress(&app, kart);
+        if p.lap_times.len() > laps {
+            laps = p.lap_times.len();
+            driver.turn = None;
+        }
+        if p.finished() {
+            break;
+        }
+    }
+    println!(
+        "keyboard player: {releases:?}, laps {:?}",
+        progress(&app, kart).lap_times
+    );
+    assert!(progress(&app, kart).finished());
+    // One drift per big turn and per lap, each released at orange, at least 15 m before the
+    // turn ends.
+    assert_eq!(releases.len(), 6, "{releases:?}");
+    for (i, release) in releases.iter().enumerate() {
+        assert_eq!(release.turn, big[i % 2], "{releases:?}");
+        assert_eq!(release.tier, Some(MiniTurbo::Orange), "{release:?}");
+        let turn = line.turns()[release.turn];
+        let end = (turn.start + turn.len) as f32 * line.step();
+        assert!(
+            release.at < end - 15.0,
+            "{release:?}: the turn ends at {end} m"
+        );
+    }
+    // A lap stays around 17 s for this driver (laps 2 and 3, without the start).
+    for lap in &progress(&app, kart).lap_times[1..] {
+        let seconds = ticks_to_seconds(*lap);
+        assert!((15.0..19.5).contains(&seconds), "{seconds} s");
+    }
 }

@@ -31,7 +31,7 @@ use bevy_rapier3d::prelude::Velocity;
 
 use crate::TICK_HZ;
 use crate::kart::{
-    Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
+    Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
     MaxSpeedFactors, MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceProgress, Racer};
@@ -190,6 +190,7 @@ fn drive_bots(
         &KartAssists,
         &MaxSpeedScale,
         &TrickTracker,
+        &Boost,
         &mut KartInput,
     )>,
 ) {
@@ -207,8 +208,19 @@ fn drive_bots(
         position: transform.translation,
         velocity: velocity.linear,
     }));
-    for (entity, bot, mut brain, transform, velocity, state, assists, scale, tricks, mut input) in
-        &mut bots
+    for (
+        entity,
+        bot,
+        mut brain,
+        transform,
+        velocity,
+        state,
+        assists,
+        scale,
+        tricks,
+        boost,
+        mut input,
+    ) in &mut bots
     {
         let senses = Senses {
             entity,
@@ -216,6 +228,8 @@ fn drive_bots(
             forward: *transform.forward(),
             right: *transform.right(),
             velocity: velocity.linear,
+            yaw_rate: -velocity.angular.dot(*transform.up()),
+            boost_left: boost.remaining,
             state: *state,
             assisted: assists.assisted_steering,
             speed_scale: scale.0,

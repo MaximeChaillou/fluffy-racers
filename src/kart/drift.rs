@@ -13,10 +13,25 @@
 //! - Releasing the button fires the boost of the reached tier; before blue, nothing.
 //! - The drift breaks, without boost, below `drift_exit_speed` (wall, brake) or after
 //!   `drift_max_air_ticks` in the air. Shorter flights keep it, charge frozen.
+//!
+//! How the drift moves (issue #30, Max: "fluide par rapport au mouvement en cours, arrière
+//! léger et glissant, sans angle serré"), in [`DriftMotion`]:
+//! - the drift's curve sets in progressively: from the yaw rate the kart had on landing to the
+//!   drift's one, along an eased ramp (`drift_curve_in_time`), and fades back to the normal
+//!   steering the same way when the drift ends (`drift_curve_out_time`). The direction of
+//!   travel follows the same blend: no jolt of the heading or of the velocity, neither on
+//!   landing nor on release;
+//! - the slip angle (the body against its direction of travel) follows its target like a
+//!   damped spring, the target growing with the curve: the rear breaks loose and slides out
+//!   progressively, and comes back in line without a snap. The simulated body follows the
+//!   trajectory (camera, collisions, network unchanged); the visual turns the body around its
+//!   front axle ([`slip_pose`]): the front follows the trajectory, the rear swings out.
 
-use super::KartInput;
+use bevy::prelude::*;
+
 use super::physics::{KartState, next_state};
 use super::tuning::KartTuning;
+use super::{KartInput, WHEEL_ANCHORS};
 
 /// Side of a drift: the side the kart turns toward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -130,14 +145,147 @@ pub fn drift_yaw_rate(tuning: &KartTuning, side: DriftSide, steer: f32, forward_
     -side.sign() * rate * low_speed_fade
 }
 
-/// Visual slip angle of a drifting kart (radians): how far its nose points inside the curve,
-/// relative to where it goes. Positive = nose to the right (right drift). Purely visual: the
-/// simulated body keeps its normal grip (see `visual.rs`).
+/// Slip angle of a settled drift (radians): how far the body points inside the curve,
+/// relative to where it goes. Positive = nose to the right (right drift). Shown by the visual
+/// only: the simulated body keeps its grip (see [`DriftMotion`] and `visual.rs`).
 pub fn drift_slip_angle(tuning: &KartTuning, side: DriftSide, steer: f32) -> f32 {
     let t = drift_tightness(side, steer);
     side.sign()
         * (tuning.drift_slip_angle_wide
             + (tuning.drift_slip_angle_tight - tuning.drift_slip_angle_wide) * t)
+}
+
+/// Smoothstep: 0 to 1 with a zero slope at both ends.
+pub fn ease(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// One tick of the slip angle's damped spring toward `target` (`drift_slip_frequency`,
+/// `drift_slip_damping`): returns the new angle and its rate (rad, rad/s). Semi-implicit Euler,
+/// stable at the 60 Hz tick for any reasonable frequency.
+pub fn slip_spring(tuning: &KartTuning, slip: f32, rate: f32, target: f32, dt: f32) -> (f32, f32) {
+    let w = tuning.drift_slip_frequency.max(0.0);
+    let accel = w * w * (target - slip) - 2.0 * tuning.drift_slip_damping.max(0.0) * w * rate;
+    let rate = rate + accel * dt;
+    (slip + rate * dt, rate)
+}
+
+/// Where the visible body of a kart slipping by `slip` sits, relative to its simulated body:
+/// turned by `slip` around the front axle (rotation, translation). The front axle stays on
+/// the trajectory and the rear swings out of the turn.
+pub fn slip_pose(slip: f32) -> (Quat, Vec3) {
+    // Nose to the right = clockwise seen from above = negative rotation around Y.
+    let rotation = Quat::from_rotation_y(-slip);
+    let front_axle = Vec3::new(0.0, 0.0, WHEEL_ANCHORS[0].z);
+    (rotation, front_axle - rotation * front_axle)
+}
+
+/// How the drift sets in and fades out (issue #30), on every kart, stepped by the driving each
+/// tick (`DriftMotion::step`): the share of the drift's curve applied, the yaw rate the curve
+/// started from, and the slip angle's spring.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct DriftMotion {
+    /// Side of the current drift, or of the last one while its curve fades out.
+    pub side: Option<DriftSide>,
+    /// The kart drifts this tick (`KartState::Drifting`).
+    pub drifting: bool,
+    /// Progress of the drift's curve: 0 = the normal steering, 1 = the drift's. Rises over
+    /// `drift_curve_in_time` while drifting, falls over `drift_curve_out_time` after.
+    pub curve: f32,
+    /// Yaw rate the kart had when the drift started (rad/s, counter-clockwise positive): the
+    /// drift's curve sets in from it.
+    pub entry_yaw: f32,
+    /// Slip angle of the body against its direction of travel (rad, positive = nose to the
+    /// right of it), and its rate (rad/s).
+    pub slip: f32,
+    pub slip_rate: f32,
+    /// Slip angle on the previous tick: the visual interpolates between the two.
+    pub previous_slip: f32,
+}
+
+impl DriftMotion {
+    /// Eased share of the drift's curve this tick: 0 = normal steering, 1 = the drift's.
+    pub fn blend(&self) -> f32 {
+        if self.side.is_some() {
+            ease(self.curve)
+        } else {
+            0.0
+        }
+    }
+
+    /// One tick. `state` is the kart's state after this tick's transitions, `yaw_rate` its yaw
+    /// rate before this tick's steering (rad/s), `steer` the stick.
+    pub fn step(
+        &mut self,
+        tuning: &KartTuning,
+        state: &KartState,
+        yaw_rate: f32,
+        steer: f32,
+        dt: f32,
+    ) {
+        self.previous_slip = self.slip;
+        match *state {
+            KartState::Respawning => {
+                // Carried by the pelican: dropped straight, nothing left of the drift.
+                *self = Self::default();
+                return;
+            }
+            KartState::Drifting { side, .. } => {
+                if !self.drifting || self.side != Some(side) {
+                    // A new drift: its curve starts from the rotation the kart has now.
+                    self.side = Some(side);
+                    self.drifting = true;
+                    self.curve = 0.0;
+                    self.entry_yaw = yaw_rate;
+                }
+                self.curve = (self.curve + dt / tuning.drift_curve_in_time.max(dt)).min(1.0);
+            }
+            _ => {
+                self.drifting = false;
+                self.curve = (self.curve - dt / tuning.drift_curve_out_time.max(dt)).max(0.0);
+            }
+        }
+        let target = match self.side {
+            Some(side) => ease(self.curve) * drift_slip_angle(tuning, side, steer),
+            None => 0.0,
+        };
+        (self.slip, self.slip_rate) = slip_spring(tuning, self.slip, self.slip_rate, target, dt);
+        if !self.drifting && self.curve == 0.0 {
+            self.side = None;
+            if self.slip.abs() < 1e-4 && self.slip_rate.abs() < 1e-3 {
+                self.slip = 0.0;
+                self.slip_rate = 0.0;
+            }
+        }
+    }
+
+    /// Yaw rate the steering aims for this tick (rad/s): `normal` is the normal steering's
+    /// target, `drift` the drift's one for `self.side` (same stick, same speed). In a drift the
+    /// curve goes from the yaw rate it started from to the drift's; after it, from the drift's
+    /// back to the normal steering.
+    pub fn yaw_target(&self, normal: f32, drift: f32) -> f32 {
+        if self.side.is_none() {
+            return normal;
+        }
+        let base = if self.drifting {
+            self.entry_yaw
+        } else {
+            normal
+        };
+        base + (drift - base) * self.blend()
+    }
+
+    /// Eased share of a drift's curve `seconds` after the drift started (what a bot expects:
+    /// it knows how long it has been drifting).
+    pub fn blend_after(tuning: &KartTuning, seconds: f32) -> f32 {
+        ease(seconds / tuning.drift_curve_in_time.max(1e-3))
+    }
+
+    /// Slip angle at `alpha` between the previous tick (0) and this one (1).
+    pub fn interpolated_slip(&self, alpha: f32) -> f32 {
+        self.previous_slip + (self.slip - self.previous_slip) * alpha.clamp(0.0, 1.0)
+    }
 }
 
 /// What the state machine needs to know about this tick.
@@ -697,6 +845,157 @@ mod tests {
                 t.mini_turbo_thresholds[pair[1].index()] > t.mini_turbo_thresholds[pair[0].index()]
             );
         }
+    }
+
+    // --- Issue #30: the drift sets in and fades out progressively ------------------------------
+
+    const DT: f32 = 1.0 / 60.0;
+
+    #[test]
+    fn ease_is_a_smoothstep() {
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
+        assert_eq!(ease(-1.0), 0.0);
+        assert_eq!(ease(2.0), 1.0);
+        assert!((ease(0.5) - 0.5).abs() < 1e-6);
+        // Flat at both ends, steepest in the middle.
+        assert!(ease(0.01) < 0.001 && ease(0.99) > 0.999);
+        for i in 0..100 {
+            let (a, b) = (i as f32 / 100.0, (i + 1) as f32 / 100.0);
+            assert!(ease(b) >= ease(a));
+        }
+    }
+
+    /// The curve rises linearly over `drift_curve_in_time` (eased by `blend`), starting from the
+    /// yaw rate the kart had on landing, then fades back to the normal steering over
+    /// `drift_curve_out_time` once the drift ends.
+    #[test]
+    fn the_drift_curve_sets_in_from_the_entry_yaw_and_fades_out() {
+        let t = KartTuning::default();
+        let mut motion = DriftMotion::default();
+        assert_eq!(
+            motion.yaw_target(-1.0, -2.0),
+            -1.0,
+            "no drift: the normal steering"
+        );
+        let entry = -0.8;
+        let (normal, drift) = (-1.2, -1.6);
+        let state = drifting(DriftSide::Right, 5.0);
+        motion.step(&t, &state, entry, 1.0, DT);
+        assert_eq!(motion.side, Some(DriftSide::Right));
+        assert!(motion.drifting);
+        assert_eq!(motion.entry_yaw, entry);
+        // First tick: barely off the rotation in progress.
+        let first = motion.yaw_target(normal, drift);
+        assert!((first - entry).abs() < 0.01, "{first}");
+        let ticks_in = (t.drift_curve_in_time / DT).round() as usize;
+        let mut previous = first;
+        for _ in 1..ticks_in {
+            motion.step(&t, &state, -1.0, 1.0, DT);
+            let target = motion.yaw_target(normal, drift);
+            assert!(target <= previous + 1e-6, "monotonic toward the drift's");
+            previous = target;
+        }
+        assert!((motion.curve - 1.0).abs() < 1e-3, "{}", motion.curve);
+        assert!((motion.yaw_target(normal, drift) - drift).abs() < 1e-3);
+        // Released: from the drift's back to the normal steering, then nothing left.
+        let ticks_out = (t.drift_curve_out_time / DT).round() as usize;
+        motion.step(&t, &KartState::Grounded, drift, 0.0, DT);
+        assert!(!motion.drifting);
+        assert_eq!(motion.side, Some(DriftSide::Right));
+        let after = motion.yaw_target(normal, drift);
+        assert!((after - drift).abs() < 0.01, "no snap on release: {after}");
+        for _ in 1..ticks_out {
+            motion.step(&t, &KartState::Grounded, -1.3, 0.0, DT);
+        }
+        assert_eq!(motion.curve, 0.0);
+        assert_eq!(motion.side, None);
+        assert_eq!(motion.yaw_target(normal, drift), normal);
+        assert_eq!(motion.blend(), 0.0);
+    }
+
+    #[test]
+    fn a_new_drift_starts_from_the_rotation_in_progress_and_the_pelican_resets_it() {
+        let t = KartTuning::default();
+        let mut motion = DriftMotion::default();
+        for _ in 0..60 {
+            motion.step(&t, &drifting(DriftSide::Right, 100.0), -1.5, 1.0, DT);
+        }
+        // Released, then a drift on the other side before the curve faded out: it starts again
+        // from the rotation the kart has, not from the old curve.
+        motion.step(&t, &KartState::Grounded, -1.5, 0.0, DT);
+        motion.step(&t, &drifting(DriftSide::Left, 2.0), -0.9, -1.0, DT);
+        assert_eq!(motion.side, Some(DriftSide::Left));
+        assert_eq!(motion.entry_yaw, -0.9);
+        assert!(motion.curve < 0.1);
+        assert!((motion.yaw_target(1.0, 1.4) - -0.9).abs() < 0.05);
+        // Carried by the pelican: nothing left of the drift, slip included.
+        motion.step(&t, &KartState::Respawning, 0.0, 0.0, DT);
+        assert_eq!(motion, DriftMotion::default());
+    }
+
+    /// The slip angle follows its target like a damped spring: it starts with no jump, rises
+    /// smoothly, overshoots a little (damping below 1: a light, slippery rear) and settles.
+    #[test]
+    fn the_slip_spring_settles_on_its_target_with_a_light_overshoot() {
+        let t = KartTuning::default();
+        let target = t.drift_slip_angle_tight;
+        let (mut slip, mut rate) = (0.0, 0.0);
+        let mut slips = Vec::new();
+        for _ in 0..120 {
+            (slip, rate) = slip_spring(&t, slip, rate, target, DT);
+            slips.push(slip);
+        }
+        // Even toward a target that jumps (the drift's own target grows with the curve), the
+        // first tick moves by w² dt² of it: under 5 %.
+        assert!(
+            slips[0] < 0.05 * target,
+            "no jump on the first tick: {}",
+            slips[0]
+        );
+        let highest = slips.iter().copied().fold(0.0, f32::max);
+        assert!(highest > target && highest < 1.1 * target, "{highest}");
+        assert!(
+            (slips[119] - target).abs() < 0.005 * target,
+            "{}",
+            slips[119]
+        );
+        // Critically damped (1): no overshoot at all.
+        let critical = KartTuning {
+            drift_slip_damping: 1.0,
+            ..t
+        };
+        let (mut slip, mut rate) = (0.0, 0.0);
+        for _ in 0..240 {
+            (slip, rate) = slip_spring(&critical, slip, rate, target, DT);
+            assert!(slip <= target + 1e-5);
+        }
+    }
+
+    /// The slip angle turns the body around its front axle: the front axle stays put, the rear
+    /// axle swings out of the turn (to the left in a right drift, nose to the right).
+    #[test]
+    fn slip_pose_keeps_the_front_axle_and_swings_the_rear_out() {
+        let slip = 0.3;
+        let (rotation, offset) = slip_pose(slip);
+        let pose = |p: Vec3| rotation * p + offset;
+        let front = Vec3::Z * WHEEL_ANCHORS[0].z;
+        let rear = Vec3::Z * WHEEL_ANCHORS[2].z;
+        assert!(pose(front).distance(front) < 1e-5);
+        let moved = pose(rear) - rear;
+        let wheelbase = WHEEL_ANCHORS[2].z - WHEEL_ANCHORS[0].z;
+        assert!((moved.x - -wheelbase * slip.sin()).abs() < 1e-4, "{moved}");
+        // The nose points to the right (+X) of the direction of travel (-Z).
+        assert!((rotation * Vec3::NEG_Z).x > 0.2);
+        assert_eq!(slip_pose(0.0), (Quat::IDENTITY, Vec3::ZERO));
+        // The visual interpolates the angle between two ticks.
+        let motion = DriftMotion {
+            previous_slip: 0.1,
+            slip: 0.2,
+            ..default()
+        };
+        assert!((motion.interpolated_slip(0.5) - 0.15).abs() < 1e-6);
+        assert_eq!(motion.interpolated_slip(2.0), 0.2);
     }
 
     /// Issue #5: the tow pelican's state ignores the driver (no hop, no drift, no boost) and
