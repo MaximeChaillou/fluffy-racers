@@ -29,7 +29,10 @@ mod visual;
 
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
-pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
+pub use input::{
+    DEBUG_BOOST_KEY, DEBUG_RESET_KEY, ITEM_KEYS, JUMP_KEYS, KartInputPlugin, KeyboardLayout,
+    LOOK_BACK_KEYS, PlayerKart, SpawnPoint, keyboard_input,
+};
 pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
 pub use rocket::{
     Stall, StartOutcome, StartPress, THROTTLE_PRESSED, rocket_start_duration, start_outcome,
@@ -103,12 +106,15 @@ pub struct Kart;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct PreviousInput(pub KartInput);
 
-/// Driving aids of this kart's driver (GD § 11), set per player. Off by default; the options
-/// menu comes with issue #17.
+/// Driving aids of this kart's driver (GD § 11), off by default. Max decided on 2026-10-13
+/// (issue #17) that the aids are not planned for now: nothing turns them on, no menu offers them
+/// and nothing keeps the kart on the track. What remains is the drift's side of the assisted
+/// steering (issue #4), kept because the drift rules, the bots' tier choice and their tests use
+/// it; it is ready if the aids come back.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KartAssists {
     /// Assisted steering: the drift charges slower (2 and 0.8 units per tick) and the purple
-    /// mini-turbo is disabled (GD § 3.3 and 3.6). Keeping the kart on the track is #17.
+    /// mini-turbo is disabled (GD § 3.3 and 3.6). Never on in the game (see above).
     pub assisted_steering: bool,
 }
 

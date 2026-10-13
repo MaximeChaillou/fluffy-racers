@@ -3,6 +3,12 @@
 //!
 //! It follows the *interpolated* visual of the kart (see `crate::interpolation`), not the
 //! physics body, so it is as smooth at 30 fps as at 144 fps.
+//!
+//! **Looking behind** (GD § 2 and 13, issue #17): while the kart's `look_back` button is held (C,
+//! or X / Y on a gamepad), the camera cuts to the front of the kart and looks back, like MK8DX.
+//! The chase rig keeps running underneath: on release the camera is back exactly where the
+//! chase camera is, its springs never interrupted. The kart itself ignores the button (only an
+//! item thrown at that moment goes backwards, issue #16): the view stays out of the simulation.
 
 mod rig;
 
@@ -13,7 +19,7 @@ use bevy::transform::TransformSystems;
 use bevy_rapier3d::prelude::*;
 
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::kart::{Boost, KartState, KartTuning};
+use crate::kart::{Boost, KartInput, KartState, KartTuning};
 
 /// All the camera knobs, with their default values (our own starting points, à régler).
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
@@ -49,6 +55,12 @@ pub struct CameraTuning {
     pub drift_side_offset: f32,
     /// The camera never goes closer than this to the ground or a wall (m).
     pub clearance: f32,
+    /// Looking behind (issue #17): the camera sits this far in front of the kart (m)...
+    pub look_back_distance: f32,
+    /// ...this high above it (m)...
+    pub look_back_height: f32,
+    /// ...and looks at a point this far behind it (m).
+    pub look_back_target: f32,
 }
 
 impl Default for CameraTuning {
@@ -68,6 +80,9 @@ impl Default for CameraTuning {
             fov_response: 4.0,
             drift_side_offset: 1.0,
             clearance: 0.4,
+            look_back_distance: 4.5,
+            look_back_height: 2.0,
+            look_back_target: 10.0,
         }
     }
 }
@@ -131,7 +146,7 @@ fn chase(
     kart_tuning: Res<KartTuning>,
     rapier: ReadRapierContext,
     visuals: Query<(&Transform, &InterpolatedFrom), Without<ChaseCamera>>,
-    bodies: Query<(&Velocity, &Boost, Option<&CameraLean>)>,
+    bodies: Query<(&Velocity, &Boost, Option<&CameraLean>, Option<&KartInput>)>,
     mut cameras: Query<(&mut ChaseCamera, &mut Transform, &mut Projection)>,
 ) {
     let dt = time.delta_secs();
@@ -140,7 +155,7 @@ fn chase(
         let Ok((target, source)) = visuals.get(camera.target) else {
             continue;
         };
-        let Ok((velocity, boost, lean)) = bodies.get(source.0) else {
+        let Ok((velocity, boost, lean, kart_input)) = bodies.get(source.0) else {
             continue;
         };
         let input = RigInput {
@@ -151,7 +166,11 @@ fn chase(
             boosting: boost.is_active(),
             lean: lean.map_or(0.0, |l| l.0),
         };
-        let pose = camera.rig.update(&tuning, &input, dt);
+        let mut pose = camera.rig.update(&tuning, &input, dt);
+        // Looking behind: a cut to the front of the kart; the rig above keeps chasing.
+        if kart_input.is_some_and(|kart_input| kart_input.look_back) {
+            pose = camera.rig.look_back(&tuning, &input);
+        }
 
         // Keep the camera out of the ground and walls: if something solid lies between the
         // kart and the camera, move the camera in front of it.

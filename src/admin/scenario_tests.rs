@@ -389,6 +389,47 @@ fn closed_the_panel_has_no_egui_context() {
     assert!(!app.world().resource::<KeyboardCapture>().0);
 }
 
+/// Issue #17: the options menu is egui too, with the same rule: its context exists only while it
+/// is open (alone, or with the panel), and closing it gives the game its time back.
+#[test]
+fn the_options_menu_has_an_egui_context_only_while_open() {
+    use crate::options::OptionsMenu;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<AdminPanel>()
+        .init_resource::<KeyboardCapture>()
+        .init_resource::<OptionsMenu>()
+        .add_systems(Update, attach_egui_context);
+    let camera = app
+        .world_mut()
+        .spawn(ChaseCamera::new(Entity::PLACEHOLDER))
+        .id();
+    let egui_parts = |app: &mut App| {
+        let world = app.world_mut();
+        count::<
+            Or<(
+                With<PrimaryEguiContext>,
+                With<EguiContext>,
+                With<EguiRenderOutput>,
+            )>,
+        >(world)
+    };
+    app.update();
+    assert_eq!(egui_parts(&mut app), 0);
+    app.world_mut().resource_mut::<OptionsMenu>().open = true;
+    app.update();
+    assert!(app.world().get::<EguiContext>(camera).is_some());
+    // The panel opens and closes over it: the context stays for the menu.
+    app.world_mut().resource_mut::<AdminPanel>().open = true;
+    app.update();
+    app.world_mut().resource_mut::<AdminPanel>().open = false;
+    app.update();
+    assert!(app.world().get::<EguiContext>(camera).is_some());
+    app.world_mut().resource_mut::<OptionsMenu>().open = false;
+    app.update();
+    assert_eq!(egui_parts(&mut app), 0);
+}
+
 /// The tunings registered for the panel are the game's resources, and every one of them is
 /// found by reflection. Issue #15 added `StatsTuning` (the bounds of the stats' effects), issue
 /// #16 `ItemTuning` (the items, and the switch that takes them out of the races).

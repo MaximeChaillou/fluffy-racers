@@ -236,13 +236,15 @@ fn setup_race(mut commands: Commands, layout: Res<TrackLayout>, tuning: Res<Race
     commands.insert_resource(Race::new(&tuning));
 }
 
-/// Results screen: Enter / Space or the gamepad's A / Start races again.
+/// Results screen: Enter / Space or the gamepad's A / Start races again. Not while the game is
+/// paused (a menu is open: its keys are not the race's).
 fn request_restart(
     keys: Option<Res<ButtonInput<KeyCode>>>,
+    time: Option<Res<Time<Virtual>>>,
     gamepads: Query<&Gamepad>,
     mut race: ResMut<Race>,
 ) {
-    if race.phase() != RacePhase::Results {
+    if race.phase() != RacePhase::Results || time.is_some_and(|time| time.is_paused()) {
         return;
     }
     let key = keys.is_some_and(|keys| keys.any_just_pressed(RESTART_KEYS));
@@ -358,7 +360,8 @@ fn judge_rocket_starts(
 }
 
 /// Nothing moves before GO (no input, and no boost: a boost pushes even without throttle);
-/// finished racers coast (they keep their steering), unless they drive on (bots).
+/// finished racers coast (they keep their steering), unless they drive on (bots). Looking
+/// behind (issue #17) stays allowed: only the camera reads it.
 fn gate_inputs(
     race: Res<Race>,
     mut racers: Query<
@@ -375,12 +378,16 @@ fn gate_inputs(
     let started = race.started();
     for (mut input, mut boost, mut stall, progress, drives_on) in &mut racers {
         if !started {
-            input.set_if_neq(KartInput::default());
+            input.set_if_neq(KartInput {
+                look_back: input.look_back,
+                ..default()
+            });
             boost.set_if_neq(Boost::default());
             stall.set_if_neq(Stall::default());
         } else if progress.finished() && !drives_on {
             let coast = KartInput {
                 steer: input.steer,
+                look_back: input.look_back,
                 ..default()
             };
             input.set_if_neq(coast);

@@ -9,7 +9,7 @@ use bevy_egui::egui::{self, Color32, RichText};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 
 use super::{PartKind, Roster, SelectionAction, SelectionScreen};
-use crate::kart::{MAX_LEVEL, Stat, display_level};
+use crate::kart::{KeyboardLayout, MAX_LEVEL, Stat, display_level};
 
 /// The line being changed.
 const HIGHLIGHT: Color32 = Color32::from_rgb(255, 190, 70);
@@ -48,8 +48,12 @@ fn selection_window(
     mut contexts: EguiContexts,
     screen: Res<SelectionScreen>,
     roster: Res<Roster>,
+    layout: Option<Res<KeyboardLayout>>,
     mut actions: MessageWriter<SelectionAction>,
 ) {
+    let [up, left, down, right] = layout
+        .map_or_else(KeyboardLayout::default, |l| *l)
+        .letters();
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -127,10 +131,11 @@ fn selection_window(
                     actions.write(SelectionAction::Cancel);
                 }
             });
-            ui.small(
-                "Flèches haut / bas : la ligne · gauche / droite : le choix · \
-                 Entrée : course · Échap : annuler · G : revenir ici en jeu",
-            );
+            ui.small(format!(
+                "Haut / Bas ({up} / {down}) : la ligne · Gauche / Droite ({left} / {right}) : \
+                 le choix · Entrée : course · Échap : annuler · G : revenir ici en jeu · \
+                 O : options (clavier)"
+            ));
         });
 }
 
