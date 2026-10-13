@@ -83,17 +83,27 @@ impl Racer {
 pub struct RaceGrid {
     /// Bots on the grid (issue #6), at most `GRID_SLOTS - 1`.
     pub bots: usize,
+    /// Race seed (issue #40): every random draw of the bots of this race comes from it and from
+    /// their grid slot (`bots::bot_seed`): driving, rocket start, tricks, kart parts. Same seed,
+    /// same bots: the race tests run several seeds, and the network will have every peer draw
+    /// the same bots from the seed of the host. The game keeps [`RaceGrid::GAME_SEED`] (the bots
+    /// of every race before #40); a new seed applies at the next restart, when the bots spawn.
+    pub seed: u64,
 }
 
 impl Default for RaceGrid {
     fn default() -> Self {
         Self {
             bots: crate::track::GRID_SLOTS - 1,
+            seed: Self::GAME_SEED,
         }
     }
 }
 
 impl RaceGrid {
+    /// The race seed of the game: the bots drive exactly as before the seed existed.
+    pub const GAME_SEED: u64 = 0;
+
     /// Bots actually on the grid: one slot always stays for the player.
     pub fn bot_count(&self) -> usize {
         self.bots.min(crate::track::GRID_SLOTS - 1)
@@ -479,11 +489,17 @@ mod grid_tests {
         assert_eq!(grid.bot_slots(), 0..11);
         assert_eq!(grid.player_slot(), 11);
         // Alone: on the pole, as before the bots.
-        let solo = RaceGrid { bots: 0 };
+        let solo = RaceGrid {
+            bots: 0,
+            ..default()
+        };
         assert_eq!(solo.player_slot(), 0);
         assert!(solo.bot_slots().is_empty());
         // Never more than 12 racers: one slot always stays for the player.
-        let crowded = RaceGrid { bots: 30 };
+        let crowded = RaceGrid {
+            bots: 30,
+            ..default()
+        };
         assert_eq!(crowded.bot_count(), 11);
         assert_eq!(crowded.player_slot(), 11);
     }

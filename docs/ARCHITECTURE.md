@@ -64,6 +64,7 @@ Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur s
 - **Mon kart** : simulé localement. Son état est diffusé à **30 Hz** : tick, position, rotation, vitesses, état de drift/boost/touché. Le tout est quantifié et compact (< 64 octets).
 - **Karts distants** : affichés environ 100 ms dans le passé, par interpolation entre les snapshots reçus. On extrapole brièvement en cas de perte de paquets. Localement, ce sont des corps **kinématiques**.
 - **Collisions kart contre kart** : chaque pair calcule le choc sur *son* kart contre le proxy kinématique de l'autre. Le rendu est approximativement symétrique ; le fun passe avant l'exactitude.
+- **Bots** : l'hôte tire une graine de course et l'envoie avec le départ (`RaceGrid::seed`). Chaque pair en tire les mêmes bots : pièces du kart, donc stats et allure, et tirages de conduite (`bots::bot_seed`). Seul le pair qui simule un bot le conduit ; les autres le voient comme un kart distant.
 - **Croquettes et boîtes à objets** : l'hôte décide qui a ramassé quoi (événement fiable). La roulette est tirée localement par le ramasseur, avec la table du game design.
 - **Objets** : le lanceur fait autorité sur la trajectoire. C'est **la victime qui décide** si elle est touchée, puis elle l'annonce. On évite ainsi le sentiment d'injustice dû à la latence.
 

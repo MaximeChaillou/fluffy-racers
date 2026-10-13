@@ -12,7 +12,7 @@ use crate::bots::{Bot, bot_loadout};
 use crate::kart::{
     DriverVisual, Kart, KartStats, MaxSpeedFactors, MaxSpeedScale, PlayerKart, Stat, StatEffects,
 };
-use crate::race::{Race, RacePhase, Racer};
+use crate::race::{Race, RaceGrid, RacePhase, Racer};
 use crate::tests::{app_on, app_with_bots, player};
 use crate::track::TrackChoice;
 
@@ -249,6 +249,7 @@ fn the_bots_race_with_their_own_characters_and_parts() {
         app.update();
     }
     let roster = app.world().resource::<Roster>().clone();
+    let seed = app.world().resource::<RaceGrid>().seed;
     let world = app.world_mut();
     let bots: Vec<(usize, KartStats, StatEffects, MaxSpeedFactors)> = world
         .query_filtered::<(&Racer, &KartStats, &StatEffects, &MaxSpeedFactors), With<Bot>>()
@@ -259,7 +260,7 @@ fn the_bots_race_with_their_own_characters_and_parts() {
     for (slot, stats, effects, factors) in &bots {
         assert_eq!(
             *stats,
-            roster.stats(&bot_loadout(&roster, *slot)),
+            roster.stats(&bot_loadout(&roster, seed, *slot)),
             "slot {slot}"
         );
         assert_eq!(factors.stats, effects.top_speed);
