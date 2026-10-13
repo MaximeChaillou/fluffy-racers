@@ -1,0 +1,43 @@
+// "Anneau Guimauve": a simple oval to try things out (issue #36, admin panel). Original layout:
+// two straights of 140 m and two flat half circles of 35 m radius, about 500 m a lap. Flat out
+// in the turns without drifting; a drift in a turn gives a blue or an orange mini-turbo.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Anneau Guimauve",
+    checkpoint_spacing: 25.0,
+    wall_height: 0.8,
+    points: [
+        // 0-3: start straight, heading north.
+        (pos: (0.0, 0.0, 25.0)),
+        (pos: (0.0, 0.0, -10.0)),
+        (pos: (0.0, 0.0, -45.0)),
+        (pos: (0.0, 0.0, -70.0)),
+        // 4-6: first half circle, to the right (center (35, -70)).
+        (pos: (10.25, 0.0, -94.75)),
+        (pos: (35.0, 0.0, -105.0)),
+        (pos: (59.75, 0.0, -94.75)),
+        // 7-11: back straight, heading south, with a boost pad.
+        (pos: (70.0, 0.0, -70.0)),
+        (pos: (70.0, 0.0, -35.0)),
+        (pos: (70.0, 0.0, 0.0)),
+        (pos: (70.0, 0.0, 35.0)),
+        (pos: (70.0, 0.0, 70.0)),
+        // 12-14: second half circle (center (35, 70)).
+        (pos: (59.75, 0.0, 94.75)),
+        (pos: (35.0, 0.0, 105.0)),
+        (pos: (10.25, 0.0, 94.75)),
+        // 15-16: back on the start straight (the grid sits between 15 and 0).
+        (pos: (0.0, 0.0, 70.0)),
+        (pos: (0.0, 0.0, 50.0)),
+    ],
+    boost_pads: [
+        (at: 9.0, offset: 0.0),
+    ],
+    // Croquettes on both straights, off the middle of the road.
+    croquettes: [
+        (from: 1.5, count: 5, spacing: 3.0, offset: 0.45),
+        (from: 8.0, count: 5, spacing: 3.0, offset: -0.45),
+    ],
+)

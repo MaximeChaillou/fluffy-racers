@@ -6,7 +6,8 @@ use bevy::prelude::*;
 
 /// All the knobs of the croquettes. Distances in meters, durations in seconds, angles in
 /// radians.
-#[derive(Resource, Clone, Debug, PartialEq)]
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
 pub struct CroquetteTuning {
     // --- Held croquettes ------------------------------------------------------------------------
     /// Most croquettes a kart can hold (GD § 7: 10, like the coins of MK8DX). Picking one up at

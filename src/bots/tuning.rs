@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use crate::kart::MiniTurbo;
 
 /// Bot difficulty (GD § 12: precision, drift tier, anticipation; items come with #16).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Reflect)]
 pub enum BotDifficulty {
     Easy,
     #[default]
@@ -26,7 +26,7 @@ impl BotDifficulty {
 /// How well a bot drives at one difficulty.
 ///
 /// Distances in meters, speeds in m/s, angles in radians.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct BotSkill {
     // --- Trajectory precision -------------------------------------------------------------------
     /// Share of the racing line followed: 0 = the centerline, 1 = the full racing line (wide
@@ -71,7 +71,8 @@ pub struct BotSkill {
 }
 
 /// All the knobs of the bots.
-#[derive(Resource, Clone, Debug, PartialEq)]
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
 pub struct BotTuning {
     /// Difficulty of the bots of the game's grid. Normal: the default level of a kart game.
     pub grid_difficulty: BotDifficulty,

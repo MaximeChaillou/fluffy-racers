@@ -34,7 +34,7 @@ use crate::kart::{
     Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
     MaxSpeedFactors, MaxSpeedScale, PlayerKart, TrickTracker, kart_body, spawn_kart_visual,
 };
-use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceProgress, Racer};
+use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
 use crate::track::TrackLayout;
 
 /// A kart driven by the computer.
@@ -87,7 +87,10 @@ impl Plugin for BotPlugin {
         app.init_resource::<BotTuning>()
             .add_systems(
                 Update,
-                (build_racing_line, spawn_bots).run_if(resource_added::<TrackLayout>),
+                // No bot in free driving (admin panel, issue #36).
+                (build_racing_line, spawn_bots)
+                    .run_if(resource_added::<TrackLayout>)
+                    .run_if(not(resource_equals(RaceMode::FreeRoam))),
             )
             .add_systems(
                 FixedUpdate,

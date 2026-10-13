@@ -1,0 +1,7 @@
+// The circuits of this folder, as the admin panel lists them (issue #36): a browser cannot list
+// a folder, so every new `*.track.ron` file is added here too (a test checks it). `name` is the
+// circuit's `name`, `file` its file in this folder. The first one is the game's circuit.
+[
+    (name: "Prairie Pompon", file: "prairie.track.ron"),
+    (name: "Anneau Guimauve", file: "anneau.track.ron"),
+]

@@ -23,7 +23,7 @@ mod visual;
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use input::{DEBUG_RESET_KEY, KartInputPlugin, PlayerKart, SpawnPoint};
-pub use physics::{Boost, KartState, target_yaw_rate};
+pub use physics::{Boost, KartState, max_speed, target_yaw_rate};
 pub use rocket::{
     Stall, StartOutcome, StartPress, THROTTLE_PRESSED, rocket_start_duration, start_outcome,
 };
@@ -42,8 +42,8 @@ use crate::interpolation::PhysicsPose;
 use crate::track::{BoostPad, Surface, TrickRamp};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
-    approach_yaw_rate, max_speed, next_forward_speed, next_lateral_speed, next_state,
-    next_yaw_rate, righting_angular_velocity, suspension_accel,
+    approach_yaw_rate, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
+    righting_angular_velocity, suspension_accel,
 };
 
 /// What a driver (player, bot, network) asks the kart to do this tick.

@@ -110,6 +110,16 @@ impl RaceGrid {
     }
 }
 
+/// What a circuit is for: a race (the default), or free driving (admin panel, issue #36): no race,
+/// no bots, the player alone on the pole, brought back there by the reset key (R) like on the
+/// test ground. Read when the level is built (`crate::level::LoadLevel` rebuilds it).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RaceMode {
+    #[default]
+    Race,
+    FreeRoam,
+}
+
 /// A racer that keeps driving after the finish line instead of coasting (bots, issue #6:
 /// coasting bots would block the straight for the racers still finishing).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -174,6 +184,7 @@ impl Plugin for RacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RaceTuning>()
             .init_resource::<RaceGrid>()
+            .init_resource::<RaceMode>()
             .configure_sets(
                 FixedUpdate,
                 (
@@ -189,7 +200,8 @@ impl Plugin for RacePlugin {
                 (
                     setup_race
                         .run_if(resource_exists::<TrackLayout>)
-                        .run_if(not(resource_exists::<Race>)),
+                        .run_if(not(resource_exists::<Race>))
+                        .run_if(resource_equals(RaceMode::Race)),
                     (request_restart, request_tow).run_if(resource_exists::<Race>),
                 ),
             )

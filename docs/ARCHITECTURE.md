@@ -38,6 +38,14 @@ Les sources possibles :
 - bot (suit la ligne de course du circuit) ;
 - réseau : on ne l'utilise pas pour les karts distants (voir plus bas).
 
+Quand un champ de texte du panneau d'admin a le clavier, `ButtonInput<KeyCode>` est vidé à chaque frame (`admin::KeyboardCapture`) : aucune source ne voit alors de touche.
+
+## Panneau d'admin et niveaux
+
+- **Réglages** (`src/admin/`) : les Resources de réglage dérivent `Reflect` ; le panneau les parcourt par réflexion (`admin::tuning`), sans les connaître. Un champ ajouté apparaît tout seul ; une nouvelle Resource de réglage demande une ligne dans `AdminPlugin`. L'export ne contient que les valeurs modifiées, sous forme de texte RON (`"KartTuning.max_speed": 30.0`) ; c'est aussi ce qui est stocké dans le navigateur.
+- **Coût** : l'interface egui (`bevy_egui`) n'existe que panneau ouvert. Le contexte egui est posé sur la caméra à l'ouverture et retiré à la fermeture ; sans contexte, egui ne fait rien.
+- **Niveaux** (`src/level.rs`) : toute entité racine d'un niveau porte `LevelScoped` (pièces du circuit, karts, visuels, croquettes éparpillées, pélicans, HUD). `LoadLevel` les supprime, retire les Resources du niveau (`TrackLayout`, `Course`, `Race`, `RacingLine`…) et laisse le chemin habituel reconstruire : circuit, joueur, bots, course. La caméra reste et suit le nouveau kart. C'est ce qu'utiliseront aussi les menus et le Grand Prix (#19).
+
 ## Réseau : P2P, sans serveur de jeu
 
 Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur son propre kart.** C'est simple, ça donne zéro latence ressentie pour son propre kart, et ça tient jusqu'à 12 joueurs. Il n'y a pas d'anti-triche : c'est un jeu entre amis, c'est assumé.

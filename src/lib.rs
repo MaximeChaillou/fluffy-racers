@@ -1,11 +1,13 @@
 //! Fluffy Racers: game logic lives here so it can be unit-tested without a window.
 
+pub mod admin;
 pub mod audio;
 pub mod bots;
 pub mod camera;
 pub mod croquettes;
 pub mod interpolation;
 pub mod kart;
+pub mod level;
 pub mod race;
 pub mod track;
 pub mod ui;
@@ -14,6 +16,7 @@ use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use admin::AdminPlugin;
 use audio::SoundPlugin;
 use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
@@ -23,7 +26,8 @@ use kart::{
     KartInputPlugin, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin, PlayerKart,
     SpawnPoint, kart_body, spawn_kart_visual,
 };
-use race::{PelicanPlugin, RaceGrid, RacePlugin, Racer};
+use level::LevelPlugin;
+use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
 use ui::{DebugOverlayPlugin, HudPlugin};
 
@@ -48,7 +52,8 @@ impl Plugin for SimulationPlugin {
 }
 
 /// The whole game: simulation, track, race rules, croquettes, player kart, bots, visuals,
-/// sounds, camera, HUD and debug overlay.
+/// sounds, camera, HUD, debug overlay and admin panel (its egui part only with a renderer).
+/// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
@@ -73,6 +78,8 @@ impl Plugin for GamePlugin {
                 HudPlugin,
                 DebugOverlayPlugin,
                 SoundPlugin,
+                LevelPlugin,
+                AdminPlugin,
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
@@ -82,9 +89,11 @@ impl Plugin for GamePlugin {
 /// Body color of the player's kart.
 pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
 
-/// Spawns the player's kart and camera once, when the track says where to start. On a circuit
-/// the player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without
-/// bots); on the test ground it just drives, and falls back to its spawn point.
+/// Spawns the player's kart, when the track says where to start, and the camera the first time
+/// (a reloaded level, issue #36, gives the same camera the new kart to follow). In a race the
+/// player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without bots);
+/// on the test ground, or driving freely on a circuit (`RaceMode::FreeRoam`), it just drives,
+/// and falls back to its spawn point.
 fn spawn_player(
     mut commands: Commands,
     visuals: Res<KartVisualAssets>,
@@ -94,9 +103,12 @@ fn spawn_player(
     start: Res<PlayerStart>,
     circuit: Option<Res<TrackLayout>>,
     grid: Res<RaceGrid>,
+    mode: Res<RaceMode>,
+    mut cameras: Query<(&mut ChaseCamera, &mut Projection)>,
 ) {
     let slot = circuit
         .as_ref()
+        .filter(|_| *mode == RaceMode::Race)
         .map(|layout| grid.player_slot().min(layout.grid.len() - 1));
     let spawn = match (&circuit, slot) {
         (Some(layout), Some(slot)) => layout.grid[slot],
@@ -109,12 +121,19 @@ fn spawn_player(
     };
     let body = kart.id();
     let visual = spawn_kart_visual(&mut commands, &visuals, &mut materials, body, PLAYER_COLOR);
+    let projection = Projection::Perspective(PerspectiveProjection {
+        fov: camera_tuning.base_fov.to_radians(),
+        ..default()
+    });
+    if let Ok((mut camera, mut current)) = cameras.single_mut() {
+        // Its springs start over behind the new kart.
+        *camera = ChaseCamera::new(visual);
+        *current = projection;
+        return;
+    }
     commands.spawn((
         Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection {
-            fov: camera_tuning.base_fov.to_radians(),
-            ..default()
-        }),
+        projection,
         Transform::from_xyz(0.0, 4.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
         ChaseCamera::new(visual),
     ));
