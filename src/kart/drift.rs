@@ -155,6 +155,12 @@ pub struct StateContext {
     pub jump_was_held: bool,
     /// Assisted steering (GD § 11): slower charge, no purple tier.
     pub assisted: bool,
+    /// A wheel stands on a trick ramp: the button arms a trick there instead of hopping
+    /// (issue #13, `trick.rs`).
+    pub on_trick_ramp: bool,
+    /// The last press of the button falls in the trick window of a takeoff from a trick ramp
+    /// (`TrickTracker::trick_ready`): a trick starts.
+    pub trick_ready: bool,
 }
 
 /// Result of one state machine tick.
@@ -165,6 +171,8 @@ pub struct StateStep {
     pub hop: bool,
     /// The drift was released with this tier reached: fire its boost.
     pub boost: Option<MiniTurbo>,
+    /// A trick landed this tick: fire the trick boost (GD § 5).
+    pub trick_landed: bool,
 }
 
 impl StateStep {
@@ -173,12 +181,13 @@ impl StateStep {
             state,
             hop: false,
             boost: None,
+            trick_landed: false,
         }
     }
 }
 
 /// Next driving state (docs/ARCHITECTURE.md: `Grounded`, `Hop`, `Drifting`, `Airborne`,
-/// `Respawning`).
+/// `Trick`, `Respawning`).
 pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> StateStep {
     // Ground contact with the usual grace period against bumps.
     let base = next_state(
@@ -195,15 +204,32 @@ pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> 
         // The tow pelican carries the kart: nothing the driver does matters until the race rules
         // drop it back on the track.
         KartState::Respawning => StateStep::to(KartState::Respawning),
-        KartState::Grounded | KartState::Airborne => {
-            if grounded && pressed {
+        // Pressed in the trick window after leaving a trick ramp (the kart may still count as
+        // grounded for the short grace period): a trick, not a hop.
+        KartState::Grounded | KartState::Airborne | KartState::Hop { .. }
+            if ctx.trick_ready && ctx.wheels_on_ground == 0 =>
+        {
+            StateStep::to(KartState::Trick)
+        }
+        KartState::Trick => {
+            if ctx.wheels_on_ground > 0 {
                 StateStep {
-                    state: KartState::Hop {
+                    trick_landed: true,
+                    ..StateStep::to(KartState::Grounded)
+                }
+            } else {
+                StateStep::to(KartState::Trick)
+            }
+        }
+        KartState::Grounded | KartState::Airborne => {
+            // On a trick ramp the button is the trick button: no hop there.
+            if grounded && pressed && !ctx.on_trick_ramp {
+                StateStep {
+                    hop: true,
+                    ..StateStep::to(KartState::Hop {
                         ticks: 0,
                         side: steered,
-                    },
-                    hop: true,
-                    boost: None,
+                    })
                 }
             } else {
                 StateStep::to(base)
@@ -234,9 +260,8 @@ pub fn step_state(tuning: &KartTuning, state: KartState, ctx: &StateContext) -> 
         KartState::Drifting { side, charge } => {
             if !held {
                 return StateStep {
-                    state: base,
-                    hop: false,
                     boost: mini_turbo_tier(tuning, charge, ctx.assisted),
+                    ..StateStep::to(base)
                 };
             }
             if ctx.ticks_without_ground >= tuning.drift_max_air_ticks
@@ -277,6 +302,8 @@ mod tests {
             },
             jump_was_held: was_held,
             assisted: false,
+            on_trick_ramp: false,
+            trick_ready: false,
         }
     }
 
@@ -688,5 +715,66 @@ mod tests {
             assert_eq!(step.boost, None);
         }
         assert_eq!(KartState::Respawning.mini_turbo(&t, false), None);
+    }
+
+    /// Issue #13: in the trick window after a trick ramp the button starts a trick, not a hop;
+    /// the trick lasts until the landing, which fires the trick boost.
+    #[test]
+    fn a_press_in_the_trick_window_starts_a_trick_that_lands_with_a_boost() {
+        let t = KartTuning::default();
+        let mut air = airborne(ctx(true, false, 0.0), 2);
+        air.trick_ready = true;
+        // Even during the grace period, when the kart still counts as grounded: no hop.
+        for state in [
+            KartState::Grounded,
+            KartState::Airborne,
+            KartState::Hop {
+                ticks: 3,
+                side: None,
+            },
+        ] {
+            let step = step_state(&t, state, &air);
+            assert_eq!(step.state, KartState::Trick, "{state:?}");
+            assert!(!step.hop);
+            assert!(!step.trick_landed);
+        }
+        // In the air the trick goes on, whatever the driver does.
+        for c in [ctx(false, true, 1.0), ctx(true, false, -1.0)] {
+            let step = step_state(&t, KartState::Trick, &airborne(c, 10));
+            assert_eq!(step.state, KartState::Trick);
+            assert!(!step.trick_landed && !step.hop);
+        }
+        // Landing: the trick boost.
+        let step = step_state(&t, KartState::Trick, &ctx(false, false, 0.0));
+        assert_eq!(step.state, KartState::Grounded);
+        assert!(step.trick_landed);
+        assert_eq!(step.boost, None);
+        assert_eq!(KartState::Trick.mini_turbo(&t, false), None);
+    }
+
+    #[test]
+    fn the_button_does_not_hop_on_a_trick_ramp_and_nothing_tricks_outside_the_window() {
+        let t = KartTuning::default();
+        let mut on_ramp = ctx(true, false, 1.0);
+        on_ramp.on_trick_ramp = true;
+        let step = step_state(&t, KartState::Grounded, &on_ramp);
+        assert!(!step.hop);
+        assert_eq!(step.state, KartState::Grounded);
+        // In the air outside the window: nothing.
+        let step = step_state(
+            &t,
+            KartState::Airborne,
+            &airborne(ctx(true, false, 0.0), 10),
+        );
+        assert_eq!(step.state, KartState::Airborne);
+        // A wheel on the ground: a hop as usual, no trick.
+        let mut grounded = ctx(true, false, 0.0);
+        grounded.trick_ready = true;
+        let step = step_state(&t, KartState::Grounded, &grounded);
+        assert!(step.hop);
+        assert_ne!(step.state, KartState::Trick);
+        // A plain landing: no trick boost.
+        let step = step_state(&t, KartState::Airborne, &ctx(false, false, 0.0));
+        assert!(!step.trick_landed);
     }
 }

@@ -7,8 +7,10 @@
 //!
 //! 1. [`RaceSystems::Flow`], before the karts read their input: race clock and phase (grid,
 //!    countdown, race, finish, results), restart.
-//! 2. [`RaceSystems::Gate`], between the input and the driving: nothing moves before GO (the
-//!    racers' `KartInput` is zeroed), finished racers coast.
+//! 2. [`RaceSystems::Gate`], between the input and the driving: the rocket start watches the
+//!    accelerator during the countdown and is judged on GO (GD § 4, issue #13: a boost, or a
+//!    stalled engine); then nothing moves before GO (the racers' `KartInput` is zeroed), and
+//!    finished racers coast.
 //! 3. [`RaceSystems::Rules`], after the physics step: checkpoints, laps, finish, tow pelican,
 //!    ranking and distance to the leader.
 //!
@@ -39,16 +41,27 @@ pub use tuning::{RaceTuning, seconds_to_ticks, ticks_to_seconds};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{PhysicsSet, Velocity};
 
+use crate::TICK_HZ;
 use crate::interpolation::PhysicsPose;
-use crate::kart::{Boost, Kart, KartInput, KartState, KartSystems, PlayerKart};
+use crate::kart::{
+    Boost, Kart, KartInput, KartState, KartSystems, KartTuning, PlayerKart, Stall, StartOutcome,
+    StartPress, start_outcome,
+};
 use crate::track::TrackLayout;
 
 /// A kart taking part in the race. `grid_slot`: its starting place (0 = pole), where a restart
 /// puts it back. See [`RaceGrid`] for who takes which slot.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-#[require(RaceProgress, Tow)]
+#[require(RaceProgress, Tow, RocketStart)]
 pub struct Racer {
     pub grid_slot: usize,
+}
+
+/// A racer's rocket start (GD § 4, issue #13): its first press of the accelerator from the
+/// race (re)start to GO, judged on GO (`kart::start_outcome`) with the kart's own tuning.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RocketStart {
+    pub press: StartPress,
 }
 
 impl Racer {
@@ -184,7 +197,9 @@ impl Plugin for RacePlugin {
                 FixedUpdate,
                 (
                     advance_race.in_set(RaceSystems::Flow),
-                    gate_inputs.in_set(RaceSystems::Gate),
+                    (judge_rocket_starts, gate_inputs)
+                        .chain()
+                        .in_set(RaceSystems::Gate),
                     (update_progress, rank_racers)
                         .chain()
                         .in_set(RaceSystems::Rules),
@@ -289,6 +304,34 @@ fn advance_race(
     }
 }
 
+/// Rocket start (GD § 4): before GO, records each racer's first press of the accelerator,
+/// before the gate zeroes it (its driver wrote it this tick); on GO, gives the start boost or
+/// stalls the engine. A (re)start forgets the previous one.
+fn judge_rocket_starts(
+    race: Res<Race>,
+    tuning: Res<KartTuning>,
+    mut racers: Query<(&KartInput, &mut RocketStart, &mut Boost, &mut Stall), With<Racer>>,
+) {
+    let flow = race.flow;
+    let race_ticks = race.race_ticks();
+    for (input, mut start, mut boost, mut stall) in &mut racers {
+        if flow.tick <= 1 {
+            start.set_if_neq(RocketStart::default());
+        }
+        if race_ticks == 0 {
+            let mut press = start.press;
+            press.observe(flow.ticks_since_two(&race.timings), input.throttle);
+            start.set_if_neq(RocketStart { press });
+        } else if race_ticks == 1 {
+            match start_outcome(&tuning, start.press, TICK_HZ as f32) {
+                StartOutcome::Normal => {}
+                StartOutcome::Stall(seconds) => stall.remaining = seconds,
+                StartOutcome::Boost(strength, duration) => boost.add(strength, duration),
+            }
+        }
+    }
+}
+
 /// Nothing moves before GO (no input, and no boost: a boost pushes even without throttle);
 /// finished racers coast (they keep their steering), unless they drive on (bots).
 fn gate_inputs(
@@ -297,6 +340,7 @@ fn gate_inputs(
         (
             &mut KartInput,
             &mut Boost,
+            &mut Stall,
             &RaceProgress,
             Has<DrivesOnAfterFinish>,
         ),
@@ -304,10 +348,11 @@ fn gate_inputs(
     >,
 ) {
     let started = race.started();
-    for (mut input, mut boost, progress, drives_on) in &mut racers {
+    for (mut input, mut boost, mut stall, progress, drives_on) in &mut racers {
         if !started {
             input.set_if_neq(KartInput::default());
             boost.set_if_neq(Boost::default());
+            stall.set_if_neq(Stall::default());
         } else if progress.finished() && !drives_on {
             let coast = KartInput {
                 steer: input.steer,

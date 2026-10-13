@@ -43,11 +43,16 @@
         // Sand at the inside of the hairpin: cutting the apex costs speed.
         (from: 5.3, to: 6.8, left: 0.55, right: 1.0),
     ],
+    // Trick ramp (issue #13): press jump/drift as the kart leaves it for a trick and a boost on
+    // landing.
     trick_ramps: [
         (at: 9.4, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
     ],
+    // Boost pads (issue #13): about 1 s of boost. Two on the start straight, one on each side,
+    // and one before the raised turn.
     boost_pads: [
         (at: 1.6, offset: -0.45),
+        (at: 2.2, offset: 0.45),
         (at: 16.2, offset: 0.35),
     ],
     item_boxes: [

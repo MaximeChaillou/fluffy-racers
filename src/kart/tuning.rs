@@ -140,6 +140,61 @@ pub struct KartTuning {
     pub drift_slip_angle_wide: f32,
     /// How fast the visual slip angle follows its target (1/s).
     pub drift_slip_response: f32,
+
+    // --- Rocket start (GD § 4, issue #13) -------------------------------------------------------
+    /// `t` = time from the "2" of the countdown to the first press of the accelerator. Up to
+    /// this `t` the start is perfect: `rocket_start_max_duration` (GD § 4: 0.25 s).
+    pub rocket_start_perfect: f32,
+    /// Boost of a perfect start (s, GD § 4: 2.5 s).
+    pub rocket_start_max_duration: f32,
+    /// Past `rocket_start_perfect`, the boost shrinks linearly down to
+    /// `rocket_start_min_duration` at this `t` (GD § 4: 1 s, when the "1" shows); later, no
+    /// boost at all.
+    pub rocket_start_late: f32,
+    /// Boost of the latest start that still gets one (s, GD § 4: 0.5 s).
+    pub rocket_start_min_duration: f32,
+    /// Max speed increase of the rocket start boost. Our own starting point, à régler: +30 %,
+    /// like a chili (the GD only gives the durations).
+    pub rocket_start_strength: f32,
+    /// Accelerating before the "2" stalls the engine for this long after GO: the kart cannot
+    /// move (s, GD § 4: 1 s).
+    pub rocket_start_stall: f32,
+
+    // --- Tricks (GD § 5, issue #13) -------------------------------------------------------------
+    /// Pressing jump/drift at most this long before or after the kart leaves a trick ramp
+    /// starts a trick (s, GD § 5: about 0.2 s). On the ramp itself the button does not hop: it
+    /// is the trick button there.
+    pub trick_window: f32,
+    /// Boost on landing after a trick (s, GD § 5: 0.5 to 0.8 s with the Mini-turbo stat; the
+    /// average kart gets the middle until the stats of issue #15).
+    pub trick_boost_duration: f32,
+    /// Max speed increase of the trick boost. Our own starting point, à régler: +20 %, like a
+    /// blue mini-turbo.
+    pub trick_boost_strength: f32,
+
+    // --- Slipstream (GD § 6, issue #13) ---------------------------------------------------------
+    /// The slipstream gauge charges within this distance behind another kart, center to
+    /// center (m, GD § 6: 5 m)...
+    pub slipstream_range: f32,
+    /// ...inside this cone behind it, half angle (rad, GD § 6: ±12°)...
+    pub slipstream_cone: f32,
+    /// ...above this share of the kart's own top speed (GD § 6: 60 %).
+    pub slipstream_min_speed: f32,
+    /// Charge time before the boost (s, GD § 6: 1.2 s).
+    pub slipstream_charge_time: f32,
+    /// Out of the wake, the gauge empties at this many seconds of charge per second (à régler:
+    /// a full gauge is lost in 0.6 s). A short swerve does not lose everything.
+    pub slipstream_decay: f32,
+    /// Slipstream boost duration (s, GD § 6: 1 s).
+    pub slipstream_boost_duration: f32,
+    /// Max speed increase of the slipstream boost. Our own starting point, à régler: +25 %.
+    pub slipstream_boost_strength: f32,
+
+    // --- Boost pads (GD § 2, issue #13) ---------------------------------------------------------
+    /// Boost given by a pad, refreshed while a wheel rolls on it (s, GD § 2: about 1 s).
+    pub boost_pad_duration: f32,
+    /// Max speed increase of a boost pad. Our own starting point, à régler: +30 %, like a chili.
+    pub boost_pad_strength: f32,
 }
 
 impl Default for KartTuning {
@@ -201,6 +256,60 @@ impl Default for KartTuning {
             drift_slip_angle_tight: 0.45,
             drift_slip_angle_wide: 0.2,
             drift_slip_response: 10.0,
+
+            rocket_start_perfect: 0.25,
+            rocket_start_max_duration: 2.5,
+            rocket_start_late: 1.0,
+            rocket_start_min_duration: 0.5,
+            rocket_start_strength: 0.3,
+            rocket_start_stall: 1.0,
+
+            trick_window: 0.2,
+            trick_boost_duration: 0.65,
+            trick_boost_strength: 0.2,
+
+            slipstream_range: 5.0,
+            slipstream_cone: 12f32.to_radians(),
+            slipstream_min_speed: 0.6,
+            slipstream_charge_time: 1.2,
+            slipstream_decay: 2.0,
+            slipstream_boost_duration: 1.0,
+            slipstream_boost_strength: 0.25,
+
+            boost_pad_duration: 1.0,
+            boost_pad_strength: 0.3,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #13: the values of GD § 2, 4, 5 and 6.
+    #[test]
+    fn driving_technique_defaults_follow_the_game_design() {
+        let t = KartTuning::default();
+        assert_eq!(t.rocket_start_perfect, 0.25);
+        assert_eq!(t.rocket_start_max_duration, 2.5);
+        assert_eq!(t.rocket_start_late, 1.0);
+        assert_eq!(t.rocket_start_min_duration, 0.5);
+        assert_eq!(t.rocket_start_stall, 1.0);
+        assert!((t.trick_window - 0.2).abs() < 1e-6);
+        assert!((0.5..=0.8).contains(&t.trick_boost_duration));
+        assert_eq!(t.slipstream_range, 5.0);
+        assert!((t.slipstream_cone.to_degrees() - 12.0).abs() < 1e-4);
+        assert_eq!(t.slipstream_min_speed, 0.6);
+        assert_eq!(t.slipstream_charge_time, 1.2);
+        assert_eq!(t.slipstream_boost_duration, 1.0);
+        assert_eq!(t.boost_pad_duration, 1.0);
+        for strength in [
+            t.rocket_start_strength,
+            t.trick_boost_strength,
+            t.slipstream_boost_strength,
+            t.boost_pad_strength,
+        ] {
+            assert!(strength > 0.0 && strength <= 0.3, "{strength}");
         }
     }
 }

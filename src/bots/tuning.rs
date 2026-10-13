@@ -60,6 +60,14 @@ pub struct BotSkill {
     pub min_drift_angle: f32,
     /// Chance to drift a turn long enough for it (decided once per turn).
     pub drift_chance: f32,
+
+    // --- Driving techniques (GD § 4 and 5, issue #13) -------------------------------------------
+    /// It accelerates this long after the "2" of the countdown, drawn in this range at each
+    /// start (s): up to 0.25 s is a perfect rocket start, after 1 s none. Never before the "2".
+    pub start_delay_min: f32,
+    pub start_delay_max: f32,
+    /// Chance to press jump/drift right after leaving a trick ramp (a trick).
+    pub trick_chance: f32,
 }
 
 /// All the knobs of the bots.
@@ -145,6 +153,9 @@ impl Default for BotTuning {
                     purple_when_possible: false,
                     min_drift_angle: 130f32.to_radians(),
                     drift_chance: 0.5,
+                    start_delay_min: 0.2,
+                    start_delay_max: 1.3,
+                    trick_chance: 0.4,
                 },
                 // Normal: good line, aims for orange.
                 BotSkill {
@@ -161,6 +172,9 @@ impl Default for BotTuning {
                     purple_when_possible: false,
                     min_drift_angle: 120f32.to_radians(),
                     drift_chance: 0.85,
+                    start_delay_min: 0.05,
+                    start_delay_max: 0.7,
+                    trick_chance: 0.8,
                 },
                 // Hard: full racing line, late braking, orange, purple when the turn allows it.
                 BotSkill {
@@ -177,6 +191,9 @@ impl Default for BotTuning {
                     purple_when_possible: true,
                     min_drift_angle: 115f32.to_radians(),
                     drift_chance: 1.0,
+                    start_delay_min: 0.0,
+                    start_delay_max: 0.22,
+                    trick_chance: 1.0,
                 },
             ],
 
@@ -226,7 +243,12 @@ mod tests {
             assert!(high.corner_margin > low.corner_margin);
             assert!(high.target_tier >= low.target_tier);
             assert!(high.drift_chance >= low.drift_chance);
+            assert!(high.start_delay_max < low.start_delay_max);
+            assert!(high.trick_chance >= low.trick_chance);
         }
+        // Rocket start: never before the "2" (no stall); Hard always perfect (≤ 0.25 s).
+        assert!(t.skills.iter().all(|s| s.start_delay_min >= 0.0));
+        assert!(t.skill(BotDifficulty::Hard).start_delay_max <= 0.25);
         assert_eq!(t.skill(BotDifficulty::Easy).target_tier, MiniTurbo::Blue);
         assert_eq!(
             t.skill(BotDifficulty::Normal).target_tier,
