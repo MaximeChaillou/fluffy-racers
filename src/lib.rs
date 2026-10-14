@@ -11,6 +11,7 @@ pub mod interpolation;
 pub mod items;
 pub mod kart;
 pub mod level;
+pub mod net;
 pub mod options;
 pub mod race;
 pub mod track;
@@ -34,6 +35,7 @@ use kart::{
     SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
+use net::NetPlugin;
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
@@ -61,8 +63,8 @@ impl Plugin for SimulationPlugin {
 
 /// The whole game: simulation, track, race rules, croquettes, items, the interactions between
 /// karts (issue #34), characters and their selection screen, player kart, bots, visuals, sounds,
-/// camera, HUD, debug overlay, the player's options (issue #17) and admin panel (the egui parts
-/// only with a renderer).
+/// camera, HUD, debug overlay, the player's options (issue #17), admin panel and the network's
+/// rooms and lobby (issue #7; the egui parts only with a renderer).
 /// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -99,7 +101,7 @@ impl Plugin for GamePlugin {
                 HudPlugin,
                 DebugOverlayPlugin,
                 SoundPlugin,
-                (LevelPlugin, OptionsPlugin, AdminPlugin),
+                (LevelPlugin, OptionsPlugin, AdminPlugin, NetPlugin),
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));

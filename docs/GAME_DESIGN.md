@@ -227,6 +227,7 @@ Le confort qui existe déjà (#17) :
 | Interaction (appui court = coup de patte, maintien = attraper, § 15) | X ou F | RB |
 | Regarder derrière (tenir) | C | X / Y |
 | Options | O | — |
+| En ligne (salon) | L | — |
 | Pause | Échap | Start |
 
 - Les touches sont des **positions physiques** : W/A/S/D se lisent Z/Q/S/D sur un clavier AZERTY. X, F, E et C portent la même lettre en AZERTY et en QWERTY.
@@ -239,6 +240,7 @@ Le confort qui existe déjà (#17) :
 - **Ni Ctrl ni Alt** : Ctrl + W (Cmd + W sur Mac) ferme l'onglet et le navigateur ne laisse pas la page l'empêcher ; Alt ouvre les menus de certains navigateurs.
 - Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay) ; Entrée et Espace relancent la course depuis le classement.
 - **Choix du pilote et du kart** (#15) : l'écran de sélection s'ouvre au lancement du jeu et avec **G** (« garage » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac). Flèches haut et bas (ou Z/S en AZERTY, W/S en QWERTY) : la ligne ; gauche et droite (Q/D ou A/D) : le choix ; **Entrée** lance la course avec ce choix ; **Échap** ou G referment l'écran sans rien changer. Le jeu est en pause tant qu'il est ouvert.
+- **En ligne** (#7) : **L** (« en ligne » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ouvre et ferme le salon : « Créer une partie », le lien d'invitation, la liste des joueurs (nom, animal, ping, hôte), « Prêt » et « Quitter la partie ». Il s'ouvre tout seul avec `?room=CODE` dans l'adresse (`--room CODE` en natif). Il se manie à la souris et **ne met pas le jeu en pause**. Tant que le menu d'options est ouvert, L ne fait rien.
 - **Panneau d'admin** (#36) : **P** l'ouvre et le ferme (même lettre en AZERTY et en QWERTY, sans Fn sur Mac, contrairement à F1 à F12), tout comme le petit bouton « admin » en bas de l'écran ; `?admin` dans l'adresse de la page l'ouvre au démarrage (`--admin` en natif). Quand on écrit dans un de ses champs de texte, le jeu ne reçoit plus aucune touche.
 
 ## 14. Ressenti (« juice »)

@@ -33,6 +33,7 @@ use crate::kart::{
     MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
 };
 use crate::level::LoadLevel;
+use crate::net::LobbyWindow;
 use crate::options::OptionsMenu;
 use crate::race::{Race, RaceGrid, RaceMode};
 use crate::track::{GRID_SLOTS, TrackChoice};
@@ -97,6 +98,7 @@ impl Plugin for AdminUiPlugin {
                     resource_changed::<AdminPanel>
                         .or_else(resource_exists_and_changed::<SelectionScreen>)
                         .or_else(resource_exists_and_changed::<OptionsMenu>)
+                        .or_else(resource_exists_and_changed::<LobbyWindow>)
                         .or_else(any_match_filter::<Added<ChaseCamera>>),
                 ),
         )
@@ -197,13 +199,15 @@ fn open_if_asked(mut panel: ResMut<AdminPanel>) {
 
 /// Puts the egui context on the game's camera when the panel opens, removes it (with every egui
 /// component and the font texture) when it closes. Closing also gives the game back its normal
-/// speed and the keyboard. The selection screen of issue #15 (`characters`) and the options menu
-/// of issue #17 (`options`) are egui too: the context stays while any of them is open, and the
-/// game stays paused while the selection screen or the options menu is.
+/// speed and the keyboard. The selection screen of issue #15 (`characters`), the options menu
+/// of issue #17 (`options`) and the lobby of issue #7 (`net`) are egui too: the context stays
+/// while any of them is open, and the game stays paused while the selection screen or the
+/// options menu is (not the lobby).
 pub(super) fn attach_egui_context(
     panel: Res<AdminPanel>,
     selection: Option<Res<SelectionScreen>>,
     options: Option<Res<OptionsMenu>>,
+    lobby: Option<Res<LobbyWindow>>,
     mut commands: Commands,
     cameras: Query<(Entity, Has<PrimaryEguiContext>), With<ChaseCamera>>,
     mut textures: Option<ResMut<EguiManagedTextures>>,
@@ -214,7 +218,7 @@ pub(super) fn attach_egui_context(
 ) {
     let choosing =
         selection.is_some_and(|screen| screen.open) || options.is_some_and(|menu| menu.open);
-    let wanted = panel.open || choosing;
+    let wanted = panel.open || choosing || lobby.is_some_and(|window| window.open);
     for (camera, attached) in &cameras {
         if wanted && !attached {
             commands.entity(camera).insert(PrimaryEguiContext);
