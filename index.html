@@ -36,6 +36,90 @@
         }
       })();
     </script>
+    <script>
+      // WebRTC (issue #49). matchbox_socket creates the RTCPeerConnections itself; this subclass
+      // completes it, and `window.fluffyNet` holds its state (read by the game, src/net/browser.rs):
+      // - an ICE server entry without URL is dropped: matchbox_socket always gives one, and the
+      //   browser refuses it empty ("Empty uri") where no STUN server is wanted (local network);
+      // - the wait for the ICE candidates is cut after `gatheringMaxMs`: matchbox_socket waits for
+      //   all of them, without a limit, before sending its offer or its answer (a STUN server that
+      //   UDP cannot reach holds Chrome about 40 s; without IPv6, Chrome may never finish). The
+      //   candidates found so far leave with it; the next ones follow, once matchbox_socket
+      //   listens for them;
+      // - the connections the browser sees fail are counted (`failures`), for the lobby.
+      (() => {
+        const Native = window.RTCPeerConnection;
+        if (!Native) return;
+        const gathering = Object.getOwnPropertyDescriptor(Native.prototype, "iceGatheringState");
+        const onCandidate = Object.getOwnPropertyDescriptor(Native.prototype, "onicecandidate");
+        if (!gathering || !gathering.get || !onCandidate || !onCandidate.set) return;
+        const net = { gatheringMaxMs: 3000, failures: 0, cut: 0 };
+        const realGathering = (pc) => gathering.get.call(pc);
+        class FluffyPeerConnection extends Native {
+          constructor(config, ...rest) {
+            if (config && Array.isArray(config.iceServers)) {
+              const iceServers = config.iceServers.filter(
+                (server) => server && server.urls && server.urls.length > 0,
+              );
+              config = Object.assign({}, config, { iceServers });
+            }
+            super(config, ...rest);
+            this.fluffyCut = false;
+            this.fluffyLate = null;
+            this.addEventListener("icegatheringstatechange", () => {
+              if (realGathering(this) !== "gathering" || this.fluffyTimer !== undefined) return;
+              this.fluffyTimer = setTimeout(() => {
+                if (realGathering(this) !== "gathering" || this.signalingState === "closed") return;
+                this.fluffyCut = true;
+                this.fluffyLate = [];
+                net.cut += 1;
+                const sdp = this.localDescription ? this.localDescription.sdp : "";
+                const found = (sdp.match(/a=candidate:/g) || []).length;
+                console.warn(
+                  `[fluffy-net] ICE gathering still running after ${net.gatheringMaxMs} ms: ` +
+                    `sending the ${found} candidate(s) found so far, the next ones will follow`,
+                );
+                this.dispatchEvent(new Event("icegatheringstatechange"));
+              }, net.gatheringMaxMs);
+            });
+            this.addEventListener("icecandidate", (event) => {
+              // Found after the cut, before matchbox_socket listens: kept for it.
+              if (this.fluffyLate && !onCandidate.get.call(this)) {
+                this.fluffyLate.push(event.candidate);
+              }
+            });
+            this.addEventListener("iceconnectionstatechange", () => {
+              if (this.iceConnectionState === "failed") {
+                net.failures += 1;
+                console.warn(
+                  "[fluffy-net] the direct connection failed (ICE failed): README, « Dépannage »",
+                );
+              }
+            });
+          }
+          get iceGatheringState() {
+            const state = realGathering(this);
+            return this.fluffyCut && state === "gathering" ? "complete" : state;
+          }
+          get onicecandidate() {
+            return onCandidate.get.call(this);
+          }
+          set onicecandidate(handler) {
+            onCandidate.set.call(this, handler);
+            if (handler && this.fluffyLate && this.fluffyLate.length > 0) {
+              const late = this.fluffyLate.splice(0);
+              setTimeout(() => {
+                for (const candidate of late) {
+                  this.dispatchEvent(new RTCPeerConnectionIceEvent("icecandidate", { candidate }));
+                }
+              }, 0);
+            }
+          }
+        }
+        window.RTCPeerConnection = FluffyPeerConnection;
+        window.fluffyNet = net;
+      })();
+    </script>
   </head>
   <body></body>
 </html>

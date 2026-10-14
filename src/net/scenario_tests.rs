@@ -6,11 +6,18 @@
 //! of two peers through a real `matchbox_server` is the ignored test at the end (README, « Jouer
 //! à plusieurs »).
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use matchbox_socket::async_trait::async_trait;
+use matchbox_socket::{
+    PeerEvent, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
+};
 
+use super::signaling::test_peer_id;
 use super::*;
 use crate::options::OptionsAction;
 use crate::tests::app_on;
@@ -156,11 +163,155 @@ fn creating_a_room_draws_a_code_and_joins_it() {
     assert_eq!(app.world().resource::<NetSession>().room, room);
 }
 
-/// An app with only the network, for the meeting test.
+/// A signaling server in memory (issue #49): it says what the test puts in `events`, and keeps
+/// what the socket sends. No other peer behind it: nobody ever answers.
+#[derive(Clone, Debug, Default)]
+struct FakeSignaling {
+    events: Arc<Mutex<VecDeque<PeerEvent>>>,
+    sent: Arc<Mutex<Vec<PeerRequest>>>,
+}
+
+#[async_trait]
+impl SignallerBuilder for FakeSignaling {
+    async fn new_signaller(
+        &self,
+        _attempts: Option<u16>,
+        _room_url: String,
+    ) -> Result<Box<dyn Signaller>, SignalingError> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+#[async_trait]
+impl Signaller for FakeSignaling {
+    async fn send(&mut self, request: PeerRequest) -> Result<(), SignalingError> {
+        self.sent.lock().unwrap().push(request);
+        Ok(())
+    }
+
+    async fn next_message(&mut self) -> Result<PeerEvent, SignalingError> {
+        loop {
+            let next = self.events.lock().unwrap().pop_front();
+            if let Some(event) = next {
+                return Ok(event);
+            }
+            futures_timer::Delay::new(Duration::from_millis(5)).await;
+        }
+    }
+}
+
+fn diagnosis(app: &App) -> Option<Diagnosis> {
+    let now = now_ms(app.world().resource::<Time<Real>>());
+    app.world().resource::<NetSession>().links.diagnosis(now)
+}
+
+/// Issue #49: the signaling server announces a newcomer whose connection never opens (its
+/// browser never answers). We make the offer, natively with no ICE server at all (the default on a
+/// local network), the lobby shows « connexion en cours » after a moment, and nothing more once
+/// the server says it left.
+#[test]
+fn a_peer_announced_but_not_connected_shows_in_the_lobby() {
+    let mut app = peer_app("Alice");
+    let signaling = FakeSignaling::default();
+    let (me, newcomer) = (test_peer_id(1 << 100), test_peer_id(2 << 100));
+    signaling
+        .events
+        .lock()
+        .unwrap()
+        .extend([PeerEvent::IdAssigned(me), PeerEvent::NewPeer(newcomer)]);
+    let settings = app.world().resource::<NetSettings>().clone();
+    let ice = settings.ice_servers();
+    assert!(
+        ice.is_empty(),
+        "no ICE server with a local signaling server"
+    );
+    let socket = NetSocket::open_with(
+        "ws://localhost:3536/fluffy-racers-TEST",
+        1,
+        &ice,
+        Arc::new(signaling.clone()),
+    );
+    app.world_mut().insert_resource(NetSession {
+        room: RoomCode::parse("TEST").unwrap(),
+        signal: settings.signal.clone(),
+        ice,
+        status: NetStatus::Connecting,
+        lobby: None,
+        links: Links::default(),
+        socket: Some(socket),
+        failures_seen: 0,
+    });
+    let newcomer_key = PeerKey(2 << 100);
+    // Our id, then the newcomer announced and our offer sent (webrtc-rs made it without any ICE
+    // server).
+    assert!(
+        wait_for(&mut app, 10.0, |app| {
+            let session = app.world().resource::<NetSession>();
+            session.status == NetStatus::InRoom
+                && session
+                    .links
+                    .pending()
+                    .first()
+                    .is_some_and(|link| link.ours_ms.is_some())
+        }),
+        "no offer: {:?}",
+        app.world().resource::<NetSession>().links.pending()
+    );
+    {
+        let session = app.world().resource::<NetSession>();
+        let link = &session.links.pending()[0];
+        assert_eq!((link.peer, link.role), (newcomer_key, Role::Offerer));
+        assert_eq!(link.theirs_ms, None);
+        // Not a player: the lobby only lists us.
+        assert_eq!(session.players(0).len(), 1);
+    }
+    let sent = signaling.sent.lock().unwrap();
+    assert!(
+        sent.iter().any(|request| matches!(
+            request,
+            PeerRequest::Signal { receiver, data: PeerSignal::Offer(sdp) }
+                if *receiver == newcomer && sdp.starts_with("v=0")
+        )),
+        "{sent:?}"
+    );
+    drop(sent);
+    // A moment later, the lobby says it.
+    assert!(diagnosis(&app).is_none(), "{:?}", diagnosis(&app));
+    assert!(
+        wait_for(&mut app, 5.0, |app| diagnosis(app)
+            == Some(Diagnosis::Connecting { peers: 1 })),
+        "{:?}",
+        diagnosis(&app)
+    );
+    // The server says it left: nothing more to show.
+    signaling
+        .events
+        .lock()
+        .unwrap()
+        .push_back(PeerEvent::PeerLeft(newcomer));
+    assert!(
+        wait_for(&mut app, 5.0, |app| app
+            .world()
+            .resource::<NetSession>()
+            .links
+            .pending()
+            .is_empty()),
+        "still pending"
+    );
+    assert_eq!(diagnosis(&app), None);
+    assert_eq!(status(&app), Some(NetStatus::InRoom));
+}
+
+/// An app with only the network, for the meeting test. `FLUFFY_STUN` (`none`, `auto`, a list of
+/// servers) chooses the STUN servers: by default none with a local signaling server.
 fn peer_app(pseudo: &str) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, NetPlugin));
-    app.world_mut().resource_mut::<NetSettings>().pseudo = Some(pseudo.into());
+    let mut settings = app.world_mut().resource_mut::<NetSettings>();
+    settings.pseudo = Some(pseudo.into());
+    if let Ok(stun) = std::env::var("FLUFFY_STUN") {
+        settings.stun = StunChoice::parse(&stun).expect("FLUFFY_STUN");
+    }
     app
 }
 

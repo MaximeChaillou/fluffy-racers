@@ -1,4 +1,5 @@
 use bevy::asset::AssetMetaCheck;
+use bevy::log::{DEFAULT_FILTER, LogPlugin};
 use bevy::prelude::*;
 
 fn main() {
@@ -19,6 +20,12 @@ fn main() {
                 // `trunk serve` answers them with index.html, which breaks loading).
                 .set(AssetPlugin {
                     meta_check: AssetMetaCheck::Never,
+                    ..default()
+                })
+                // The steps of each WebRTC connection in the console (issue #49: « created
+                // offer », « Ice gathering completed »...). Only in a room: solo has no socket.
+                .set(LogPlugin {
+                    filter: format!("{DEFAULT_FILTER},matchbox_socket=debug"),
                     ..default()
                 }),
         )

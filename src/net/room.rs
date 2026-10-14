@@ -9,8 +9,14 @@
 //!   through it). [`DEFAULT_SIGNAL_URL`] in development (`matchbox_server` on the player's
 //!   machine); `?signal=wss://…` or `--signal wss://…` names another one, until the production
 //!   signaling of issue #10. The room's address on it is [`room_url`].
+//! - **ICE servers** (issue #49, `ice.rs`): `?stun=none` or `?stun=stun:host:port,…`, and a TURN
+//!   relay with `?turn=turn:host:port&turnuser=…&turnpass=…` (the same with `--stun`, `--turn`,
+//!   `--turnuser` and `--turnpass` natively). They are not part of the invitation link: each
+//!   player chooses his own.
 
 use std::fmt;
+
+use super::ice::{StunChoice, TurnServer, is_local_host, url_host};
 
 /// The characters of a generated code: no 0, O, 1, I or L.
 pub const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -24,6 +30,9 @@ pub const MAX_CODE_LENGTH: usize = 16;
 /// The signaling server by default: `matchbox_server` on this machine (README, « Jouer à
 /// plusieurs »).
 pub const DEFAULT_SIGNAL_URL: &str = "ws://localhost:3536";
+
+/// The port of `matchbox_server`.
+pub const SIGNAL_PORT: u16 = 3536;
 
 /// Prefix of our rooms on the signaling server: another game on the same server never meets ours.
 pub const ROOM_PREFIX: &str = "fluffy-racers-";
@@ -81,6 +90,21 @@ pub fn parse_signal(text: &str) -> Option<String> {
     (!host.is_empty() && !host.contains(char::is_whitespace)).then(|| text.to_string())
 }
 
+/// The signaling server by default for a page served from `page_host` (issue #49): when the page
+/// comes from this machine or the local network (`localhost`, `192.168.1.20`, `mon-mac.local`...),
+/// `matchbox_server` on that same machine (`ws://HOST:3536`). Another device of the network that
+/// opens `http://192.168.1.20:8080/?room=CODE` then meets the others without `?signal=`. Any
+/// other page (GitHub Pages), or none (natively): [`DEFAULT_SIGNAL_URL`].
+pub fn default_signal(page_host: Option<&str>) -> String {
+    match page_host.map(|host| host.trim_start_matches('[').trim_end_matches(']')) {
+        Some(host) if is_local_host(host) && host.contains(':') => {
+            format!("ws://[{host}]:{SIGNAL_PORT}")
+        }
+        Some(host) if is_local_host(host) => format!("ws://{host}:{SIGNAL_PORT}"),
+        _ => DEFAULT_SIGNAL_URL.to_string(),
+    }
+}
+
 /// The room's address on the signaling server: one full-mesh room per code.
 pub fn room_url(signal: &str, code: &RoomCode) -> String {
     format!("{}/{ROOM_PREFIX}{code}", signal.trim_end_matches('/'))
@@ -95,6 +119,15 @@ pub struct LaunchOptions {
     pub signal: Option<String>,
     /// `?pseudo=Max`, `--pseudo Max`: the name shown to the others.
     pub pseudo: Option<String>,
+    /// `?stun=none`, `?stun=stun:host:port,…` (issue #49); an unreadable value is ignored.
+    pub stun: Option<StunChoice>,
+    /// `?turn=turn:host:port,…`, as given: see [`LaunchOptions::turn_server`].
+    pub turn: Option<String>,
+    /// `?turnuser=…`, `?turnpass=…`: the TURN relay's credentials.
+    pub turn_user: Option<String>,
+    pub turn_pass: Option<String>,
+    /// An unreadable `stun` value, kept for the warning ([`LaunchOptions::unusable`]).
+    pub stun_refused: Option<String>,
 }
 
 impl LaunchOptions {
@@ -111,7 +144,8 @@ impl LaunchOptions {
     }
 
     /// From the command line's arguments (without the program's name): `--room CODE` or
-    /// `--room=CODE`, and the same for `--signal` and `--pseudo`. Other arguments are ignored.
+    /// `--room=CODE`, and the same for `--signal`, `--pseudo`, `--stun`, `--turn`, `--turnuser`
+    /// and `--turnpass`. Other arguments are ignored.
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
         let mut options = Self::default();
         let mut args = args.into_iter();
@@ -123,7 +157,7 @@ impl LaunchOptions {
                 Some((key, value)) => (key.to_string(), Some(value.to_string())),
                 None => (flag.to_string(), None),
             };
-            if !matches!(key.as_str(), "room" | "signal" | "pseudo") {
+            if !LAUNCH_KEYS.contains(&key.as_str()) {
                 continue;
             }
             if let Some(value) = value.or_else(|| args.next()) {
@@ -141,17 +175,65 @@ impl LaunchOptions {
                 let name = crate::net::Profile::clean_name(value);
                 self.pseudo = (!name.is_empty()).then_some(name);
             }
+            "stun" => {
+                self.stun = StunChoice::parse(value);
+                self.stun_refused = self.stun.is_none().then(|| value.to_string());
+            }
+            "turn" | "turnuser" | "turnpass" => {
+                let value = value.trim();
+                let value = (!value.is_empty()).then(|| value.to_string());
+                match key {
+                    "turn" => self.turn = value,
+                    "turnuser" => self.turn_user = value,
+                    _ => self.turn_pass = value,
+                }
+            }
             _ => {}
         }
     }
+
+    /// The TURN relay asked for: `turn`, `turnuser` and `turnpass` all given and valid
+    /// ([`TurnServer::parse`]), or none.
+    pub fn turn_server(&self) -> Option<TurnServer> {
+        TurnServer::parse(
+            self.turn.as_deref()?,
+            self.turn_user.as_deref()?,
+            self.turn_pass.as_deref()?,
+        )
+    }
+
+    /// What was given but cannot be used, for a warning in the console: an unreadable `stun`,
+    /// a `turn` relay without its credentials or with an unreadable address.
+    pub fn unusable(&self) -> Vec<String> {
+        let mut unusable = Vec::new();
+        if let Some(stun) = &self.stun_refused {
+            unusable.push(format!("stun={stun}"));
+        }
+        if let Some(turn) = &self.turn
+            && self.turn_server().is_none()
+        {
+            let missing = self.turn_user.is_none() || self.turn_pass.is_none();
+            unusable.push(if missing {
+                format!("turn={turn} (turnuser and turnpass are needed too)")
+            } else {
+                format!("turn={turn}")
+            });
+        }
+        unusable
+    }
 }
 
+/// The parameters of the page address and the command line.
+const LAUNCH_KEYS: [&str; 7] = [
+    "room", "signal", "pseudo", "stun", "turn", "turnuser", "turnpass",
+];
+
 /// The invitation link: the game's page (`page`: its address without query, like
-/// `https://…/fluffy-racers/`) with `?room=CODE`, and `&signal=…` when the server is not the
-/// default one (the friend must use the same).
+/// `https://…/fluffy-racers/`) with `?room=CODE`, and `&signal=…` when the server is not the one
+/// this page uses by default ([`default_signal`]: the friend must use the same).
 pub fn invite_link(page: &str, code: &RoomCode, signal: &str) -> String {
     let mut link = format!("{page}?room={code}");
-    if signal != DEFAULT_SIGNAL_URL {
+    if signal != default_signal(url_host(page)) {
         link.push_str("&signal=");
         link.push_str(&percent_encode(signal));
     }
@@ -327,6 +409,122 @@ mod tests {
         assert_eq!(args("--room"), LaunchOptions::default());
         assert_eq!(args("room TEST"), LaunchOptions::default());
         assert_eq!(args("--room=TEST").room, RoomCode::parse("TEST"));
+    }
+
+    /// Issue #49: a page served on this machine or the local network meets the others through
+    /// `matchbox_server` on that same machine; GitHub Pages keeps `ws://localhost:3536`.
+    #[test]
+    fn the_signaling_server_follows_a_local_page() {
+        assert_eq!(default_signal(Some("localhost")), "ws://localhost:3536");
+        assert_eq!(default_signal(Some("127.0.0.1")), "ws://127.0.0.1:3536");
+        assert_eq!(
+            default_signal(Some("192.168.1.20")),
+            "ws://192.168.1.20:3536"
+        );
+        assert_eq!(default_signal(Some("10.0.0.7")), "ws://10.0.0.7:3536");
+        assert_eq!(default_signal(Some("172.20.1.2")), "ws://172.20.1.2:3536");
+        assert_eq!(
+            default_signal(Some("mon-mac.local")),
+            "ws://mon-mac.local:3536"
+        );
+        assert_eq!(default_signal(Some("[::1]")), "ws://[::1]:3536");
+        assert_eq!(default_signal(Some("fd00::5")), "ws://[fd00::5]:3536");
+        for public in [
+            Some("maximechaillou.github.io"),
+            Some("8.8.8.8"),
+            Some("172.32.0.1"),
+            Some(""),
+            None,
+        ] {
+            assert_eq!(default_signal(public), DEFAULT_SIGNAL_URL, "{public:?}");
+        }
+        // Every default is a signaling address, and a local one (no STUN by default).
+        for host in ["localhost", "192.168.1.20", "[::1]", "mon-mac.local"] {
+            let signal = default_signal(Some(host));
+            assert_eq!(parse_signal(&signal), Some(signal.clone()));
+            assert!(crate::net::is_local_signal(&signal), "{signal}");
+        }
+
+        // The invitation from a page on the local network: its own address, without `signal`
+        // (the friend's page finds the same); with it when another server was asked for.
+        let code = RoomCode::parse("AB3CD").unwrap();
+        let page = "http://192.168.1.20:8080/";
+        assert_eq!(
+            invite_link(page, &code, "ws://192.168.1.20:3536"),
+            "http://192.168.1.20:8080/?room=AB3CD"
+        );
+        assert_eq!(
+            invite_link(page, &code, DEFAULT_SIGNAL_URL),
+            "http://192.168.1.20:8080/?room=AB3CD&signal=ws%3A%2F%2Flocalhost%3A3536"
+        );
+        assert_eq!(
+            invite_link("http://localhost:8080/", &code, DEFAULT_SIGNAL_URL),
+            "http://localhost:8080/?room=AB3CD"
+        );
+    }
+
+    /// Issue #49: the ICE servers, from the page address and from the command line.
+    #[test]
+    fn the_page_address_and_the_command_line_name_the_ice_servers() {
+        let options = LaunchOptions::from_query("?room=TEST&stun=none");
+        assert_eq!(options.stun, Some(StunChoice::Off));
+        assert!(options.unusable().is_empty());
+        let options = LaunchOptions::from_query(
+            "?stun=stun%3Astun.example.org%3A3478,stun:192.168.1.2&turn=turn:relay.example.org:3478&turnuser=max&TURNPASS=s%C3%A9same",
+        );
+        assert_eq!(
+            options.stun,
+            Some(StunChoice::Servers(vec![
+                "stun:stun.example.org:3478".into(),
+                "stun:192.168.1.2".into()
+            ]))
+        );
+        let turn = options.turn_server().unwrap();
+        assert_eq!(turn.urls, vec!["turn:relay.example.org:3478".to_string()]);
+        assert_eq!(turn.username, "max");
+        assert_eq!(turn.credential, "sésame");
+        assert!(options.unusable().is_empty());
+
+        // Unreadable values are ignored, and said.
+        let options = LaunchOptions::from_query("?stun=http://x&turn=turn:relay.example.org");
+        assert_eq!(options.stun, None);
+        assert_eq!(options.turn_server(), None);
+        assert_eq!(
+            options.unusable(),
+            vec![
+                "stun=http://x".to_string(),
+                "turn=turn:relay.example.org (turnuser and turnpass are needed too)".to_string()
+            ]
+        );
+        let options = LaunchOptions::from_query("?turn=stun:x&turnuser=a&turnpass=b");
+        assert_eq!(options.turn_server(), None);
+        assert_eq!(options.unusable(), vec!["turn=stun:x".to_string()]);
+        // Empty: as if not given.
+        assert_eq!(
+            LaunchOptions::from_query("?turn=&turnuser=&turnpass="),
+            LaunchOptions::default()
+        );
+
+        let args = |text: &str| LaunchOptions::from_args(text.split(' ').map(String::from));
+        let options = args(
+            "--room TEST --stun none --turn turns:relay.example.org:5349 --turnuser max --turnpass=x",
+        );
+        assert_eq!(options.room, RoomCode::parse("TEST"));
+        assert_eq!(options.stun, Some(StunChoice::Off));
+        let turn = options.turn_server().unwrap();
+        assert_eq!(turn.urls, vec!["turns:relay.example.org:5349".to_string()]);
+        assert_eq!(
+            (turn.username.as_str(), turn.credential.as_str()),
+            ("max", "x")
+        );
+        assert_eq!(
+            args("--stun=stun.example.org").stun,
+            Some(StunChoice::Servers(vec!["stun:stun.example.org".into()]))
+        );
+        assert_eq!(
+            args("--stun nope!").unusable(),
+            vec!["stun=nope!".to_string()]
+        );
     }
 
     #[test]

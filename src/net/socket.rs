@@ -6,16 +6,27 @@
 //! game polls the socket from a system each frame ([`NetSocket::poll`]): peers that come and go,
 //! packets received, packets to send. Nothing here blocks.
 //!
+//! Its ICE servers are chosen by the game (`ice.rs`, issue #49), and its signaling goes through
+//! [`ObservedSignallerBuilder`] (`signaling.rs`): what the signaling server says comes out of
+//! [`NetSocket::poll`] too ([`SocketEvent::Signal`]), before the peers it concerns are connected.
+//!
 //! Two traps of `matchbox_socket` 0.14, avoided here:
 //! - its message loop **panics** when asked to send to a peer whose data channels are not open
 //!   yet: only peers it reported connected get packets;
 //! - a packet can arrive before the peer is reported connected: it waits ([`EARLY_PACKETS`] at
 //!   most) until it is.
 
-use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
-use matchbox_socket::{ChannelConfig, PeerId, PeerState, WebRtcSocket, WebRtcSocketBuilder};
+use std::sync::Arc;
 
+use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
+use matchbox_socket::{
+    ChannelConfig, PeerId, PeerState, RtcIceServerConfig, SignallerBuilder, WebRtcSocket,
+    WebRtcSocketBuilder,
+};
+
+use super::ice::IceServers;
 use super::protocol::{Channel, Message, PeerKey};
+use super::signaling::{Notes, ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuilder};
 
 /// Packets kept from peers not reported connected yet.
 pub const EARLY_PACKETS: usize = 64;
@@ -31,6 +42,8 @@ pub enum SocketEvent {
     Packet(PeerKey, Channel, Box<[u8]>),
     /// The message loop stopped: the signaling server could not be reached, or dropped us.
     Closed(Result<(), String>),
+    /// Something went through the signaling server (a peer announced, an offer...).
+    Signal(SignalNote),
 }
 
 /// A socket in a room, and its message loop.
@@ -43,16 +56,43 @@ pub struct NetSocket {
     early: Vec<(PeerId, Channel, Box<[u8]>)>,
     /// Reused for every packet written.
     buffer: Vec<u8>,
+    /// Written by the message loop's signaling, read by [`NetSocket::poll`].
+    notes: Notes,
+    /// Swapped with `notes` to read them without holding the lock.
+    read: Vec<SignalNote>,
 }
 
 impl NetSocket {
-    /// Joins the room at `room_url` (`room::room_url`). `attempts`: how many times to try the
-    /// signaling server before giving up (3 s apart).
-    pub fn open(room_url: &str, attempts: u16) -> Self {
+    /// Joins the room at `room_url` (`room::room_url`) through the signaling server's WebSocket.
+    /// `attempts`: how many times to try the signaling server before giving up (3 s apart).
+    /// `ice`: the STUN and TURN servers (none at all: only the host candidates).
+    pub fn open(room_url: &str, attempts: u16, ice: &IceServers) -> Self {
+        Self::open_with(room_url, attempts, ice, Arc::new(WebSocketSignallerBuilder))
+    }
+
+    /// The same, with another way to reach the signaling server (the tests).
+    pub fn open_with(
+        room_url: &str,
+        attempts: u16,
+        ice: &IceServers,
+        signaller: Arc<dyn SignallerBuilder>,
+    ) -> Self {
+        let notes = Notes::default();
         let (socket, message_loop) = WebRtcSocketBuilder::new(room_url)
             .add_channel(ChannelConfig::reliable())
             .add_channel(ChannelConfig::unreliable())
             .reconnect_attempts(Some(attempts.max(1)))
+            .ice_server(RtcIceServerConfig {
+                // Empty: natively, webrtc-rs takes it as no server; in the browser, the page's
+                // shim drops the server entry without URL (index.html, issue #49).
+                urls: ice.urls.clone(),
+                username: ice.username.clone(),
+                credential: ice.credential.clone(),
+            })
+            .signaller_builder(Arc::new(ObservedSignallerBuilder::new(
+                signaller,
+                notes.clone(),
+            )))
             .build();
         let task = IoTaskPool::get()
             .spawn(async move { message_loop.await.map_err(|error| error.to_string()) });
@@ -63,6 +103,8 @@ impl NetSocket {
             connected: Vec::new(),
             early: Vec::new(),
             buffer: Vec::new(),
+            notes,
+            read: Vec::new(),
         }
     }
 
@@ -71,7 +113,8 @@ impl NetSocket {
         self.me
     }
 
-    /// What happened since the last call, in order: our id, peers, packets, the end of the loop.
+    /// What happened since the last call, in order: our id, the signaling server's news, peers,
+    /// packets, the end of the loop.
     pub fn poll(&mut self, mut on: impl FnMut(SocketEvent)) {
         if self.task.is_none() {
             return;
@@ -82,6 +125,14 @@ impl NetSocket {
             let me = key_of(id);
             self.me = Some(me);
             on(SocketEvent::Joined(me));
+        }
+        if let Ok(mut notes) = self.notes.try_lock()
+            && !notes.is_empty()
+        {
+            std::mem::swap(&mut *notes, &mut self.read);
+        }
+        for note in self.read.drain(..) {
+            on(SocketEvent::Signal(note));
         }
         if let Ok(changes) = self.socket.try_update_peers() {
             for (id, state) in changes {
