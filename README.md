@@ -22,7 +22,7 @@ Sur Linux, il faut aussi : `libasound2-dev libudev-dev libwayland-dev libxkbcomm
 
 Les joueurs se connectent directement entre eux (WebRTC, pair à pair). Pour se trouver, ils passent par un petit **serveur de mise en relation** : il n'échange que quelques Ko au moment de rejoindre, aucune donnée de jeu n'y passe. En attendant celui de production (issue #10), on lance `matchbox_server` sur sa machine.
 
-Pour l'instant (réseau 1/3, issue #7), on se retrouve dans le **salon** (touche **L**) : la liste des joueurs, le ping de chacun, l'hôte et le bouton « Prêt ». La course reste en solo : les karts des autres arrivent avec #8, la course synchronisée avec #9.
+Pour l'instant (réseau 2/3, issues #7 et #8), on se retrouve dans le **salon** (touche **L**) : la liste des joueurs, le ping de chacun, l'hôte et le bouton « Prêt ». Une fois assis dans la partie, **tout le monde roule librement sur Prairie Pompon** (sans bots ni compte à rebours) et **chacun voit les karts des autres** rouler. La course synchronisée (compte à rebours commun, bots, objets, classement) arrive avec #9.
 
 ### 1. Installer et lancer le serveur de mise en relation
 
@@ -43,7 +43,13 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
 4. Dans le terminal de `matchbox_server` : deux lignes `Client connected …`, puis une ligne `… -> "{\"NewPeer\":…}"` (le serveur présente le second au premier). **Le serveur n'écrit jamais les offres ni les réponses** (`Offer`, `Answer`, `IceCandidate`), même quand tout marche : c'est la console du navigateur qui les montre.
 5. Dans la console du navigateur (F12, onglet Console), les étapes de la connexion : dans la première fenêtre, `network: #f599 announced by the signaling server: we make the offer`, `network: offer sent to #f599 after 0.01 s: 1 candidate (1 host .local)`, `network: answer received from #f599…` ; dans l'autre, `network: offer received…` et `network: answer sent…` ; puis dans les deux `network: #… connected, 0.05 s after it was announced…`.
 6. Clique sur **Prêt !** dans une fenêtre : « prêt » s'affiche aussi dans l'autre. Ferme un onglet : il disparaît du salon de l'autre (tout de suite avec **Quitter la partie**). Si c'était l'hôte, l'autre le devient.
-7. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
+7. **Rouler ensemble** (#8) : environ 2,5 s après l'arrivée dans la partie, chaque fenêtre passe sur **Prairie Pompon en roulage libre** (la console écrit `network: online driving, from grid slot N`). Ferme l'écran « Pilote et kart » (**Entrée**) dans les deux fenêtres. Chaque kart part de la place de la grille de son siège : le premier arrivé en pole, le second à côté. Ce que tu dois voir :
+   - roule dans une fenêtre (flèches, ou Z/Q/S/D) : dans l'autre, ton kart avance **en douceur**, environ un dixième de seconde en retard, avec ton animal et une couleur de carrosserie à lui (chaque joueur voit son propre kart en rose) ;
+   - drift (Espace) : l'autre fenêtre montre la glisse et les étincelles bleues, oranges, violettes ; un boost (B, ou un mini-turbo) montre les flammes ; R te ramène sur ta place de la grille, et l'autre fenêtre te voit **sauter** jusqu'à elle, sans glisser ;
+   - fonce dans l'autre kart : **ton** kart est repoussé, l'autre ne bouge pas sur ton écran (c'est son joueur qui le conduit) ; sur l'autre écran, c'est son kart qui est repoussé par le tien. Pas d'éjection, pas de kart qui monte sur l'autre ;
+   - **Quitter la partie** : tu reviens au circuit et au mode d'avant ;
+   - la console (F12) écrit toutes les 3 s où est ton kart (`network: our kart at (x, y, z)`) et où tu vois chacun des autres (`network: kart of #abcd at …`, avec le nombre d'états reçus) : de quoi comparer les deux fenêtres.
+8. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
 
 Si la connexion ne se fait pas, le salon le dit (« connexion directe en cours… », puis « n'aboutit pas » avec les pistes) : voir **Dépannage** plus bas.
 
@@ -55,7 +61,7 @@ Deux appareils sur le même Wi-Fi (ton Mac et un autre ordinateur, par exemple),
 2. Lance `matchbox_server`, puis `trunk serve` : le jeu écoute sur toutes les interfaces (`Trunk.toml`), et trunk affiche ses adresses au démarrage.
 3. Sur les deux appareils, ouvre `http://192.168.1.20:8080/?room=TEST` (avec ton IP). La page trouve toute seule le serveur de mise en relation sur la même machine (`ws://192.168.1.20:3536`, affiché dans le salon), sans `&signal=`. Le lien d'invitation du salon reprend cette adresse.
 4. Si macOS demande d'**accepter les connexions entrantes** (pour `matchbox_server` ou `trunk`) ou si le navigateur veut **accéder aux appareils du réseau local**, accepte.
-5. Ce que tu dois voir : comme plus haut, les deux joueurs avec leur ping ; dans la console, `offer sent` / `answer received` puis `connected`. En bas du salon : « Mise en relation : ws://192.168.1.20:3536 » et « Connexion directe : sans serveur STUN ».
+5. Ce que tu dois voir : comme plus haut, les deux joueurs avec leur ping ; dans la console, `offer sent` / `answer received` puis `connected`. En bas du salon : « Mise en relation : ws://192.168.1.20:3536 » et « Connexion directe : sans serveur STUN ». Puis, comme au point 7 plus haut, Prairie Pompon sur les deux appareils : roule sur l'un, ton kart roule sur l'autre.
 
 Ouverte en `localhost`, la page ne connaît pas l'adresse de ton Mac sur le réseau (le salon le rappelle) : pour inviter quelqu'un, ouvre-la avec l'adresse IP.
 
@@ -65,6 +71,16 @@ Il faut un serveur de mise en relation public en `wss://` (issue #10, en attente
 
 Par Internet, chaque navigateur demande son adresse publique aux serveurs STUN publics de Google. Sans relais TURN, certains réseaux (entreprise, 4G) bloquent la connexion directe ; un relais se donne avec `?turn=turn:relais.exemple.org:3478&turnuser=NOM&turnpass=MOT_DE_PASSE` (celui de production viendra avec #10).
 
+### Simuler un mauvais réseau (debug)
+
+Pour voir comment les karts des autres se comportent sur une mauvaise connexion, le jeu peut ajouter de la latence, de la gigue et des pertes aux états des karts qu'il **reçoit** (pas au salon ni aux pings : le ping affiché reste le vrai) :
+
+- dans l'adresse : `http://localhost:8080/?room=TEST&netsim=120,20,5` : 120 ms de latence, ± 20 ms de gigue, 5 % de pertes (`&netsim=80` : la latence seule) ;
+- ou pendant le jeu, dans le panneau d'admin (**P**) : `NetTuning` > `simulator` (`latency_ms`, `jitter_ms`, `loss_percent`), effet immédiat. Remets-les à 0 (ou le bouton de remise à zéro de `NetTuning`) pour l'arrêter : le panneau garde les réglages modifiés d'une session à l'autre. Attention : avec `?netsim=` dans l'adresse, si tu modifies un autre réglage dans le panneau, le simulateur est mémorisé avec ;
+- chaque fenêtre simule son côté : pour ralentir les deux sens, mets `netsim` dans les deux adresses.
+
+Ce que tu dois voir avec `netsim=120,20,5` : le kart de l'autre roule toujours **sans à-coups**, simplement un peu plus en retard (environ 0,2 s au lieu de 0,1 s). Les réglages de l'affichage (délai de 100 ms, extrapolation de 250 ms au plus…) sont aussi dans `NetTuning`.
+
 ### Réglages de la connexion
 
 | Page | Natif | Effet |
@@ -73,6 +89,7 @@ Par Internet, chaque navigateur demande son adresse publique aux serveurs STUN p
 | `?stun=none` | `--stun none` | Aucun serveur STUN (le défaut quand la mise en relation est locale). |
 | `?stun=stun:hôte:port,…` | `--stun …` | Ces serveurs STUN. `?stun=auto` : le défaut. |
 | `?turn=turn:hôte:port&turnuser=…&turnpass=…` | `--turn … --turnuser … --turnpass …` | Un relais TURN (les trois sont nécessaires). Aucun par défaut. |
+| `?netsim=120,20,5` | `--netsim 120,20,5` | Simulateur de réseau (debug) : latence (ms), gigue (ms), pertes (%) des états de karts reçus. |
 
 Une valeur illisible est ignorée, avec un avertissement dans la console.
 
@@ -113,6 +130,12 @@ Un test automatique fait se rencontrer deux clients natifs (serveur lancé ; `FL
 
 ```bash
 cargo test --lib net::scenario_tests::two_native_peers -- --ignored --nocapture
+```
+
+Un autre fait rouler deux jeux complets (sans fenêtre) dans la même partie : Ana roule, et le test compare, tick par tick, où Bob voit son kart et où il était (`FLUFFY_NETSIM=120,20,5` met le simulateur chez Bob) :
+
+```bash
+cargo test --lib net::scenario_tests::two_games_drive -- --ignored --nocapture
 ```
 
 Deux pages Chromium qui se connectent pour de vrai (Node et Playwright, `matchbox_server` et `trunk serve` lancés) : `scripts/webrtc-pages.cjs` (voir son en-tête).

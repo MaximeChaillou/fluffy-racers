@@ -21,6 +21,13 @@
 //!   room in the address. It does not pause the game, and costs nothing once closed (no egui
 //!   context, like the other windows).
 //!
+//! - **Kart synchronization** (issue #8, `sync.rs`, [`KartSyncPlugin`] of the game): once seated,
+//!   everyone drives freely on the same circuit and sees the others' karts. Each peer sends its
+//!   kart's state 30 times a second ([`KartSnapshot`], `snapshot.rs`) on the unreliable channel;
+//!   the others show it about 100 ms later, interpolated (`interp.rs`), as a kinematic body our
+//!   kart bumps into. A network simulator (`netsim.rs`, `?netsim=120,20,5`) adds latency,
+//!   jitter and losses for the debug.
+//!
 //! **Solo is unchanged**: without a room there is no socket; only the L key and the reading of
 //! the actions run each frame, the rest needs a [`NetSession`] (measured: no cost in the
 //! browser's single-threaded executor, STATUS.md « Métriques »).
@@ -29,35 +36,54 @@ mod browser;
 mod clock;
 mod ice;
 pub mod interactions;
+mod interp;
 mod links;
 mod lobby;
+mod netsim;
 mod protocol;
 mod room;
 mod signaling;
+mod snapshot;
 mod socket;
+mod sync;
+mod tuning;
 mod ui;
 
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod sync_tests;
 
 pub use clock::PeerClock;
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
+pub use interp::{
+    BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
+    SampleKind, SampleLimits, SnapshotBuffer, TICK_MS, TickClock,
+};
 pub use links::{
     CONNECTING_SHOWN_MS, Diagnosis, Link, Links, NO_CANDIDATE_MS, Role, STUCK_MS, Stuck,
 };
 pub use lobby::{
     Lobby, LobbyEvent, LobbyPeer, Outgoing, PING_INTERVAL_MS, PlayerRow, SETTLE_MS, SILENT_MS,
 };
+pub use netsim::{NetSim, NetSimTuning};
 pub use protocol::{
-    Channel, DecodeError, Grab, KartId, MAX_NAME_CHARS, MAX_PLAYERS, Message, PROTOCOL_VERSION,
-    PeerKey, Profile, RaceStart, Strike, StrikeReply, TetherBreak,
+    Channel, DecodeError, Grab, KartId, KartSnapshot, MAX_KART_STATE_BYTES, MAX_NAME_CHARS,
+    MAX_PLAYERS, Message, PROTOCOL_VERSION, PeerKey, Profile, RaceStart, Strike, StrikeReply,
+    TetherBreak,
 };
 pub use room::{
     CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SIGNAL_PORT,
     default_signal, invite_link, native_command, parse_signal, query_with_room, room_url,
 };
 pub use signaling::{ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuilder};
+pub use snapshot::{KartLook, KartPose, LookParts, Phase, pack_rotation, unpack_rotation};
 pub use socket::{NetSocket, SocketEvent};
+pub use sync::{
+    KartHistory, KartSync, KartSyncPlugin, OnlineLevel, OnlineSlot, RemoteKart, RemoteKartProxy,
+    remote_body,
+};
+pub use tuning::NetTuning;
 pub use ui::NetUiPlugin;
 
 use bevy::prelude::*;
@@ -355,15 +381,21 @@ fn profile_of(
     (name, parts.map(|part| part.min(255) as u8))
 }
 
-/// Each frame in a room: the socket's news into the lobby, the lobby's messages out.
+/// Each frame in a room: the socket's news into the lobby (the kart states into the
+/// synchronization, issue #8), the lobby's messages and our kart's states out.
+#[allow(clippy::too_many_arguments)]
 fn poll_session(
     mut session: ResMut<NetSession>,
     settings: Res<NetSettings>,
     loadout: Option<Res<PlayerLoadout>>,
     roster: Option<Res<Roster>>,
     time: Res<Time<Real>>,
+    game_time: Res<Time<Virtual>>,
+    mut sync: Option<ResMut<KartSync>>,
+    tuning: Option<Res<NetTuning>>,
 ) {
     let now = now_ms(&time);
+    let game_ms = game_time.elapsed_secs_f64() * 1_000.0;
     let session = &mut *session;
     let Some(socket) = session.socket.as_mut() else {
         return;
@@ -403,7 +435,14 @@ fn poll_session(
         SocketEvent::Packet(peer, _, bytes) => {
             if let Some(lobby) = lobby.as_mut() {
                 match Message::decode(&bytes) {
-                    Ok(message) => lobby.receive(peer, message, now),
+                    Ok(message) => {
+                        if let (Message::KartState(state), Some(sync), Some(tuning)) =
+                            (&message, sync.as_deref_mut(), tuning.as_deref())
+                        {
+                            sync.receive(peer, *state, game_ms, tuning);
+                        }
+                        lobby.receive(peer, message, now);
+                    }
                     Err(error) => {
                         debug!("network: packet from {peer:?} refused: {error}");
                         lobby.receive_error(peer, error, now);
@@ -439,6 +478,18 @@ fn poll_session(
         lobby.update(now);
         for out in lobby.drain_outbox() {
             socket.send(out.to, &out.message);
+        }
+        // Our kart's states, to every other seated player (issue #8).
+        if let Some(sync) = sync.as_deref_mut() {
+            let me = lobby.me();
+            for state in sync.drain_outgoing() {
+                let message = Message::KartState(state);
+                for peer in lobby.seats() {
+                    if *peer != me {
+                        socket.send(*peer, &message);
+                    }
+                }
+            }
         }
         for event in lobby.drain_events() {
             info!("network: {event:?}");

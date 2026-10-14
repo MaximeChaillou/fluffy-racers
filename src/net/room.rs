@@ -17,6 +17,7 @@
 use std::fmt;
 
 use super::ice::{StunChoice, TurnServer, is_local_host, url_host};
+use super::netsim::NetSimTuning;
 
 /// The characters of a generated code: no 0, O, 1, I or L.
 pub const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -111,7 +112,7 @@ pub fn room_url(signal: &str, code: &RoomCode) -> String {
 }
 
 /// What the page address or the command line asks for at startup.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct LaunchOptions {
     /// `?room=CODE`, `--room CODE`: join this room.
     pub room: Option<RoomCode>,
@@ -128,6 +129,11 @@ pub struct LaunchOptions {
     pub turn_pass: Option<String>,
     /// An unreadable `stun` value, kept for the warning ([`LaunchOptions::unusable`]).
     pub stun_refused: Option<String>,
+    /// `?netsim=120,20,5`, `--netsim 120,20,5` (issue #8, debug): latency (ms), jitter (ms) and
+    /// losses (%) of the kart states received ([`NetSimTuning::parse`]).
+    pub netsim: Option<NetSimTuning>,
+    /// An unreadable `netsim` value, kept for the warning.
+    pub netsim_refused: Option<String>,
 }
 
 impl LaunchOptions {
@@ -144,8 +150,8 @@ impl LaunchOptions {
     }
 
     /// From the command line's arguments (without the program's name): `--room CODE` or
-    /// `--room=CODE`, and the same for `--signal`, `--pseudo`, `--stun`, `--turn`, `--turnuser`
-    /// and `--turnpass`. Other arguments are ignored.
+    /// `--room=CODE`, and the same for `--signal`, `--pseudo`, `--stun`, `--turn`, `--turnuser`,
+    /// `--turnpass` and `--netsim`. Other arguments are ignored.
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
         let mut options = Self::default();
         let mut args = args.into_iter();
@@ -179,6 +185,10 @@ impl LaunchOptions {
                 self.stun = StunChoice::parse(value);
                 self.stun_refused = self.stun.is_none().then(|| value.to_string());
             }
+            "netsim" => {
+                self.netsim = NetSimTuning::parse(value);
+                self.netsim_refused = self.netsim.is_none().then(|| value.to_string());
+            }
             "turn" | "turnuser" | "turnpass" => {
                 let value = value.trim();
                 let value = (!value.is_empty()).then(|| value.to_string());
@@ -209,6 +219,9 @@ impl LaunchOptions {
         if let Some(stun) = &self.stun_refused {
             unusable.push(format!("stun={stun}"));
         }
+        if let Some(netsim) = &self.netsim_refused {
+            unusable.push(format!("netsim={netsim} (latency,jitter,losses: 120,20,5)"));
+        }
         if let Some(turn) = &self.turn
             && self.turn_server().is_none()
         {
@@ -224,8 +237,8 @@ impl LaunchOptions {
 }
 
 /// The parameters of the page address and the command line.
-const LAUNCH_KEYS: [&str; 7] = [
-    "room", "signal", "pseudo", "stun", "turn", "turnuser", "turnpass",
+const LAUNCH_KEYS: [&str; 8] = [
+    "room", "signal", "pseudo", "stun", "turn", "turnuser", "turnpass", "netsim",
 ];
 
 /// The invitation link: the game's page (`page`: its address without query, like
@@ -524,6 +537,39 @@ mod tests {
         assert_eq!(
             args("--stun nope!").unusable(),
             vec!["stun=nope!".to_string()]
+        );
+    }
+
+    /// Issue #8: the network simulator from the page address and from the command line.
+    #[test]
+    fn the_page_address_and_the_command_line_set_the_network_simulator() {
+        let options = LaunchOptions::from_query("?room=TEST&netsim=120,20,5");
+        let bad = NetSimTuning {
+            latency_ms: 120.0,
+            jitter_ms: 20.0,
+            loss_percent: 5.0,
+        };
+        assert_eq!(options.netsim, Some(bad));
+        assert!(options.unusable().is_empty());
+        // Percent-encoded commas, as some browsers write them.
+        assert_eq!(
+            LaunchOptions::from_query("?NETSIM=120%2C20%2C5").netsim,
+            Some(bad)
+        );
+        let args = |text: &str| LaunchOptions::from_args(text.split(' ').map(String::from));
+        assert_eq!(args("--room TEST --netsim 120,20,5").netsim, Some(bad));
+        assert_eq!(args("--netsim=off").netsim, Some(NetSimTuning::default()));
+        let refused = LaunchOptions::from_query("?netsim=lent");
+        assert_eq!(refused.netsim, None);
+        assert_eq!(
+            refused.unusable(),
+            vec!["netsim=lent (latency,jitter,losses: 120,20,5)".to_string()]
+        );
+        // Not part of the invitation: each peer simulates its own way in.
+        let code = RoomCode::parse("AB3CD").unwrap();
+        assert_eq!(
+            query_with_room("?netsim=120,20,5", Some(&code)),
+            "?room=AB3CD&netsim=120,20,5"
         );
     }
 

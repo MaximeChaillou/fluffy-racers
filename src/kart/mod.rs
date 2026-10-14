@@ -291,18 +291,24 @@ pub fn kart_body_with_stats(
     )
 }
 
+/// A kart's collision box ([`KART_HALF_EXTENTS`], rounded edges): ours, the bots', and the
+/// kinematic bodies of the other players' karts online (issue #8).
+pub fn kart_collider() -> Collider {
+    let rounding = 0.1;
+    let half = KART_HALF_EXTENTS - Vec3::splat(rounding);
+    Collider::round_cuboid(half.x, half.y, half.z, rounding)
+}
+
 /// Everything a kart body needs: physics, driving components and pose recording for the
 /// visual interpolation. Add `PlayerKart` (or a bot / network driver) and a visual on top. Its
 /// stats are the middle level (exactly `tuning`); see [`kart_body_with_stats`].
 pub fn kart_body(tuning: &KartTuning, transform: Transform) -> impl Bundle + use<> {
-    let rounding = 0.1;
-    let half = KART_HALF_EXTENTS - Vec3::splat(rounding);
     (
         Kart,
         transform,
         PhysicsPose::new(transform),
         RigidBody::Dynamic,
-        Collider::round_cuboid(half.x, half.y, half.z, rounding),
+        kart_collider(),
         ColliderMassProperties::MassProperties(MassProperties {
             local_center_of_mass: Vec3::Y * tuning.center_of_mass_height,
             mass: tuning.mass,

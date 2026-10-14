@@ -14,8 +14,8 @@ use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContext
 use super::NetSystems;
 use super::ice::{is_loopback_host, signal_host};
 use super::{
-    Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, Stuck,
-    default_signal, invite_link, is_local_signal, native_command, now_ms,
+    Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, NetTuning,
+    Stuck, default_signal, invite_link, is_local_signal, native_command, now_ms,
 };
 use crate::characters::{PartKind, Roster};
 
@@ -55,12 +55,21 @@ struct LobbyUiState {
     copied_at: Option<f64>,
 }
 
-/// `?room=CODE&signal=…&pseudo=…&stun=…&turn=…` in the page address, or `--room CODE --signal …`
-/// natively: the settings, and the room to join. Without `signal`, a page served on this machine
+/// `?room=CODE&signal=…&pseudo=…&stun=…&turn=…&netsim=…` in the page address, or `--room CODE
+/// --signal …` natively: the settings, and the room to join. Without `signal`, a page served on this machine
 /// or the local network meets the others through `matchbox_server` on that machine
 /// ([`default_signal`], issue #49).
-fn join_launch_room(mut settings: ResMut<NetSettings>, mut actions: MessageWriter<NetAction>) {
+fn join_launch_room(
+    mut settings: ResMut<NetSettings>,
+    tuning: Option<ResMut<NetTuning>>,
+    mut actions: MessageWriter<NetAction>,
+) {
     let options = platform::launch_options();
+    // `?netsim=120,20,5` (issue #8): after the stored tunings of the admin panel (PreStartup).
+    if let (Some(netsim), Some(mut tuning)) = (options.netsim, tuning) {
+        info!("network: simulated network on the kart states received: {netsim:?}");
+        tuning.simulator = netsim;
+    }
     for unusable in options.unusable() {
         warn!("network: ignored, cannot be used: {unusable}");
     }

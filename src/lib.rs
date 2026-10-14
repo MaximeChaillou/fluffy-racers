@@ -35,7 +35,7 @@ use kart::{
     SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
-use net::NetPlugin;
+use net::{KartSyncPlugin, NetPlugin, OnlineSlot};
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
@@ -64,7 +64,8 @@ impl Plugin for SimulationPlugin {
 /// The whole game: simulation, track, race rules, croquettes, items, the interactions between
 /// karts (issue #34), characters and their selection screen, player kart, bots, visuals, sounds,
 /// camera, HUD, debug overlay, the player's options (issue #17), admin panel and the network's
-/// rooms and lobby (issue #7; the egui parts only with a renderer).
+/// rooms and lobby (issue #7; the egui parts only with a renderer), and the other players' karts
+/// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room).
 /// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -101,7 +102,13 @@ impl Plugin for GamePlugin {
                 HudPlugin,
                 DebugOverlayPlugin,
                 SoundPlugin,
-                (LevelPlugin, OptionsPlugin, AdminPlugin, NetPlugin),
+                (
+                    LevelPlugin,
+                    OptionsPlugin,
+                    AdminPlugin,
+                    NetPlugin,
+                    KartSyncPlugin,
+                ),
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
@@ -116,7 +123,9 @@ pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
 /// player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without bots);
 /// on the test ground, or driving freely on a circuit (`RaceMode::FreeRoam`), it just drives,
 /// and falls back to its spawn point. Its character and parts are the player's loadout
-/// (issue #15): their stats, and the driver on the kart.
+/// (issue #15): their stats, and the driver on the kart. Online (issue #8, `net::OnlineSlot`),
+/// it starts from the grid slot of its seat, so that the players do not start on top of each
+/// other.
 fn spawn_player(
     mut commands: Commands,
     visuals: Res<KartVisualAssets>,
@@ -131,6 +140,7 @@ fn spawn_player(
     circuit: Option<Res<TrackLayout>>,
     grid: Res<RaceGrid>,
     mode: Res<RaceMode>,
+    online: Option<Res<OnlineSlot>>,
     mut cameras: Query<(&mut ChaseCamera, &mut Projection)>,
 ) {
     let slot = circuit
@@ -139,7 +149,10 @@ fn spawn_player(
         .map(|layout| grid.player_slot().min(layout.grid.len() - 1));
     let spawn = match (&circuit, slot) {
         (Some(layout), Some(slot)) => layout.grid[slot],
-        _ => start.0,
+        _ => online
+            .zip(circuit.as_ref())
+            .and_then(|(online, layout)| layout.grid.get(online.0).copied())
+            .unwrap_or(start.0),
     };
     let stats = roster.stats(&loadout);
     let mut kart = commands.spawn((
