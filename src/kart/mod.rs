@@ -6,11 +6,15 @@
 //! the physics step, the bumps between karts. The kart only reads its `KartInput`, never the
 //! keyboard.
 //!
+//! The interactions between karts (GD § 15, issue #34, `crate::interactions`) reach the driving
+//! through two components (`push.rs`): the sideways push of a paw strike ([`Shove`]), kept apart
+//! from the grip, and the pull of a tether ([`TetherPull`]).
+//!
 //! Every boost source (mini-turbo, rocket start, trick, slipstream, boost pad, croquette, piment)
 //! goes through the one `Boost` component (GD § 2). Hit by an item (issue #16), the kart spins
 //! out or tumbles (`KartState::Hit`: deaf to its driver, slowing down hard), then starts its
-//! invincibility. Every top speed multiplier
-//! (bots' catch-up, croquettes, stats) goes through `MaxSpeedFactors`.
+//! invincibility. Every top speed multiplier (bots' catch-up, croquettes, stats, a tether
+//! holding the kart) goes through `MaxSpeedFactors`.
 //!
 //! The stats of the kart (GD § 9, issue #15, `stats.rs`) are converted once when it spawns into
 //! multipliers ([`StatEffects`]); every tick the driving applies them to `KartTuning` for this
@@ -20,6 +24,7 @@ mod bump;
 mod drift;
 mod input;
 mod physics;
+mod push;
 mod rocket;
 mod slipstream;
 mod stats;
@@ -30,10 +35,12 @@ mod visual;
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use input::{
-    DEBUG_BOOST_KEY, DEBUG_RESET_KEY, ITEM_KEYS, JUMP_KEYS, KartInputPlugin, KeyboardLayout,
-    LOOK_BACK_KEYS, PlayerKart, SpawnPoint, keyboard_input,
+    DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
+    JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerKart, SpawnPoint,
+    gamepad_input, keyboard_input,
 };
 pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
+pub use push::{Shove, TetherPull, towed_forward_speed, towed_top_speed};
 pub use rocket::{
     Stall, StartOutcome, StartPress, THROTTLE_PRESSED, rocket_start_duration, start_outcome,
 };
@@ -78,6 +85,10 @@ pub struct KartInput {
     pub item: bool,
     /// Look behind (used by the camera).
     pub look_back: bool,
+    /// Interaction button, held (GD § 15, issue #34): a short press strikes with the paw on the
+    /// release, a longer one grabs the kart alongside and holds it while the button stays down
+    /// (`crate::interactions`).
+    pub interact: bool,
 }
 
 /// A kart's simulated body. Spawn it with [`kart_body`].
@@ -98,7 +109,9 @@ pub struct KartInput {
     Slipstream,
     KartStats,
     StatEffects,
-    Invincibility
+    Invincibility,
+    Shove,
+    TetherPull
 )]
 pub struct Kart;
 
@@ -142,6 +155,9 @@ pub struct MaxSpeedFactors {
     /// The Speed stat (GD § 9, issue #15): `StatEffects::top_speed`, set when the kart spawns
     /// (0.92 to 1.08 by default; 1 at the middle level).
     pub stats: f32,
+    /// Held by another kart's paw (GD § 15, issue #34): braked a little while the tether lasts
+    /// (0.9 at the middle Weight, with the default `InteractionTuning::tether_target_brake`).
+    pub tether: f32,
 }
 
 impl Default for MaxSpeedFactors {
@@ -150,13 +166,14 @@ impl Default for MaxSpeedFactors {
             catch_up: 1.0,
             croquettes: 1.0,
             stats: 1.0,
+            tether: 1.0,
         }
     }
 }
 
 impl MaxSpeedFactors {
     pub fn product(&self) -> f32 {
-        self.catch_up * self.croquettes * self.stats
+        self.catch_up * self.croquettes * self.stats * self.tether
     }
 }
 
@@ -526,6 +543,7 @@ fn drive_karts(
             &mut DriftMotion,
             &mut KartWheels,
             &mut Velocity,
+            (&mut Shove, &TetherPull),
             &mut ExternalForce,
             &mut GravityScale,
         ),
@@ -568,6 +586,7 @@ fn drive_karts(
         mut motion,
         mut wheels,
         mut velocity,
+        (mut shove, pull),
         mut force,
         mut gravity,
     ) in &mut karts
@@ -591,6 +610,7 @@ fn drive_karts(
                 gravity.0 = 0.0;
             }
             *wheels = KartWheels::default();
+            shove.set_if_neq(Shove::default());
             tricks.set_if_neq(TrickTracker::default());
             previous_input.set_if_neq(PreviousInput(*input));
             continue;
@@ -676,7 +696,10 @@ fn drive_karts(
         let normal = wheels.ground_normal;
         let ahead = (forward - normal * forward.dot(normal)).normalize_or(forward);
         let right = ahead.cross(normal);
-        let mut linvel = velocity.linear;
+        // A strike's push (GD § 15, `push.rs`) is kept apart: the driving works on the velocity
+        // without it, and adds it back at the end. A wall that stopped it ended it.
+        let carried = shove.carried(velocity.linear);
+        let mut linvel = velocity.linear - shove.direction * carried;
         let angvel = velocity.angular;
 
         // Tricks (GD § 5): takeoff from a trick ramp, and the button pressed around it.
@@ -743,8 +766,13 @@ fn drive_karts(
         };
         if ground_handling {
             let forward_speed = linvel.dot(ahead);
-            let top_speed =
-                max_speed(tuning, wheels.offroad_ratio, &boost) * speed_scale.0.max(0.0);
+            // Towed by a tether (GD § 15), the kart neither accelerates by itself nor slows down
+            // between its own top speed and its partner's: the tether pulls it there.
+            let top_speed = towed_top_speed(
+                max_speed(tuning, wheels.offroad_ratio, &boost) * speed_scale.0.max(0.0),
+                forward_speed,
+                pull.tow_speed,
+            );
             // Hit by an item: it slows down hard, boost or not (GD § 8).
             let new_forward = match hit {
                 Some(reaction) => hit_forward_speed(tuning, forward_speed, reaction, dt),
@@ -757,7 +785,12 @@ fn drive_karts(
                     dt,
                 ),
             };
-            let new_lateral = next_lateral_speed(tuning, linvel.dot(right), dt);
+            // The tether pulls along the heading (towed up to its partner's speed at most) and
+            // to the side (the grip takes most of that: the kart keeps its direction).
+            let new_forward =
+                towed_forward_speed(new_forward, pull.accel.dot(ahead), pull.tow_speed, dt);
+            let new_lateral =
+                next_lateral_speed(tuning, linvel.dot(right), dt) + pull.accel.dot(right) * dt;
 
             let yaw = angvel.dot(normal);
             let tilt = angvel - normal * yaw;
@@ -789,7 +822,7 @@ fn drive_karts(
             velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
         } else {
             // A little air control, and turn back upright to land on the wheels.
-            velocity.linear = linvel;
+            velocity.linear = linvel + pull.accel * dt;
             let yaw = angvel.dot(Vec3::Y);
             let tilt = angvel - Vec3::Y * yaw;
             let target =
@@ -798,6 +831,11 @@ fn drive_karts(
             let blend = 1.0 - (-tuning.air_rotation_response * dt).exp();
             velocity.angular =
                 Vec3::Y * next_yaw_rate(tuning, yaw, target, dt) + tilt + (righting - tilt) * blend;
+        }
+        // The push, fading by itself (`push.rs`).
+        if shove.is_active() {
+            let push = shove.step(carried, dt);
+            velocity.linear += shove.direction * push;
         }
     }
 }

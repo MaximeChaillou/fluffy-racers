@@ -22,6 +22,7 @@ const FULL_THROTTLE: KartInput = KartInput {
     jump_drift: false,
     item: false,
     look_back: false,
+    interact: false,
 };
 
 /// A kart at the origin looking down -Z on a large flat slab, with the croquette rules.

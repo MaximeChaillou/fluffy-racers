@@ -54,6 +54,9 @@ pub enum LossCause {
     ItemHit,
     /// Bumped by another kart: 1.
     Bump,
+    /// Struck by another kart's paw, or thrown by it (GD § 15, issue #34): 1, with the same 1 s
+    /// of protection as a bump (a strike and the bump it causes cost one croquette).
+    Strike,
 }
 
 impl LossCause {
@@ -62,7 +65,14 @@ impl LossCause {
         match self {
             LossCause::ItemHit => tuning.item_hit_loss,
             LossCause::Bump => tuning.bump_loss,
+            LossCause::Strike => tuning.strike_loss,
         }
+    }
+
+    /// Whether this loss shares the bumps' grace period (`CroquetteTuning::bump_grace`): a bump
+    /// and a paw strike do (GD § 15), an item hit does not (the items have their own rules).
+    pub fn has_grace(self) -> bool {
+        matches!(self, LossCause::Bump | LossCause::Strike)
     }
 }
 

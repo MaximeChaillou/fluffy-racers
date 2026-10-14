@@ -14,7 +14,9 @@
 //! and the tricks (issue #13), through their `KartInput` like a player. They take item boxes
 //! (a little detour on the straights when a slot is free) and use their items (issue #16,
 //! `items.rs`): the item button of their `KartInput` too, more or less often with their level
-//! (`BotSkill::item_delay`).
+//! (`BotSkill::item_delay`). And they use their paw (issue #34, `interactions.rs`): a strike in a
+//! share of the occasions, a grab on a faster kart passing, a jump to break free when held, with
+//! their level (`BotSkill::strike_chance`, `grab_chance`, `escape_delay`).
 //!
 //! Each bot also has its own character and parts (issue #15, [`bot_loadout`]): the weight
 //! classes take turns along the grid, so that the 9 animals line up and every stretch of the
@@ -27,6 +29,7 @@
 //! tests run several, and the network will share the host's.
 
 mod driver;
+mod interactions;
 mod items;
 mod line;
 mod rng;
@@ -36,6 +39,7 @@ mod tuning;
 mod scenario_tests;
 
 pub use driver::{BotBrain, DriftPlan, Neighbor, Senses, catch_up_scale, charge_per_radian, drive};
+pub use interactions::{BotPawBrain, PawButtons, PawSenses, ReachKart, paw_buttons};
 pub use items::{BotItemBrain, ItemButtons, ItemSenses, item_buttons};
 pub use line::{Located, RacingLine, Turn};
 pub use rng::BotRng;
@@ -47,6 +51,7 @@ use bevy_rapier3d::prelude::Velocity;
 use crate::TICK_HZ;
 use crate::characters::{DriverLooks, Loadout, PartKind, Roster, WeightClass};
 use crate::croquettes::{CroquetteTuning, Croquettes};
+use crate::interactions::{InteractionTuning, Paw, PawMotion};
 use crate::items::{ItemBox, ItemSlots, ItemTuning, Slot};
 use crate::kart::{
     Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
@@ -135,6 +140,7 @@ pub fn bot(difficulty: BotDifficulty, seed: u64, tuning: &BotTuning) -> impl Bun
         Bot { difficulty },
         BotBrain::new(seed, tuning),
         BotItemBrain::new(seed),
+        BotPawBrain::new(seed),
         DrivesOnAfterFinish,
     )
 }
@@ -308,16 +314,18 @@ fn drive_bots(
     tuning: Res<BotTuning>,
     kart_tuning: Res<KartTuning>,
     item_tuning: Option<Res<ItemTuning>>,
+    interaction_tuning: Option<Res<InteractionTuning>>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
     race: Option<Res<Race>>,
     mut neighbors: Local<Vec<Neighbor>>,
     mut boxes: Local<Vec<Vec3>>,
+    mut in_reach: Local<Vec<ReachKart>>,
     karts: Query<(Entity, &Transform, &Velocity), With<Kart>>,
     item_boxes: Query<(&Transform, &ItemBox)>,
     mut bots: Query<(
         Entity,
         &Bot,
-        (&mut BotBrain, &mut BotItemBrain),
+        (&mut BotBrain, &mut BotItemBrain, Option<&mut BotPawBrain>),
         &Transform,
         &Velocity,
         &KartState,
@@ -330,6 +338,7 @@ fn drive_bots(
             Option<&ItemSlots>,
             Option<&RaceProgress>,
             Option<&Croquettes>,
+            Option<&Paw>,
         ),
         &mut KartInput,
     )>,
@@ -359,10 +368,11 @@ fn drive_bots(
         );
     }
     let max_croquettes = croquette_tuning.map_or(10, |t| t.max_held);
+    let interactions = interaction_tuning.as_deref().filter(|t| t.enabled);
     for (
         entity,
         bot,
-        (mut brain, mut item_brain),
+        (mut brain, mut item_brain, paw_brain),
         transform,
         velocity,
         state,
@@ -371,7 +381,7 @@ fn drive_bots(
         effects,
         tricks,
         boost,
-        (slots, progress, croquettes),
+        (slots, progress, croquettes, paw),
         mut input,
     ) in &mut bots
     {
@@ -455,6 +465,66 @@ fn drive_bots(
             let buttons = item_buttons(&mut item_brain, skill, &tuning, &senses);
             new.item = buttons.item;
             new.look_back = buttons.back;
+        }
+        // Its paw (issue #34): the Interaction button, a jump to break free, a throw's stick.
+        if let (Some(interactions), Some(paw), Some(mut paw_brain)) = (interactions, paw, paw_brain)
+        {
+            let forward = transform.forward().with_y(0.0).normalize_or(Vec3::NEG_Z);
+            let speed = velocity.linear.dot(forward);
+            // The side of the track's nearer edge, from its own place across the road (right
+            // positive), seen along its heading (it drives along the track).
+            let edge = if brain.lateral.abs() > 0.5 {
+                brain.lateral.signum()
+            } else {
+                0.0
+            };
+            in_reach.clear();
+            in_reach.extend(
+                neighbors
+                    .iter()
+                    .filter(|o| o.entity != entity)
+                    .filter_map(|other| {
+                        let reach = crate::interactions::reach(
+                            interactions,
+                            transform.translation,
+                            forward,
+                            other.position,
+                        )?;
+                        let side = if reach.lateral >= 0.0 { 1.0 } else { -1.0 };
+                        Some(ReachKart {
+                            entity: other.entity,
+                            side,
+                            ahead: reach.ahead,
+                            faster_by: other.velocity.dot(forward) - speed,
+                            toward_edge: edge != 0.0 && side == edge,
+                        })
+                    }),
+            );
+            let seconds = |ticks: u32| ticks as f32 / TICK_HZ as f32;
+            let senses = PawSenses {
+                can_act: racing
+                    && !state.is_hit()
+                    && *state != KartState::Respawning
+                    && !progress.is_some_and(|p| p.finished()),
+                ready: paw.ready(),
+                drifting: matches!(state, KartState::Hop { .. } | KartState::Drifting { .. }),
+                grounded: *state == KartState::Grounded,
+                reaching: matches!(paw.motion, PawMotion::Reaching { .. }),
+                holding: match paw.motion {
+                    PawMotion::Holding { ticks, side, .. } => Some((seconds(ticks), side)),
+                    _ => None,
+                },
+                held_for: paw.held.map(|held| seconds(held.ticks)),
+                tap_time: interactions.tap_time,
+                in_reach: &in_reach,
+                dt: time.delta_secs(),
+            };
+            let buttons = paw_buttons(&mut paw_brain, skill, &tuning, &senses);
+            new.interact = buttons.interact;
+            new.jump_drift |= buttons.jump;
+            if let Some(steer) = buttons.steer {
+                new.steer = steer;
+            }
         }
         input.set_if_neq(new);
     }

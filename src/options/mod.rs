@@ -232,7 +232,7 @@ fn apply_player_options(options: Res<PlayerOptions>, mut layout: ResMut<Keyboard
 }
 
 /// The controls (GD § 13) with the letters of `layout`: (action, keys), for the menu.
-pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 9] {
+pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 10] {
     let [up, left, down, right] = layout.letters();
     [
         ("Accélérer", format!("Haut ou {up}")),
@@ -242,6 +242,10 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 9] {
         (
             "Objet (maintenir : traîner)",
             "Shift ou E ; avec Bas, S ou C : derrière".to_string(),
+        ),
+        (
+            "Interaction (appui : coup de patte ; tenir : attraper)",
+            "X ou F".to_string(),
         ),
         ("Regarder derrière", "C (tenir)".to_string()),
         ("Pilote et kart", "G".to_string()),
@@ -256,7 +260,7 @@ mod scenario_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kart::{DEBUG_RESET_KEY, ITEM_KEYS, JUMP_KEYS, LOOK_BACK_KEYS};
+    use crate::kart::{DEBUG_RESET_KEY, INTERACT_KEYS, ITEM_KEYS, JUMP_KEYS, LOOK_BACK_KEYS};
 
     /// Issue #17: the options go to the browser and come back the same.
     #[test]
@@ -309,7 +313,8 @@ mod tests {
     /// of debugging. The menu keys are the same letter at the same place in AZERTY and QWERTY.
     #[test]
     fn no_key_does_two_things_in_either_layout() {
-        let interaction = [KeyCode::KeyX, KeyCode::KeyF];
+        // Issue #34: the keys the game reads for the Interaction button, X and F (GD § 13).
+        assert_eq!(INTERACT_KEYS, [KeyCode::KeyX, KeyCode::KeyF]);
         let menus = [
             OPTIONS_KEY,
             crate::characters::SELECTION_KEY,
@@ -329,7 +334,7 @@ mod tests {
                 &JUMP_KEYS,
                 &ITEM_KEYS,
                 &LOOK_BACK_KEYS,
-                &interaction,
+                &INTERACT_KEYS,
                 &menus,
             ];
             let mut all: Vec<KeyCode> = actions
@@ -351,5 +356,13 @@ mod tests {
             controls(KeyboardLayout::Qwerty)[2].1,
             "Gauche / Droite, ou A / D"
         );
+        // Issue #34: the menu shows the Interaction keys.
+        for layout in KeyboardLayout::ALL {
+            assert!(
+                controls(layout)
+                    .iter()
+                    .any(|(action, keys)| action.starts_with("Interaction") && keys == "X ou F")
+            );
+        }
     }
 }

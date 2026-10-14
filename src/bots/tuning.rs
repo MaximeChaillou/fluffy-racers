@@ -76,6 +76,23 @@ pub struct BotSkill {
     pub item_aim: f32,
     /// Chance to drag a single pelure or pelote behind as a shield before letting it go.
     pub item_shield: f32,
+
+    // --- Interactions between karts (GD § 15, issue #34) ----------------------------------------
+    /// Share of the occasions (a kart coming in reach, the paw ready) it strikes at (GD: 10 / 30
+    /// / 60 %).
+    pub strike_chance: f32,
+    /// Preference for pushing toward the nearer edge of the track (GD: Hard): the chance is
+    /// `× (1 + bias)` for a kart on that side, `× (1 − bias)` for one on the other side.
+    pub strike_edge_bias: f32,
+    /// Chance to grab a faster kart passing it (GD: Easy never, Normal sometimes, Hard to get
+    /// towed)...
+    pub grab_chance: f32,
+    /// ...held this long before letting go (s)...
+    pub grab_hold: f32,
+    /// ...and then thrown away from itself (GD: Hard).
+    pub throw: bool,
+    /// Held by another kart, it jumps free after this long (s, GD: about 1 / 0.5 / 0.25 s).
+    pub escape_delay: f32,
 }
 
 /// All the knobs of the bots.
@@ -149,6 +166,13 @@ pub struct BotTuning {
     pub item_box_pull: f32,
     pub item_box_range: f32,
 
+    // --- Interactions between karts (GD § 15, issue #34) ----------------------------------------
+    /// It never goes for the same kart twice within this long (s, GD: 5 s).
+    pub interaction_retarget: f32,
+    /// A kart counts as "faster, passing" (worth grabbing) when it goes at least this much
+    /// faster along the bot's heading (m/s): a boost, mostly.
+    pub grab_min_speed_gain: f32,
+
     // --- Recovery -----------------------------------------------------------------------------
     /// Slower than this (m/s) while trying to drive for `stuck_seconds`: the bot backs up for
     /// `reverse_seconds`, steering away. The tow pelican (3 s) remains the last resort.
@@ -189,6 +213,12 @@ impl Default for BotTuning {
                     item_delay: 2.5,
                     item_aim: 0.18,
                     item_shield: 0.2,
+                    strike_chance: 0.1,
+                    strike_edge_bias: 0.0,
+                    grab_chance: 0.0,
+                    grab_hold: 1.0,
+                    throw: false,
+                    escape_delay: 1.0,
                 },
                 // Normal: good line, aims for orange.
                 BotSkill {
@@ -211,6 +241,12 @@ impl Default for BotTuning {
                     item_delay: 1.2,
                     item_aim: 0.1,
                     item_shield: 0.6,
+                    strike_chance: 0.3,
+                    strike_edge_bias: 0.0,
+                    grab_chance: 0.3,
+                    grab_hold: 1.2,
+                    throw: false,
+                    escape_delay: 0.5,
                 },
                 // Hard: full racing line, late braking, orange, purple when the turn allows it.
                 BotSkill {
@@ -233,6 +269,12 @@ impl Default for BotTuning {
                     item_delay: 0.5,
                     item_aim: 0.06,
                     item_shield: 0.9,
+                    strike_chance: 0.6,
+                    strike_edge_bias: 0.33,
+                    grab_chance: 0.7,
+                    grab_hold: 1.6,
+                    throw: true,
+                    escape_delay: 0.25,
                 },
             ],
 
@@ -266,6 +308,9 @@ impl Default for BotTuning {
             item_box_pull: 2.5,
             item_box_range: 35.0,
 
+            interaction_retarget: 5.0,
+            grab_min_speed_gain: 2.0,
+
             stuck_speed: 1.5,
             stuck_seconds: 0.6,
             reverse_seconds: 1.0,
@@ -298,7 +343,25 @@ mod tests {
             assert!(high.item_delay < low.item_delay);
             assert!(high.item_aim < low.item_aim);
             assert!(high.item_shield > low.item_shield);
+            // Issue #34: harder = strikes and grabs more, breaks free sooner.
+            assert!(high.strike_chance > low.strike_chance);
+            assert!(high.grab_chance >= low.grab_chance);
+            assert!(high.escape_delay < low.escape_delay);
         }
+        // GD § 15: 10 / 30 / 60 % of the occasions; Easy never grabs, Hard throws and prefers
+        // the edge; they break free after about 1 / 0.5 / 0.25 s; never the same kart within 5 s.
+        let strikes: Vec<f32> = t.skills.iter().map(|s| s.strike_chance).collect();
+        assert_eq!(strikes, [0.1, 0.3, 0.6]);
+        assert_eq!(t.skill(BotDifficulty::Easy).grab_chance, 0.0);
+        assert!(t.skill(BotDifficulty::Normal).grab_chance > 0.0);
+        let hard = t.skill(BotDifficulty::Hard);
+        assert!(hard.throw && hard.strike_edge_bias > 0.0);
+        assert!(!t.skill(BotDifficulty::Normal).throw);
+        let escapes: Vec<f32> = t.skills.iter().map(|s| s.escape_delay).collect();
+        assert_eq!(escapes, [1.0, 0.5, 0.25]);
+        assert_eq!(t.interaction_retarget, 5.0);
+        // A grab is held less than the 2 s a tether lasts.
+        assert!(t.skills.iter().all(|s| s.grab_hold < 2.0));
         assert!(t.item_shield_time[0] < t.item_shield_time[1]);
         // Rocket start: never before the "2" (no stall); Hard always perfect (≤ 0.25 s).
         assert!(t.skills.iter().all(|s| s.start_delay_min >= 0.0));

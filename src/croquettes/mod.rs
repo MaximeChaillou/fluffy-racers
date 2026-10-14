@@ -8,7 +8,9 @@
 //!   [`TrackCroquette`]s). A kart touching one picks it up: +1 croquette (still taken at 10) and
 //!   a mini-boost of 0.3 s through the kart's `Boost`, like every boost. It comes back 10 s
 //!   later.
-//! - **Lost**: bumped by another kart (`kart::KartBump`), a kart loses 1; hit by an item, 3
+//! - **Lost**: bumped by another kart (`kart::KartBump`), a kart loses 1; struck by a paw (GD
+//!   § 15, issue #34: `LossCause::Strike`, written by `crate::interactions`), 1 too, with the same
+//!   1 s of protection; hit by an item, 3
 //!   (`crate::items` writes [`LoseCroquettes`] once the kart decided it is hit: not while it
 //!   spins, tumbles or is invincible). Never below 0. The lost croquettes fly out behind
 //!   the kart and land on the ground ([`LooseCroquette`]): anyone can pick them up, the kart that
@@ -160,11 +162,11 @@ fn tick_croquettes(
     }
 }
 
-/// Bumps (from the last physics step) and item hits: the kart loses croquettes, which fly out
-/// behind it. A bump costs nothing during the grace period of the previous one (GD § 15: the
-/// same 1 s for every kart); an item hit always costs its croquettes: the item rules only send
-/// it once the kart is really hit (GD § 8: not while it spins, tumbles or is invincible, its
-/// Invincibility stat; `crate::items`).
+/// Bumps (from the last physics step), paw strikes and item hits: the kart loses croquettes,
+/// which fly out behind it. A bump or a strike costs nothing during the grace period of the
+/// previous one (GD § 15: the same 1 s for every kart); an item hit always costs its
+/// croquettes: the item rules only send it once the kart is really hit (GD § 8: not while it
+/// spins, tumbles or is invincible, its Invincibility stat; `crate::items`).
 fn lose_croquettes(
     tuning: Res<CroquetteTuning>,
     rapier: ReadRapierContext,
@@ -189,7 +191,7 @@ fn lose_croquettes(
         let Ok((transform, mut held)) = karts.get_mut(kart) else {
             continue;
         };
-        if cause == LossCause::Bump {
+        if cause.has_grace() {
             if held.bump_grace > 0.0 {
                 continue;
             }

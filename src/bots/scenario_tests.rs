@@ -15,6 +15,11 @@
 //! measure, with the same thresholds as before the items. One more race test runs with the
 //! items, as in the game ([`bots_race_with_items`]): every race ends, the bots take boxes and use
 //! their items, karts get hit, and no bot gets towed in free driving.
+//!
+//! **Without interactions (issue #34)** either: the paw strikes and the grabs between karts are
+//! switched off in these races too (`InteractionTuning::enabled`), same thresholds. One more race
+//! test runs with them ([`bots_race_with_interactions`]): the bots strike and grab, every race
+//! ends, and no bot gets towed in free driving (a kart struck or held counts as an incident).
 
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -26,6 +31,7 @@ use bevy_rapier3d::prelude::{
 use super::*;
 use crate::TICK_HZ;
 use crate::croquettes::Croquettes;
+use crate::interactions::{InteractionTuning, Paw, PawStats};
 use crate::items::{ItemStats, ItemTuning};
 use crate::kart::{
     KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, StatEffects,
@@ -319,6 +325,14 @@ impl RaceLog {
             if state.is_hit() {
                 log.last_contact = Some(self.ticks);
             }
+            // Issue #34: struck by a paw (its protection runs for 1 s after) or in a tether, too
+            // (never in the races without interactions).
+            if world
+                .get::<Paw>(*entity)
+                .is_some_and(|paw| paw.protected > 0 || paw.linked())
+            {
+                log.last_contact = Some(self.ticks);
+            }
             let input = *world.get::<KartInput>(*entity).unwrap();
             let progress = world.get::<RaceProgress>(*entity).unwrap();
             let drifting = matches!(state, KartState::Drifting { .. });
@@ -421,6 +435,25 @@ impl RaceLog {
                 log.croquettes_held,
                 ticks_to_seconds(log.contact_ticks),
             );
+            if let Some(paws) = app
+                .world()
+                .get::<PawStats>(*entity)
+                .filter(|paws| **paws != PawStats::default())
+            {
+                let _ = writeln!(
+                    out,
+                    "    paw: {} strikes, {} landed, {} missed, {} grabs, {} throws; struck {} \
+                     times, held {} times, broke free {} times",
+                    paws.strikes,
+                    paws.landed,
+                    paws.missed,
+                    paws.grabs,
+                    paws.throws,
+                    paws.struck,
+                    paws.held,
+                    paws.escapes
+                );
+            }
             if let Some(items) = app
                 .world()
                 .get::<ItemStats>(*entity)
@@ -705,16 +738,23 @@ fn wait_for_the_bots(app: &mut App, bots: usize) {
 }
 
 /// The game on `track` with `bots` bots and the race seed `seed`, before its first update,
-/// without items (issue #16: these races measure the driving).
+/// without items (issue #16) nor interactions between karts (issue #34): these races measure the
+/// driving.
 fn seeded_app(bots: usize, seed: u64) -> App {
     seeded_app_with(bots, seed, false)
 }
 
-/// The same, with or without the items.
+/// The same, with or without the items (and without the interactions).
 fn seeded_app_with(bots: usize, seed: u64, items: bool) -> App {
+    seeded_app_full(bots, seed, items, false)
+}
+
+/// The same, with or without the items and the interactions between karts.
+fn seeded_app_full(bots: usize, seed: u64, items: bool, interactions: bool) -> App {
     let mut app = game_app_unloaded(TrackChoice::default(), bots);
     app.world_mut().resource_mut::<RaceGrid>().seed = seed;
     app.world_mut().resource_mut::<ItemTuning>().enabled = items;
+    app.world_mut().resource_mut::<InteractionTuning>().enabled = interactions;
     single_threaded(&mut app);
     app
 }
@@ -824,6 +864,8 @@ struct KartResult {
     thresholds: [f32; 3],
     /// Its items (issue #16): boxes, items used, hits taken and landed.
     items: ItemStats,
+    /// Its paw (issue #34): strikes, grabs, throws, struck, held, escapes.
+    paws: PawStats,
 }
 
 impl KartResult {
@@ -879,6 +921,11 @@ impl RaceResult {
                     items: app
                         .world()
                         .get::<ItemStats>(*entity)
+                        .copied()
+                        .unwrap_or_default(),
+                    paws: app
+                        .world()
+                        .get::<PawStats>(*entity)
                         .copied()
                         .unwrap_or_default(),
                 }
@@ -1632,6 +1679,134 @@ fn bots_race_with_items() {
         &per_race(&runs, |r| r.race.tows() as f32),
         Some(5.0),
         Some(2.0),
+    );
+    checks.at_most(
+        "tows in free driving",
+        &per_race(&runs, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+        Some(0.0),
+        None,
+    );
+    checks.finish();
+}
+
+/// Issue #34 acceptance: a mixed grid (Easy, Normal, Hard, the player's kart driven by a bot too)
+/// races 3 laps of Prairie Pompon **with the interactions between karts** (without items, which
+/// have their own race). The bots strike their neighbours and grab the faster karts (GD § 15,
+/// each with its level), the karts held break free; every race ends, in the time windows of the
+/// race without interactions ([`the_three_difficulties_drive_differently`]: GD § 15, "les temps
+/// et l'absence de pélican mesurés sans interactions restent la référence"), and the
+/// interactions never send a bot off by itself (no tow in free driving: a kart struck or held
+/// counts as an incident).
+#[test]
+fn bots_race_with_interactions() {
+    let difficulty = |slot: usize| BotDifficulty::ALL[slot % 3];
+    struct Run {
+        race: RaceResult,
+        over: bool,
+    }
+    let seeds = race_seeds();
+    let runs = for_each_seed(&seeds, |seed| {
+        let mut app = seeded_app_full(11, seed, false, true);
+        wait_for_the_player(&mut app);
+        wait_for_the_bots(&mut app, 11);
+        set_difficulties(&mut app, difficulty);
+        player_becomes_a_bot(&mut app, difficulty(11));
+        let mut log = RaceLog::new(&mut app);
+        run_race(&mut app, &mut log, 150.0);
+        let race = RaceResult::of(&app, &log, "12 karts, mixed, with interactions");
+        app.update();
+        let over = race_phase(&app) == RacePhase::Finished;
+        Run { race, over }
+    });
+    print_reports(&seeds, runs.iter().map(|r| &r.race));
+
+    let mut checks = Checks::new("12 karts, mixed grid, with interactions", &seeds);
+    checks.every_race(
+        "every kart finishes",
+        runs.iter().map(|r| r.race.all_finished()),
+    );
+    checks.every_race(
+        "the race is over once all have finished",
+        runs.iter().map(|r| r.over),
+    );
+    let finishes = |r: &Run| r.race.finishes();
+    checks.below(
+        "slowest finish (s)",
+        &per_race(&runs, |r| highest(&finishes(r))),
+        Some(85.0),
+        Some(70.0),
+    );
+    // The Hard bots in front: below 50 s (47.9 s at the fastest on the seeds 0 to 7). A tow
+    // never makes a lap shorter than that.
+    checks.at_least(
+        "fastest finish (s)",
+        &per_race(&runs, |r| lowest(&finishes(r))),
+        Some(45.0),
+        None,
+    );
+    let paws = |r: &Run| r.race.karts.iter().map(|k| k.paws).collect::<Vec<_>>();
+    let count = |r: &Run, f: fn(&PawStats) -> bool| paws(r).iter().filter(|p| f(p)).count() as f32;
+    let sum = |r: &Run, f: fn(&PawStats) -> u32| paws(r).iter().map(f).sum::<u32>() as f32;
+    checks.at_least(
+        "karts that struck",
+        &per_race(&runs, |r| count(r, |p| p.strikes > 0)),
+        Some(3.0),
+        Some(6.0),
+    );
+    checks.at_least(
+        "strikes landed",
+        &per_race(&runs, |r| sum(r, |p| p.landed)),
+        Some(4.0),
+        Some(10.0),
+    );
+    checks.at_least(
+        "karts struck",
+        &per_race(&runs, |r| count(r, |p| p.struck > 0)),
+        Some(2.0),
+        Some(5.0),
+    );
+    // A grab needs a faster kart passing: some races have only one (1 at the fewest on 48
+    // seeds): the mean is the requirement.
+    checks.at_least(
+        "grabs (tethers)",
+        &per_race(&runs, |r| sum(r, |p| p.grabs)),
+        None,
+        Some(3.0),
+    );
+    checks.at_least(
+        "karts held that broke free (a jump)",
+        &per_race(&runs, |r| sum(r, |p| p.escapes)),
+        None,
+        Some(1.0),
+    );
+    // Lap times (laps 2 and 3, without the pelican's time after a pack incident) no slower than
+    // the windows of the race without interactions.
+    use BotDifficulty::{Easy, Hard, Normal};
+    for (d, [mean_high, high]) in [
+        (Easy, [20.9, 23.0]),
+        (Normal, [19.5, 21.0]),
+        (Hard, [17.8, 19.5]),
+    ] {
+        let laps = |r: &Run| {
+            mean(
+                &r.race
+                    .of_difficulty(d)
+                    .flat_map(|k| k.laps_without_pelican.iter().skip(1).copied())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        checks.at_most(
+            &format!("{d:?}: average lap 2 and 3 (s)"),
+            &per_race(&runs, laps),
+            Some(high),
+            Some(mean_high),
+        );
+    }
+    tow_checks(
+        &mut checks,
+        &runs.iter().map(|r| &r.race).collect::<Vec<_>>(),
+        5.0,
+        2.0,
     );
     checks.at_most(
         "tows in free driving",

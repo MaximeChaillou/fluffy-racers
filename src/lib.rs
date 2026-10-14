@@ -6,6 +6,7 @@ pub mod bots;
 pub mod camera;
 pub mod characters;
 pub mod croquettes;
+pub mod interactions;
 pub mod interpolation;
 pub mod items;
 pub mod kart;
@@ -25,6 +26,7 @@ use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
 use characters::{CharacterPlugin, DriverLooks, PlayerLoadout, Roster};
 use croquettes::{CroquettePlugin, CroquetteVisualPlugin};
+use interactions::{InteractionPlugin, InteractionVisualPlugin};
 use interpolation::InterpolationPlugin;
 use items::{ItemPlugin, ItemVisualPlugin};
 use kart::{
@@ -57,16 +59,18 @@ impl Plugin for SimulationPlugin {
     }
 }
 
-/// The whole game: simulation, track, race rules, croquettes, items, characters and their
-/// selection screen, player kart, bots, visuals, sounds, camera, HUD, debug overlay, the
-/// player's options (issue #17) and admin panel (the egui parts only with a renderer).
+/// The whole game: simulation, track, race rules, croquettes, items, the interactions between
+/// karts (issue #34), characters and their selection screen, player kart, bots, visuals, sounds,
+/// camera, HUD, debug overlay, the player's options (issue #17) and admin panel (the egui parts
+/// only with a renderer).
 /// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
 /// the bots (`BotPlugin`) fill the grid: 11 of them by default (`RaceGrid`), the player behind.
-/// The croquettes (`CroquettePlugin`) and the items (`ItemPlugin`, issue #16) are not part of it
-/// either: a kart scenario has none.
+/// The croquettes (`CroquettePlugin`), the items (`ItemPlugin`, issue #16) and the interactions
+/// between karts (`InteractionPlugin`, issue #34) are not part of it either: a kart scenario has
+/// none.
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -76,10 +80,19 @@ impl Plugin for GamePlugin {
                 SimulationPlugin,
                 TrackPlugin,
                 RacePlugin,
-                (CroquettePlugin, CharacterPlugin, ItemPlugin),
+                (
+                    CroquettePlugin,
+                    CharacterPlugin,
+                    ItemPlugin,
+                    InteractionPlugin,
+                ),
                 KartInputPlugin,
                 KartVisualPlugin,
-                (CroquetteVisualPlugin, ItemVisualPlugin),
+                (
+                    CroquetteVisualPlugin,
+                    ItemVisualPlugin,
+                    InteractionVisualPlugin,
+                ),
                 BotPlugin,
                 PelicanPlugin,
                 CameraPlugin,
