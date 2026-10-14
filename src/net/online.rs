@@ -236,15 +236,14 @@ fn online_mode(
         .and_then(|session| session.lobby.as_ref())
         .filter(|lobby| lobby.seated());
     // Our place: once everyone shares the seat order, and the peers being connected had their
-    // chance to sit with us (given up on after 10 s, like in the lobby). A link whose peer the
-    // lobby already knows is not waited for: natively, a note of the signaling can come after
-    // the connection and leave a stale link behind (issue #51).
+    // chance to sit with us (given up on after 10 s, like in the lobby).
     let now = now_ms(&real);
     let connecting = session.as_deref().is_some_and(|session| {
-        session.links.pending().iter().any(|link| {
-            now.saturating_sub(link.since_ms) < STUCK_MS
-                && lobby.is_none_or(|lobby| lobby.peer(link.peer).is_none())
-        })
+        session
+            .links
+            .pending()
+            .iter()
+            .any(|link| now.saturating_sub(link.since_ms) < STUCK_MS)
     });
     let agreed = lobby.is_some_and(|lobby| lobby.seats_agreed()) && !connecting;
     match (online.as_deref_mut(), lobby) {

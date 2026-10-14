@@ -10,6 +10,12 @@
 //!   [`NO_CANDIDATE_MS`] after the offer and the answer crossed (the browser gave no address it
 //!   can be reached at), the browser saw it fail (`Links::failed`), or still nothing after
 //!   [`STUCK_MS`].
+//!
+//! The socket's word on who is connected is the truth (issue #51): every peer its `update_peers`
+//! reports connected goes through `Links::connected`, every peer gone through
+//! `Links::disconnected`. A connected peer is never pending, even if a note about it came after
+//! its connection (`NetSocket::poll` gives a peer's notes before its connection, but natively the
+//! signaling runs on another thread).
 
 use super::ice::Candidates;
 use super::protocol::PeerKey;
@@ -126,11 +132,19 @@ pub enum Diagnosis {
 #[derive(Clone, Debug, Default)]
 pub struct Links {
     links: Vec<Link>,
+    /// The peers the socket reports connected, until it reports them gone or the signaling
+    /// server says they left.
+    connected: Vec<PeerKey>,
 }
 
 impl Links {
     pub fn pending(&self) -> &[Link] {
         &self.links
+    }
+
+    /// The socket reported `peer` connected (and not gone since).
+    pub fn is_connected(&self, peer: PeerKey) -> bool {
+        self.connected.contains(&peer)
     }
 
     fn get(&mut self, peer: PeerKey, role: Role, now_ms: u64) -> &mut Link {
@@ -148,6 +162,14 @@ impl Links {
     pub fn note(&mut self, note: &SignalNote, now_ms: u64) -> Option<String> {
         let seconds = |since: u64| (now_ms.saturating_sub(since)) as f32 / 1000.0;
         match *note {
+            // About a peer already connected: the note comes late, its connection is open.
+            SignalNote::Announced(peer)
+            | SignalNote::SdpSent { peer, .. }
+            | SignalNote::SdpReceived { peer, .. }
+                if self.is_connected(peer) =>
+            {
+                None
+            }
             SignalNote::Announced(peer) => {
                 // Announced again (it came back): start over.
                 self.links.retain(|link| link.peer != peer);
@@ -202,6 +224,7 @@ impl Links {
                 None
             }
             SignalNote::Left(peer) => {
+                self.connected.retain(|key| *key != peer);
                 let index = self.links.iter().position(|link| link.peer == peer)?;
                 let link = self.links.remove(index);
                 Some(format!(
@@ -213,8 +236,12 @@ impl Links {
         }
     }
 
-    /// The socket reports `peer` connected: what the console says.
+    /// The socket reports `peer` connected: its link is done. Returns what the console says (call
+    /// it whether the console shows it or not).
     pub fn connected(&mut self, peer: PeerKey, now_ms: u64) -> String {
+        if !self.is_connected(peer) {
+            self.connected.push(peer);
+        }
         match self.links.iter().position(|link| link.peer == peer) {
             Some(index) => {
                 let link = self.links.remove(index);
@@ -232,6 +259,7 @@ impl Links {
 
     /// The socket reports `peer` gone.
     pub fn disconnected(&mut self, peer: PeerKey) {
+        self.connected.retain(|key| *key != peer);
         self.links.retain(|link| link.peer != peer);
     }
 
@@ -495,6 +523,60 @@ mod tests {
         links.disconnected(A);
         assert!(links.pending().is_empty());
         assert_eq!(links.diagnosis(20_000), None);
+    }
+
+    /// Issue #51: the socket reported the peer connected, then a note about it comes (natively,
+    /// the signaling runs on another thread). Nothing is pending, the lobby and the console say
+    /// nothing, ever; once the peer is gone, it can be announced again.
+    #[test]
+    fn a_note_after_the_connection_leaves_nothing_pending() {
+        let mut links = Links::default();
+        // The offering side: announced, offer, answer, all after « connected ».
+        assert_eq!(links.connected(B, 640), "#f599 connected");
+        assert!(links.is_connected(B));
+        assert_eq!(links.note(&SignalNote::Announced(B), 654), None);
+        assert_eq!(links.note(&sent(B, true, Candidates::default()), 654), None);
+        assert_eq!(
+            links.note(&received(B, false, Candidates::default()), 654),
+            None
+        );
+        // The answering side: the offer, then our answer.
+        links.connected(A, 700);
+        assert_eq!(links.note(&received(A, true, mdns(1)), 710), None);
+        assert_eq!(links.note(&sent(A, false, mdns(1)), 720), None);
+        // Candidates that follow the connection (natively one by one; in the browser those found
+        // after the page's shim stopped waiting, issue #49).
+        for candidates in [
+            SignalNote::CandidateSent {
+                peer: B,
+                candidates: mdns(1),
+            },
+            SignalNote::CandidateReceived {
+                peer: A,
+                candidates: mdns(1),
+            },
+        ] {
+            assert_eq!(links.note(&candidates, 800), None);
+        }
+        assert!(links.pending().is_empty(), "{:?}", links.pending());
+        // A connection failed somewhere: not these.
+        links.failed();
+        for now in [2_654, 4_654, 11_000, 60_000] {
+            assert_eq!(links.diagnosis(now), None, "{now} ms");
+            assert!(links.newly_stuck(now).is_empty(), "{now} ms");
+        }
+        // Gone (the socket says it, or the signaling server): announced again, pending again.
+        links.disconnected(B);
+        assert!(links.note(&SignalNote::Left(A), 61_000).is_none());
+        assert!(!links.is_connected(A) && !links.is_connected(B));
+        links.note(&SignalNote::Announced(B), 62_000);
+        links.note(&received(A, true, mdns(1)), 62_000);
+        let pending: Vec<PeerKey> = links.pending().iter().map(|link| link.peer).collect();
+        assert_eq!(pending, vec![B, A]);
+        assert_eq!(
+            links.diagnosis(64_000),
+            Some(Diagnosis::Connecting { peers: 2 })
+        );
     }
 
     /// A peer announced again (it came back) starts over.

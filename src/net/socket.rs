@@ -4,7 +4,8 @@
 //! The socket's message loop is a future: it runs on Bevy's I/O task pool, natively (its own
 //! threads) as in the browser (the page's event loop, where the pool spawns local tasks). The
 //! game polls the socket from a system each frame ([`NetSocket::poll`]): peers that come and go,
-//! packets received, packets to send. Nothing here blocks.
+//! packets received, packets to send. Nothing here waits (the lock of the signaling's notes is
+//! only ever held to push one).
 //!
 //! Its ICE servers are chosen by the game (`ice.rs`, issue #49), and its signaling goes through
 //! [`ObservedSignallerBuilder`] (`signaling.rs`): what the signaling server says comes out of
@@ -16,7 +17,7 @@
 //! - a packet can arrive before the peer is reported connected: it waits ([`EARLY_PACKETS`] at
 //!   most) until it is.
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
 use matchbox_socket::{
@@ -119,7 +120,7 @@ impl NetSocket {
     }
 
     /// What happened since the last call, in order: our id, the signaling server's news, peers,
-    /// packets, the end of the loop.
+    /// packets, the end of the loop. The news about a peer always comes before it is connected.
     pub fn poll(&mut self, mut on: impl FnMut(SocketEvent)) {
         #[cfg(test)]
         if let Some(port) = self.memory.as_mut() {
@@ -136,15 +137,18 @@ impl NetSocket {
             self.me = Some(me);
             on(SocketEvent::Joined(me));
         }
-        if let Ok(mut notes) = self.notes.try_lock()
-            && !notes.is_empty()
+        // The peers that came and went, then the notes: every note written before one of these
+        // changes (by the message loop, natively on another thread) is read now, and told first
+        // (issue #51). The loop only holds the lock to push a note.
+        let changes = self.socket.try_update_peers();
         {
+            let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
             std::mem::swap(&mut *notes, &mut self.read);
         }
         for note in self.read.drain(..) {
             on(SocketEvent::Signal(note));
         }
-        if let Ok(changes) = self.socket.try_update_peers() {
+        if let Ok(changes) = changes {
             for (id, state) in changes {
                 let key = key_of(id);
                 match state {
@@ -268,7 +272,9 @@ pub mod memory {
     use matchbox_socket::async_trait::async_trait;
     use matchbox_socket::{PeerEvent, PeerRequest, SignalingError, Signaller, SignallerBuilder};
 
+    use super::super::ice::Candidates;
     use super::super::protocol::{Channel, Message, PeerKey};
+    use super::super::signaling::SignalNote;
     use super::SocketEvent;
 
     #[derive(Default)]
@@ -280,6 +286,8 @@ pub mod memory {
         /// Every this many unreliable packets, one is lost (0: none).
         lose_every: u32,
         unreliable_sent: u32,
+        /// Each port gives the signaling notes of a peer before its connection.
+        signal_notes: bool,
     }
 
     /// The room (cloned: the same one).
@@ -295,6 +303,13 @@ pub mod memory {
         /// One unreliable packet in `n` is lost (0: none).
         pub fn lose_every(&self, n: u32) {
             self.0.lock().unwrap().lose_every = n;
+        }
+
+        /// Each port also gives what goes through the signaling server before a peer is
+        /// connected, as a WebRTC socket does (issue #51): the announcement, the offer and the
+        /// answer (without candidates).
+        pub fn signal_notes(&self) {
+            self.0.lock().unwrap().signal_notes = true;
         }
 
         pub fn port(&self, me: PeerKey) -> Port {
@@ -332,8 +347,9 @@ pub mod memory {
                 self.joined = true;
                 on(SocketEvent::Joined(self.me));
             }
-            let (present, packets) = {
+            let (present, packets, signal_notes) = {
                 let mut state = self.hub.0.lock().unwrap();
+                let signal_notes = state.signal_notes;
                 let present: Vec<PeerKey> = state.ports.iter().map(|(k, _)| *k).collect();
                 let mut packets = Vec::new();
                 if let Some((_, inbox)) = state.ports.iter_mut().find(|(k, _)| *k == self.me) {
@@ -347,11 +363,34 @@ pub mod memory {
                     }
                     *inbox = kept;
                 }
-                (present, packets)
+                (present, packets, signal_notes)
             };
             for key in &present {
                 if *key != self.me && !self.known.contains(key) {
                     self.known.push(*key);
+                    if signal_notes {
+                        // The one with the smaller key was there first: it makes the offer.
+                        let (peer, offer, candidates) =
+                            (*key, self.me < *key, Candidates::default());
+                        let ours = SignalNote::SdpSent {
+                            peer,
+                            offer,
+                            candidates,
+                        };
+                        let theirs = SignalNote::SdpReceived {
+                            peer,
+                            offer: !offer,
+                            candidates,
+                        };
+                        if offer {
+                            on(SocketEvent::Signal(SignalNote::Announced(peer)));
+                            on(SocketEvent::Signal(ours));
+                            on(SocketEvent::Signal(theirs));
+                        } else {
+                            on(SocketEvent::Signal(theirs));
+                            on(SocketEvent::Signal(ours));
+                        }
+                    }
                     on(SocketEvent::Connected(*key));
                 }
             }

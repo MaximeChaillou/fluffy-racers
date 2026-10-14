@@ -14,7 +14,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use matchbox_socket::async_trait::async_trait;
 use matchbox_socket::{
-    PeerEvent, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
+    PeerEvent, PeerId, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
 };
 
 use super::signaling::test_peer_id;
@@ -197,6 +197,252 @@ impl Signaller for FakeSignaling {
             }
             futures_timer::Delay::new(Duration::from_millis(5)).await;
         }
+    }
+}
+
+/// A signaling server in memory that introduces its peers to each other like `matchbox_server`
+/// (issue #51): a newcomer gets its id, the peers already there are told about it (they make the
+/// offer), and each signal goes to its receiver.
+#[derive(Clone, Debug, Default)]
+struct FakeRoom(Arc<Mutex<Vec<(PeerId, VecDeque<PeerEvent>)>>>);
+
+/// The way into a [`FakeRoom`] of the peer `id`.
+#[derive(Clone, Debug)]
+struct RoomDoor {
+    room: FakeRoom,
+    id: PeerId,
+}
+
+impl FakeRoom {
+    fn door(&self, id: PeerId) -> Arc<RoomDoor> {
+        Arc::new(RoomDoor {
+            room: self.clone(),
+            id,
+        })
+    }
+}
+
+#[async_trait]
+impl SignallerBuilder for RoomDoor {
+    async fn new_signaller(
+        &self,
+        _attempts: Option<u16>,
+        _room_url: String,
+    ) -> Result<Box<dyn Signaller>, SignalingError> {
+        let mut peers = self.room.0.lock().unwrap();
+        for (_, events) in peers.iter_mut() {
+            events.push_back(PeerEvent::NewPeer(self.id));
+        }
+        peers.push((self.id, VecDeque::from([PeerEvent::IdAssigned(self.id)])));
+        Ok(Box::new(self.clone()))
+    }
+}
+
+#[async_trait]
+impl Signaller for RoomDoor {
+    async fn send(&mut self, request: PeerRequest) -> Result<(), SignalingError> {
+        if let PeerRequest::Signal { receiver, data } = request {
+            let mut peers = self.room.0.lock().unwrap();
+            if let Some((_, events)) = peers.iter_mut().find(|(id, _)| *id == receiver) {
+                events.push_back(PeerEvent::Signal {
+                    sender: self.id,
+                    data,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn next_message(&mut self) -> Result<PeerEvent, SignalingError> {
+        loop {
+            let next = {
+                let mut peers = self.room.0.lock().unwrap();
+                peers
+                    .iter_mut()
+                    .find(|(id, _)| *id == self.id)
+                    .and_then(|(_, events)| events.pop_front())
+            };
+            if let Some(event) = next {
+                return Ok(event);
+            }
+            futures_timer::Delay::new(Duration::from_millis(5)).await;
+        }
+    }
+}
+
+/// A session in the room `TEST` of a test signaling server (instead of `NetAction::Join`).
+fn join_through(app: &mut App, signaller: Arc<dyn SignallerBuilder>) {
+    let settings = app.world().resource::<NetSettings>().clone();
+    let ice = settings.ice_servers();
+    let url = "ws://localhost:3536/fluffy-racers-TEST";
+    let socket = NetSocket::open_with(url, 1, &ice, signaller);
+    app.world_mut().insert_resource(NetSession {
+        room: RoomCode::parse("TEST").unwrap(),
+        signal: settings.signal.clone(),
+        ice,
+        status: NetStatus::Connecting,
+        lobby: None,
+        links: Links::default(),
+        socket: Some(socket),
+        failures_seen: 0,
+    });
+}
+
+/// Issue #51, as seen with `matchbox_server`: two native peers (only the network) meet through the
+/// room in memory, their direct connection opens (webrtc-rs, no ICE server) and each lobby lists
+/// the other with its ping. The link made by the notes of the signaling ends with « connected »,
+/// whatever the console shows (there is no log subscriber here: the link used to be removed only
+/// while writing the console's line, so never), and the lobby never says « en cours » nor
+/// « n'aboutit pas ».
+#[test]
+fn two_native_peers_connect_and_nothing_stays_pending() {
+    let room = FakeRoom::default();
+    let (ana_key, bob_key) = (PeerKey(1 << 100), PeerKey(2 << 100));
+    let (mut ana, mut bob) = (peer_app("Ana"), peer_app("Bob"));
+    join_through(&mut ana, room.door(test_peer_id(ana_key.0)));
+    join_through(&mut bob, room.door(test_peer_id(bob_key.0)));
+    let sees_the_other = |app: &App| {
+        lobby_rows(app)
+            .iter()
+            .any(|row| !row.me && row.ping_ms.is_some())
+    };
+    let start = Instant::now();
+    let mut frames_after = 0;
+    while frames_after < 60 {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "they never met: {:?} / {:?}",
+            lobby_rows(&ana),
+            lobby_rows(&bob)
+        );
+        ana.update();
+        bob.update();
+        if sees_the_other(&ana) && sees_the_other(&bob) {
+            // Connected: nothing to show about the connection, from now on.
+            assert_eq!((diagnosis(&ana), diagnosis(&bob)), (None, None));
+            frames_after += 1;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for (app, other) in [(&ana, bob_key), (&bob, ana_key)] {
+        let now = now_ms(app.world().resource::<Time<Real>>());
+        let links = &app.world().resource::<NetSession>().links;
+        assert!(links.pending().is_empty(), "{:?}", links.pending());
+        assert!(links.is_connected(other));
+        assert_eq!(links.diagnosis(now + STUCK_MS), None);
+    }
+}
+
+/// Issue #51, the order of the socket's news: natively, the signaling runs on another thread than
+/// the game, and a direct connection opens in a few milliseconds. Two real sockets meet through
+/// the room in memory; Ana's game is slow (2 s) on the frame where it reads Bob's announcement:
+/// meanwhile, in the background, her offer leaves, Bob's answer comes and the connection opens.
+/// Every note about Bob is still given before « connected » (the socket reads the peers, then the
+/// notes, and gives the notes first), and nothing stays « en cours ».
+#[test]
+fn a_slow_frame_does_not_put_a_note_after_the_connection() {
+    // The task pools of the other tests (the socket's loop runs on the I/O one).
+    App::new().add_plugins(bevy::app::TaskPoolPlugin::default());
+    let room = FakeRoom::default();
+    let bob_key = PeerKey(2 << 100);
+    let ice = IceServers::choose(&StunChoice::Auto, None, "ws://localhost:3536");
+    let url = "ws://localhost:3536/fluffy-racers-TEST";
+    let mut ana = NetSocket::open_with(url, 1, &ice, room.door(test_peer_id(1 << 100)));
+    // Ana first in the room: she makes the offer.
+    let start = Instant::now();
+    while ana.me().is_none() {
+        assert!(start.elapsed() < Duration::from_secs(10), "no id");
+        ana.poll(|_| {});
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut bob = NetSocket::open_with(url, 1, &ice, room.door(test_peer_id(bob_key.0)));
+    let mut links = Links::default();
+    let mut events: Vec<SocketEvent> = Vec::new();
+    let mut slow_frame = true;
+    let ms = || start.elapsed().as_millis() as u64;
+    // Until Bob is connected, then a few frames more (for a note that would follow).
+    let mut frames_after = 0;
+    while frames_after < 20 {
+        assert!(
+            start.elapsed() < Duration::from_secs(30),
+            "Ana and Bob never connected: {events:?}"
+        );
+        ana.poll(|event| {
+            match &event {
+                SocketEvent::Connected(peer) => {
+                    links.connected(*peer, ms());
+                }
+                SocketEvent::Disconnected(peer) => links.disconnected(*peer),
+                SocketEvent::Signal(note) => {
+                    links.note(note, ms());
+                    if slow_frame {
+                        slow_frame = false;
+                        std::thread::sleep(Duration::from_secs(2));
+                    }
+                }
+                _ => {}
+            }
+            events.push(event);
+        });
+        bob.poll(|_| {});
+        if events.contains(&SocketEvent::Connected(bob_key)) {
+            frames_after += 1;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let answer = events.iter().position(|e| {
+        matches!(e, SocketEvent::Signal(SignalNote::SdpReceived { peer, offer: false, .. })
+            if *peer == bob_key)
+    });
+    let connected = events
+        .iter()
+        .position(|e| *e == SocketEvent::Connected(bob_key));
+    assert!(
+        events[0] == SocketEvent::Signal(SignalNote::Announced(bob_key)) && answer.is_some(),
+        "{events:?}"
+    );
+    assert!(
+        answer < connected,
+        "Bob's answer came after his connection: {events:?}"
+    );
+    assert!(links.pending().is_empty(), "{:?}", links.pending());
+    assert_eq!(links.diagnosis(ms() + STUCK_MS), None);
+}
+
+/// Issue #51, in the game: two whole games in the in-memory room, with the notes of the signaling
+/// (announcement, offer, answer) before each connection, as a WebRTC socket gives them. The lobby
+/// never shows a connection « en cours » or that « n'aboutit pas », and online driving starts as
+/// soon as the seats are shared: `online_mode` waits for the connections being made, and none is
+/// left (since #8, it left out the peers the lobby knew because of the link that stayed: no
+/// longer needed).
+#[test]
+fn online_driving_does_not_wait_for_a_connected_peer() {
+    use super::race_tests::{ANA, BOB, Room};
+
+    let mut room = Room::new(&[(ANA, "Ana"), (BOB, "Bob")]);
+    room.hub.signal_notes();
+    room.until(20.0, "the seats shared", |app| {
+        assert_eq!(diagnosis(app), None);
+        app.world()
+            .resource::<NetSession>()
+            .lobby
+            .as_ref()
+            .is_some_and(|lobby| lobby.seats().len() == 2 && lobby.seats_agreed())
+    });
+    // The level follows the next frame.
+    for _ in 0..3 {
+        room.frame();
+    }
+    for (key, app) in &room.games {
+        assert!(
+            app.world().get_resource::<OnlineLevel>().is_some(),
+            "{key:?} still waits"
+        );
+        let now = now_ms(app.world().resource::<Time<Real>>());
+        let links = &app.world().resource::<NetSession>().links;
+        assert!(links.pending().is_empty(), "{key:?}: {:?}", links.pending());
+        assert!(links.is_connected(if *key == ANA { BOB } else { ANA }));
+        assert_eq!(links.diagnosis(now + STUCK_MS), None);
     }
 }
 
@@ -460,6 +706,11 @@ fn two_native_peers_meet_through_a_local_signaling_server() {
         println!("{rows:#?}");
         assert!(rows.iter().any(|r| !r.me && r.name == other));
         assert_eq!(rows.iter().filter(|r| r.host).count(), 1);
+        // Issue #51: no connection « en cours » left, now or later.
+        let now = now_ms(app.world().resource::<Time<Real>>());
+        let links = &app.world().resource::<NetSession>().links;
+        assert!(links.pending().is_empty(), "{:?}", links.pending());
+        assert_eq!(links.diagnosis(now + STUCK_MS), None);
     }
     let host_of = |app: &App| {
         app.world()
@@ -641,6 +892,12 @@ fn two_games_drive_together_through_a_local_signaling_server() {
         "each sees the other's kart after {:.2} s",
         start.elapsed().as_secs_f32()
     );
+    // Issue #51: no connection « en cours » left behind.
+    for app in [&ana, &bob] {
+        assert_eq!(diagnosis(app), None);
+        let links = &app.world().resource::<NetSession>().links;
+        assert!(links.pending().is_empty(), "{:?}", links.pending());
+    }
     let kart = crate::tests::player(&mut ana);
     let ana_key = ana.world().resource::<KartSync>().me();
     let from = ana.world().get::<Transform>(kart).unwrap().translation;
