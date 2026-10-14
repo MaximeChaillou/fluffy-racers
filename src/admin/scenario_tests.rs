@@ -489,7 +489,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "RaceTuning",
             "StatsTuning",
             "ItemTuning",
-            "InteractionTuning"
+            "InteractionTuning",
+            "NetTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {

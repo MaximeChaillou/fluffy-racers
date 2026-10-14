@@ -123,6 +123,8 @@ pub struct Lobby {
     full: bool,
     left: bool,
     announced: Option<RaceStart>,
+    /// The host whose list of seats we last received (issue #8: the seat order everyone shares).
+    seats_from: Option<PeerKey>,
     outbox: Vec<Outgoing>,
     events: Vec<LobbyEvent>,
 }
@@ -143,6 +145,7 @@ impl Lobby {
             full: false,
             left: false,
             announced: None,
+            seats_from: None,
             outbox: Vec::new(),
             events: Vec::new(),
         }
@@ -178,6 +181,14 @@ impl Lobby {
     /// Seated players, us included, in seat order.
     pub fn seats(&self) -> &[PeerKey] {
         &self.seats
+    }
+
+    /// We are seated, and our seat order is everyone's: we host, or the host's list arrived
+    /// (issue #8: our place on the grid comes from it). Two peers who sat down by themselves at
+    /// the same moment each put themselves first, until the host's list.
+    pub fn seats_agreed(&self) -> bool {
+        self.profile.seated
+            && (self.is_host() || (self.host.is_some() && self.seats_from == self.host))
     }
 
     pub fn peers(&self) -> &[LobbyPeer] {
@@ -303,11 +314,13 @@ impl Lobby {
                     self.events.push(LobbyEvent::RaceAnnounced(start));
                 }
             }
-            // Issue #9 routes the interactions between karts; nothing to do in the lobby.
+            // Issue #9 routes the interactions between karts, and the kart states go to the
+            // synchronization (issue #8, `poll_session`): nothing to do in the lobby.
             Message::Strike(_)
             | Message::StrikeReply(_)
             | Message::Grab(_)
-            | Message::TetherBreak(_) => {}
+            | Message::TetherBreak(_)
+            | Message::KartState(_) => {}
             Message::Ping { sent_ms } => {
                 let pong = Message::Pong {
                     echo_ms: sent_ms,
@@ -510,6 +523,7 @@ impl Lobby {
             self.sit(*key);
         }
         if self.host == Some(from) {
+            self.seats_from = Some(from);
             let mut ordered: Vec<PeerKey> = list
                 .iter()
                 .copied()
@@ -948,6 +962,47 @@ mod tests {
     }
 
     /// A newcomer waits for its seat: it never hosts before, even with the smallest id.
+    /// Issue #8: the grid slot of each player is its place in the seat order, which must be the
+    /// same everywhere. Two peers who sit down by themselves at once each put themselves first:
+    /// the newcomer waits for the host's list before its order counts.
+    #[test]
+    fn the_seat_order_is_agreed_before_it_counts() {
+        let mut mesh = Mesh::new();
+        let a = mesh.join(8);
+        assert!(!mesh.view(a).seats_agreed(), "not seated yet");
+        mesh.run(SETTLE_MS + 100);
+        assert!(mesh.view(a).seats_agreed(), "alone, it hosts");
+        let b = mesh.join(9);
+        let mut agreed_at = None;
+        for ms in 0..2_000 {
+            mesh.run(1);
+            let view = mesh.view(b);
+            if view.seats_agreed() {
+                agreed_at.get_or_insert(ms);
+                // From then on, the same order as the host's.
+                assert_eq!(view.seats(), mesh.view(a).seats());
+            }
+        }
+        assert!(agreed_at.is_some(), "the newcomer never agreed");
+        assert_eq!(mesh.view(b).seats(), &[a, b]);
+        // Two at once, the second with the smallest id: the order the host sends wins.
+        let mut both = Mesh::new();
+        let c = both.join(8);
+        let d = both.join(6);
+        let mut checked = 0;
+        for _ in 0..(SETTLE_MS + 1_000) {
+            both.run(1);
+            if both.view(c).seats_agreed() && both.view(d).seats_agreed() {
+                checked += 1;
+                assert_eq!(both.view(c).seats(), both.view(d).seats());
+            }
+        }
+        assert!(checked > 0);
+        let seats = both.view(c).seats();
+        assert_eq!(seats.len(), 2);
+        assert!(seats.contains(&c) && seats.contains(&d));
+    }
+
     #[test]
     fn a_newcomer_waits_for_the_host_to_seat_it() {
         let mut mesh = Mesh::new();

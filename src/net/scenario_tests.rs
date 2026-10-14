@@ -302,6 +302,104 @@ fn a_peer_announced_but_not_connected_shows_in_the_lobby() {
     assert_eq!(status(&app), Some(NetStatus::InRoom));
 }
 
+/// Issue #8: seated in a room (alone here, after 2.5 s), the game switches to free driving on
+/// Prairie Pompon, our kart on the grid slot of its seat, no countdown, no bot; its states go
+/// out (stamped with the common clock: ours, we host) and its history fills. Leaving the room
+/// brings back the level we were on, as it was.
+#[test]
+fn a_room_drives_freely_on_prairie_pompon_and_leaving_comes_back() {
+    let mut app = app_on(TrackChoice::TestGround);
+    let signaling = FakeSignaling::default();
+    signaling
+        .events
+        .lock()
+        .unwrap()
+        .push_back(PeerEvent::IdAssigned(test_peer_id(1 << 100)));
+    let settings = app.world().resource::<NetSettings>().clone();
+    let ice = settings.ice_servers();
+    let socket = NetSocket::open_with(
+        "ws://localhost:3536/fluffy-racers-TEST",
+        1,
+        &ice,
+        Arc::new(signaling.clone()),
+    );
+    app.world_mut().insert_resource(NetSession {
+        room: RoomCode::parse("TEST").unwrap(),
+        signal: settings.signal.clone(),
+        ice,
+        status: NetStatus::Connecting,
+        lobby: None,
+        links: Links::default(),
+        socket: Some(socket),
+        failures_seen: 0,
+    });
+    // Not seated yet: solo goes on.
+    for _ in 0..10 {
+        app.update();
+    }
+    assert!(app.world().get_resource::<KartSync>().is_none());
+    let player_on_a_circuit = |app: &App| {
+        app.world()
+            .get_resource::<crate::track::TrackLayout>()
+            .is_some()
+            && app.world().get_resource::<OnlineSlot>().is_some()
+            && app
+                .world()
+                .iter_entities()
+                .any(|e| e.contains::<crate::kart::PlayerKart>())
+    };
+    assert!(
+        wait_for(&mut app, 20.0, player_on_a_circuit),
+        "never drove online"
+    );
+    assert_eq!(
+        *app.world().resource::<TrackChoice>(),
+        TrackChoice::default()
+    );
+    assert_eq!(
+        *app.world().resource::<crate::race::RaceMode>(),
+        crate::race::RaceMode::FreeRoam
+    );
+    assert_eq!(app.world().resource::<OnlineSlot>().0, 0);
+    for _ in 0..30 {
+        app.update();
+    }
+    assert!(app.world().get_resource::<crate::race::Race>().is_none());
+    let mut bots = app
+        .world_mut()
+        .query_filtered::<(), With<crate::bots::Bot>>();
+    assert_eq!(bots.iter(app.world()).count(), 0);
+    let kart = crate::tests::player(&mut app);
+    let pole = app.world().resource::<crate::track::TrackLayout>().grid[0];
+    let at = app.world().get::<Transform>(kart).unwrap().translation;
+    assert!(
+        at.distance(pole.translation) < 1.0,
+        "{at} vs {}",
+        pole.translation
+    );
+    assert!(app.world().resource::<KartSync>().clock.is_set());
+    assert!(app.world().get::<KartHistory>(kart).is_some());
+    // Out of the room: back on the test ground, in a race, as before.
+    act(&mut app, NetAction::Leave);
+    assert!(
+        wait_for(&mut app, 20.0, |app| {
+            *app.world().resource::<TrackChoice>() == TrackChoice::TestGround
+                && app.world().get_resource::<KartSync>().is_none()
+                && app
+                    .world()
+                    .iter_entities()
+                    .any(|e| e.contains::<crate::kart::PlayerKart>())
+        }),
+        "never came back"
+    );
+    assert_eq!(
+        *app.world().resource::<crate::race::RaceMode>(),
+        crate::race::RaceMode::Race
+    );
+    assert!(app.world().get_resource::<OnlineSlot>().is_none());
+    assert!(app.world().get_resource::<OnlineLevel>().is_none());
+}
+
 /// An app with only the network, for the meeting test. `FLUFFY_STUN` (`none`, `auto`, a list of
 /// servers) chooses the STUN servers: by default none with a local signaling server.
 fn peer_app(pseudo: &str) -> App {
@@ -483,4 +581,156 @@ fn stay_in_a_room() {
             println!("t+{elapsed} s {:?}: {}", status(&app), rows.join(" | "));
         }
     }
+}
+
+/// Issue #8, for real: two whole games (headless, real time) meet through `matchbox_server` on
+/// this machine and drive freely on Prairie Pompon. Ana drives; Bob sees Ana's kart where she
+/// drove it, compared tick by tick. `FLUFFY_NETSIM=120,20,5` puts the network simulator on Bob's
+/// side. Run it by hand, the server started:
+/// `cargo test --lib net::scenario_tests::two_games_drive -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs matchbox_server on localhost:3536"]
+fn two_games_drive_together_through_a_local_signaling_server() {
+    use bevy::time::TimeUpdateStrategy;
+
+    let code = RoomCode::generate(getrandom::u64().unwrap());
+    println!("room {code}");
+    let game = |pseudo: &str| {
+        let mut app = crate::tests::game_app_unloaded(TrackChoice::TestGround, 0);
+        // Real time: the lobby's clock and the game's go together, as in the browser.
+        app.insert_resource(TimeUpdateStrategy::Automatic);
+        app.world_mut().resource_mut::<NetSettings>().pseudo = Some(pseudo.into());
+        if let Ok(stun) = std::env::var("FLUFFY_STUN") {
+            app.world_mut().resource_mut::<NetSettings>().stun =
+                StunChoice::parse(&stun).expect("FLUFFY_STUN");
+        }
+        crate::tests::wait_for_the_player(&mut app);
+        app
+    };
+    let (mut ana, mut bob) = (game("Ana"), game("Bob"));
+    if let Ok(netsim) = std::env::var("FLUFFY_NETSIM") {
+        let netsim = NetSimTuning::parse(&netsim).expect("FLUFFY_NETSIM: 120,20,5");
+        println!("Bob's network simulator: {netsim:?}");
+        bob.world_mut().resource_mut::<NetTuning>().simulator = netsim;
+    }
+    for app in [&mut ana, &mut bob] {
+        act(app, NetAction::Join(code.clone()));
+    }
+    let start = Instant::now();
+    let update_both = |ana: &mut App, bob: &mut App| {
+        ana.update();
+        bob.update();
+        std::thread::sleep(Duration::from_millis(4));
+    };
+    // Both seated, on Prairie Pompon, each seeing the other's kart.
+    let sees_the_other = |app: &App| {
+        app.world()
+            .get_resource::<KartSync>()
+            .is_some_and(|sync| sync.remotes().iter().any(|r| r.proxy.is_some()))
+    };
+    while !(sees_the_other(&ana) && sees_the_other(&bob)) {
+        assert!(
+            start.elapsed() < Duration::from_secs(40),
+            "they never saw each other's karts: {:?} / {:?}",
+            lobby_rows(&ana),
+            lobby_rows(&bob)
+        );
+        update_both(&mut ana, &mut bob);
+    }
+    println!(
+        "each sees the other's kart after {:.2} s",
+        start.elapsed().as_secs_f32()
+    );
+    let kart = crate::tests::player(&mut ana);
+    let ana_key = ana.world().resource::<KartSync>().me();
+    let from = ana.world().get::<Transform>(kart).unwrap().translation;
+    // Each on the grid slot of its seat: not on top of each other.
+    let bob_kart = crate::tests::player(&mut bob);
+    let bob_from = bob.world().get::<Transform>(bob_kart).unwrap().translation;
+    println!(
+        "Ana starts at {from:.1} (slot {}), Bob at {bob_from:.1} (slot {})",
+        ana.world().resource::<OnlineSlot>().0,
+        bob.world().resource::<OnlineSlot>().0
+    );
+    assert!(from.distance(bob_from) > 2.0, "on top of each other");
+    // Ana's kart by common tick (from its history), Bob's view of it frame by frame.
+    let mut truth: std::collections::BTreeMap<u32, Vec3> = Default::default();
+    let mut views: Vec<(f64, Vec3)> = Vec::new();
+    // How far behind the common clock Bob shows Ana's kart (ms).
+    let mut delays: Vec<f64> = Vec::new();
+    let drive = Instant::now();
+    let mut next_print = 0.0;
+    while drive.elapsed() < Duration::from_secs(7) {
+        {
+            let mut keys = ana.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::ArrowUp);
+            let t = drive.elapsed().as_secs_f32();
+            if (3.0..3.4).contains(&t) {
+                keys.press(KeyCode::ArrowLeft);
+            } else {
+                keys.release(KeyCode::ArrowLeft);
+            }
+        }
+        update_both(&mut ana, &mut bob);
+        if let Some(history) = ana.world().get::<KartHistory>(kart)
+            && let Some(newest) = history.0.newest_tick()
+        {
+            for tick in newest.saturating_sub(20)..=newest {
+                if let Some(position) = history.0.position_at(tick) {
+                    truth.entry(tick).or_insert(position);
+                }
+            }
+        }
+        let now = bob.world().resource::<Time<Virtual>>().elapsed_secs_f64() * 1_000.0
+            - 1_000.0 / crate::TICK_HZ;
+        let sync = bob.world().resource::<KartSync>();
+        let Some(remote) = sync.remote(ana_key) else {
+            continue;
+        };
+        if let (Some(tick), Some(visual)) = (remote.shown_tick(now), remote.visual) {
+            let position = bob.world().get::<Transform>(visual).unwrap().translation;
+            views.push((tick, position));
+            let local = now / TICK_MS;
+            if let Some(common) = sync.clock.local(0.0).map(|zero| local - zero) {
+                delays.push((common - tick) * TICK_MS);
+            }
+        }
+        let t = drive.elapsed().as_secs_f32();
+        if t >= next_print {
+            next_print += 0.5;
+            let ana_at = ana.world().get::<Transform>(kart).unwrap().translation;
+            let shown = views.last().map(|v| v.1).unwrap_or(Vec3::NAN);
+            println!(
+                "t+{t:.1} s  Ana drives at {ana_at:.1}  Bob shows her at {shown:.1} ({:.1} m behind)  states {}",
+                ana_at.distance(shown),
+                remote.received
+            );
+        }
+    }
+    let truth_at = |tick: f64| {
+        let (a, b) = (tick.floor() as u32, tick.ceil() as u32);
+        Some(truth.get(&a)?.lerp(*truth.get(&b)?, tick.fract() as f32))
+    };
+    let errors: Vec<f32> = views
+        .iter()
+        .filter_map(|(tick, position)| Some(truth_at(*tick)?.distance(*position)))
+        .collect();
+    let driven = truth.values().last().unwrap().distance(from);
+    let worst = errors.iter().copied().fold(0.0f32, f32::max);
+    let mean = errors.iter().sum::<f32>() / errors.len().max(1) as f32;
+    let sync = bob.world().resource::<KartSync>();
+    let remote = sync.remote(ana_key).unwrap();
+    let delay = delays.iter().sum::<f64>() / delays.len().max(1) as f64;
+    println!(
+        "Ana drove {driven:.1} m; Bob compared {} frames: error mean {mean:.3} m, worst {worst:.3} m; {} states received, {:?} (received, lost) by the simulator; Bob shows Ana's kart {delay:.0} ms after her tick, on average",
+        errors.len(),
+        remote.received,
+        sync.simulated_losses(),
+    );
+    assert!(driven > 50.0, "Ana barely drove: {driven} m");
+    assert!(errors.len() > 100, "{} frames compared", errors.len());
+    assert!(
+        worst < 1.0,
+        "Bob showed Ana's kart {worst} m away from where she was"
+    );
 }

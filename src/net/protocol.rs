@@ -14,16 +14,19 @@
 //! of another version, or with an impossible value (a boolean of 2, a float that is not finite,
 //! more seats than players) is refused with its [`DecodeError`].
 //!
-//! **Channels** ([`Channel`]): the lobby and the events go on the reliable channel; the pings on
-//! the unreliable one (a retransmitted ping would measure the retransmission). The kart states of
-//! issue #8 will go on the unreliable one too.
+//! **Channels** ([`Channel`]): the lobby and the events go on the reliable channel; the pings and
+//! the kart states (issue #8, [`KartSnapshot`], 30 per second) on the unreliable one: a
+//! retransmitted ping would measure the retransmission, and a lost kart state is replaced by the
+//! next one 33 ms later.
+//!
+//! Version 2 (issue #8): the kart states.
 
 use std::fmt;
 
 use crate::interactions::TetherEnd;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -50,7 +53,7 @@ impl PeerKey {
 pub enum Channel {
     /// Ordered, retransmitted: lobby and events.
     Reliable,
-    /// Unordered, never retransmitted: pings now, kart states with issue #8.
+    /// Unordered, never retransmitted: pings and kart states (issue #8).
     Unreliable,
 }
 
@@ -159,6 +162,46 @@ pub struct TetherBreak {
     pub reason: TetherEnd,
 }
 
+/// A kart's state at a tick (issue #8, `docs/ARCHITECTURE.md` § « Synchronisation »): the peer
+/// that has authority over the kart sends it 30 times a second, on the unreliable channel.
+/// Quantized by `net::snapshot` (`KartSnapshot::quantize`, `KartSnapshot::pose`): every field is
+/// the integer that travels, so that what is read writes back to the same bytes. 47 bytes with
+/// the version and the kind (fewer than [`MAX_KART_STATE_BYTES`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KartSnapshot {
+    /// Tick of the room's common clock (60 per second, on the host's clock: `net::TickClock`).
+    pub tick: u32,
+    /// The kart: its grid slot (the same id as the interactions' [`KartId`]).
+    pub kart: KartId,
+    /// Position (mm).
+    pub position: [i32; 3],
+    /// Rotation, « smallest three » on 48 bits (`snapshot::pack_rotation`); the last bit is 0.
+    pub rotation: [u8; 6],
+    /// Linear velocity (cm/s).
+    pub velocity: [i16; 3],
+    /// Angular velocity (mrad/s).
+    pub spin: [i16; 3],
+    /// Bits 0-2: the phase (grounded, hop, drift, airborne, trick, hit, towed); 3: drifting to
+    /// the right; 4-5: the sparks' tier (0: none); 6: tumbling (hit); 7: 0.
+    pub state: u8,
+    /// Bit 0: stalled engine; 1: invincible; the others are 0.
+    pub flags: u8,
+    /// Hit by an item: ticks since the hit, and its duration (ticks).
+    pub hit: [u8; 2],
+    /// Boost: strength (1/200: 60 = +30 %) and time left (ticks).
+    pub boost: [u8; 2],
+    /// The drift's slip angle (5 mrad).
+    pub slip: i8,
+    /// The slipstream gauge while it charges (1 to 255), 0 otherwise.
+    pub slipstream: u8,
+    /// The 4 wheels, 4 bits each (front left first): 0 in the air, 1 to 15 on the ground with a
+    /// spring compressed by 0 to 0.7 m.
+    pub wheels: u16,
+}
+
+/// A kart state fits in a small unreliable packet (issue #8: fewer than 64 bytes).
+pub const MAX_KART_STATE_BYTES: usize = 64;
+
 /// Every message of the protocol.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
@@ -187,6 +230,8 @@ pub enum Message {
         echo_ms: u32,
         clock_ms: u32,
     },
+    /// The state of a kart of the sender (issue #8), 30 times a second.
+    KartState(KartSnapshot),
 }
 
 const HELLO: u8 = 1;
@@ -201,6 +246,7 @@ const GRAB: u8 = 18;
 const TETHER_BREAK: u8 = 19;
 const PING: u8 = 32;
 const PONG: u8 = 33;
+const KART_STATE: u8 = 40;
 
 /// The reasons a tether ends, in their wire order.
 const TETHER_ENDS: [TetherEnd; 10] = [
@@ -232,13 +278,16 @@ impl Message {
             Message::TetherBreak(_) => TETHER_BREAK,
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
+            Message::KartState(_) => KART_STATE,
         }
     }
 
     /// The channel it goes on.
     pub fn channel(&self) -> Channel {
         match self {
-            Message::Ping { .. } | Message::Pong { .. } => Channel::Unreliable,
+            Message::Ping { .. } | Message::Pong { .. } | Message::KartState(_) => {
+                Channel::Unreliable
+            }
             _ => Channel::Reliable,
         }
     }
@@ -296,6 +345,23 @@ impl Message {
             Message::Pong { echo_ms, clock_ms } => {
                 put_u32(out, *echo_ms);
                 put_u32(out, *clock_ms);
+            }
+            Message::KartState(kart) => {
+                put_u32(out, kart.tick);
+                out.push(kart.kart);
+                for value in kart.position {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&kart.rotation);
+                for value in kart.velocity.iter().chain(&kart.spin) {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&[kart.state, kart.flags]);
+                out.extend_from_slice(&kart.hit);
+                out.extend_from_slice(&kart.boost);
+                out.extend_from_slice(&kart.slip.to_le_bytes());
+                out.push(kart.slipstream);
+                out.extend_from_slice(&kart.wheels.to_le_bytes());
             }
         }
     }
@@ -397,6 +463,34 @@ impl Message {
                 echo_ms: reader.u32()?,
                 clock_ms: reader.u32()?,
             },
+            KART_STATE => {
+                let kart = KartSnapshot {
+                    tick: reader.u32()?,
+                    kart: reader.u8()?,
+                    position: [reader.i32()?, reader.i32()?, reader.i32()?],
+                    rotation: reader.array()?,
+                    velocity: [reader.i16()?, reader.i16()?, reader.i16()?],
+                    spin: [reader.i16()?, reader.i16()?, reader.i16()?],
+                    state: reader.u8()?,
+                    flags: reader.u8()?,
+                    hit: reader.array()?,
+                    boost: reader.array()?,
+                    slip: i8::from_le_bytes(reader.array()?),
+                    slipstream: reader.u8()?,
+                    wheels: u16::from_le_bytes(reader.array()?),
+                };
+                if kart.rotation[5] & 0x80 != 0 {
+                    return Err(DecodeError::Invalid("kart rotation"));
+                }
+                // Phase 7 does not exist; bit 7 is free.
+                if kart.state & 0x07 == 0x07 || kart.state & 0x80 != 0 {
+                    return Err(DecodeError::Invalid("kart state"));
+                }
+                if kart.flags > 0b11 {
+                    return Err(DecodeError::Invalid("kart flags"));
+                }
+                Message::KartState(kart)
+            }
             other => return Err(DecodeError::UnknownKind(other)),
         };
         if !reader.0.is_empty() {
@@ -477,6 +571,14 @@ impl Reader<'_> {
 
     fn u32(&mut self) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.array()?))
+    }
+
+    fn i32(&mut self) -> Result<i32, DecodeError> {
+        Ok(i32::from_le_bytes(self.array()?))
+    }
+
+    fn i16(&mut self) -> Result<i16, DecodeError> {
+        Ok(i16::from_le_bytes(self.array()?))
     }
 
     fn bool(&mut self) -> Result<bool, DecodeError> {
@@ -586,6 +688,22 @@ mod tests {
                 echo_ms: 17,
                 clock_ms: 1_000_000,
             },
+            Message::KartState(KartSnapshot::default()),
+            Message::KartState(KartSnapshot {
+                tick: 4_000_000_123,
+                kart: 11,
+                position: [i32::MIN, -1, i32::MAX],
+                rotation: [0xff, 0x00, 0x12, 0x34, 0x56, 0x7f],
+                velocity: [i16::MIN, 0, i16::MAX],
+                spin: [-1, 1_234, -32_000],
+                state: 0b0111_1110,
+                flags: 0b11,
+                hit: [17, 96],
+                boost: [60, 255],
+                slip: -128,
+                slipstream: 255,
+                wheels: 0xfedc,
+            }),
         ]
         .into_iter()
         .chain(TETHER_ENDS.iter().map(|reason| {
@@ -614,7 +732,7 @@ mod tests {
         // Every kind is tested, and no two messages share one.
         kinds.sort_unstable();
         kinds.dedup();
-        assert_eq!(kinds.len(), 12);
+        assert_eq!(kinds.len(), 13);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -622,11 +740,15 @@ mod tests {
         );
     }
 
-    /// The pings go on the unreliable channel, everything else on the reliable one.
+    /// The pings and the kart states (issue #8) go on the unreliable channel, everything else on
+    /// the reliable one.
     #[test]
-    fn only_the_pings_are_unreliable() {
+    fn only_the_pings_and_the_kart_states_are_unreliable() {
         for message in every_message() {
-            let unreliable = matches!(message, Message::Ping { .. } | Message::Pong { .. });
+            let unreliable = matches!(
+                message,
+                Message::Ping { .. } | Message::Pong { .. } | Message::KartState(_)
+            );
             assert_eq!(
                 message.channel() == Channel::Unreliable,
                 unreliable,
@@ -649,6 +771,14 @@ mod tests {
         assert_eq!(hello.to_bytes().len(), 2 + 1 + 3 + 4 + 1);
         let seats = Message::Seats(vec![PeerKey(1); MAX_PLAYERS]);
         assert_eq!(seats.to_bytes().len(), 3 + 16 * MAX_PLAYERS);
+        // Issue #8: a kart state in fewer than 64 bytes, whatever its values.
+        for message in every_message() {
+            if let Message::KartState(_) = message {
+                let length = message.to_bytes().len();
+                assert_eq!(length, 47);
+                assert!(length < MAX_KART_STATE_BYTES);
+            }
+        }
         for message in every_message() {
             assert!(message.to_bytes().len() <= 200, "{message:?}");
         }
@@ -730,6 +860,25 @@ mod tests {
         assert!(invalid(&seats));
         // An unknown reason to end a tether.
         assert!(invalid(&[v, TETHER_BREAK, 0, 1, TETHER_ENDS.len() as u8]));
+        // A kart state: phase 7, the free bits of the state, the flags and the rotation.
+        let kart = Message::KartState(KartSnapshot::default()).to_bytes();
+        let (rotation, state, flags) = (
+            2 + 4 + 1 + 12 + 5,
+            2 + 4 + 1 + 12 + 6 + 12,
+            2 + 4 + 1 + 12 + 6 + 12 + 1,
+        );
+        for (at, value) in [
+            (state, 0x07),
+            (state, 0x80),
+            (flags, 0b100),
+            (flags, 0x80),
+            (rotation, 0x80),
+        ] {
+            let mut bad = kart.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "byte {at} = {value:#x}");
+        }
+        assert!(Message::decode(&kart).is_ok());
         // A float that is not finite.
         let mut grab = Message::Grab(Grab {
             grabber: 0,
