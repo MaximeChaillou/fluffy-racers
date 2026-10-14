@@ -22,7 +22,7 @@ Sur Linux, il faut aussi : `libasound2-dev libudev-dev libwayland-dev libxkbcomm
 
 Les joueurs se connectent directement entre eux (WebRTC, pair à pair). Pour se trouver, ils passent par un petit **serveur de mise en relation** : il n'échange que quelques Ko au moment de rejoindre, aucune donnée de jeu n'y passe. En attendant celui de production (issue #10), on lance `matchbox_server` sur sa machine.
 
-Pour l'instant (réseau 2/3, issues #7 et #8), on se retrouve dans le **salon** (touche **L**) : la liste des joueurs, le ping de chacun, l'hôte et le bouton « Prêt ». Une fois assis dans la partie, **tout le monde roule librement sur Prairie Pompon** (sans bots ni compte à rebours) et **chacun voit les karts des autres** rouler. La course synchronisée (compte à rebours commun, bots, objets, classement) arrive avec #9.
+On se retrouve dans le **salon** (touche **L**) : la liste des joueurs, le ping de chacun, l'hôte et le bouton « Prêt ». Une fois assis dans la partie, **tout le monde roule librement sur le circuit choisi par l'hôte** et **chacun voit les karts des autres**. Quand tout le monde est prêt, **l'hôte lance la course** (#9) : même circuit, même grille (les bots de l'hôte devant, les joueurs derrière), compte à rebours commun, classement partagé et mêmes résultats sur tous les écrans. **En ligne, rien ne met le jeu en pause.** Les objets et les croquettes ne sont pas encore partagés : ils sont désactivés en ligne pour l'instant.
 
 ### 1. Installer et lancer le serveur de mise en relation
 
@@ -43,13 +43,22 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
 4. Dans le terminal de `matchbox_server` : deux lignes `Client connected …`, puis une ligne `… -> "{\"NewPeer\":…}"` (le serveur présente le second au premier). **Le serveur n'écrit jamais les offres ni les réponses** (`Offer`, `Answer`, `IceCandidate`), même quand tout marche : c'est la console du navigateur qui les montre.
 5. Dans la console du navigateur (F12, onglet Console), les étapes de la connexion : dans la première fenêtre, `network: #f599 announced by the signaling server: we make the offer`, `network: offer sent to #f599 after 0.01 s: 1 candidate (1 host .local)`, `network: answer received from #f599…` ; dans l'autre, `network: offer received…` et `network: answer sent…` ; puis dans les deux `network: #… connected, 0.05 s after it was announced…`.
 6. Clique sur **Prêt !** dans une fenêtre : « prêt » s'affiche aussi dans l'autre. Ferme un onglet : il disparaît du salon de l'autre (tout de suite avec **Quitter la partie**). Si c'était l'hôte, l'autre le devient.
-7. **Rouler ensemble** (#8) : environ 2,5 s après l'arrivée dans la partie, chaque fenêtre passe sur **Prairie Pompon en roulage libre** (la console écrit `network: online driving, from grid slot N`). Ferme l'écran « Pilote et kart » (**Entrée**) dans les deux fenêtres. Chaque kart part de la place de la grille de son siège : le premier arrivé en pole, le second à côté. Ce que tu dois voir :
+7. **Rouler ensemble** (#8) : environ 2,5 s après l'arrivée dans la partie, chaque fenêtre passe sur **Prairie Pompon en roulage libre** (le circuit de l'hôte ; la console écrit `network: free driving on circuit 0, from grid slot N`). Ferme l'écran « Pilote et kart » (**Entrée**) dans les deux fenêtres. Chaque kart part de la place de la grille de son siège : le premier arrivé en pole, le second à côté. Ce que tu dois voir :
    - roule dans une fenêtre (flèches, ou Z/Q/S/D) : dans l'autre, ton kart avance **en douceur**, environ un dixième de seconde en retard, avec ton animal et une couleur de carrosserie à lui (chaque joueur voit son propre kart en rose) ;
    - drift (Espace) : l'autre fenêtre montre la glisse et les étincelles bleues, oranges, violettes ; un boost (B, ou un mini-turbo) montre les flammes ; R te ramène sur ta place de la grille, et l'autre fenêtre te voit **sauter** jusqu'à elle, sans glisser ;
    - fonce dans l'autre kart : **ton** kart est repoussé, l'autre ne bouge pas sur ton écran (c'est son joueur qui le conduit) ; sur l'autre écran, c'est son kart qui est repoussé par le tien. Pas d'éjection, pas de kart qui monte sur l'autre ;
    - **Quitter la partie** : tu reviens au circuit et au mode d'avant ;
-   - la console (F12) écrit toutes les 3 s où est ton kart (`network: our kart at (x, y, z)`) et où tu vois chacun des autres (`network: kart of #abcd at …`, avec le nombre d'états reçus) : de quoi comparer les deux fenêtres.
-8. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
+   - la console (F12) écrit toutes les 3 s où est ton kart (`network: our kart at (x, y, z)`) et où tu vois chacun des autres (`network: kart 1 of #abcd at …`, avec l'id du kart et le nombre d'états reçus) : de quoi comparer les deux fenêtres.
+8. **La course en ligne** (#9) :
+   - **le circuit** : dans le salon de l'hôte (« hôte » à côté de son nom), la liste **Circuit** : choisis « Anneau Guimauve » ; les deux fenêtres passent dessus en roulage libre (« Roulage libre sur Anneau Guimauve » dans le salon). Remets « Prairie Pompon ». Chez l'autre joueur, le salon dit « L'hôte choisit le circuit et lance la course quand tout le monde est prêt » ;
+   - **le départ** : clique sur **Prêt !** dans les deux fenêtres, puis **Lancer la course** dans celle de l'hôte (le bouton n'est actif que quand tout le monde est prêt). Les deux fenêtres passent sur la grille en même temps : 10 bots devant, puis les deux joueurs côte à côte (11e et 12e places, dans leur ordre d'arrivée dans la partie) ; 2 s plus tard, la grille puis « 3, 2, 1, GO » **au même moment dans les deux fenêtres** (la console écrit `network: race 1 on circuit 0, 10 bots, from grid slot N, starting at tick T`, le même T des deux côtés). Le départ fusée marche comme en solo ;
+   - **les bots** : ce sont ceux de l'hôte : dans l'autre fenêtre, les mêmes animaux aux mêmes places, qui roulent pareil (un dixième de seconde en retard) ;
+   - **la course** : le classement en haut à gauche compte les 12 coureurs, les deux joueurs compris ; il peut différer d'une place entre les deux fenêtres quand deux karts sont au coude à coude (chacun voit l'autre un dixième de seconde dans le passé). Tu peux te coller dans le sillage de l'autre joueur (aspiration), lui donner un **coup de patte** (X ou F) ou **l'attraper** (tenir X) : c'est **sa** fenêtre qui décide si le coup porte, puis le « pof » s'affiche des deux côtés ;
+   - **l'arrivée** : quand les deux joueurs ont fini (ou 30 s après le premier), l'hôte termine la course : « FINI ! », puis **le même classement dans les deux fenêtres**, avec les temps, ton nom (« Toi ») et celui de l'autre. La console de l'hôte écrit `network: the race is over at race tick …`. Pour la course suivante : **Lancer la course** dans le salon de l'hôte (ou un autre circuit) ;
+   - **pas de pause** : ouvre le menu d'options (**O**) ou l'écran « Pilote et kart » (**G**) en pleine course : le jeu continue, ton kart roule en roue libre et l'autre fenêtre le voit avancer. Un nouveau kart choisi dans « Pilote et kart » sert à la course suivante ;
+   - **l'hôte s'en va** : ferme la fenêtre de l'hôte en pleine course : l'autre devient l'hôte, **reprend les bots** (ils continuent de rouler, de là où ils étaient) et terminera la course ; le kart parti est classé dernier ;
+   - un joueur qui arrive pendant une course roule librement à côté et la regarde ; il sera de la suivante.
+9. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
 
 Si la connexion ne se fait pas, le salon le dit (« connexion directe en cours… », puis « n'aboutit pas » avec les pistes) : voir **Dépannage** plus bas.
 
@@ -61,7 +70,7 @@ Deux appareils sur le même Wi-Fi (ton Mac et un autre ordinateur, par exemple),
 2. Lance `matchbox_server`, puis `trunk serve` : le jeu écoute sur toutes les interfaces (`Trunk.toml`), et trunk affiche ses adresses au démarrage.
 3. Sur les deux appareils, ouvre `http://192.168.1.20:8080/?room=TEST` (avec ton IP). La page trouve toute seule le serveur de mise en relation sur la même machine (`ws://192.168.1.20:3536`, affiché dans le salon), sans `&signal=`. Le lien d'invitation du salon reprend cette adresse.
 4. Si macOS demande d'**accepter les connexions entrantes** (pour `matchbox_server` ou `trunk`) ou si le navigateur veut **accéder aux appareils du réseau local**, accepte.
-5. Ce que tu dois voir : comme plus haut, les deux joueurs avec leur ping ; dans la console, `offer sent` / `answer received` puis `connected`. En bas du salon : « Mise en relation : ws://192.168.1.20:3536 » et « Connexion directe : sans serveur STUN ». Puis, comme au point 7 plus haut, Prairie Pompon sur les deux appareils : roule sur l'un, ton kart roule sur l'autre.
+5. Ce que tu dois voir : comme plus haut, les deux joueurs avec leur ping ; dans la console, `offer sent` / `answer received` puis `connected`. En bas du salon : « Mise en relation : ws://192.168.1.20:3536 » et « Connexion directe : sans serveur STUN ». Puis, comme au point 7 plus haut, Prairie Pompon sur les deux appareils : roule sur l'un, ton kart roule sur l'autre ; et la course du point 8 : **Prêt !** sur les deux appareils, **Lancer la course** chez l'hôte.
 
 Ouverte en `localhost`, la page ne connaît pas l'adresse de ton Mac sur le réseau (le salon le rappelle) : pour inviter quelqu'un, ouvre-la avec l'adresse IP.
 
@@ -136,6 +145,12 @@ Un autre fait rouler deux jeux complets (sans fenêtre) dans la même partie : A
 
 ```bash
 cargo test --lib net::scenario_tests::two_games_drive -- --ignored --nocapture
+```
+
+Un troisième fait courir deux jeux complets l'un contre l'autre (#9) : l'hôte lance une course de 3 tours avec 10 bots, les deux joueurs sont conduits par des bots jusqu'à l'arrivée, et le test vérifie que les deux jeux s'accordent (circuit, tick de départ, bots, GO, tours, arrivées, classement final) :
+
+```bash
+cargo test --lib net::race_tests::two_games_race -- --ignored --nocapture
 ```
 
 Deux pages Chromium qui se connectent pour de vrai (Node et Playwright, `matchbox_server` et `trunk serve` lancés) : `scripts/webrtc-pages.cjs` (voir son en-tête).

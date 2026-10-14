@@ -579,3 +579,64 @@ fn a_remote_clock_that_jumps_back_starts_over() {
     let sync = arena.app.world().resource::<KartSync>();
     assert!(sync.remote(REMOTE).unwrap().buffer.len() <= 20);
 }
+
+/// Issue #9: the remote karts are kept by network id, with the peer that has authority over each
+/// one. A state is taken only from that peer, of the current session; a kart whose peer changes
+/// (a new host takes the bots) starts its buffer over; a player who left keeps its kart, marked;
+/// a new session (another race, free driving) drops every remote kart.
+#[test]
+fn the_roster_keeps_the_karts_by_id_and_authority() {
+    const CYD: PeerKey = PeerKey(3 << 100);
+    let tuning = NetTuning::default();
+    let mut sync = KartSync::new(BOB, 5, 0);
+    sync.set_session(7);
+    let entry = |kart: KartId, peer: PeerKey| RosterEntry {
+        kart,
+        peer,
+        loadout: Some([1, 0, 0, 0]),
+        color: usize::from(kart),
+        name: None,
+        racer: true,
+        left: false,
+    };
+    // Bots 0 and 1 are Ana's (she hosts), kart 4 is Ana's own.
+    sync.set_roster([entry(0, ANA), entry(1, ANA), entry(4, ANA)]);
+    assert_eq!(sync.remotes().len(), 3);
+    let state = |kart: KartId, session: u8, tick: u32| {
+        let pose = KartPose {
+            tick,
+            ..standing(Vec3::new(f32::from(kart), 0.55, 0.0))
+        };
+        KartSnapshot {
+            session,
+            ..KartSnapshot::quantize(kart, &pose)
+        }
+    };
+    sync.receive(ANA, state(0, 7, 10), 0.0, &tuning);
+    sync.receive(CYD, state(1, 7, 10), 0.0, &tuning);
+    sync.receive(ANA, state(4, 0, 10), 0.0, &tuning);
+    assert_eq!(sync.remote_kart(0).unwrap().received, 1);
+    assert_eq!(sync.remote_kart(1).unwrap().received, 0, "not Cyd's kart");
+    assert_eq!(sync.remote_kart(4).unwrap().received, 0, "another session");
+    // Ana leaves: Cyd hosts, the bots are his; Ana's kart is kept, marked.
+    let mut left = entry(4, ANA);
+    left.left = true;
+    left.loadout = None;
+    sync.set_roster([entry(0, CYD), entry(1, CYD), left]);
+    let bot = sync.remote_kart(0).unwrap();
+    assert_eq!(bot.peer, CYD);
+    assert!(bot.buffer.is_empty(), "its buffer starts over");
+    sync.receive(ANA, state(0, 7, 12), 0.0, &tuning);
+    sync.receive(CYD, state(0, 7, 12), 0.0, &tuning);
+    assert_eq!(sync.remote_kart(0).unwrap().received, 2);
+    assert_eq!(sync.remote_kart(0).unwrap().buffer.len(), 1);
+    let ana = sync.remote_kart(4).unwrap();
+    assert!(ana.left);
+    assert_eq!(ana.loadout, [1, 0, 0, 0], "its parts are kept");
+    // Our own states carry the session.
+    sync.send(state(5, 0, 20));
+    assert_eq!(sync.drain_outgoing().next().unwrap().session, 7);
+    // A new session: every remote kart goes.
+    sync.set_session(0);
+    assert!(sync.remotes().is_empty());
+}

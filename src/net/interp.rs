@@ -389,6 +389,11 @@ impl TickClock {
     pub fn is_set(&self) -> bool {
         self.offset.is_some()
     }
+
+    /// Common tick minus local tick, once set.
+    pub fn offset(&self) -> Option<i64> {
+        self.offset
+    }
 }
 
 /// Our own kart's last [`HISTORY_TICKS`] positions, by common tick (a ring, no allocation).

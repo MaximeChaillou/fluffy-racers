@@ -36,8 +36,8 @@ pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use input::{
     DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
-    JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerKart, SpawnPoint,
-    gamepad_input, keyboard_input,
+    JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
+    SpawnPoint, gamepad_input, keyboard_input,
 };
 pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
 pub use push::{Shove, TetherPull, towed_forward_speed, towed_top_speed};
@@ -114,6 +114,20 @@ pub struct KartInput {
     TetherPull
 )]
 pub struct Kart;
+
+/// A kart another peer drives (issue #9, `crate::net`): a kinematic body shown where that peer's
+/// states say, with the look of a kart, never driven here (it is not a [`Kart`]). The systems
+/// that look at the other karts see it: the slipstream behind it, the bots around it, the paws
+/// (strikes and grabs: its own peer decides, docs/ARCHITECTURE.md). Only the network writes it.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Remote {
+    /// The common tick of the state shown: what a paw that strikes it saw (`tick_vu`).
+    pub seen: u32,
+    /// Where it is now, extrapolated from its newest state to the current common tick (what a
+    /// tether pulls toward: not the pose shown about 100 ms in the past), and its velocity.
+    pub now: Vec3,
+    pub now_velocity: Vec3,
+}
 
 /// The kart's input on the previous tick: a hop starts when the jump/drift button is
 /// *pressed*, not every tick while it stays held.
@@ -481,6 +495,7 @@ fn charge_slipstreams(
     tuning: Res<KartTuning>,
     time: Res<Time>,
     mut leaders: Local<Vec<(Entity, Vec3, Vec3)>>,
+    remotes: Query<(Entity, &Transform, &KartState), (With<Remote>, Without<Kart>)>,
     mut karts: Query<
         (
             Entity,
@@ -504,6 +519,13 @@ fn charge_slipstreams(
             .iter()
             .filter(|(_, _, _, state, ..)| **state != KartState::Respawning)
             .map(|(entity, transform, ..)| (entity, transform.translation, *transform.forward())),
+    );
+    // Online (issue #9): the other peers' karts leave a wake too, where they are shown.
+    leaders.extend(
+        remotes
+            .iter()
+            .filter(|(_, _, state)| **state != KartState::Respawning)
+            .map(|(entity, transform, _)| (entity, transform.translation, *transform.forward())),
     );
     for (entity, transform, velocity, state, scale, mut slipstream, mut boost) in &mut karts {
         let mut gauge = *slipstream;

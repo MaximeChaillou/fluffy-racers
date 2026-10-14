@@ -22,6 +22,16 @@ use crate::race::{Course, Race, RaceMode};
 use crate::track::{PlayerStart, TrackChoice, TrackHandle, TrackLayout, test_ground};
 use crate::ui::{CroquetteCounterAnimation, HudRoot, ResultsScreen};
 
+/// The level is played online (issue #9, `crate::net`: inserted while we drive in a room, free
+/// driving or a race). What follows from it, outside the network:
+/// - **no pause**: the menus (options, selection screen, admin panel) leave the game running, our
+///   kart goes on existing for the others (it coasts while a menu is open);
+/// - **no item and no croquette** yet: they are not shared yet (issue #53, the next step),
+///   so they are off (`ItemTuning::enabled` and `CroquetteTuning` untouched);
+/// - **no local restart** of a race: the host starts the races.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Online;
+
 /// On every root entity of the current level: [`LoadLevel`] despawns them (with their children).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct LevelScoped;

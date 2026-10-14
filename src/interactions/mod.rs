@@ -59,9 +59,10 @@ use crate::TICK_HZ;
 use crate::croquettes::{CroquetteSystems, LoseCroquettes, LossCause};
 use crate::items::ItemSystems;
 use crate::kart::{
-    Invincibility, Kart, KartInput, KartState, KartSystems, MaxSpeedFactors, Shove, Stall,
+    Invincibility, Kart, KartInput, KartState, KartSystems, MaxSpeedFactors, Remote, Shove, Stall,
     StatEffects, StatsTuning, TetherPull, strike_push_factor, tether_force_scale,
 };
+use crate::net::KartHistory;
 use crate::race::{Race, RaceProgress, RaceSystems};
 
 /// `striker` strikes `target` with its paw, or throws it at the end of a tether (`throw`): the
@@ -121,12 +122,28 @@ pub struct TetherEnded {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InteractionSystems;
 
+/// The tick the events speak in (`tick`, `seen`): the local tick solo; online (issue #9), the
+/// room's common tick, which the network sets (`offset`: common minus local), so that the
+/// victim compares the tick the striker saw with its own history (`net::KartHistory`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InteractionClock {
+    pub offset: i64,
+}
+
+impl InteractionClock {
+    /// The tick of this simulation tick.
+    pub fn tick(&self, time: &Time) -> u32 {
+        (i64::from(current_tick(time)) + self.offset).clamp(0, i64::from(u32::MAX)) as u32
+    }
+}
+
 /// The interaction rules. Headless: tests run them with `MinimalPlugins`.
 pub struct InteractionPlugin;
 
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InteractionTuning>()
+            .init_resource::<InteractionClock>()
             .add_message::<KartStruck>()
             .add_message::<StrikeAnswer>()
             .add_message::<KartGrabbed>()
@@ -253,12 +270,29 @@ fn tick_paws(mut paws: Query<&mut Paw>) {
 /// Every kart's Interaction button (the side that acts, `step_paw`): strikes, grabs, the end of
 /// its tether, its swings into thin air. It tells the other kart by message; it never touches
 /// it. The karts are gathered first in a buffer kept between ticks (no allocation per tick).
+/// Online (issue #9), the other peers' karts are targets too, where they are shown: the network
+/// takes the event to the peer that decides.
 fn use_paws(
     tuning: Res<InteractionTuning>,
     stats_tuning: Res<StatsTuning>,
     time: Res<Time>,
+    clock: Res<InteractionClock>,
     race: Option<Res<Race>>,
     mut views: Local<Vec<KartView>>,
+    remotes: Query<
+        (
+            Entity,
+            &Transform,
+            &Velocity,
+            &KartState,
+            &Invincibility,
+            &StatEffects,
+            &Remote,
+            Option<&Paw>,
+            Option<&RaceProgress>,
+        ),
+        Without<Kart>,
+    >,
     mut karts: Query<
         (
             Entity,
@@ -279,7 +313,7 @@ fn use_paws(
     mut ends: MessageWriter<TetherEnded>,
 ) {
     let racing = race.as_ref().is_none_or(|race| race.started());
-    let tick = current_tick(&time);
+    let tick = clock.tick(&time);
     views.clear();
     views.extend(karts.iter().map(
         |(
@@ -299,11 +333,31 @@ fn use_paws(
             KartView {
                 entity,
                 position: transform.translation,
+                now: transform.translation,
+                seen: tick,
                 forward: heading(transform),
                 velocity: velocity.linear,
                 weight: effects.weight,
                 strikable: can_be_struck(state, invincible, racing, finished) && paw.protected == 0,
                 grabbable: can_be_grabbed(state, invincible, racing, finished, paw.linked()),
+            }
+        },
+    ));
+    views.extend(remotes.iter().map(
+        |(entity, transform, velocity, state, invincibility, effects, remote, paw, progress)| {
+            let finished = progress.is_some_and(|p| p.finished());
+            let invincible = invincibility.is_active();
+            let (protected, linked) = paw.map_or((false, false), |p| (p.protected > 0, p.linked()));
+            KartView {
+                entity,
+                position: transform.translation,
+                now: remote.now,
+                seen: remote.seen,
+                forward: heading(transform),
+                velocity: velocity.linear,
+                weight: effects.weight,
+                strikable: can_be_struck(state, invincible, racing, finished) && !protected,
+                grabbable: can_be_grabbed(state, invincible, racing, finished, linked),
             }
         },
     ));
@@ -352,6 +406,12 @@ fn use_paws(
         };
         let mut next = *paw;
         let weight_of = |kart: Entity| views.iter().find(|k| k.entity == kart).map(|k| k.weight);
+        let seen_of = |kart: Entity| {
+            views
+                .iter()
+                .find(|k| k.entity == kart)
+                .map_or(tick, |k| k.seen)
+        };
         match step_paw(&mut next, &tuning, &ctx, &views) {
             PawOutcome::None => {}
             PawOutcome::Strike { target, side } => {
@@ -372,7 +432,7 @@ fn use_paws(
                             striker: entity,
                             target,
                             tick,
-                            seen: tick,
+                            seen: seen_of(target),
                             striker_position: transform.translation,
                             direction: right * side,
                             push: tuning.strike_push_speed
@@ -398,7 +458,7 @@ fn use_paws(
                     grabber: entity,
                     target,
                     tick,
-                    seen: tick,
+                    seen: seen_of(target),
                     grabber_position: transform.translation,
                     rest,
                 });
@@ -442,7 +502,7 @@ fn use_paws(
                         striker: entity,
                         target,
                         tick,
-                        seen: tick,
+                        seen: seen_of(target),
                         striker_position: transform.translation,
                         direction: right * side,
                         push: tuning.strike_push_speed
@@ -460,14 +520,18 @@ fn use_paws(
 /// The victim's side (docs/ARCHITECTURE.md): each kart applies to itself the strikes and the
 /// grabs aimed at it, if they reach it and it is not immune; and the kart held decides when it
 /// breaks free (it lands its jump), or when its tether breaks because of it (hit, towed, past
-/// the line).
+/// the line). Online (issue #9), only our own karts are here (another peer's kart is its peer's
+/// to judge), and the reach is checked from where the kart was at the tick the striker saw
+/// (`net::KartHistory`, 30 ticks).
 fn receive_interactions(
     tuning: Res<InteractionTuning>,
     time: Res<Time>,
+    clock: Res<InteractionClock>,
     race: Option<Res<Race>>,
     mut strikes: MessageReader<KartStruck>,
     mut grabs: MessageReader<KartGrabbed>,
-    present: Query<(), With<Kart>>,
+    present: Query<(), Or<(With<Kart>, With<Remote>)>>,
+    remote: Query<(), (With<Remote>, Without<Kart>)>,
     mut karts: Query<
         (
             Entity,
@@ -477,6 +541,7 @@ fn receive_interactions(
             &Invincibility,
             (&mut Paw, &mut PawStats, &mut Shove),
             Option<&RaceProgress>,
+            Option<&KartHistory>,
         ),
         With<Kart>,
     >,
@@ -485,7 +550,13 @@ fn receive_interactions(
     mut losses: MessageWriter<LoseCroquettes>,
 ) {
     let racing = race.as_ref().is_none_or(|race| race.started());
-    let tick = current_tick(&time);
+    let tick = clock.tick(&time);
+    // Where our kart was at the tick the striker saw: solo (no history), where it is; online,
+    // from its history (30 ticks), and nowhere if that is older (the event is refused).
+    let seen_at = |transform: &Transform, history: Option<&KartHistory>, seen: u32| match history {
+        Some(history) => history.0.position_at(seen),
+        None => Some(transform.translation),
+    };
     for strike in strikes.read() {
         let Ok((
             _,
@@ -495,6 +566,7 @@ fn receive_interactions(
             invincibility,
             (mut paw, mut stats, mut shove),
             progress,
+            history,
         )) = karts.get_mut(strike.target)
         else {
             continue;
@@ -504,13 +576,16 @@ fn receive_interactions(
         let in_reach = if strike.throw {
             paw.held.is_some_and(|held| held.by == strike.striker)
         } else {
-            accepts(
-                &tuning,
-                tick,
-                strike.seen,
-                strike.striker_position,
-                transform.translation,
-            )
+            // Its age from when it was sent; the reach from where we were at the tick it saw.
+            seen_at(transform, history, strike.seen).is_some_and(|position| {
+                accepts(
+                    &tuning,
+                    tick,
+                    strike.tick,
+                    strike.striker_position,
+                    position,
+                )
+            })
         };
         let landed = in_reach
             && paw.protected == 0
@@ -541,24 +616,23 @@ fn receive_interactions(
         });
     }
     for grab in grabs.read() {
-        let Ok((_, transform, _, state, invincibility, (mut paw, mut stats, _), progress)) =
+        let Ok((_, transform, _, state, invincibility, (mut paw, mut stats, _), progress, history)) =
             karts.get_mut(grab.target)
         else {
-            ends.write(TetherEnded {
-                grabber: grab.grabber,
-                target: grab.target,
-                reason: TetherEnd::Gone,
-            });
+            // Another peer's kart decides for itself (online); a kart gone cannot be held.
+            if !remote.contains(grab.target) {
+                ends.write(TetherEnded {
+                    grabber: grab.grabber,
+                    target: grab.target,
+                    reason: TetherEnd::Gone,
+                });
+            }
             continue;
         };
         let finished = progress.is_some_and(|p| p.finished());
-        let accepted = accepts(
-            &tuning,
-            tick,
-            grab.seen,
-            grab.grabber_position,
-            transform.translation,
-        ) && can_be_grabbed(
+        let accepted = seen_at(transform, history, grab.seen).is_some_and(|position| {
+            accepts(&tuning, tick, grab.tick, grab.grabber_position, position)
+        }) && can_be_grabbed(
             state,
             invincibility.is_active(),
             racing,
@@ -583,7 +657,7 @@ fn receive_interactions(
     }
     // The kart held: it breaks free when it lands its jump; hit, towed or past the line, its
     // tether breaks.
-    for (entity, _, _, state, _, (mut paw, ..), progress) in &mut karts {
+    for (entity, _, _, state, _, (mut paw, ..), progress, _) in &mut karts {
         let Some(mut held) = paw.held else {
             continue;
         };
@@ -677,11 +751,13 @@ fn end_tethers(
 
 /// Each kart of a tether pulls itself toward the other one (docs/ARCHITECTURE.md): the grabber
 /// gets the whole pull and is towed up to its partner's speed, the kart held a quarter of it,
-/// never forward; each divided by its Weight factor. The others: no pull.
+/// never forward; each divided by its Weight factor. The others: no pull. Online (issue #9),
+/// toward another peer's kart where it is now (extrapolated), not where it is shown.
 fn pull_tethers(
     tuning: Res<InteractionTuning>,
     stats_tuning: Res<StatsTuning>,
     karts: Query<(&Transform, &Velocity, &Paw, &StatEffects)>,
+    partners: Query<(&Transform, &Velocity, Option<&Remote>)>,
     mut pulls: Query<(Entity, &mut TetherPull, &mut MaxSpeedFactors)>,
 ) {
     for (entity, mut pull, mut factors) in &mut pulls {
@@ -707,20 +783,24 @@ fn pull_tethers(
                         (held.by, held.rest, false)
                     }
                 };
-                let (other, other_velocity, ..) = karts.get(partner).ok()?;
+                let (other, other_velocity, remote) = partners.get(partner).ok()?;
+                let (other, other_velocity) = match remote {
+                    Some(remote) => (remote.now, remote.now_velocity),
+                    None => (other.translation, other_velocity.linear),
+                };
                 let forward = heading(transform);
                 let accel = tether_accel(
                     &tuning,
                     transform.translation,
                     velocity.linear,
-                    other.translation,
-                    other_velocity.linear,
+                    other,
+                    other_velocity,
                     rest,
                 ) * tether_force_scale(&stats_tuning, effects.weight);
                 Some(if grabber {
                     TetherPull {
                         accel,
-                        tow_speed: Some(other_velocity.linear.dot(forward)),
+                        tow_speed: Some(other_velocity.dot(forward)),
                     }
                 } else {
                     TetherPull {

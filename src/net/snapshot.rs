@@ -7,7 +7,7 @@
 //!   ([`KartLook`]: the phase, drift side and sparks, a hit's spin or tumble, the boost flames, a
 //!   stalled engine, the blinking of invincibility, the slipstream's wind lines, the drift's slip
 //!   angle and the wheels).
-//! - [`KartSnapshot`] (`protocol.rs`): the same, quantized, 47 bytes. Position to the millimeter
+//! - [`KartSnapshot`] (`protocol.rs`): the same, quantized, 48 bytes. Position to the millimeter
 //!   (±2 100 km), rotation as « smallest three » on 48 bits (about 0.005°), velocities to the
 //!   cm/s (±327 m/s) and the mrad/s (±32 rad/s).
 //!
@@ -245,6 +245,7 @@ impl KartSnapshot {
         Self {
             tick: pose.tick,
             kart,
+            session: 0,
             position: pose.position.to_array().map(|v| step_i32(v, POSITION_STEP)),
             rotation: pack_rotation(pose.rotation),
             velocity: pose.velocity.to_array().map(|v| step_i16(v, VELOCITY_STEP)),

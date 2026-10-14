@@ -122,9 +122,15 @@ pub const INTERACT_KEYS: [KeyCode; 2] = [KeyCode::KeyX, KeyCode::KeyF];
 /// headless simulation: bots and network peers produce `KartInput` their own way.
 pub struct KartInputPlugin;
 
+/// The player's keys belong to a menu that does not pause the game (online, issue #9): the
+/// player's kart coasts.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayerInputMuted(pub bool);
+
 impl Plugin for KartInputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, read_player_input.in_set(KartSystems::Input))
+        app.init_resource::<PlayerInputMuted>()
+            .add_systems(FixedUpdate, read_player_input.in_set(KartSystems::Input))
             .add_systems(Update, debug_keys);
     }
 }
@@ -182,6 +188,7 @@ pub fn combine(a: KartInput, b: KartInput) -> KartInput {
 fn read_player_input(
     keys: Res<ButtonInput<KeyCode>>,
     layout: Option<Res<KeyboardLayout>>,
+    muted: Option<Res<PlayerInputMuted>>,
     gamepads: Query<&Gamepad>,
     mut karts: Query<&mut KartInput, With<PlayerKart>>,
 ) {
@@ -189,6 +196,9 @@ fn read_player_input(
     let mut input = keyboard_input(&keys, layout);
     for gamepad in &gamepads {
         input = combine(input, gamepad_input(gamepad));
+    }
+    if muted.is_some_and(|muted| muted.0) {
+        input = KartInput::default();
     }
     for mut kart_input in &mut karts {
         kart_input.set_if_neq(input);

@@ -35,7 +35,7 @@ use kart::{
     SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
-use net::{KartSyncPlugin, NetPlugin, OnlineSlot};
+use net::{KartId, KartSyncPlugin, NetKart, NetPlugin, OnlineSlot};
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
 use track::{PlayerStart, TrackLayout, TrackPlugin};
@@ -125,7 +125,8 @@ pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
 /// and falls back to its spawn point. Its character and parts are the player's loadout
 /// (issue #15): their stats, and the driver on the kart. Online (issue #8, `net::OnlineSlot`),
 /// it starts from the grid slot of its seat, so that the players do not start on top of each
-/// other.
+/// other; in a race online (issue #9), from its place on the race's grid (behind the bots), and
+/// that slot is its network id (`net::NetKart`).
 fn spawn_player(
     mut commands: Commands,
     visuals: Res<KartVisualAssets>,
@@ -146,10 +147,16 @@ fn spawn_player(
     let slot = circuit
         .as_ref()
         .filter(|_| *mode == RaceMode::Race)
-        .map(|layout| grid.player_slot().min(layout.grid.len() - 1));
+        .map(|layout| {
+            let slot = online
+                .as_ref()
+                .map_or(grid.player_slot(), |online| online.0);
+            slot.min(layout.grid.len() - 1)
+        });
     let spawn = match (&circuit, slot) {
         (Some(layout), Some(slot)) => layout.grid[slot],
         _ => online
+            .as_ref()
             .zip(circuit.as_ref())
             .and_then(|(online, layout)| layout.grid.get(online.0).copied())
             .unwrap_or(start.0),
@@ -164,6 +171,9 @@ fn spawn_player(
         Some(slot) => kart.insert(Racer::new(slot)),
         None => kart.insert(SpawnPoint(spawn)),
     };
+    if let Some(online) = &online {
+        kart.insert(NetKart(online.0.min(track::GRID_SLOTS - 1) as KartId));
+    }
     let body = kart.id();
     let driver = looks
         .as_ref()

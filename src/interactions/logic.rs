@@ -192,7 +192,14 @@ pub enum TetherEnd {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KartView {
     pub entity: Entity,
+    /// Where it is shown: what the paw reaches for (online, another peer's kart is shown about
+    /// 100 ms in the past: what the player sees is what the paw strikes).
     pub position: Vec3,
+    /// Where it is now: what a tether measures and pulls toward. The same as `position` for our
+    /// own karts; online, another peer's kart extrapolated to the current tick (issue #9).
+    pub now: Vec3,
+    /// The tick of the state shown (`tick_vu`): the current one for our own karts.
+    pub seen: u32,
     /// Its heading, horizontal (unit).
     pub forward: Vec3,
     pub velocity: Vec3,
@@ -267,18 +274,19 @@ pub fn max_reach(tuning: &InteractionTuning) -> f32 {
     side.max(ahead)
 }
 
-/// Whether the kart struck or grabbed (at `position`, at tick `now`) accepts an event judged at
-/// tick `seen` by a kart that was at `from` (docs/ARCHITECTURE.md): not too old, and in reach
-/// with some tolerance. Solo, the event is judged on this very tick.
+/// Whether the kart struck or grabbed accepts, at tick `now`, an event sent at tick `sent` by a
+/// kart that was at `from` (docs/ARCHITECTURE.md): not too old, and in reach of `position` with
+/// some tolerance. `position`: where the kart was at the tick the striker saw (`tick_vu`; online,
+/// from its history, issue #9). Solo, the event is judged on this very tick, where it is.
 pub fn accepts(
     tuning: &InteractionTuning,
     now: u32,
-    seen: u32,
+    sent: u32,
     from: Vec3,
     position: Vec3,
 ) -> bool {
     let to = position - from;
-    now.saturating_sub(seen) <= ticks(tuning.max_event_age)
+    now.saturating_sub(sent) <= ticks(tuning.max_event_age)
         && to.with_y(0.0).length() <= max_reach(tuning) + tuning.reach_tolerance
         && to.y.abs() <= tuning.max_height_difference + tuning.reach_tolerance
 }
@@ -572,7 +580,7 @@ pub fn step_paw(
                 };
                 return let_go(paw, reason, throw);
             }
-            let stretch = (partner.position - ctx.position).with_y(0.0).length() - rest;
+            let stretch = (partner.now - ctx.position).with_y(0.0).length() - rest;
             if stretch > tuning.tether_max_stretch {
                 return let_go(paw, TetherEnd::Stretched, None);
             }
@@ -613,15 +621,18 @@ fn reach_out(
         )
     {
         let side = reach.lateral.signum();
+        // The tether's rest length, to where the kart is now (online, not where it is shown):
+        // each side pulls toward the other one's position now.
+        let rest = (kart.now - ctx.position).with_y(0.0).length();
         paw.motion = PawMotion::Holding {
             target: kart.entity,
             ticks: 0,
-            rest: reach.distance,
+            rest,
             side,
         };
         return PawOutcome::Grab {
             target: kart.entity,
-            rest: reach.distance,
+            rest,
             side,
         };
     }
@@ -707,6 +718,8 @@ mod tests {
         KartView {
             entity: entity(index),
             position: Vec3::new(x, 0.55, z),
+            now: Vec3::new(x, 0.55, z),
+            seen: 0,
             forward: Vec3::NEG_Z,
             velocity: Vec3::new(0.0, 0.0, -25.0),
             weight: 10,

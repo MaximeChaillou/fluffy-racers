@@ -146,6 +146,16 @@ impl RaceFlow {
         self.race_ticks(timings) > 0
     }
 
+    /// Online (issue #9): the race clock follows the room's. `tick` is the flow tick of this
+    /// simulation tick (from the race's start tick on the room's clock: 0 before it); the clock
+    /// never goes back (a room clock that steps back holds it a few ticks), and jumps forward
+    /// with the room's (a frozen tab catching up). `over_at`: the tick the host ended the race
+    /// on. No restart: the host starts a new race.
+    pub fn follow(&mut self, tick: u32, over_at: Option<u32>) {
+        self.tick = self.tick.max(tick);
+        self.over_at = over_at;
+    }
+
     /// Skips what is left of the grid and the countdown (admin panel, issue #36): the next tick
     /// is GO. Nothing happens once the race has started. Returns whether it skipped.
     pub fn skip_countdown(&mut self, timings: &FlowTimings) -> bool {
@@ -330,6 +340,30 @@ mod tests {
             assert!(!flow.skip_countdown(&t), "already racing");
             assert_eq!(flow.tick, RaceFlow::go_tick(&t));
         }
+    }
+
+    /// Issue #9: online, the flow follows the room's clock: the same phases on the same ticks
+    /// for everyone, never back, and over when the host says so.
+    #[test]
+    fn online_the_flow_follows_the_room() {
+        let t = timings();
+        let mut flow = RaceFlow::default();
+        flow.follow(0, None);
+        assert_eq!(flow.phase(&t), RacePhase::Grid);
+        assert!(!flow.started(&t));
+        flow.follow(RaceFlow::go_tick(&t), None);
+        assert!(flow.started(&t));
+        assert_eq!(flow.race_ticks(&t), 1);
+        // A clock that steps back holds the race clock.
+        flow.follow(RaceFlow::go_tick(&t) - 3, None);
+        assert_eq!(flow.race_ticks(&t), 1);
+        flow.follow(RaceFlow::go_tick(&t) + 600, None);
+        assert_eq!(flow.race_ticks(&t), 601);
+        let over = flow.tick;
+        flow.follow(over + 1, Some(over));
+        assert_eq!(flow.phase(&t), RacePhase::Finished);
+        flow.follow(over + t.finish, Some(over));
+        assert_eq!(flow.phase(&t), RacePhase::Results);
     }
 
     #[test]

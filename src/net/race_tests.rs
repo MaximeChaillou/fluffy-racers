@@ -1,0 +1,1092 @@
+//! Headless scenarios of the race online (issue #9): two or three whole games (`GamePlugin`) in a
+//! room, linked by the in-memory socket of the tests (`socket::memory`): every message goes
+//! through its bytes, the lobby, the room's clock, the kart states and the events go the way they
+//! go between browsers. One frame is one tick (60 per second) for every game, in turn.
+//!
+//! The race with `matchbox_server` (real sockets, real time) is the ignored test at the end.
+
+use std::time::{Duration, Instant};
+
+use bevy::time::TimeUpdateStrategy;
+use bevy_rapier3d::prelude::Velocity;
+
+use super::socket::memory::Hub;
+use super::*;
+use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_seed};
+use crate::interactions::{InteractionTuning, Paw, PawMotion, PawStats};
+use crate::kart::{Kart, KartInput, PlayerKart, Shove, SpawnPoint};
+use crate::options::{OptionsAction, OptionsMenu};
+use crate::race::{OnlineFlow, Race, RaceGrid, RaceMode, RacePhase, RaceProgress, Racer};
+use crate::track::{TrackChoice, TrackLayout};
+
+const ANA: PeerKey = PeerKey(1 << 100);
+const BOB: PeerKey = PeerKey(2 << 100);
+const CYD: PeerKey = PeerKey(3 << 100);
+
+/// A whole game (headless, a tick per frame) joining the room of `hub` as `key`, named `name`.
+/// It starts on the test ground, solo.
+fn game(hub: &Hub, key: PeerKey, name: &str) -> App {
+    let mut app = crate::tests::game_app_unloaded(TrackChoice::TestGround, 0);
+    crate::tests::single_threaded(&mut app);
+    app.world_mut().resource_mut::<NetSettings>().pseudo = Some(name.into());
+    crate::tests::wait_for_the_player(&mut app);
+    let settings = app.world().resource::<NetSettings>().clone();
+    app.world_mut().insert_resource(NetSession {
+        room: RoomCode::parse("TEST").unwrap(),
+        signal: settings.signal.clone(),
+        ice: settings.ice_servers(),
+        status: NetStatus::Connecting,
+        lobby: None,
+        links: Links::default(),
+        socket: Some(NetSocket::memory(hub, key)),
+        failures_seen: 0,
+    });
+    app
+}
+
+/// The games of a room, updated in turn.
+struct Room {
+    hub: Hub,
+    games: Vec<(PeerKey, App)>,
+}
+
+impl Room {
+    fn new(players: &[(PeerKey, &str)]) -> Self {
+        let hub = Hub::default();
+        let games = players
+            .iter()
+            .map(|(key, name)| (*key, game(&hub, *key, name)))
+            .collect();
+        Self { hub, games }
+    }
+
+    fn app(&mut self, key: PeerKey) -> &mut App {
+        &mut self
+            .games
+            .iter_mut()
+            .find(|(k, _)| *k == key)
+            .expect("no such game")
+            .1
+    }
+
+    fn view(&self, key: PeerKey) -> &App {
+        &self.games.iter().find(|(k, _)| *k == key).unwrap().1
+    }
+
+    /// One frame of every game.
+    fn frame(&mut self) {
+        for (_, app) in &mut self.games {
+            app.update();
+        }
+    }
+
+    /// Frames until `done` holds for every game (the circuit files load in the background: a
+    /// little real time too), `seconds` of game time at most.
+    fn until(&mut self, seconds: f32, what: &str, mut done: impl FnMut(&App) -> bool) {
+        let start = Instant::now();
+        for _ in 0..(seconds * 60.0) as usize {
+            self.frame();
+            if self.games.iter().all(|(_, app)| done(app)) {
+                return;
+            }
+            if start.elapsed() > Duration::from_secs(120) {
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        panic!("{what}: never happened");
+    }
+
+    fn act(&mut self, key: PeerKey, action: NetAction) {
+        self.app(key).world_mut().write_message(action);
+    }
+
+    /// A game leaves without a word (its tab closes): the others see it gone.
+    fn close(&mut self, key: PeerKey) {
+        self.hub.drop_port(key);
+        self.games.retain(|(k, _)| *k != key);
+    }
+}
+
+fn lobby(app: &App) -> &Lobby {
+    app.world()
+        .resource::<NetSession>()
+        .lobby
+        .as_ref()
+        .expect("no lobby")
+}
+
+fn showing(app: &App) -> Option<Showing> {
+    app.world()
+        .get_resource::<OnlineLevel>()
+        .map(|level| level.showing)
+}
+
+fn player(app: &mut App) -> Entity {
+    let world = app.world_mut();
+    let tagged = world
+        .query_filtered::<Entity, (With<Kart>, With<NetKart>, Without<Bot>)>()
+        .iter(world)
+        .next();
+    tagged
+        .or_else(|| {
+            world
+                .query_filtered::<Entity, (With<Kart>, With<PlayerKart>)>()
+                .iter(world)
+                .next()
+        })
+        .expect("no player kart")
+}
+
+/// Our kart in a race: on its grid slot, the race there and the level built.
+fn on_grid(app: &App) -> bool {
+    app.world().get_resource::<Race>().is_some()
+        && app.world().get_resource::<OnlineRace>().is_some()
+        && app
+            .world()
+            .iter_entities()
+            .any(|e| e.contains::<PlayerKart>() && e.contains::<Racer>())
+}
+
+/// A room of `players` seated, driving freely on the room's circuit, each seeing the others.
+fn seated(players: &[(PeerKey, &str)]) -> Room {
+    let mut room = Room::new(players);
+    let count = players.len();
+    room.until(15.0, "everyone seated, free driving", |app| {
+        app.world().get_resource::<KartSync>().is_some_and(|sync| {
+            sync.remotes().len() == count - 1 && sync.remotes().iter().all(|r| r.proxy.is_some())
+        }) && showing(app) == Some(Showing::Free(0))
+            && app.world().get_resource::<TrackLayout>().is_some()
+    });
+    room
+}
+
+/// The host starts a race of `laps` laps with `bots` bots, everyone ready (the lobby's
+/// « Lancer la course » with a smaller grid, for the tests' time).
+fn start_race(room: &mut Room, host: PeerKey, bots: u8, laps: u8) -> RaceStart {
+    let keys: Vec<PeerKey> = room.games.iter().map(|(k, _)| *k).collect();
+    for key in &keys {
+        room.act(*key, NetAction::Ready(true));
+    }
+    room.until(2.0, "everyone ready", |app| lobby(app).all_ready());
+    let app = room.app(host);
+    let now = now_ms(app.world().resource::<Time<Real>>());
+    let session = app.world().resource::<NetSession>();
+    let lobby = session.lobby.as_ref().unwrap();
+    let mut start = race_to_start(
+        lobby,
+        now,
+        0xbeef,
+        u32::from(laps),
+        BotDifficulty::Normal,
+        &NetTuning::default(),
+    )
+    .expect("the host knows the room's clock");
+    start.bots = bots;
+    let mut session = app.world_mut().resource_mut::<NetSession>();
+    assert!(session.lobby.as_mut().unwrap().announce_race(start.clone()));
+    room.until(10.0, "everyone on the grid", on_grid);
+    start
+}
+
+/// Every game's own karts (its player's, the bots it hosts) are driven by bots: a race the test
+/// can run to the end.
+fn bots_drive_the_players(room: &mut Room) {
+    for (_, app) in &mut room.games {
+        let kart = player(app);
+        let slot = app.world().get::<Racer>(kart).unwrap().grid_slot;
+        let seed = bot_seed(app.world().resource::<RaceGrid>().seed, slot);
+        let tuning = app.world().resource::<BotTuning>().clone();
+        app.world_mut()
+            .entity_mut(kart)
+            .remove::<PlayerKart>()
+            .insert(bot(BotDifficulty::Normal, seed, &tuning));
+    }
+}
+
+/// The common tick of this frame in `app` (its clock set).
+fn common_tick(app: &App) -> u32 {
+    let local = (app.world().resource::<Time<Fixed>>().elapsed_secs_f64() * crate::TICK_HZ).round();
+    app.world()
+        .resource::<KartSync>()
+        .clock
+        .common(local as u32)
+        .expect("clock not set")
+}
+
+/// Every racer's progress in `app`, by grid slot: (passed, lap times, finish).
+fn progress_by_slot(app: &mut App) -> Vec<(usize, u32, Vec<u32>, Option<u32>)> {
+    let world = app.world_mut();
+    let mut all: Vec<(usize, u32, Vec<u32>, Option<u32>)> = world
+        .query::<(&Racer, &RaceProgress)>()
+        .iter(world)
+        .map(|(racer, p)| (racer.grid_slot, p.passed, p.lap_times.clone(), p.finish))
+        .collect();
+    all.sort_by_key(|(slot, ..)| *slot);
+    all
+}
+
+/// Two games agree on every racer: the same laps, times and finish for those who finished; for
+/// those still on their way (the bots drive on after the end), a checkpoint at most apart (one
+/// may be on the way).
+fn assert_same_progress(
+    a: &[(usize, u32, Vec<u32>, Option<u32>)],
+    b: &[(usize, u32, Vec<u32>, Option<u32>)],
+) {
+    assert_eq!(a.len(), b.len(), "{a:?}\n{b:?}");
+    for (x, y) in a.iter().zip(b) {
+        assert_eq!(x.0, y.0);
+        if x.3.is_some() || y.3.is_some() {
+            assert_eq!(x, y, "slot {}", x.0);
+        } else {
+            assert!(x.1.abs_diff(y.1) <= 1, "slot {}: {x:?} vs {y:?}", x.0);
+        }
+    }
+}
+
+/// The standings (grid slots, first to last).
+fn standings(app: &mut App) -> Vec<usize> {
+    let order = app.world().resource::<Race>().standings.clone();
+    order
+        .iter()
+        .map(|entity| app.world().get::<Racer>(*entity).unwrap().grid_slot)
+        .collect()
+}
+
+/// Issue #9: the host chooses the room's circuit: everyone drives freely on it; then it starts a
+/// race: the same circuit, the same grid (its bots in front, the players behind in its order),
+/// the same start tick, the same bots at the same places, the countdown and GO on the same tick
+/// for both. The guest has no bot of its own: it shows the host's.
+#[test]
+fn the_host_starts_the_race_for_everyone() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    assert!(lobby(room.view(ANA)).is_host());
+    // Another circuit, then back to the first one.
+    room.act(ANA, NetAction::ChooseCircuit(1));
+    room.until(10.0, "free driving on the second circuit", |app| {
+        showing(app) == Some(Showing::Free(1))
+            && app
+                .world()
+                .get_resource::<TrackLayout>()
+                .is_some_and(|layout| layout.name == "Anneau Guimauve")
+    });
+    // A guest cannot choose.
+    room.act(BOB, NetAction::ChooseCircuit(0));
+    for _ in 0..30 {
+        room.frame();
+    }
+    for (_, app) in &room.games {
+        assert_eq!(lobby(app).circuit(), 1);
+    }
+    room.act(ANA, NetAction::ChooseCircuit(0));
+    room.until(10.0, "free driving on the first circuit", |app| {
+        showing(app) == Some(Showing::Free(0))
+            && app
+                .world()
+                .get_resource::<TrackLayout>()
+                .is_some_and(|layout| layout.name == "Prairie Pompon")
+    });
+    // Free driving: no race, no bot, no item nor croquette (not shared yet).
+    for (_, app) in &room.games {
+        assert!(app.world().get_resource::<Race>().is_none());
+        assert!(app.world().get_resource::<crate::level::Online>().is_some());
+    }
+
+    let start = start_race(&mut room, ANA, 4, 1);
+    assert_eq!(start.players, vec![ANA, BOB]);
+    // Both on the same race: its circuit, its seed, its start; Ana on slot 4, Bob on 5.
+    for key in [ANA, BOB] {
+        let app = room.app(key);
+        let race = app.world().resource::<OnlineRace>();
+        assert_eq!(race.shared.start, start, "{key:?}");
+        assert!(race.racing);
+        assert_eq!(app.world().resource::<TrackLayout>().name, "Prairie Pompon");
+        assert_eq!(*app.world().resource::<RaceMode>(), RaceMode::Race);
+        let kart = player(app);
+        let slot = app.world().get::<Racer>(kart).unwrap().grid_slot;
+        assert_eq!(slot, usize::from(start.slot_of(key).unwrap()));
+        let layout = app.world().resource::<TrackLayout>();
+        let at = app.world().get::<Transform>(kart).unwrap().translation;
+        assert!(
+            at.distance(layout.grid[slot].translation) < 1.0,
+            "{key:?} at {at}"
+        );
+    }
+    // Ana hosts the 4 bots; Bob shows them (and Ana's kart).
+    let bots = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Racer, (With<Bot>, With<Kart>, With<NetKart>)>()
+            .iter(world)
+            .count()
+    };
+    assert_eq!(bots(room.app(ANA)), 4);
+    assert_eq!(bots(room.app(BOB)), 0);
+    room.until(2.0, "Bob shows the bots", |app| {
+        app.world()
+            .resource::<KartSync>()
+            .remotes()
+            .iter()
+            .filter(|remote| remote.proxy.is_some())
+            .count()
+            == if lobby(app).is_host() { 1 } else { 5 }
+    });
+    // The bots stand at the same places on both screens.
+    {
+        let ana = room.app(ANA);
+        let mut ana_bots: Vec<(usize, Vec3)> = {
+            let world = ana.world_mut();
+            world
+                .query_filtered::<(&Racer, &Transform), With<Bot>>()
+                .iter(world)
+                .map(|(racer, transform)| (racer.grid_slot, transform.translation))
+                .collect()
+        };
+        ana_bots.sort_by_key(|(slot, _)| *slot);
+        let bob = room.app(BOB);
+        let world = bob.world_mut();
+        let mut shown: Vec<(usize, Vec3)> = world
+            .query::<(&RemoteKartProxy, &Transform)>()
+            .iter(world)
+            .filter(|(proxy, _)| proxy.kart < 4)
+            .map(|(proxy, transform)| (usize::from(proxy.kart), transform.translation))
+            .collect();
+        shown.sort_by_key(|(slot, _)| *slot);
+        assert_eq!(shown.len(), 4);
+        for ((slot, at), (shown_slot, shown_at)) in ana_bots.iter().zip(&shown) {
+            assert_eq!(slot, shown_slot);
+            assert!(
+                at.distance(*shown_at) < 0.05,
+                "bot {slot}: {at} vs {shown_at}"
+            );
+        }
+        // Bob's bots have the parts Ana's have: the same seed.
+        let ana_parts = crate::bots::bot_loadout(
+            room.view(ANA)
+                .world()
+                .resource::<crate::characters::Roster>(),
+            start.seed,
+            2,
+        );
+        let remote = room
+            .view(BOB)
+            .world()
+            .resource::<KartSync>()
+            .remote_kart(2)
+            .unwrap()
+            .loadout;
+        assert_eq!(usize::from(remote[0]), ana_parts.character);
+    }
+    // GO on the same common tick for both (within a tick: each estimates the room's clock).
+    let mut go: Vec<(PeerKey, u32)> = Vec::new();
+    for _ in 0..(8 * 60) {
+        room.frame();
+        for (key, app) in &room.games {
+            if !go.iter().any(|(k, _)| k == key) && app.world().resource::<Race>().started() {
+                go.push((*key, common_tick(app)));
+            }
+        }
+        if go.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(go.len(), 2, "GO never came");
+    let expected = start.start_tick
+        + crate::race::RaceFlow::go_tick(&room.view(ANA).world().resource::<Race>().timings)
+        - 1;
+    for (key, tick) in &go {
+        assert!(
+            tick.abs_diff(expected) <= 1,
+            "{key:?}: GO at {tick}, expected {expected}"
+        );
+    }
+}
+
+/// Issue #9 acceptance (in memory): a race of two players and bots, run to the end: every
+/// checkpoint of every racer comes out the same on both screens (laps, times, finish), the host
+/// ends the race, and both show the same results, in the same order.
+#[test]
+fn a_race_online_ends_with_the_same_results_for_everyone() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    let start = start_race(&mut room, ANA, 4, 1);
+    bots_drive_the_players(&mut room);
+    room.until(150.0, "the results", |app| {
+        app.world().resource::<Race>().phase() == RacePhase::Results
+    });
+    let (ana, bob) = (
+        progress_by_slot(room.app(ANA)),
+        progress_by_slot(room.app(BOB)),
+    );
+    println!("Ana: {ana:?}\nBob: {bob:?}");
+    assert_eq!(ana.len(), usize::from(start.bots) + 2);
+    assert_same_progress(&ana, &bob);
+    let finished = ana.iter().filter(|(.., finish)| finish.is_some()).count();
+    assert!(finished >= 2, "both players finished: {ana:?}");
+    let (ana_order, bob_order) = (standings(room.app(ANA)), standings(room.app(BOB)));
+    println!("results: {ana_order:?}");
+    assert_eq!(ana_order, bob_order);
+    let over = room
+        .view(ANA)
+        .world()
+        .resource::<OnlineRace>()
+        .shared
+        .over()
+        .cloned()
+        .expect("the host ended it");
+    assert_eq!(
+        ana_order,
+        over.order
+            .iter()
+            .map(|k| usize::from(*k))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        room.view(BOB)
+            .world()
+            .resource::<OnlineFlow>()
+            .order
+            .as_deref(),
+        Some(ana_order.as_slice())
+    );
+}
+
+/// Bob's kart stands 2.4 m to the right of Ana's, and shows there on Ana's screen.
+fn put_bob_beside_ana(room: &mut Room, ana_kart: Entity, bob_kart: Entity) {
+    let ana_at = *room.view(ANA).world().get::<Transform>(ana_kart).unwrap();
+    let beside = ana_at.translation + *ana_at.right() * 2.4;
+    {
+        let world = room.app(BOB).world_mut();
+        let mut transform = world.get_mut::<Transform>(bob_kart).unwrap();
+        *transform = ana_at;
+        transform.translation = beside;
+        let placed = *transform;
+        world
+            .get_mut::<crate::interpolation::PhysicsPose>(bob_kart)
+            .unwrap()
+            .snap(placed);
+        *world.get_mut::<Velocity>(bob_kart).unwrap() = Velocity::zero();
+    }
+    room.until(3.0, "Bob beside Ana", |app| {
+        if !lobby(app).is_host() {
+            return true;
+        }
+        let sync = app.world().resource::<KartSync>();
+        let proxy = sync.remote(BOB).and_then(|r| r.proxy).unwrap();
+        let at = app.world().get::<Transform>(proxy).unwrap().translation;
+        at.distance(beside) < 0.3
+    });
+}
+
+/// Ana taps the Interaction button (her kart's input is the test's).
+fn strike(room: &mut Room, ana_kart: Entity) {
+    for pressed in [true, true, false] {
+        room.app(ANA)
+            .world_mut()
+            .get_mut::<KartInput>(ana_kart)
+            .unwrap()
+            .interact = pressed;
+        room.frame();
+    }
+}
+
+/// Issue #9: a paw strike on another player's kart. Ana sees Bob's kart beside hers and
+/// strikes: Bob's game decides (in reach at the tick Ana saw), pushes its own kart and answers;
+/// Ana counts it landed, and shows the "pof" on Bob's kart. A strike that comes too late (0.5 s
+/// on the way) is refused: Bob's kart is not struck, Ana's paw struck the air.
+#[test]
+fn a_strike_on_another_players_kart_is_judged_by_its_game() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    // The test drives both karts (no keyboard).
+    let ana_kart = player(room.app(ANA));
+    let bob_kart = player(room.app(BOB));
+    room.app(ANA)
+        .world_mut()
+        .entity_mut(ana_kart)
+        .remove::<PlayerKart>();
+    room.app(BOB)
+        .world_mut()
+        .entity_mut(bob_kart)
+        .remove::<PlayerKart>();
+    put_bob_beside_ana(&mut room, ana_kart, bob_kart);
+    strike(&mut room, ana_kart);
+    room.until(1.0, "the answer", |app| {
+        !lobby(app).is_host()
+            || app
+                .world()
+                .get::<PawStats>(player_of(app))
+                .is_some_and(|s| s.landed == 1)
+    });
+    let struck = room
+        .view(BOB)
+        .world()
+        .get::<PawStats>(bob_kart)
+        .unwrap()
+        .struck;
+    assert_eq!(struck, 1, "Bob's game applied the strike");
+    assert!(
+        room.view(BOB)
+            .world()
+            .get::<Shove>(bob_kart)
+            .unwrap()
+            .is_active()
+            || room
+                .view(BOB)
+                .world()
+                .get::<Velocity>(bob_kart)
+                .unwrap()
+                .linear
+                .length()
+                > 1.0,
+        "Bob's kart pushed"
+    );
+    // The "pof" on Ana's screen: Bob's kart was struck.
+    let proxy = room
+        .view(ANA)
+        .world()
+        .resource::<KartSync>()
+        .remote(BOB)
+        .unwrap()
+        .proxy
+        .unwrap();
+    assert_eq!(
+        room.view(ANA)
+            .world()
+            .get::<Paw>(proxy)
+            .unwrap()
+            .struck_count,
+        1
+    );
+
+    // The cooldown and the protection over, Bob beside Ana again; the strike takes 0.5 s.
+    for _ in 0..(3 * 60) {
+        room.frame();
+    }
+    put_bob_beside_ana(&mut room, ana_kart, bob_kart);
+    room.hub.set_delay(30);
+    strike(&mut room, ana_kart);
+    for _ in 0..90 {
+        room.frame();
+    }
+    let ana_strikes = room
+        .view(ANA)
+        .world()
+        .get::<PawStats>(ana_kart)
+        .unwrap()
+        .strikes;
+    assert_eq!(ana_strikes, 2, "Ana struck twice");
+    let struck = room
+        .view(BOB)
+        .world()
+        .get::<PawStats>(bob_kart)
+        .unwrap()
+        .struck;
+    assert_eq!(struck, 1, "a strike older than 0.3 s is refused");
+    let landed = room
+        .view(ANA)
+        .world()
+        .get::<PawStats>(ana_kart)
+        .unwrap()
+        .landed;
+    assert_eq!(landed, 1, "the refusal came back: not landed");
+}
+
+/// The player's kart of a game (bots aside).
+fn player_of(app: &App) -> Entity {
+    app.world()
+        .iter_entities()
+        .find(|e| e.contains::<NetKart>() && e.contains::<Kart>() && !e.contains::<Bot>())
+        .map(|e| e.id())
+        .expect("no player kart")
+}
+
+/// Issue #9: Ana grabs Bob's kart: Bob's game accepts and holds its kart (each pulls its own
+/// kart toward the other one); Ana lets go: Bob's kart is free on both screens.
+#[test]
+fn a_grab_holds_another_players_kart_until_released() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let ana_kart = player(room.app(ANA));
+    let bob_kart = player(room.app(BOB));
+    room.app(ANA)
+        .world_mut()
+        .entity_mut(ana_kart)
+        .remove::<PlayerKart>();
+    room.app(BOB)
+        .world_mut()
+        .entity_mut(bob_kart)
+        .remove::<PlayerKart>();
+    put_bob_beside_ana(&mut room, ana_kart, bob_kart);
+    room.app(ANA)
+        .world_mut()
+        .get_mut::<KartInput>(ana_kart)
+        .unwrap()
+        .interact = true;
+    room.until(1.5, "Bob held", |app| {
+        if lobby(app).is_host() {
+            matches!(
+                app.world().get::<Paw>(player_of(app)).unwrap().motion,
+                PawMotion::Holding { .. }
+            )
+        } else {
+            app.world()
+                .get::<Paw>(player_of(app))
+                .unwrap()
+                .held
+                .is_some()
+        }
+    });
+    // Ana's paw is shown holding on Bob's screen.
+    let ana_proxy = room
+        .view(BOB)
+        .world()
+        .resource::<KartSync>()
+        .remote(ANA)
+        .unwrap()
+        .proxy
+        .unwrap();
+    assert!(matches!(
+        room.view(BOB).world().get::<Paw>(ana_proxy).unwrap().motion,
+        PawMotion::Holding { .. }
+    ));
+    room.app(ANA)
+        .world_mut()
+        .get_mut::<KartInput>(ana_kart)
+        .unwrap()
+        .interact = false;
+    room.until(1.0, "Bob free", |app| {
+        let paw = app.world().get::<Paw>(player_of(app)).unwrap();
+        paw.held.is_none() && !matches!(paw.motion, PawMotion::Holding { .. })
+    });
+    assert!(!matches!(
+        room.view(BOB).world().get::<Paw>(ana_proxy).unwrap().motion,
+        PawMotion::Holding { .. }
+    ));
+    let _ = InteractionTuning::default();
+}
+
+/// Issue #9: the host leaves in the middle of a race: the next one (the smallest id left) takes
+/// the bots over where they were and goes on hosting them; the third one sees them driving on,
+/// from their new host; the race's clock goes on without a jump; the host's kart gives up.
+#[test]
+fn a_new_host_takes_the_bots_over() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob"), (CYD, "Cyd")]);
+    let start = start_race(&mut room, ANA, 3, 1);
+    bots_drive_the_players(&mut room);
+    room.until(10.0, "GO", |app| app.world().resource::<Race>().started());
+    for _ in 0..(4 * 60) {
+        room.frame();
+    }
+    let passed = |app: &mut App, slot: usize| {
+        progress_by_slot(app)
+            .iter()
+            .find(|(s, ..)| *s == slot)
+            .map(|(_, passed, ..)| *passed)
+            .unwrap()
+    };
+    let bot_before = passed(room.app(CYD), 1);
+    // Ana's tab closes. Cyd's race clock goes on tick by tick.
+    let mut flow = room.view(CYD).world().resource::<Race>().flow.tick;
+    room.close(ANA);
+    let mut worst_step = 0;
+    for _ in 0..(3 * 60) {
+        room.frame();
+        let now = room.view(CYD).world().resource::<Race>().flow.tick;
+        worst_step = worst_step.max(now.abs_diff(flow));
+        flow = now;
+    }
+    assert!(
+        worst_step <= 3,
+        "the race clock jumped by {worst_step} ticks"
+    );
+    for (_, app) in &room.games {
+        assert_eq!(lobby(app).host(), Some(BOB));
+        // Bob drives the 3 bots now (the players' karts, driven by bots too, aside).
+        let local = app
+            .world()
+            .iter_entities()
+            .filter(|e| {
+                e.contains::<Bot>()
+                    && e.contains::<Kart>()
+                    && e.get::<NetKart>().is_some_and(|net| net.0 < start.bots)
+            })
+            .count();
+        assert_eq!(local, if lobby(app).is_host() { 3 } else { 0 });
+    }
+    for _ in 0..(6 * 60) {
+        room.frame();
+    }
+    // Cyd sees bot 1 driving on: further checkpoints, from Bob now.
+    let bot_after = passed(room.app(CYD), 1);
+    assert!(
+        bot_after > bot_before + 3,
+        "bot 1: {bot_before} then {bot_after}"
+    );
+    let remote = room
+        .view(CYD)
+        .world()
+        .resource::<KartSync>()
+        .remote_kart(1)
+        .unwrap()
+        .clone();
+    assert_eq!(remote.peer, BOB);
+    // Ana's kart gave up: kept for the results, hidden.
+    let race = &room.view(CYD).world().resource::<OnlineRace>().shared;
+    assert!(race.kart(start.slot_of(ANA).unwrap()).unwrap().left);
+    let ana_remote = room
+        .view(CYD)
+        .world()
+        .resource::<KartSync>()
+        .remote_kart(start.slot_of(ANA).unwrap())
+        .cloned();
+    assert!(ana_remote.is_some_and(|r| r.left));
+    // The bots' positions agree on both screens (Cyd shows them about 100 ms late).
+    let bob_bot = {
+        let world = room.app(BOB).world_mut();
+        world
+            .query_filtered::<(&Racer, &Transform), (With<Bot>, With<Kart>)>()
+            .iter(world)
+            .find(|(racer, _)| racer.grid_slot == 1)
+            .map(|(_, t)| t.translation)
+            .unwrap()
+    };
+    let proxy = remote.proxy.unwrap();
+    let cyd_bot = room
+        .view(CYD)
+        .world()
+        .get::<Transform>(proxy)
+        .unwrap()
+        .translation;
+    assert!(bob_bot.distance(cyd_bot) < 6.0, "{bob_bot} vs {cyd_bot}");
+}
+
+/// Issue #9 (seen in two Chromium pages): in free driving, the karts' ids are the seats. The
+/// player of the first seat leaves: the others' seats move up, and so do their karts' ids and
+/// their places on the grid (R); each one goes on showing the other, its states coming under
+/// its new id.
+#[test]
+fn free_driving_follows_the_seats_when_a_player_leaves() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob"), (CYD, "Cyd")]);
+    let first = lobby(room.view(ANA)).seats()[0];
+    room.close(first);
+    let seat = |app: &App| {
+        let lobby = lobby(app);
+        lobby.seats().iter().position(|key| *key == lobby.me())
+    };
+    room.until(5.0, "the seats moved up", |app| {
+        let sync = app.world().resource::<KartSync>();
+        lobby(app).seats().len() == 2
+            && seat(app).is_some_and(|seat| usize::from(sync.kart()) == seat)
+            && sync.remotes().len() == 1
+    });
+    let received = |app: &App| app.world().resource::<KartSync>().remotes()[0].received;
+    let before: Vec<u32> = room.games.iter().map(|(_, app)| received(app)).collect();
+    for _ in 0..(2 * 60) {
+        room.frame();
+    }
+    let keys: Vec<PeerKey> = room.games.iter().map(|(key, _)| *key).collect();
+    for (index, key) in keys.iter().enumerate() {
+        let other = keys[1 - index];
+        let app = room.app(*key);
+        let ours = seat(app).unwrap();
+        let theirs = lobby(app).seats().iter().position(|k| *k == other).unwrap();
+        assert_eq!(ours + theirs, 1, "{key:?}: seats 0 and 1");
+        let place = app.world().resource::<TrackLayout>().grid[ours];
+        let kart = player(app);
+        assert_eq!(
+            usize::from(app.world().get::<NetKart>(kart).unwrap().0),
+            ours
+        );
+        assert_eq!(app.world().get::<SpawnPoint>(kart).unwrap().0, place);
+        assert_eq!(app.world().resource::<OnlineSlot>().0, ours);
+        let sync = app.world().resource::<KartSync>();
+        let remote = &sync.remotes()[0];
+        assert_eq!((remote.peer, usize::from(remote.kart)), (other, theirs));
+        assert!(remote.proxy.is_some());
+        let fresh = remote.received.saturating_sub(before[index]);
+        assert!(fresh >= 30, "{key:?}: {fresh} states of the other in 2 s");
+    }
+}
+
+/// Issue #9 (Max's decision): online, a menu does not pause the game: the options menu and the
+/// selection screen open, the game runs on, our kart coasts (its keys are the menu's) and its
+/// states keep going to the others.
+#[test]
+fn online_the_menus_do_not_pause() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    let bob_kart = player(room.app(BOB));
+    room.app(BOB)
+        .world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::ArrowUp);
+    for _ in 0..60 {
+        room.frame();
+    }
+    room.app(BOB)
+        .world_mut()
+        .write_message(OptionsAction::Toggle);
+    for _ in 0..10 {
+        room.frame();
+    }
+    let bob = room.view(BOB);
+    assert!(bob.world().resource::<OptionsMenu>().open);
+    assert!(!bob.world().resource::<Time<Virtual>>().is_paused());
+    assert_eq!(
+        *bob.world().get::<KartInput>(bob_kart).unwrap(),
+        KartInput::default(),
+        "it coasts"
+    );
+    // Ana still receives Bob's states.
+    let received = |room: &Room| {
+        room.view(ANA)
+            .world()
+            .resource::<KartSync>()
+            .remote(BOB)
+            .unwrap()
+            .received
+    };
+    let before = received(&room);
+    for _ in 0..60 {
+        room.frame();
+    }
+    assert!(
+        received(&room) >= before + 25,
+        "{} then {}",
+        before,
+        received(&room)
+    );
+    let speed = room
+        .view(BOB)
+        .world()
+        .get::<Velocity>(bob_kart)
+        .unwrap()
+        .linear
+        .length();
+    assert!(speed > 1.0, "the kart rolls on: {speed}");
+}
+
+/// Issue #9 acceptance, for real: two whole games (headless, real time) meet through
+/// `matchbox_server` on this machine, get ready, and the host (the smallest id) starts a race:
+/// 3 laps of Prairie Pompon, the grid filled with 10 bots. Both players are driven by bots (the
+/// test cannot play) until the results. Both games must agree: the same circuit, the same start
+/// tick, the same bots at the same places, GO on the same tick, every racer's laps and finish,
+/// and the same results. Run it by hand, the server started:
+/// `cargo test --lib net::race_tests::two_games_race -- --ignored --nocapture`
+/// (`FLUFFY_NETSIM=120,20,5` puts the network simulator on Bob's side).
+#[test]
+#[ignore = "needs matchbox_server on localhost:3536"]
+fn two_games_race_through_a_local_signaling_server() {
+    let code = RoomCode::generate(getrandom::u64().unwrap());
+    println!("room {code}");
+    let game = |pseudo: &str| {
+        let mut app = crate::tests::game_app_unloaded(TrackChoice::TestGround, 0);
+        // Real time: the lobby's clock and the game's go together, as in the browser.
+        app.insert_resource(TimeUpdateStrategy::Automatic);
+        app.world_mut().resource_mut::<NetSettings>().pseudo = Some(pseudo.into());
+        crate::tests::wait_for_the_player(&mut app);
+        app
+    };
+    let mut games = [("Ana", game("Ana")), ("Bob", game("Bob"))];
+    if let Ok(netsim) = std::env::var("FLUFFY_NETSIM") {
+        let netsim = NetSimTuning::parse(&netsim).expect("FLUFFY_NETSIM: 120,20,5");
+        println!("Bob's network simulator: {netsim:?}");
+        games[1].1.world_mut().resource_mut::<NetTuning>().simulator = netsim;
+    }
+    for (_, app) in &mut games {
+        app.world_mut().write_message(NetAction::Join(code.clone()));
+    }
+    let start = Instant::now();
+    let update = |games: &mut [(&str, App); 2]| {
+        for (_, app) in games.iter_mut() {
+            app.update();
+        }
+        std::thread::sleep(Duration::from_millis(3));
+    };
+    let wait =
+        |games: &mut [(&str, App); 2], seconds: u64, what: &str, done: &dyn Fn(&App) -> bool| {
+            let since = Instant::now();
+            while !games.iter().all(|(_, app)| done(app)) {
+                assert!(
+                    since.elapsed() < Duration::from_secs(seconds),
+                    "{what}: never happened"
+                );
+                update(games);
+            }
+            println!("{what} after {:.1} s", start.elapsed().as_secs_f32());
+        };
+    wait(&mut games, 40, "both seated, seeing each other", &|app| {
+        app.world()
+            .get_resource::<KartSync>()
+            .is_some_and(|sync| sync.remotes().iter().any(|r| r.proxy.is_some()))
+    });
+    for (_, app) in &mut games {
+        app.world_mut().write_message(NetAction::Ready(true));
+    }
+    wait(&mut games, 10, "everyone ready", &|app| {
+        app.world()
+            .resource::<NetSession>()
+            .lobby
+            .as_ref()
+            .is_some_and(Lobby::all_ready)
+    });
+    let host = games
+        .iter()
+        .position(|(_, app)| lobby(app).is_host())
+        .expect("a host");
+    println!("{} hosts", games[host].0);
+    games[host]
+        .1
+        .world_mut()
+        .write_message(NetAction::StartRace);
+    wait(&mut games, 30, "both on the grid", &on_grid);
+    let starts: Vec<RaceStart> = games
+        .iter()
+        .map(|(_, app)| app.world().resource::<OnlineRace>().shared.start.clone())
+        .collect();
+    println!("the race: {:?}", starts[0]);
+    assert_eq!(starts[0], starts[1]);
+    assert_eq!(starts[0].bots, 10);
+    for (name, app) in &games {
+        let layout = app.world().resource::<TrackLayout>();
+        println!("{name} races on {}", layout.name);
+        assert_eq!(layout.name, "Prairie Pompon");
+    }
+    let mut drivers = [Entity::PLACEHOLDER; 2];
+    for (index, (_, app)) in games.iter_mut().enumerate() {
+        let kart = player(app);
+        drivers[index] = kart;
+        let slot = app.world().get::<Racer>(kart).unwrap().grid_slot;
+        let seed = bot_seed(app.world().resource::<RaceGrid>().seed, slot);
+        let tuning = app.world().resource::<BotTuning>().clone();
+        app.world_mut()
+            .entity_mut(kart)
+            .remove::<PlayerKart>()
+            .insert(bot(BotDifficulty::Normal, seed, &tuning));
+    }
+    // The bots on the grid: the host's and what the guest shows, before GO.
+    let guest = 1 - host;
+    let since = Instant::now();
+    while since.elapsed() < Duration::from_secs(2) {
+        update(&mut games);
+    }
+    let bots_of_host: Vec<(usize, Vec3)> = {
+        let world = games[host].1.world_mut();
+        let mut all: Vec<(usize, Vec3)> = world
+            .query_filtered::<(&Racer, &Transform), With<Bot>>()
+            .iter(world)
+            .filter(|(racer, _)| racer.grid_slot < 10)
+            .map(|(racer, t)| (racer.grid_slot, t.translation))
+            .collect();
+        all.sort_by_key(|(slot, _)| *slot);
+        all
+    };
+    let bots_of_guest: Vec<(usize, Vec3)> = {
+        let world = games[guest].1.world_mut();
+        let mut all: Vec<(usize, Vec3)> = world
+            .query::<(&RemoteKartProxy, &Transform)>()
+            .iter(world)
+            .filter(|(proxy, _)| proxy.kart < 10)
+            .map(|(proxy, t)| (usize::from(proxy.kart), t.translation))
+            .collect();
+        all.sort_by_key(|(slot, _)| *slot);
+        all
+    };
+    let worst = bots_of_host
+        .iter()
+        .zip(&bots_of_guest)
+        .map(|((a, x), (b, y))| {
+            assert_eq!(a, b);
+            x.distance(*y)
+        })
+        .fold(0.0f32, f32::max);
+    println!(
+        "the 10 bots on both screens before GO: {} and {}, {worst:.3} m apart at worst",
+        bots_of_host.len(),
+        bots_of_guest.len()
+    );
+    assert_eq!(bots_of_guest.len(), 10);
+    assert!(worst < 0.1);
+    // GO: the common tick each game saw it on.
+    let mut go: [Option<u32>; 2] = [None; 2];
+    while go.iter().any(Option::is_none) {
+        assert!(start.elapsed() < Duration::from_secs(120), "GO never came");
+        update(&mut games);
+        for (index, (_, app)) in games.iter().enumerate() {
+            if go[index].is_none() && app.world().resource::<Race>().started() {
+                go[index] = Some(common_tick(app));
+            }
+        }
+    }
+    println!(
+        "GO at common tick {:?} (start tick {})",
+        go, starts[0].start_tick
+    );
+    assert!(go[0].unwrap().abs_diff(go[1].unwrap()) <= 2);
+    let mut next_print = Instant::now();
+    loop {
+        update(&mut games);
+        if games
+            .iter()
+            .all(|(_, app)| app.world().resource::<Race>().phase() == RacePhase::Results)
+        {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(400),
+            "the race never ended"
+        );
+        if next_print.elapsed() > Duration::from_secs(10) {
+            next_print = Instant::now();
+            for (index, (name, app)) in games.iter_mut().enumerate() {
+                let order = standings(app);
+                let kart = drivers[index];
+                let progress = app.world().get::<RaceProgress>(kart).unwrap().clone();
+                println!(
+                    "t+{:.0} s {name}: race tick {}, own kart {} checkpoints, rank {}; standings {order:?}",
+                    start.elapsed().as_secs_f32(),
+                    app.world().resource::<Race>().race_ticks(),
+                    progress.passed,
+                    progress.rank
+                );
+            }
+        }
+    }
+    let progress: Vec<Vec<(usize, u32, Vec<u32>, Option<u32>)>> = games
+        .iter_mut()
+        .map(|(_, app)| progress_by_slot(app))
+        .collect();
+    let results: Vec<Vec<usize>> = games.iter_mut().map(|(_, app)| standings(app)).collect();
+    for (name, app) in games.iter_mut() {
+        println!("{name}'s results:");
+        let order = standings(app);
+        let entities = app.world().resource::<Race>().standings.clone();
+        for (rank, (slot, entity)) in order.iter().zip(entities).enumerate() {
+            let p = app.world().get::<RaceProgress>(entity).unwrap();
+            let name = app
+                .world()
+                .get::<crate::race::RacerName>(entity)
+                .map(|n| n.0.clone())
+                .unwrap_or_else(|| {
+                    if app.world().get::<NetKart>(entity).is_some()
+                        && app.world().get::<Bot>(entity).is_some()
+                        && *slot >= 10
+                    {
+                        "(this game's player)".into()
+                    } else {
+                        format!("Kart {}", slot + 1)
+                    }
+                });
+            println!(
+                "  {:>2}. slot {slot:>2} {name:<20} finish {:?} laps {:?}",
+                rank + 1,
+                p.finish,
+                p.lap_times
+            );
+        }
+    }
+    assert_same_progress(&progress[0], &progress[1]);
+    assert_eq!(results[0], results[1], "the same results");
+    println!("the whole race took {:.0} s", start.elapsed().as_secs_f32());
+}

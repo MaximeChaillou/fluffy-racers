@@ -17,7 +17,9 @@
 //!   lost them a bit later, until they vanish.
 //!
 //! Everything runs in `FixedUpdate` at 60 Hz ([`CroquetteSystems`]): after the karts' input and
-//! the race gate, before the karts drive, so a pick-up boosts the kart on this very tick. Pure
+//! the race gate, before the karts drive, so a pick-up boosts the kart on this very tick. Online
+//! (issue #9, `level::Online`), nothing runs and the track's croquettes are hidden: they are not
+//! shared yet. Pure
 //! logic in `logic.rs`; visuals in `visual.rs` ([`CroquetteVisualPlugin`]); the HUD counter is in
 //! `crate::ui`, the sounds in `crate::audio`, both fed by [`CroquettePickedUp`] and
 //! [`CroquettesLost`].
@@ -106,6 +108,7 @@ impl Plugin for CroquettePlugin {
                     update_speed_factors,
                 )
                     .chain()
+                    .run_if(not(resource_exists::<crate::level::Online>))
                     .in_set(CroquetteSystems),
             );
     }

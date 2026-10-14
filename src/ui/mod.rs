@@ -18,10 +18,10 @@ use bevy::prelude::*;
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::PlayerKart;
-use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer};
+use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use format::{
-    HudValues, RESULTS_FOOTER, RESULTS_TITLE, hundredths, write_best_lap, write_croquettes,
-    write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
+    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_ONLINE, RESULTS_TITLE, hundredths, write_best_lap,
+    write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
 };
 
 /// Root of the in-race HUD.
@@ -558,12 +558,15 @@ fn animate_croquette_counter(
     }
 }
 
-/// Spawns the results screen when the results phase starts, removes it on restart.
+/// Spawns the results screen when the results phase starts, removes it on restart. Online
+/// (issue #9): the host's order (`race::OnlineFlow`), the other players' names, and the host
+/// starts the next race.
 fn show_results(
     mut commands: Commands,
     race: Res<Race>,
+    online: Option<Res<crate::level::Online>>,
     screens: Query<Entity, With<ResultsScreen>>,
-    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>)>,
+    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
 ) {
     let showing = race.phase() == RacePhase::Results;
     if !showing {
@@ -611,7 +614,7 @@ fn show_results(
                         },
                     ));
                     for (i, entity) in race.standings.iter().enumerate() {
-                        let Ok((racer, progress, player)) = racers.get(*entity) else {
+                        let Ok((racer, progress, player, name)) = racers.get(*entity) else {
                             continue;
                         };
                         let color = if player { RANK_COLOR } else { TEXT_COLOR };
@@ -632,7 +635,12 @@ fn show_results(
                                 };
                                 write_ordinal(&mut line, i as u32 + 1);
                                 cell(&line, 60.0);
-                                write_racer_name(&mut line, player, racer.grid_slot);
+                                write_racer_name(
+                                    &mut line,
+                                    player,
+                                    racer.grid_slot,
+                                    name.map(|n| n.0.as_str()),
+                                );
                                 cell(&line, 110.0);
                                 line.clear();
                                 write_time(&mut line, progress.finish.map(hundredths));
@@ -642,7 +650,15 @@ fn show_results(
                             });
                     }
                     panel.spawn((
-                        text(RESULTS_FOOTER, 20.0, TEXT_COLOR),
+                        text(
+                            if online.is_some() {
+                                RESULTS_FOOTER_ONLINE
+                            } else {
+                                RESULTS_FOOTER
+                            },
+                            20.0,
+                            TEXT_COLOR,
+                        ),
                         Node {
                             margin: UiRect::top(px(12)),
                             ..default()

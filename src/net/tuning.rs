@@ -34,6 +34,13 @@ pub struct NetTuning {
     pub proxy_snap_distance: f32,
     /// Our kart's state goes out every this many ticks (2: 30 per second).
     pub send_interval_ticks: u32,
+    /// Issue #9: the race starts this long after the host's « Lancer la course » (ms): its first
+    /// tick on the grid, on the room's clock. Long enough for the announcement to reach everyone
+    /// and the level to be built; a peer later than that joins the countdown where it is.
+    pub start_lead_ms: f32,
+    /// Issue #9: once the first player crossed the finish line, the host ends the race this long
+    /// after at the latest (s, « à régler »): the players still racing are ranked where they are.
+    pub finish_grace_s: f32,
     /// The network simulator (debug, `?netsim=120,20,5`): off by default.
     pub simulator: NetSimTuning,
 }
@@ -50,6 +57,8 @@ impl Default for NetTuning {
             proxy_speed_margin: 5.0,
             proxy_snap_distance: 4.0,
             send_interval_ticks: 2,
+            start_lead_ms: 2_000.0,
+            finish_grace_s: 30.0,
             simulator: NetSimTuning::default(),
         }
     }

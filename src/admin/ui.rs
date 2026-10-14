@@ -452,6 +452,13 @@ fn test_section(
     tunings: &Tunings,
     changed: &mut bool,
 ) {
+    if world.contains_resource::<crate::level::Online>() {
+        // Issue #9: online, the host chooses the circuit and starts the races (lobby, L), and the
+        // game never pauses nor slows down: every peer's race follows the room's clock.
+        ui.label("En ligne : l'hôte choisit le circuit et lance les courses depuis le salon (L).");
+        ui.small("Ni « Relancer », ni pause, ni ralenti en ligne.");
+        return;
+    }
     let choice = world.resource::<TrackChoice>().clone();
     let mode = *world.resource::<RaceMode>();
     let mut request = None;

@@ -55,9 +55,10 @@ use crate::interactions::{InteractionTuning, Paw, PawMotion};
 use crate::items::{ItemBox, ItemSlots, ItemTuning, Slot};
 use crate::kart::{
     Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
-    MaxSpeedFactors, MaxSpeedScale, PlayerKart, StatEffects, StatsTuning, TrickTracker,
+    MaxSpeedFactors, MaxSpeedScale, PlayerKart, Remote, StatEffects, StatsTuning, TrickTracker,
     kart_body_with_stats, spawn_kart_visual_with_driver,
 };
+use crate::level::Online;
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
 use crate::track::TrackLayout;
 
@@ -307,20 +308,21 @@ fn karts_around(
 
 /// Every bot writes its kart's input for this tick: its driving, and its item button (issue
 /// #16). The other karts and the boxes are gathered once in buffers kept between ticks (no
-/// allocation per tick).
+/// allocation per tick). Online (issue #9), the host's bots see the other players' karts too.
 fn drive_bots(
     time: Res<Time>,
     line: Res<RacingLine>,
     tuning: Res<BotTuning>,
     kart_tuning: Res<KartTuning>,
     item_tuning: Option<Res<ItemTuning>>,
+    online: Option<Res<Online>>,
     interaction_tuning: Option<Res<InteractionTuning>>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
     race: Option<Res<Race>>,
     mut neighbors: Local<Vec<Neighbor>>,
     mut boxes: Local<Vec<Vec3>>,
     mut in_reach: Local<Vec<ReachKart>>,
-    karts: Query<(Entity, &Transform, &Velocity), With<Kart>>,
+    karts: Query<(Entity, &Transform, &Velocity), Or<(With<Kart>, With<Remote>)>>,
     item_boxes: Query<(&Transform, &ItemBox)>,
     mut bots: Query<(
         Entity,
@@ -357,7 +359,8 @@ fn drive_bots(
         position: transform.translation,
         velocity: velocity.linear,
     }));
-    let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled);
+    // Online, no item yet (issue #9: not shared yet).
+    let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled) && online.is_none();
     boxes.clear();
     if items_on {
         boxes.extend(
