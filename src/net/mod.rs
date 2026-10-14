@@ -8,6 +8,11 @@
 //!   the peers to each other.
 //! - **Socket** (`socket.rs`): `matchbox_socket`, full mesh, a reliable and an unreliable
 //!   channel, polled each frame from a system, natively and in the browser.
+//! - **Direct connections** (issue #49): the STUN and TURN servers (`ice.rs`: none on a local
+//!   network, `?stun=`, `?turn=`), what goes through the signaling server (`signaling.rs`) and
+//!   the connections being made (`links.rs`): each step in the console, and in the lobby a peer
+//!   that does not connect, with the leads (README, « Dépannage »). In the browser, a small shim
+//!   of the page (`index.html`, read by `browser.rs`) completes `matchbox_socket`.
 //! - **Protocol** (`protocol.rs`): compact, versioned messages; **lobby** (`lobby.rs`): seats,
 //!   host (the smallest `PeerId`), « Prêt », ping and common clock (`clock.rs`), arrivals and
 //!   departures, the room full at 12. All of it is pure logic, unit-tested without Bevy.
@@ -20,11 +25,15 @@
 //! the actions run each frame, the rest needs a [`NetSession`] (measured: no cost in the
 //! browser's single-threaded executor, STATUS.md « Métriques »).
 
+mod browser;
 mod clock;
+mod ice;
 pub mod interactions;
+mod links;
 mod lobby;
 mod protocol;
 mod room;
+mod signaling;
 mod socket;
 mod ui;
 
@@ -32,6 +41,10 @@ mod ui;
 mod scenario_tests;
 
 pub use clock::PeerClock;
+pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
+pub use links::{
+    CONNECTING_SHOWN_MS, Diagnosis, Link, Links, NO_CANDIDATE_MS, Role, STUCK_MS, Stuck,
+};
 pub use lobby::{
     Lobby, LobbyEvent, LobbyPeer, Outgoing, PING_INTERVAL_MS, PlayerRow, SETTLE_MS, SILENT_MS,
 };
@@ -40,9 +53,10 @@ pub use protocol::{
     PeerKey, Profile, RaceStart, Strike, StrikeReply, TetherBreak,
 };
 pub use room::{
-    CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, invite_link,
-    native_command, parse_signal, query_with_room, room_url,
+    CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SIGNAL_PORT,
+    default_signal, invite_link, native_command, parse_signal, query_with_room, room_url,
 };
+pub use signaling::{ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuilder};
 pub use socket::{NetSocket, SocketEvent};
 pub use ui::NetUiPlugin;
 
@@ -58,15 +72,27 @@ pub const LOBBY_KEY: KeyCode = KeyCode::KeyL;
 /// A departing socket gets this long to send its `Bye` before it is dropped (s).
 const DEPARTURE_SECONDS: f64 = 2.0;
 
-/// How to reach the others: the signaling server, the name shown to them.
+/// How to reach the others: the signaling server, the name shown to them, the ICE servers.
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
 pub struct NetSettings {
-    /// The signaling server ([`DEFAULT_SIGNAL_URL`], `?signal=`, `--signal`).
+    /// The signaling server ([`DEFAULT_SIGNAL_URL`]; in the browser, the page's own machine when
+    /// it is local, [`default_signal`]; `?signal=`, `--signal`).
     pub signal: String,
     /// `?pseudo=` / `--pseudo`; without it, the name of the player's character.
     pub pseudo: Option<String>,
     /// Tries to reach the signaling server before giving up, 3 s apart.
     pub attempts: u16,
+    /// STUN servers (issue #49, `?stun=` / `--stun`): by default none when the signaling server
+    /// is local, the public ones otherwise ([`IceServers::choose`]).
+    pub stun: StunChoice,
+    /// A TURN relay (`?turn=…&turnuser=…&turnpass=…`): none by default (issue #10 brings one).
+    pub turn: Option<TurnServer>,
+    /// In the browser, the longest wait for the ICE candidates before an offer or an answer
+    /// leaves anyway, with those found so far (ms; the next ones follow). `matchbox_socket` waits
+    /// for all of them without a limit: a STUN server that UDP cannot reach holds Chrome about
+    /// 40 s, and a machine without IPv6 can keep it waiting for ever. 3 s leave a STUN server
+    /// several tries; on a local network, the candidates come in a few milliseconds.
+    pub ice_gathering_max_ms: u32,
 }
 
 impl Default for NetSettings {
@@ -75,7 +101,24 @@ impl Default for NetSettings {
             signal: DEFAULT_SIGNAL_URL.to_string(),
             pseudo: None,
             attempts: 3,
+            stun: StunChoice::Auto,
+            turn: None,
+            ice_gathering_max_ms: 3_000,
         }
+    }
+}
+
+impl NetSettings {
+    /// The ICE servers of a socket joining a room now ([`IceServers::choose`]). A page without
+    /// the shim of `index.html` cannot connect without any server: the public STUN ones then.
+    pub fn ice_servers(&self) -> IceServers {
+        let ice = IceServers::choose(&self.stun, self.turn.as_ref(), &self.signal);
+        if ice.is_empty() && !browser::accepts_no_ice_server() {
+            warn!("network: this page cannot connect without an ICE server: public STUN servers");
+            let public = StunChoice::Servers(PUBLIC_STUN.map(String::from).to_vec());
+            return IceServers::choose(&public, self.turn.as_ref(), &self.signal);
+        }
+        ice
     }
 }
 
@@ -120,10 +163,16 @@ pub struct NetSession {
     pub room: RoomCode,
     /// The signaling server it goes through.
     pub signal: String,
+    /// The STUN and TURN servers of its connections.
+    pub ice: IceServers,
     pub status: NetStatus,
     /// From our id on.
     pub lobby: Option<Lobby>,
+    /// The direct connections being made (issue #49).
+    pub links: Links,
     socket: Option<NetSocket>,
+    /// The browser's count of failed connections when we last looked (`browser::ice_failures`).
+    failures_seen: u32,
 }
 
 impl NetSession {
@@ -211,14 +260,23 @@ fn apply_net_actions(
                     }
                     depart(current, &mut departures, &time);
                 }
-                info!("network: joining room {room} on {}", settings.signal);
+                let ice = settings.ice_servers();
+                browser::set_gathering_max_ms(settings.ice_gathering_max_ms);
+                info!(
+                    "network: joining room {room} on {}, {}",
+                    settings.signal,
+                    ice.describe()
+                );
                 let url = room_url(&settings.signal, &room);
                 let new = NetSession {
                     room,
                     signal: settings.signal.clone(),
+                    socket: Some(NetSocket::open(&url, settings.attempts, &ice)),
+                    ice,
                     status: NetStatus::Connecting,
                     lobby: None,
-                    socket: Some(NetSocket::open(&url, settings.attempts)),
+                    links: Links::default(),
+                    failures_seen: browser::ice_failures(),
                 };
                 // Commands apply after this system: the next action of this frame (rare) sees
                 // the old session.
@@ -310,8 +368,10 @@ fn poll_session(
     let Some(socket) = session.socket.as_mut() else {
         return;
     };
+    let idle = session.links.pending().is_empty();
     let lobby = &mut session.lobby;
     let status = &mut session.status;
+    let links = &mut session.links;
     socket.poll(|event| match event {
         SocketEvent::Joined(me) => {
             let (name, loadout) = profile_of(&settings, loadout.as_deref(), roster.as_deref());
@@ -324,13 +384,20 @@ fn poll_session(
             *status = NetStatus::InRoom;
         }
         SocketEvent::Connected(peer) => {
+            info!("network: {}", links.connected(peer, now));
             if let Some(lobby) = lobby.as_mut() {
                 lobby.connect(peer, now);
             }
         }
         SocketEvent::Disconnected(peer) => {
+            links.disconnected(peer);
             if let Some(lobby) = lobby.as_mut() {
                 lobby.disconnect(peer);
+            }
+        }
+        SocketEvent::Signal(note) => {
+            if let Some(line) = links.note(&note, now) {
+                info!("network: {line}");
             }
         }
         SocketEvent::Packet(peer, _, bytes) => {
@@ -353,6 +420,21 @@ fn poll_session(
             *status = NetStatus::Failed(reason);
         }
     });
+    // While connections are being made: did the browser see one fail (the page's shim counts
+    // them)? Is one stuck?
+    if !session.links.pending().is_empty() {
+        let failures = browser::ice_failures();
+        if idle {
+            // New connections: the failures before them are not theirs.
+            session.failures_seen = failures;
+        } else if failures > session.failures_seen {
+            session.failures_seen = failures;
+            session.links.failed();
+        }
+        for warning in session.links.newly_stuck(now) {
+            warn!("network: {warning}");
+        }
+    }
     if let Some(lobby) = session.lobby.as_mut() {
         lobby.update(now);
         for out in lobby.drain_outbox() {

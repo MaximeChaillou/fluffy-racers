@@ -25,10 +25,26 @@ bevy_egui = { version = "0.43", default-features = false, features = [
 # support Bevy 0.20). Planned in the stack (CLAUDE.md). Natively it brings webrtc-rs (and rustls,
 # tokio, async-std); in the browser only a few small crates over the browser's own WebRTC.
 matchbox_socket = "0.14"
+# Issue #49: our own signaller around matchbox's (`net/signaling.rs`), to see what goes through the
+# signaling server (peers announced, offers and their ICE candidates). The same crates, versions
+# and features as matchbox_socket's own signaller: nothing more is compiled.
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+futures-timer = { version = "3", default-features = false }
 # A random room code (« Créer une partie »). Already compiled for bevy_egui, on both targets.
 getrandom = "0.4"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Issue #49: matchbox_socket's WebSocket natively (see `serde_json` above).
+async-tungstenite = { version = "0.32", default-features = false, features = [
+    "async-std-runtime",
+    "async-tls",
+] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# Issue #49: matchbox_socket's WebSocket in the browser, and its timers (see `serde_json` above).
+ws_stream_wasm = { version = "0.7", default-features = false }
+futures-timer = { version = "3", default-features = false, features = ["wasm-bindgen"] }
 # Already compiled for Bevy (winit, wgpu): the admin panel only adds the browser's local storage
 # (its settings survive a reload) and the page address (`?admin`).
 # Issue #7: the page's `History` puts `?room=CODE` in the address bar.

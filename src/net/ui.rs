@@ -12,9 +12,10 @@ use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContext
 
 #[cfg(target_arch = "wasm32")]
 use super::NetSystems;
+use super::ice::{is_loopback_host, signal_host};
 use super::{
-    DEFAULT_SIGNAL_URL, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus,
-    invite_link, native_command, now_ms,
+    Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, Stuck,
+    default_signal, invite_link, is_local_signal, native_command, now_ms,
 };
 use crate::characters::{PartKind, Roster};
 
@@ -54,12 +55,25 @@ struct LobbyUiState {
     copied_at: Option<f64>,
 }
 
-/// `?room=CODE&signal=…&pseudo=…` in the page address, or `--room CODE --signal … --pseudo …`
-/// natively: the settings, and the room to join.
+/// `?room=CODE&signal=…&pseudo=…&stun=…&turn=…` in the page address, or `--room CODE --signal …`
+/// natively: the settings, and the room to join. Without `signal`, a page served on this machine
+/// or the local network meets the others through `matchbox_server` on that machine
+/// ([`default_signal`], issue #49).
 fn join_launch_room(mut settings: ResMut<NetSettings>, mut actions: MessageWriter<NetAction>) {
     let options = platform::launch_options();
-    if let Some(signal) = options.signal {
+    for unusable in options.unusable() {
+        warn!("network: ignored, cannot be used: {unusable}");
+    }
+    if let Some(signal) = options.signal.clone() {
         settings.signal = signal;
+    } else if let Some(host) = platform::page_host() {
+        settings.signal = default_signal(Some(&host));
+    }
+    if let Some(stun) = options.stun.clone() {
+        settings.stun = stun;
+    }
+    if let Some(turn) = options.turn_server() {
+        settings.turn = Some(turn);
     }
     if options.pseudo.is_some() {
         settings.pseudo = options.pseudo;
@@ -89,6 +103,11 @@ mod platform {
             .and_then(|window| window.location().search().ok())
             .map(|query| LaunchOptions::from_query(&query))
             .unwrap_or_default()
+    }
+
+    /// The machine the page comes from (`192.168.1.20`, `localhost`...).
+    pub fn page_host() -> Option<String> {
+        web_sys::window()?.location().hostname().ok()
     }
 
     /// The game's page, without its query: the base of the invitation link.
@@ -125,6 +144,10 @@ mod platform {
 
     pub fn launch_options() -> LaunchOptions {
         LaunchOptions::from_args(std::env::args().skip(1))
+    }
+
+    pub fn page_host() -> Option<String> {
+        None
     }
 
     /// Natively, no page: the invitation is a command line.
@@ -195,8 +218,15 @@ fn offline(ui: &mut egui::Ui, settings: &NetSettings, actions: &mut MessageWrite
 
 fn signal_hint(ui: &mut egui::Ui, signal: &str) {
     ui.small(format!("Mise en relation : {signal}"));
-    if signal == DEFAULT_SIGNAL_URL {
-        ui.small("matchbox_server doit tourner sur ton ordinateur (voir le README).");
+    if let Some(host) = signal_host(signal).filter(|_| is_local_signal(signal)) {
+        let machine = if is_loopback_host(host) {
+            "ton ordinateur".to_string()
+        } else {
+            host.to_string()
+        };
+        ui.small(format!(
+            "matchbox_server doit tourner sur {machine} (voir le README)."
+        ));
     }
 }
 
@@ -224,6 +254,13 @@ fn in_room(
             ui.label(RichText::new("Copié !").color(GOOD));
         }
     });
+    if platform::page_host().is_some_and(|host| is_loopback_host(&host)) {
+        // The browser does not know the machine's address on the network (it hides it).
+        ui.small(
+            "Pour inviter quelqu'un sur ton réseau local, ouvre le jeu avec l'adresse IP de ton \
+             ordinateur (http://192.168…:8080, voir le README).",
+        );
+    }
     ui.separator();
     match &session.status {
         NetStatus::Connecting => {
@@ -238,10 +275,8 @@ fn in_room(
                 ))
                 .color(BAD),
             );
-            if session.signal == DEFAULT_SIGNAL_URL {
-                ui.label(
-                    "Lance matchbox_server sur ton ordinateur (voir le README), puis réessaie.",
-                );
+            if is_local_signal(&session.signal) {
+                ui.label("Lance matchbox_server (voir le README), puis réessaie.");
             }
             ui.small(reason);
             if ui.button("Réessayer").clicked() {
@@ -346,6 +381,7 @@ fn lobby_list(
     if rows.iter().any(|row| row.other_version.is_some()) {
         ui.small("Un joueur a une autre version du jeu : rechargez tous la page.");
     }
+    connections(ui, session, now_ms);
     ui.add_space(4.0);
     let ready = lobby.profile().ready;
     let label = if ready { "Pas prêt" } else { "Prêt !" };
@@ -364,6 +400,69 @@ fn lobby_list(
     }
 }
 
+/// The Chrome setting that hides the local addresses behind `….local` names.
+const CHROME_MDNS_FLAG: &str = "chrome://flags/#enable-webrtc-hide-local-ips-with-mdns";
+
+/// The direct connections being made (issue #49): « en cours » after a moment, and the leads when
+/// one does not come.
+fn connections(ui: &mut egui::Ui, session: &NetSession, now_ms: u64) {
+    match session.links.diagnosis(now_ms) {
+        None => {}
+        Some(Diagnosis::Connecting { peers }) => {
+            ui.label(format!(
+                "Connexion directe en cours avec {peers} joueur{}…",
+                plural(peers)
+            ));
+        }
+        Some(Diagnosis::Stuck { peers, cause }) => {
+            ui.label(
+                RichText::new(format!(
+                    "La connexion directe avec {peers} joueur{} n'aboutit pas.",
+                    plural(peers)
+                ))
+                .color(BAD),
+            );
+            let why = match cause {
+                Stuck::NoCandidateHere => {
+                    Some("Ton navigateur n'a donné aucune adresse réseau (aucun candidat ICE).")
+                }
+                Stuck::NoCandidateThere => Some(
+                    "Le navigateur de l'autre joueur n'a donné aucune adresse réseau : \
+                     les pistes sont pour lui.",
+                ),
+                Stuck::Failed => Some("Aucun chemin trouvé entre vous deux."),
+                Stuck::Slow => None,
+            };
+            if let Some(why) = why {
+                ui.small(why);
+            }
+            ui.small("Pistes, dans l'ordre :");
+            ui.small(
+                "1. macOS : Réglages Système > Confidentialité et sécurité > Réseau local : \
+                 active ton navigateur, puis relance-le.",
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.small(format!(
+                    "2. Chrome : {CHROME_MDNS_FLAG} > Disabled, puis relance."
+                ));
+                if ui.small_button("Copier").clicked() {
+                    ui.ctx().copy_text(CHROME_MDNS_FLAG.to_string());
+                }
+            });
+            ui.small("3. Réseau qui bloque l'UDP : il faudra un relais TURN (prévu avec #10).");
+            ui.small(
+                "Détails : console (F12) et chrome://webrtc-internals (README, « Dépannage »).",
+            );
+        }
+    }
+    ui.small(format!("Mise en relation : {}", session.signal));
+    ui.small(format!("Connexion directe : {}", session.ice.describe()));
+}
+
+fn plural(n: usize) -> &'static str {
+    if n > 1 { "s" } else { "" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,6 +471,7 @@ mod tests {
     #[test]
     fn natively_there_is_no_page() {
         assert_eq!(platform::page(), None);
+        assert_eq!(platform::page_host(), None);
         // `cargo test` gives no `--room`.
         assert_eq!(platform::launch_options().room, None);
     }

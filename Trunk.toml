@@ -1,0 +1,6 @@
+# `trunk serve` (issue #49): the game on every network interface of this machine, so that another
+# device of the local network opens it at http://IP_OF_THIS_MACHINE:8080 (README, « Jouer sur le
+# réseau local »). Same port as before; `trunk build` (the deployment) does not read this section.
+[serve]
+addresses = ["0.0.0.0"]
+port = 8080

@@ -31,32 +31,71 @@ cargo install matchbox_server --version 0.14.0   # une seule fois (environ 2 min
 matchbox_server                                  # écoute sur le port 3536 ; laisse-le tourner
 ```
 
-### 2. Deux onglets
+### 2. Deux fenêtres sur ton ordinateur
 
 ```bash
 trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
 ```
 
-1. Ouvre http://localhost:8080, appuie sur **L**, puis clique sur **Créer une partie** : l'adresse devient `http://localhost:8080/?room=CODE`, et le salon montre le lien d'invitation (bouton **Copier le lien**).
-2. Colle ce lien dans un **deuxième onglet, ouvert dans une nouvelle fenêtre**, et mets les deux fenêtres côte à côte : le navigateur ralentit beaucoup un onglet caché (le jeu y tourne au ralenti, son ping monte et il peut s'afficher « muet »).
-3. Après quelques secondes, chaque fenêtre montre les deux joueurs : le nom (celui de l'animal, ou `&pseudo=Max` dans l'adresse), le ping en millisecondes, « hôte » sur l'un des deux.
-4. Clique sur **Prêt !** dans une fenêtre : « prêt » s'affiche aussi dans l'autre.
-5. Ferme un onglet : il disparaît du salon de l'autre (tout de suite avec **Quitter la partie**). Si c'était l'hôte, l'autre le devient.
+1. Dans Chrome, ouvre http://localhost:8080/?room=TEST : le salon s'ouvre tout seul (sinon, **L**). Ou bien appuie sur **L** puis **Créer une partie** : l'adresse devient `http://localhost:8080/?room=CODE`, et le salon montre le lien d'invitation (bouton **Copier le lien**).
+2. Ouvre la même adresse dans une **nouvelle fenêtre** Chrome, et mets les deux fenêtres côte à côte : le navigateur ralentit beaucoup un onglet caché (le jeu y tourne au ralenti, son ping monte et il peut s'afficher « muet »).
+3. En une ou deux secondes, chaque fenêtre montre les deux joueurs : le nom (celui de l'animal, ou `&pseudo=Max` dans l'adresse), le ping en millisecondes, « hôte » sur l'un des deux. En bas du salon : « Connexion directe : sans serveur STUN » (inutile en local).
+4. Dans le terminal de `matchbox_server` : deux lignes `Client connected …`, puis une ligne `… -> "{\"NewPeer\":…}"` (le serveur présente le second au premier). **Le serveur n'écrit jamais les offres ni les réponses** (`Offer`, `Answer`, `IceCandidate`), même quand tout marche : c'est la console du navigateur qui les montre.
+5. Dans la console du navigateur (F12, onglet Console), les étapes de la connexion : dans la première fenêtre, `network: #f599 announced by the signaling server: we make the offer`, `network: offer sent to #f599 after 0.01 s: 1 candidate (1 host .local)`, `network: answer received from #f599…` ; dans l'autre, `network: offer received…` et `network: answer sent…` ; puis dans les deux `network: #… connected, 0.05 s after it was announced…`.
+6. Clique sur **Prêt !** dans une fenêtre : « prêt » s'affiche aussi dans l'autre. Ferme un onglet : il disparaît du salon de l'autre (tout de suite avec **Quitter la partie**). Si c'était l'hôte, l'autre le devient.
+7. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
 
-Si les joueurs restent seuls chacun de leur côté (« 1 joueur(s) sur 12 » dans chaque fenêtre), la connexion directe ne s'est pas faite : regarde la console du navigateur (F12) et signale-le.
+Si la connexion ne se fait pas, le salon le dit (« connexion directe en cours… », puis « n'aboutit pas » avec les pistes) : voir **Dépannage** plus bas.
 
-### 3. Deux navigateurs
+### 3. Jouer sur le réseau local
 
-Même chose avec le lien ouvert dans un autre navigateur (Chrome et Firefox, par exemple), sur la même machine.
+Deux appareils sur le même Wi-Fi (ton Mac et un autre ordinateur, par exemple), ou deux navigateurs de ton Mac via son adresse sur le réseau.
 
-### 4. Deux machines
+1. Trouve l'adresse IP de ton Mac : `ipconfig getifaddr en0` (Wi-Fi ; si rien ne s'affiche, essaie `en1`), par exemple `192.168.1.20`.
+2. Lance `matchbox_server`, puis `trunk serve` : le jeu écoute sur toutes les interfaces (`Trunk.toml`), et trunk affiche ses adresses au démarrage.
+3. Sur les deux appareils, ouvre `http://192.168.1.20:8080/?room=TEST` (avec ton IP). La page trouve toute seule le serveur de mise en relation sur la même machine (`ws://192.168.1.20:3536`, affiché dans le salon), sans `&signal=`. Le lien d'invitation du salon reprend cette adresse.
+4. Si macOS demande d'**accepter les connexions entrantes** (pour `matchbox_server` ou `trunk`) ou si le navigateur veut **accéder aux appareils du réseau local**, accepte.
+5. Ce que tu dois voir : comme plus haut, les deux joueurs avec leur ping ; dans la console, `offer sent` / `answer received` puis `connected`. En bas du salon : « Mise en relation : ws://192.168.1.20:3536 » et « Connexion directe : sans serveur STUN ».
 
-Il faut que les deux machines joignent le même serveur de mise en relation :
+Ouverte en `localhost`, la page ne connaît pas l'adresse de ton Mac sur le réseau (le salon le rappelle) : pour inviter quelqu'un, ouvre-la avec l'adresse IP.
 
-- sur le même réseau local : lance `matchbox_server` sur la machine A, puis ouvre le jeu sur les deux machines avec `?room=CODE&signal=ws://IP_DE_A:3536` (`trunk serve --address 0.0.0.0` pour servir le jeu aux autres machines, à l'adresse `http://IP_DE_A:8080`) ;
-- par Internet : il faut un serveur de mise en relation public en `wss://` (issue #10, en attente) ; `?signal=wss://…` le désigne.
+### 4. Par Internet
 
-La connexion directe entre les deux machines passe par des serveurs STUN publics (Google). Sans serveur TURN, certains réseaux (entreprise, 4G) peuvent la bloquer.
+Il faut un serveur de mise en relation public en `wss://` (issue #10, en attente) ; `?signal=wss://…` le désigne. Le lien d'invitation garde ce paramètre.
+
+Par Internet, chaque navigateur demande son adresse publique aux serveurs STUN publics de Google. Sans relais TURN, certains réseaux (entreprise, 4G) bloquent la connexion directe ; un relais se donne avec `?turn=turn:relais.exemple.org:3478&turnuser=NOM&turnpass=MOT_DE_PASSE` (celui de production viendra avec #10).
+
+### Réglages de la connexion
+
+| Page | Natif | Effet |
+|---|---|---|
+| `?signal=ws://…` | `--signal ws://…` | Le serveur de mise en relation. Par défaut : celui de la machine qui sert la page quand elle est locale, sinon `ws://localhost:3536`. |
+| `?stun=none` | `--stun none` | Aucun serveur STUN (le défaut quand la mise en relation est locale). |
+| `?stun=stun:hôte:port,…` | `--stun …` | Ces serveurs STUN. `?stun=auto` : le défaut. |
+| `?turn=turn:hôte:port&turnuser=…&turnpass=…` | `--turn … --turnuser … --turnpass …` | Un relais TURN (les trois sont nécessaires). Aucun par défaut. |
+
+Une valeur illisible est ignorée, avec un avertissement dans la console.
+
+### Dépannage
+
+**Le salon dit « la connexion directe … n'aboutit pas »**, ou chacun reste seul (« 1 joueur(s) sur 12 »). Pistes, dans l'ordre :
+
+1. **macOS** : Réglages Système > Confidentialité et sécurité > **Réseau local** : active ton navigateur (Chrome, Safari…), puis quitte-le et relance-le. Sans cette autorisation, le navigateur ne peut pas annoncer ses adresses locales (mDNS).
+2. **Chrome** : ouvre `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` (« Anonymize local IPs exposed by WebRTC »), passe-le à **Disabled**, puis relance Chrome. C'est ce qui a débloqué Max (#49) : Chrome cache ses adresses locales derrière des noms `….local`, et sur son Mac ces noms ne marchaient pas.
+3. **Un réseau qui bloque l'UDP** (entreprise) : il faudra un relais TURN (`?turn=…`, prévu avec #10).
+
+Autres causes possibles : une extension anti-fuite WebRTC (uBlock Origin « Empêcher WebRTC de divulguer les adresses IP locales », WebRTC Leak Prevent…), un VPN, une politique Chrome (`chrome://policy`, `WebRtcIPHandlingPolicy`). Pour les écarter : essaie en navigation privée (sans extensions).
+
+**La console** (F12) écrit chaque étape : `announced`, `offer sent … N candidates`, `answer received …`, `connected`. `no candidate` dans une offre ou une réponse : ce navigateur n'a trouvé aucune adresse où l'autre peut le joindre (pistes 1 et 2). `[fluffy-net] the direct connection failed (ICE failed)` : les deux navigateurs ont essayé toutes leurs adresses, sans réponse. Les lignes `matchbox_socket` (en `DEBUG`) donnent le détail de la crate (« created offer », « Ice gathering completed »…).
+
+**`chrome://webrtc-internals`** : ouvre-le dans un onglet **avant** de rejoindre la partie, puis rejoins-la dans un autre onglet. Chaque connexion a sa ligne (l'adresse du jeu) ; clique dessus et regarde :
+
+- la configuration (`iceServers`) ;
+- « ICE connection state » et « Connection state » (`new => checking => connected`, ou `failed`) ;
+- la **grille des candidats** (« ICE candidate grid ») : **vide, c'est qu'aucun candidat n'a été trouvé** (pistes 1 et 2) ;
+- les événements `setLocalDescription` / `setRemoteDescription` et `icecandidate`.
+
+À envoyer si ça ne marche toujours pas : ces quatre éléments (une capture suffit), ou le fichier de **Create a WebRTC-Internals dump** (en haut de la page), avec la console du jeu et le terminal de `matchbox_server`.
 
 ### Sur la version en ligne (GitHub Pages)
 
@@ -67,13 +106,16 @@ La page est en `https`, et le serveur par défaut est `ws://localhost:3536` (non
 ```bash
 cargo run -- --room CODE                 # rejoint la partie CODE (L ouvre le salon)
 cargo run -- --room CODE --pseudo Max --signal ws://192.168.1.20:3536
+cargo run -- --room CODE --stun none     # sans STUN (le défaut avec une mise en relation locale)
 ```
 
-Un test automatique fait se rencontrer deux clients natifs (serveur lancé) :
+Un test automatique fait se rencontrer deux clients natifs (serveur lancé ; `FLUFFY_STUN=auto` par défaut, `FLUFFY_STUN=stun:stun.l.google.com:19302` pour passer par un STUN) :
 
 ```bash
 cargo test --lib net::scenario_tests::two_native_peers -- --ignored --nocapture
 ```
+
+Deux pages Chromium qui se connectent pour de vrai (Node et Playwright, `matchbox_server` et `trunk serve` lancés) : `scripts/webrtc-pages.cjs` (voir son en-tête).
 
 ## Comment ce projet est construit
 

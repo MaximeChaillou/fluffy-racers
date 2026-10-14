@@ -3400,15 +3400,20 @@ dependencies = [
 name = "fluffy-racers"
 version = "0.1.0"
 dependencies = [
+ "async-tungstenite",
  "bevy",
  "bevy_egui",
  "bevy_rapier3d",
+ "futures-timer",
+ "futures-util",
  "getrandom 0.4.3",
  "matchbox_socket",
  "ron",
  "serde",
+ "serde_json",
  "web-sys",
  "winit",
+ "ws_stream_wasm",
 ]
 
 [[package]]
