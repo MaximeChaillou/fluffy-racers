@@ -218,6 +218,21 @@ impl ItemSlots {
         }
     }
 
+    /// A box this kart took was another kart's after all (online, issue #53: the host gave it to
+    /// a kart that touched it first): the roulettes it started stop, empty, in the slots it
+    /// `filled` (hand, reserve). An item already out of its roulette stays (the verdict came too
+    /// late to take it back). The reserve moves into an emptied hand.
+    pub fn revoke(&mut self, filled: [bool; 2]) {
+        for (slot, filled) in [&mut self.hand, &mut self.reserve].into_iter().zip(filled) {
+            if filled && matches!(slot, Slot::Spinning { .. }) {
+                *slot = Slot::Empty;
+            }
+        }
+        if self.hand.is_empty() && !self.reserve.is_empty() {
+            self.shift();
+        }
+    }
+
     /// Everything is gone (a race restarts, the items are switched off): empty slots, nothing
     /// out, no draw yet.
     pub fn clear(&mut self) {
@@ -450,5 +465,34 @@ mod tests {
         assert_eq!(nothing.hand, ready(Pelote, 3));
         nothing.clear();
         assert_eq!(nothing, ItemSlots::default());
+    }
+
+    /// Issue #53: a box the host gave to another kart: the roulettes it started stop, empty; an
+    /// item already out stays; the reserve moves into an emptied hand.
+    #[test]
+    fn a_box_given_to_another_kart_stops_its_roulettes() {
+        let mut slots = ItemSlots::default();
+        slots.give(Pelure, 1, 90);
+        slots.give(Abeille, 1, 90);
+        slots.revoke([true, true]);
+        assert_eq!(slots, ItemSlots::default());
+        // The hand was already there: only the reserve's roulette stops.
+        let mut slots = ItemSlots::default();
+        slots.give(Piment, 1, 0);
+        slots.give(Pelote, 3, 90);
+        slots.revoke([false, true]);
+        assert_eq!((slots.hand, slots.reserve), (ready(Piment, 1), Slot::Empty));
+        // The hand's roulette stops, the reserve (from an earlier box) moves in.
+        let mut slots = ItemSlots::default();
+        slots.give(Pelote, 1, 90);
+        slots.give(Piment, 1, 0);
+        slots.revoke([true, false]);
+        assert_eq!((slots.hand, slots.reserve), (ready(Piment, 1), Slot::Empty));
+        // Too late: the roulette stopped, the item stays.
+        let mut slots = ItemSlots::default();
+        slots.give(Abeille, 1, 1);
+        slots.tick();
+        slots.revoke([true, false]);
+        assert_eq!(slots.hand, ready(Abeille, 1));
     }
 }

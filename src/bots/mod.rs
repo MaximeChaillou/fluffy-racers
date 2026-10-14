@@ -58,7 +58,6 @@ use crate::kart::{
     MaxSpeedFactors, MaxSpeedScale, PlayerKart, Remote, StatEffects, StatsTuning, TrickTracker,
     kart_body_with_stats, spawn_kart_visual_with_driver,
 };
-use crate::level::Online;
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
 use crate::track::TrackLayout;
 
@@ -315,7 +314,6 @@ fn drive_bots(
     tuning: Res<BotTuning>,
     kart_tuning: Res<KartTuning>,
     item_tuning: Option<Res<ItemTuning>>,
-    online: Option<Res<Online>>,
     interaction_tuning: Option<Res<InteractionTuning>>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
     race: Option<Res<Race>>,
@@ -359,8 +357,8 @@ fn drive_bots(
         position: transform.translation,
         velocity: velocity.linear,
     }));
-    // Online, no item yet (issue #9: not shared yet).
-    let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled) && online.is_none();
+    // Online too (issue #53): the host's bots take boxes and use their items as solo.
+    let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled);
     boxes.clear();
     if items_on {
         boxes.extend(

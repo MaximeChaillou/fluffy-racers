@@ -41,12 +41,13 @@ use super::interp::{
 };
 use super::netsim::NetSim;
 use super::protocol::{KartId, KartSnapshot, Message, PeerKey};
-use super::snapshot::{KartLook, KartPose, LookParts};
+use super::snapshot::{HeldLook, KartLook, KartPose, LookParts};
 use super::tuning::NetTuning;
 use crate::bots::bot_color;
 use crate::characters::{DriverLooks, Loadout, Roster};
 use crate::interactions::Paw;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
+use crate::items::ItemSlots;
 use crate::kart::{
     Boost, DriftMotion, Invincibility, Kart, KartAssists, KartState, KartSystems, KartTuning,
     KartVisualAssets, KartWheels, PlayerKart, Remote, Slipstream, Stall, StatEffects, StatsTuning,
@@ -482,7 +483,10 @@ impl Plugin for KartSyncPlugin {
                     .run_if(resource_exists::<KartSync>)
                     .in_set(InterpolationSystems),
             )
-            .add_plugins(super::online::OnlineRacePlugin);
+            .add_plugins((
+                super::online::OnlineRacePlugin,
+                super::items_online::OnlineItemsPlugin,
+            ));
     }
 }
 
@@ -505,6 +509,7 @@ fn update_remote_karts(
 /// shown, with its states received (to compare two screens, and for Max's reports).
 fn report_karts(
     sync: Res<KartSync>,
+    items: Option<Res<super::items_online::OnlineItems>>,
     time: Res<Time<Virtual>>,
     ours: Query<&Transform, With<PlayerKart>>,
     bodies: Query<&Transform, With<RemoteKartProxy>>,
@@ -525,6 +530,10 @@ fn report_karts(
             "network: our kart at ({:.1}, {:.1}, {:.1}), tick {tick}",
             at.x, at.y, at.z
         );
+    }
+    // Issue #53: the story of the items, to compare two screens.
+    if let Some(items) = items {
+        info!("network: items: {}", items.summary());
     }
     for remote in sync.remotes() {
         let shown = remote.proxy.and_then(|proxy| bodies.get(proxy).ok());
@@ -645,7 +654,7 @@ fn spawn_remote_karts(
                 effects,
             ),
             // Issue #9: what the slipstream, the bots and the paws see of it; its paw, for the
-            // visuals of what its peer tells.
+            // visuals of what its peer tells. Issue #53: what it holds out, as its states say.
             (
                 Remote {
                     seen: shown.tick,
@@ -653,6 +662,7 @@ fn spawn_remote_karts(
                     now_velocity: shown.velocity,
                 },
                 Paw::default(),
+                HeldLook::slots(shown.look.held),
             ),
         ));
         if remote.racer {
@@ -797,7 +807,7 @@ fn record_our_kart(
             (&KartState, &KartAssists, &StatEffects, &DriftMotion),
             (&Boost, &Stall, &Invincibility, &Slipstream, &KartWheels),
             Option<&mut KartHistory>,
-            Option<&NetKart>,
+            (Option<&NetKart>, Option<&ItemSlots>),
         ),
         (With<Kart>, Or<(With<PlayerKart>, With<NetKart>)>),
     >,
@@ -812,7 +822,7 @@ fn record_our_kart(
         (state, assists, effects, motion),
         (boost, stall, invincibility, slipstream, wheels),
         history,
-        net,
+        (net, slots),
     ) in &mut karts
     {
         match history {
@@ -827,7 +837,7 @@ fn record_our_kart(
             continue;
         }
         let own = effects.tuning(&kart_tuning);
-        let look = KartLook::of(&LookParts {
+        let mut look = KartLook::of(&LookParts {
             state,
             sparks: state.mini_turbo(&own, assists.assisted_steering),
             motion,
@@ -838,6 +848,8 @@ fn record_our_kart(
             slipstream_fill: slipstream.fill(&own),
             wheels,
         });
+        // Issue #53: its shields, drawn by the others.
+        look.held = slots.and_then(HeldLook::of);
         let pose = KartPose {
             tick,
             position: transform.translation,
@@ -871,6 +883,7 @@ fn show_remote_karts(
                 &mut KartWheels,
             ),
             &StatEffects,
+            Option<&mut ItemSlots>,
         ),
         With<RemoteKartProxy>,
     >,
@@ -897,11 +910,19 @@ fn show_remote_karts(
             (mut state, mut motion, mut boost),
             (mut stall, mut invincibility, mut slipstream, mut wheels),
             effects,
+            slots,
         )) = bodies.get_mut(proxy)
         else {
             continue;
         };
         let look = pose.look;
+        // Issue #53: what it holds out, its shields on our screen (`items::move_items`).
+        if let Some(mut slots) = slots {
+            let held = HeldLook::slots(look.held);
+            if HeldLook::of(&slots) != look.held {
+                *slots = held;
+            }
+        }
         let own = effects.tuning(&kart_tuning);
         state.set_if_neq(look.kart_state(&own));
         let drift = look.kart_state(&own);

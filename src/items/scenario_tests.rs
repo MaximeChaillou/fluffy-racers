@@ -393,6 +393,7 @@ fn a_hit_spins_or_tumbles_the_kart_then_it_is_invincible() {
             kart,
             by: Entity::PLACEHOLDER,
             item,
+            object: None,
         });
         arena.tick(&[(kart, drift)]);
         assert_eq!(arena.held(kart), 7, "3 croquettes lost");
@@ -408,6 +409,7 @@ fn a_hit_spins_or_tumbles_the_kart_then_it_is_invincible() {
                     kart,
                     by: Entity::PLACEHOLDER,
                     item: ItemKind::Pelote,
+                    object: None,
                 });
             }
             // The driver still presses: the kart does not listen.
@@ -431,6 +433,7 @@ fn a_hit_spins_or_tumbles_the_kart_then_it_is_invincible() {
                     kart,
                     by: Entity::PLACEHOLDER,
                     item: ItemKind::Pelure,
+                    object: None,
                 });
             }
             arena.tick(&[(kart, FULL_THROTTLE)]);
@@ -453,6 +456,7 @@ fn a_hit_spins_or_tumbles_the_kart_then_it_is_invincible() {
             kart,
             by: Entity::PLACEHOLDER,
             item: ItemKind::Pelure,
+            object: None,
         });
         arena.tick(&[(kart, FULL_THROTTLE)]);
         assert!(arena.state(kart).is_hit());

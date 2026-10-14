@@ -152,7 +152,6 @@ fn dress_boxes(
 fn animate_boxes(
     time: Res<Time>,
     tuning: Res<ItemTuning>,
-    online: Option<Res<crate::level::Online>>,
     boxes: Query<&ItemBox>,
     mut looks: Query<(&ChildOf, &mut ItemBoxLook, &mut Transform, &mut Visibility)>,
 ) {
@@ -162,7 +161,7 @@ fn animate_boxes(
         let Ok(item_box) = boxes.get(child_of.parent()) else {
             continue;
         };
-        let shown = tuning.enabled && online.is_none() && item_box.available();
+        let shown = tuning.enabled && item_box.available();
         visibility.set_if_neq(if shown {
             Visibility::Inherited
         } else {

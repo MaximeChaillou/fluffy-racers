@@ -19,13 +19,13 @@ use crate::options::{OptionsAction, OptionsMenu};
 use crate::race::{OnlineFlow, Race, RaceGrid, RaceMode, RacePhase, RaceProgress, Racer};
 use crate::track::{TrackChoice, TrackLayout};
 
-const ANA: PeerKey = PeerKey(1 << 100);
-const BOB: PeerKey = PeerKey(2 << 100);
-const CYD: PeerKey = PeerKey(3 << 100);
+pub(super) const ANA: PeerKey = PeerKey(1 << 100);
+pub(super) const BOB: PeerKey = PeerKey(2 << 100);
+pub(super) const CYD: PeerKey = PeerKey(3 << 100);
 
 /// A whole game (headless, a tick per frame) joining the room of `hub` as `key`, named `name`.
 /// It starts on the test ground, solo.
-fn game(hub: &Hub, key: PeerKey, name: &str) -> App {
+pub(super) fn game(hub: &Hub, key: PeerKey, name: &str) -> App {
     let mut app = crate::tests::game_app_unloaded(TrackChoice::TestGround, 0);
     crate::tests::single_threaded(&mut app);
     app.world_mut().resource_mut::<NetSettings>().pseudo = Some(name.into());
@@ -45,13 +45,13 @@ fn game(hub: &Hub, key: PeerKey, name: &str) -> App {
 }
 
 /// The games of a room, updated in turn.
-struct Room {
-    hub: Hub,
-    games: Vec<(PeerKey, App)>,
+pub(super) struct Room {
+    pub(super) hub: Hub,
+    pub(super) games: Vec<(PeerKey, App)>,
 }
 
 impl Room {
-    fn new(players: &[(PeerKey, &str)]) -> Self {
+    pub(super) fn new(players: &[(PeerKey, &str)]) -> Self {
         let hub = Hub::default();
         let games = players
             .iter()
@@ -60,7 +60,7 @@ impl Room {
         Self { hub, games }
     }
 
-    fn app(&mut self, key: PeerKey) -> &mut App {
+    pub(super) fn app(&mut self, key: PeerKey) -> &mut App {
         &mut self
             .games
             .iter_mut()
@@ -69,12 +69,12 @@ impl Room {
             .1
     }
 
-    fn view(&self, key: PeerKey) -> &App {
+    pub(super) fn view(&self, key: PeerKey) -> &App {
         &self.games.iter().find(|(k, _)| *k == key).unwrap().1
     }
 
     /// One frame of every game.
-    fn frame(&mut self) {
+    pub(super) fn frame(&mut self) {
         for (_, app) in &mut self.games {
             app.update();
         }
@@ -82,7 +82,7 @@ impl Room {
 
     /// Frames until `done` holds for every game (the circuit files load in the background: a
     /// little real time too), `seconds` of game time at most.
-    fn until(&mut self, seconds: f32, what: &str, mut done: impl FnMut(&App) -> bool) {
+    pub(super) fn until(&mut self, seconds: f32, what: &str, mut done: impl FnMut(&App) -> bool) {
         let start = Instant::now();
         for _ in 0..(seconds * 60.0) as usize {
             self.frame();
@@ -97,18 +97,18 @@ impl Room {
         panic!("{what}: never happened");
     }
 
-    fn act(&mut self, key: PeerKey, action: NetAction) {
+    pub(super) fn act(&mut self, key: PeerKey, action: NetAction) {
         self.app(key).world_mut().write_message(action);
     }
 
     /// A game leaves without a word (its tab closes): the others see it gone.
-    fn close(&mut self, key: PeerKey) {
+    pub(super) fn close(&mut self, key: PeerKey) {
         self.hub.drop_port(key);
         self.games.retain(|(k, _)| *k != key);
     }
 }
 
-fn lobby(app: &App) -> &Lobby {
+pub(super) fn lobby(app: &App) -> &Lobby {
     app.world()
         .resource::<NetSession>()
         .lobby
@@ -116,13 +116,13 @@ fn lobby(app: &App) -> &Lobby {
         .expect("no lobby")
 }
 
-fn showing(app: &App) -> Option<Showing> {
+pub(super) fn showing(app: &App) -> Option<Showing> {
     app.world()
         .get_resource::<OnlineLevel>()
         .map(|level| level.showing)
 }
 
-fn player(app: &mut App) -> Entity {
+pub(super) fn player(app: &mut App) -> Entity {
     let world = app.world_mut();
     let tagged = world
         .query_filtered::<Entity, (With<Kart>, With<NetKart>, Without<Bot>)>()
@@ -139,7 +139,7 @@ fn player(app: &mut App) -> Entity {
 }
 
 /// Our kart in a race: on its grid slot, the race there and the level built.
-fn on_grid(app: &App) -> bool {
+pub(super) fn on_grid(app: &App) -> bool {
     app.world().get_resource::<Race>().is_some()
         && app.world().get_resource::<OnlineRace>().is_some()
         && app
@@ -149,7 +149,7 @@ fn on_grid(app: &App) -> bool {
 }
 
 /// A room of `players` seated, driving freely on the room's circuit, each seeing the others.
-fn seated(players: &[(PeerKey, &str)]) -> Room {
+pub(super) fn seated(players: &[(PeerKey, &str)]) -> Room {
     let mut room = Room::new(players);
     let count = players.len();
     room.until(15.0, "everyone seated, free driving", |app| {
@@ -163,7 +163,7 @@ fn seated(players: &[(PeerKey, &str)]) -> Room {
 
 /// The host starts a race of `laps` laps with `bots` bots, everyone ready (the lobby's
 /// « Lancer la course » with a smaller grid, for the tests' time).
-fn start_race(room: &mut Room, host: PeerKey, bots: u8, laps: u8) -> RaceStart {
+pub(super) fn start_race(room: &mut Room, host: PeerKey, bots: u8, laps: u8) -> RaceStart {
     let keys: Vec<PeerKey> = room.games.iter().map(|(k, _)| *k).collect();
     for key in &keys {
         room.act(*key, NetAction::Ready(true));
@@ -191,7 +191,7 @@ fn start_race(room: &mut Room, host: PeerKey, bots: u8, laps: u8) -> RaceStart {
 
 /// Every game's own karts (its player's, the bots it hosts) are driven by bots: a race the test
 /// can run to the end.
-fn bots_drive_the_players(room: &mut Room) {
+pub(super) fn bots_drive_the_players(room: &mut Room) {
     for (_, app) in &mut room.games {
         let kart = player(app);
         let slot = app.world().get::<Racer>(kart).unwrap().grid_slot;
@@ -205,7 +205,7 @@ fn bots_drive_the_players(room: &mut Room) {
 }
 
 /// The common tick of this frame in `app` (its clock set).
-fn common_tick(app: &App) -> u32 {
+pub(super) fn common_tick(app: &App) -> u32 {
     let local = (app.world().resource::<Time<Fixed>>().elapsed_secs_f64() * crate::TICK_HZ).round();
     app.world()
         .resource::<KartSync>()
@@ -215,7 +215,7 @@ fn common_tick(app: &App) -> u32 {
 }
 
 /// Every racer's progress in `app`, by grid slot: (passed, lap times, finish).
-fn progress_by_slot(app: &mut App) -> Vec<(usize, u32, Vec<u32>, Option<u32>)> {
+pub(super) fn progress_by_slot(app: &mut App) -> Vec<(usize, u32, Vec<u32>, Option<u32>)> {
     let world = app.world_mut();
     let mut all: Vec<(usize, u32, Vec<u32>, Option<u32>)> = world
         .query::<(&Racer, &RaceProgress)>()
@@ -229,7 +229,7 @@ fn progress_by_slot(app: &mut App) -> Vec<(usize, u32, Vec<u32>, Option<u32>)> {
 /// Two games agree on every racer: the same laps, times and finish for those who finished; for
 /// those still on their way (the bots drive on after the end), a checkpoint at most apart (one
 /// may be on the way).
-fn assert_same_progress(
+pub(super) fn assert_same_progress(
     a: &[(usize, u32, Vec<u32>, Option<u32>)],
     b: &[(usize, u32, Vec<u32>, Option<u32>)],
 ) {
@@ -245,7 +245,7 @@ fn assert_same_progress(
 }
 
 /// The standings (grid slots, first to last).
-fn standings(app: &mut App) -> Vec<usize> {
+pub(super) fn standings(app: &mut App) -> Vec<usize> {
     let order = app.world().resource::<Race>().standings.clone();
     order
         .iter()
@@ -286,7 +286,7 @@ fn the_host_starts_the_race_for_everyone() {
                 .get_resource::<TrackLayout>()
                 .is_some_and(|layout| layout.name == "Prairie Pompon")
     });
-    // Free driving: no race, no bot, no item nor croquette (not shared yet).
+    // Free driving: no race, no bot; online (the items and croquettes are shared since #53).
     for (_, app) in &room.games {
         assert!(app.world().get_resource::<Race>().is_none());
         assert!(app.world().get_resource::<crate::level::Online>().is_some());
@@ -593,7 +593,7 @@ fn a_strike_on_another_players_kart_is_judged_by_its_game() {
 }
 
 /// The player's kart of a game (bots aside).
-fn player_of(app: &App) -> Entity {
+pub(super) fn player_of(app: &App) -> Entity {
     app.world()
         .iter_entities()
         .find(|e| e.contains::<NetKart>() && e.contains::<Kart>() && !e.contains::<Bot>())
@@ -872,7 +872,9 @@ fn online_the_menus_do_not_pause() {
 /// 3 laps of Prairie Pompon, the grid filled with 10 bots. Both players are driven by bots (the
 /// test cannot play) until the results. Both games must agree: the same circuit, the same start
 /// tick, the same bots at the same places, GO on the same tick, every racer's laps and finish,
-/// and the same results. Run it by hand, the server started:
+/// and the same results. Since issue #53, with the items and the croquettes: the same boxes and
+/// croquettes taken, the same items thrown, the same hits, the same croquettes lost
+/// (`item_tests::assert_same_story`). Run it by hand, the server started:
 /// `cargo test --lib net::race_tests::two_games_race -- --ignored --nocapture`
 /// (`FLUFFY_NETSIM=120,20,5` puts the network simulator on Bob's side).
 #[test]
@@ -1088,5 +1090,15 @@ fn two_games_race_through_a_local_signaling_server() {
     }
     assert_same_progress(&progress[0], &progress[1]);
     assert_eq!(results[0], results[1], "the same results");
+    // Issue #53: the same story of the items and the croquettes (what is on its way arrives).
+    let since = Instant::now();
+    while since.elapsed() < Duration::from_secs(2) {
+        update(&mut games);
+    }
+    for (name, app) in &games {
+        let items = app.world().resource::<OnlineItems>();
+        println!("{name}: {}", items.summary());
+    }
+    super::item_tests::assert_same_story(&games[0].1, &games[1].1);
     println!("the whole race took {:.0} s", start.elapsed().as_secs_f32());
 }

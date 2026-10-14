@@ -42,10 +42,12 @@ mod clock;
 mod ice;
 pub mod interactions;
 mod interp;
+mod items_online;
 mod links;
 mod lobby;
 mod netsim;
 mod online;
+mod pickups;
 mod protocol;
 mod race;
 mod room;
@@ -56,6 +58,8 @@ mod sync;
 mod tuning;
 mod ui;
 
+#[cfg(test)]
+mod item_tests;
 #[cfg(test)]
 mod race_tests;
 #[cfg(test)]
@@ -69,6 +73,7 @@ pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
     SampleKind, SampleLimits, SnapshotBuffer, TICK_MS, TickClock,
 };
+pub use items_online::{ItemLog, OnlineItems, OnlineItemsPlugin};
 pub use links::{
     CONNECTING_SHOWN_MS, Diagnosis, Link, Links, NO_CANDIDATE_MS, Role, STUCK_MS, Stuck,
 };
@@ -77,10 +82,12 @@ pub use lobby::{
 };
 pub use netsim::{NetSim, NetSimTuning};
 pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
+pub use pickups::{Arbiter, ClaimKey};
 pub use protocol::{
-    Channel, DecodeError, Grab, KartId, KartSnapshot, MAX_KART_STATE_BYTES, MAX_NAME_CHARS,
-    MAX_PLAYERS, Message, PROTOCOL_VERSION, PeerKey, Profile, Progress, RaceOver, RaceStart,
-    Strike, StrikeReply, TetherBreak,
+    Channel, Claim, DecodeError, Grab, ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId,
+    MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
+    PROTOCOL_VERSION, PeerKey, Pickup, Profile, Progress, RaceOver, RaceStart, Scatter, Spot,
+    Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use room::{
@@ -88,7 +95,9 @@ pub use room::{
     default_signal, invite_link, native_command, parse_signal, query_with_room, room_url,
 };
 pub use signaling::{ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuilder};
-pub use snapshot::{KartLook, KartPose, LookParts, Phase, pack_rotation, unpack_rotation};
+pub use snapshot::{
+    HeldLook, KartLook, KartPose, LookParts, Phase, pack_rotation, unpack_rotation,
+};
 pub use socket::{NetSocket, SocketEvent};
 pub use sync::{
     KartHistory, KartSync, KartSyncPlugin, NetKart, OnlineLevel, OnlineSlot, RemoteKart,
@@ -450,6 +459,7 @@ fn poll_session(
     game_time: Res<Time<Virtual>>,
     mut sync: Option<ResMut<KartSync>>,
     mut race: Option<ResMut<OnlineRace>>,
+    mut items: Option<ResMut<OnlineItems>>,
     tuning: Option<Res<NetTuning>>,
 ) {
     let now = now_ms(&time);
@@ -495,6 +505,18 @@ fn poll_session(
                 match Message::decode(&bytes) {
                     Ok(message) => {
                         let host = lobby.host();
+                        // Issue #53: the items and the croquettes.
+                        if let (
+                            Message::Claim(_)
+                            | Message::Verdict(_)
+                            | Message::ItemOut(_)
+                            | Message::ItemBreak(_)
+                            | Message::Scatter(_),
+                            Some(items),
+                        ) = (&message, items.as_deref_mut())
+                        {
+                            items.receive(peer, message.clone());
+                        }
                         match (&message, sync.as_deref_mut(), race.as_deref_mut()) {
                             (Message::KartState(state), Some(sync), _) => {
                                 if let Some(tuning) = tuning.as_deref() {
@@ -583,11 +605,22 @@ fn poll_session(
                 to_everyone(&message);
             }
         }
+        if let Some(items) = items.as_deref_mut() {
+            for message in items.drain_outbox() {
+                to_everyone(&message);
+            }
+        }
         for event in lobby.drain_events() {
             info!("network: {event:?}");
-            // A player who leaves gives up the race (issue #9).
-            if let (LobbyEvent::Left(peer), Some(race)) = (&event, race.as_deref_mut()) {
-                race.shared.leave(*peer);
+            if let LobbyEvent::Left(peer) = &event {
+                // A player who leaves gives up the race (issue #9); its items out disappear
+                // (issue #53).
+                if let Some(race) = race.as_deref_mut() {
+                    race.shared.leave(*peer);
+                }
+                if let Some(items) = items.as_deref_mut() {
+                    items.left(*peer);
+                }
             }
         }
         if lobby.full() {

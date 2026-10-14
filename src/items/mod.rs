@@ -25,6 +25,13 @@
 //! - **Piment**: a boost of about 1.2 s through the kart's `Boost`, like every boost (GD § 2).
 //!   **Croquette dorée**: 2 croquettes (`Croquettes::gain`, up to 10) and a croquette's mini-boost.
 //!
+//! - **Online** (issue #53, `crate::net`): these rules run for our karts; a box broken is a claim
+//!   to the host ([`BoxBroken`]), an item thrown goes to every peer, which simulates it
+//!   ([`CatchUp`] for the ticks of its trip); each peer judges only the contacts that are its own
+//!   (`collide_items`: its karts, its shields) and tells the others ([`ItemHitJudged`],
+//!   [`ItemBlocked`]). The other peers' karts (`kart::Remote`) are targets for the abeilles, and
+//!   what they hold out follows them.
+//!
 //! Everything runs in `FixedUpdate` at 60 Hz ([`ItemSystems`]): after the karts' input and the
 //! race gate, before the croquettes and the driving. `ItemTuning::enabled` switches the items
 //! off (no box, nothing held, nothing on the track): the bots' driving tests race without items.
@@ -61,8 +68,9 @@ use crate::croquettes::{
 };
 use crate::kart::{
     Boost, HitReaction, Invincibility, KART_HALF_EXTENTS, Kart, KartInput, KartState, KartSystems,
+    Remote,
 };
-use crate::level::LevelScoped;
+use crate::level::{LevelScoped, Online};
 use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceSystems, Racer, seconds_to_ticks};
 use crate::track::ItemBoxSpot;
 
@@ -206,7 +214,48 @@ pub struct ItemHit {
     pub kart: Entity,
     pub by: Entity,
     pub item: ItemKind,
+    /// The item that touched it ([`ItemObject`], gone now), if one did: online (issue #53), the
+    /// victim tells everyone which item broke on its kart.
+    pub object: Option<Entity>,
 }
+
+/// The victim decided ([`ItemHit`]): `landed` when its kart was hit, not when it was immune
+/// (the item broke all the same). Online (issue #53), its peer tells everyone.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct ItemHitJudged {
+    pub kart: Entity,
+    pub by: Entity,
+    pub item: ItemKind,
+    pub object: Option<Entity>,
+    pub landed: bool,
+}
+
+/// An item out broke on another item (a shield, another projectile): `object`, gone now.
+/// Online (issue #53), the peer that judged it tells everyone.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct ItemBlocked {
+    pub object: Entity,
+    pub owner: Entity,
+}
+
+/// `kart` broke `item_box`, and drew `draws` items from it (0: both slots were taken), the
+/// first one with draw number `draw` (`ItemSlots::draws` before it), at `gap` meters from the
+/// leader; `filled` says which slots they went to (hand, reserve). Online (issue #53), its peer
+/// asks the host for the box; refused, the roulettes stop (`ItemSlots::revoke`).
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct BoxBroken {
+    pub item_box: Entity,
+    pub kart: Entity,
+    pub draw: u32,
+    pub draws: u8,
+    pub gap: f32,
+    pub filled: [bool; 2],
+}
+
+/// An item that another peer threw some ticks ago (issue #53): it catches up on its first tick
+/// here, `0` ticks behind then (its first step sweeps the whole way for contacts).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CatchUp(pub u32);
 
 /// The item systems inside `FixedUpdate`: after the input and the race gate, before the
 /// croquettes (an item hit costs its croquettes on the same tick) and the driving (a piment boosts
@@ -222,6 +271,9 @@ impl Plugin for ItemPlugin {
         app.init_resource::<ItemTuning>()
             .insert_resource(ItemTable::embedded())
             .add_message::<ItemHit>()
+            .add_message::<ItemHitJudged>()
+            .add_message::<ItemBlocked>()
+            .add_message::<BoxBroken>()
             .add_message::<LoseCroquettes>()
             .add_message::<CroquettePickedUp>()
             // Every kart holds items; every box spot of the track is a box.
@@ -257,10 +309,10 @@ impl Plugin for ItemPlugin {
     }
 }
 
-/// The items are in the races (`ItemTuning::enabled`); not online yet (issue #9,
-/// `level::Online`: they are not shared yet).
-pub fn items_on(tuning: Res<ItemTuning>, online: Option<Res<crate::level::Online>>) -> bool {
-    tuning.enabled && online.is_none()
+/// The items are in the races (`ItemTuning::enabled`), solo and online (issue #53: shared by
+/// `crate::net`).
+pub fn items_on(tuning: Res<ItemTuning>) -> bool {
+    tuning.enabled
 }
 
 /// Items switched off: nothing held, nothing out, every box back (and hidden, `visual.rs`).
@@ -347,9 +399,10 @@ fn take_boxes(
     tuning: Res<ItemTuning>,
     table: Res<ItemTable>,
     grid: Option<Res<RaceGrid>>,
-    mut boxes: Query<(&Transform, &ItemBoxSpot, &mut ItemBox)>,
+    mut boxes: Query<(Entity, &Transform, &ItemBoxSpot, &mut ItemBox)>,
     mut karts: Query<
         (
+            Entity,
             &Transform,
             &KartState,
             &mut ItemSlots,
@@ -359,14 +412,15 @@ fn take_boxes(
         ),
         With<Kart>,
     >,
+    mut broken: MessageWriter<BoxBroken>,
 ) {
     let seed = grid.map_or(RaceGrid::GAME_SEED, |g| g.seed);
     let roulette = seconds_to_ticks(tuning.roulette_time);
-    for (box_transform, spot, mut item_box) in &mut boxes {
+    for (item_box_entity, box_transform, spot, mut item_box) in &mut boxes {
         if !item_box.available() {
             continue;
         }
-        for (transform, state, mut slots, mut stats, racer, progress) in &mut karts {
+        for (kart, transform, state, mut slots, mut stats, racer, progress) in &mut karts {
             if *state == KartState::Respawning
                 || progress.is_some_and(|p| p.finished())
                 || !touches(
@@ -381,16 +435,29 @@ fn take_boxes(
             item_box.respawn_in = tuning.box_respawn_time.max(f32::MIN_POSITIVE);
             stats.boxes += 1;
             let (slot, gap) = draw_context(racer, progress);
+            let (draw, mut draws, mut filled) = (slots.draws, 0, [false; 2]);
             for _ in 0..if spot.double { 2 } else { 1 } {
                 if !slots.has_room() {
                     break;
                 }
                 let unit = draw_unit(seed, slot, slots.draws);
                 slots.draws += 1;
+                draws += 1;
                 if let Some((item, count)) = table.draw(gap, unit).item() {
-                    slots.give(item, count, roulette);
+                    let into = usize::from(!slots.hand.is_empty());
+                    if slots.give(item, count, roulette) {
+                        filled[into] = true;
+                    }
                 }
             }
+            broken.write(BoxBroken {
+                item_box: item_box_entity,
+                kart,
+                draw,
+                draws,
+                gap,
+                filled,
+            });
             break;
         }
     }
@@ -547,6 +614,7 @@ fn use_items(
     mut commands: Commands,
     mut positions: Local<Vec<(Entity, Vec3)>>,
     objects: Query<(Entity, &ItemObject)>,
+    remotes: Query<(Entity, &Transform), (With<Remote>, Without<Kart>)>,
     mut karts: Query<
         (
             Entity,
@@ -565,6 +633,8 @@ fn use_items(
 ) {
     positions.clear();
     positions.extend(karts.iter().map(|(e, t, ..)| (e, t.translation)));
+    // Online (issue #53), the other peers' karts are targets too.
+    positions.extend(remotes.iter().map(|(e, t)| (e, t.translation)));
     let croquettes_tuning = croquette_tuning.as_deref().cloned().unwrap_or_default();
     let started = race.as_ref().is_none_or(|r| r.started());
     for (kart, transform, input, state, mut slots, mut stats, mut boost, croquettes, progress) in
@@ -676,7 +746,10 @@ fn use_items(
 
 /// Moves every item out: the held ones with their kart, the pelotes rolling (rays against the
 /// track), the abeilles along the centerline then diving. Too old, fallen, broken on a wall, or
-/// held by a kart that no longer holds it: gone.
+/// held by a kart that no longer holds it: gone. Online (issue #53), the other peers' karts are
+/// here too (`kart::Remote`): what they hold out follows them (their slots as their states say),
+/// an abeille goes after them; an item thrown by another peer catches up the ticks since its
+/// throw ([`CatchUp`]) on its first tick here.
 fn move_items(
     time: Res<Time>,
     tuning: Res<ItemTuning>,
@@ -688,12 +761,12 @@ fn move_items(
             Entity,
             &Transform,
             &KartState,
-            &ItemSlots,
+            Option<&ItemSlots>,
             Option<&RaceProgress>,
         ),
-        With<Kart>,
+        Or<(With<Kart>, With<Remote>)>,
     >,
-    mut objects: Query<(Entity, &mut ItemObject)>,
+    mut objects: Query<(Entity, &mut ItemObject, Option<&mut CatchUp>)>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -720,14 +793,14 @@ fn move_items(
                 (transform.translation, progress.map(|p| p.distance))
             })
     };
-    for (entity, mut object) in &mut objects {
-        let mut item = *object;
+    // One tick of an item; false once it is gone.
+    let step = |item: &mut ItemObject| -> bool {
         item.previous = item.position;
         item.age += dt;
         let radius = item.radius(&tuning);
-        let alive = match item.motion {
+        match item.motion {
             Motion::Held(hold) => match karts.get(item.owner) {
-                Ok((_, transform, _, slots, _))
+                Ok((_, transform, _, Some(slots), _))
                     if slots.held_out().is_some_and(|(held, _)| held == item.item)
                         && (hold == Hold::Dragged) == slots.dragging.is_some() =>
                 {
@@ -762,7 +835,7 @@ fn move_items(
                     fall,
                     bounces_left,
                 };
-                let step = roll(&mut rolling, radius, dt, cast);
+                let rolled = roll(&mut rolling, radius, dt, cast);
                 item.position = rolling.position;
                 item.velocity = rolling.velocity;
                 item.motion = Motion::Rolling {
@@ -774,7 +847,7 @@ fn move_items(
                 } else {
                     tuning.pelote_lifetime
                 };
-                !matches!(step, RollStep::Broke | RollStep::Fell) && item.age < lifetime
+                !matches!(rolled, RollStep::Broke | RollStep::Fell) && item.age < lifetime
             }
             Motion::Homing { target, flight } => {
                 let mut target = target.filter(|t| chaseable(*t).is_some());
@@ -786,8 +859,8 @@ fn move_items(
                         let mut lateral = lateral;
                         if let Some((at, _)) = chased {
                             let wanted = (at - sample.position).dot(sample.right);
-                            let step = tuning.abeille_lateral_speed * dt;
-                            lateral += (wanted - lateral).clamp(-step, step);
+                            let most = tuning.abeille_lateral_speed * dt;
+                            lateral += (wanted - lateral).clamp(-most, most);
                         }
                         let room = (sample.half_width - 0.5).max(0.0);
                         lateral = lateral.clamp(-room, room);
@@ -818,10 +891,10 @@ fn move_items(
                         // Diving at its target, or straight on without one (or off a race).
                         if let Some((at, _)) = target.and_then(chaseable) {
                             let to = at - item.position;
-                            let step = tuning.abeille_dive_speed * dt;
+                            let most = tuning.abeille_dive_speed * dt;
                             item.velocity = to.normalize_or(item.velocity.normalize_or_zero())
                                 * tuning.abeille_dive_speed;
-                            item.position = if to.length() <= step {
+                            item.position = if to.length() <= most {
                                 at
                             } else {
                                 item.position + item.velocity * dt
@@ -835,7 +908,24 @@ fn move_items(
                 item.motion = Motion::Homing { target, flight };
                 item.age < tuning.abeille_lifetime
             }
-        };
+        }
+    };
+    for (entity, mut object, catch_up) in &mut objects {
+        let mut item = *object;
+        // An item from another peer: the ticks since its throw first, then this one. Its
+        // contacts sweep the whole way (`previous` where it was received).
+        let behind = catch_up.map_or(0, |mut catch_up| std::mem::take(&mut catch_up.0));
+        let from = item.position;
+        let mut alive = true;
+        for _ in 0..=behind {
+            alive = step(&mut item);
+            if !alive {
+                break;
+            }
+        }
+        if behind > 0 && matches!(item.motion, Motion::Rolling { .. } | Motion::Homing { .. }) {
+            item.previous = from;
+        }
         if alive {
             if *object != item {
                 *object = item;
@@ -869,8 +959,14 @@ struct Contact {
 /// touching break each other (a held item is a shield); an item touching a kart breaks on it
 /// and tells the kart ([`ItemHit`]). A kart's own items never touch each other; its own pelote or
 /// pelure can hit it after `own_item_delay`, its own abeille never.
+///
+/// Online (issue #53), each peer judges what is its own to judge, and tells the others
+/// (`crate::net`): an item touching one of **our** karts (the victim decides; the other peers'
+/// karts are not here); a shield **we** hold out against anything (the holder decides: what
+/// another peer's kart holds out is only drawn here); two items out when one of them is ours.
 fn collide_items(
     tuning: Res<ItemTuning>,
+    online: Option<Res<Online>>,
     mut commands: Commands,
     mut items: Local<Vec<Contact>>,
     mut broken: Local<Vec<bool>>,
@@ -879,6 +975,7 @@ fn collide_items(
     karts: Query<(Entity, &Transform, &KartState), With<Kart>>,
     mut slots: Query<(&mut ItemSlots, &mut ItemStats)>,
     mut hits: MessageWriter<ItemHit>,
+    mut blocked: MessageWriter<ItemBlocked>,
 ) {
     items.clear();
     items.extend(objects.iter().map(|(entity, o)| Contact {
@@ -904,6 +1001,13 @@ fn collide_items(
     );
     broken.clear();
     broken.resize(items.len(), false);
+    // Whether two items meet here: always solo; online, see above.
+    let ours = |owner: Entity| karts.contains(owner);
+    let judged = |a: &Contact, b: &Contact| {
+        let shown_shield = |c: &Contact| c.held.is_some() && !ours(c.owner);
+        online.is_none()
+            || (!shown_shield(a) && !shown_shield(b) && (ours(a.owner) || ours(b.owner)))
+    };
     for i in 0..items.len() {
         if broken[i] {
             continue;
@@ -917,7 +1021,12 @@ fn collide_items(
             }
         };
         for (j, b) in items.iter().enumerate() {
-            if j == i || broken[j] || b.owner == a.owner || !(a.moving || b.moving) {
+            if j == i
+                || broken[j]
+                || b.owner == a.owner
+                || !(a.moving || b.moving)
+                || !judged(&a, b)
+            {
                 continue;
             }
             if let Some(t) = segment_sphere(a.from, a.to, b.to, a.radius + b.radius) {
@@ -951,6 +1060,10 @@ fn collide_items(
                         held.lose_one_held_out();
                         stats.blocked += 1;
                     }
+                    blocked.write(ItemBlocked {
+                        object: c.entity,
+                        owner: c.owner,
+                    });
                 }
             }
             Some((_, Err(kart))) => {
@@ -964,6 +1077,7 @@ fn collide_items(
                     kart,
                     by: a.owner,
                     item: a.item,
+                    object: Some(a.entity),
                 });
             }
             None => {}
@@ -997,6 +1111,7 @@ fn apply_item_hits(
         With<Kart>,
     >,
     mut losses: MessageWriter<LoseCroquettes>,
+    mut judged: MessageWriter<ItemHitJudged>,
 ) {
     for hit in hits.read() {
         let Ok((mut state, mut boost, invincibility, mut slots, mut stats, progress)) =
@@ -1004,11 +1119,19 @@ fn apply_item_hits(
         else {
             continue;
         };
-        if immune_to_items(
+        let immune = immune_to_items(
             &state,
             invincibility,
             progress.is_some_and(|p| p.finished()),
-        ) {
+        );
+        judged.write(ItemHitJudged {
+            kart: hit.kart,
+            by: hit.by,
+            item: hit.item,
+            object: hit.object,
+            landed: !immune,
+        });
+        if immune {
             continue;
         }
         let reaction = reaction_to(hit.item);

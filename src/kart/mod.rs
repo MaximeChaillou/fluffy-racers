@@ -396,6 +396,7 @@ fn detect_bumps(
     tuning: Res<KartTuning>,
     rapier: ReadRapierContext,
     karts: Query<(Entity, &Transform, &StepVelocity, &KartState), With<Kart>>,
+    remotes: Query<(&Transform, &Velocity, &KartState), (With<Remote>, Without<Kart>)>,
     mut bumps: MessageWriter<KartBump>,
 ) {
     let Ok(context) = rapier.single() else {
@@ -410,11 +411,21 @@ fn detect_bumps(
                 continue;
             };
             let b = if c1 == a { c2 } else { c1 };
+            // Online (issue #53): another peer's kart. Only ours is judged here (its own peer
+            // judges the other one): the victim decides.
+            let remote = remotes.get(b).ok().map(|(transform, velocity, state)| {
+                (b, transform, StepVelocity(velocity.linear), state)
+            });
             // Each pair once; only karts.
-            if b <= a {
+            if remote.is_none() && b <= a {
                 continue;
             }
-            let Ok((_, b_transform, b_velocity, b_state)) = karts.get(b) else {
+            let Some((_, b_transform, b_velocity, b_state)) = remote.or_else(|| {
+                karts
+                    .get(b)
+                    .ok()
+                    .map(|(b, transform, velocity, state)| (b, transform, *velocity, state))
+            }) else {
                 continue;
             };
             if *b_state == KartState::Respawning
@@ -448,7 +459,7 @@ fn detect_bumps(
                     closing_speed,
                 });
             }
-            if b_bumped {
+            if b_bumped && remote.is_none() {
                 bumps.write(KartBump {
                     kart: b,
                     by: a,
