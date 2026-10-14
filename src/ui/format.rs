@@ -176,15 +176,44 @@ pub fn write_debug_overlay(
 /// Static labels of the HUD and the results screen.
 pub const RESULTS_TITLE: &str = "CLASSEMENT";
 pub const RESULTS_FOOTER: &str = "ESPACE ou ENTREE (manette : A) : rejouer";
+/// Online (issue #9): the host starts the next race.
+pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hote la lance depuis le salon (L)";
 pub const PLAYER_NAME: &str = "Toi";
 
-/// Name of a racer on the results screen.
-pub fn write_racer_name(out: &mut String, player: bool, grid_slot: usize) {
+/// Name of a racer on the results screen. `name`: another player's (online, issue #9), written
+/// in the HUD's font: its accented letters without their accents, any other letter it lacks as
+/// "?".
+pub fn write_racer_name(out: &mut String, player: bool, grid_slot: usize, name: Option<&str>) {
     out.clear();
     if player {
         out.push_str(PLAYER_NAME);
+    } else if let Some(name) = name {
+        out.extend(name.chars().map(ascii_letter));
     } else {
         let _ = write!(out, "Kart {}", grid_slot + 1);
+    }
+}
+
+/// A letter the HUD's font has (ASCII): the French accented ones lose their accent.
+pub fn ascii_letter(c: char) -> char {
+    match c {
+        ' '..='~' => c,
+        'à' | 'â' | 'ä' | 'á' | 'ã' | 'å' => 'a',
+        'À' | 'Â' | 'Ä' | 'Á' | 'Ã' | 'Å' => 'A',
+        'é' | 'è' | 'ê' | 'ë' => 'e',
+        'É' | 'È' | 'Ê' | 'Ë' => 'E',
+        'î' | 'ï' | 'í' | 'ì' => 'i',
+        'Î' | 'Ï' | 'Í' | 'Ì' => 'I',
+        'ô' | 'ö' | 'ó' | 'ò' | 'õ' => 'o',
+        'Ô' | 'Ö' | 'Ó' | 'Ò' | 'Õ' => 'O',
+        'ù' | 'û' | 'ü' | 'ú' => 'u',
+        'Ù' | 'Û' | 'Ü' | 'Ú' => 'U',
+        'ç' => 'c',
+        'Ç' => 'C',
+        'ñ' => 'n',
+        'Ñ' => 'N',
+        'ÿ' => 'y',
+        _ => '?',
     }
 }
 
@@ -258,6 +287,7 @@ mod tests {
         let mut texts = vec![
             RESULTS_TITLE.to_string(),
             RESULTS_FOOTER.to_string(),
+            RESULTS_FOOTER_ONLINE.to_string(),
             PLAYER_NAME.to_string(),
         ];
         for banner in [
@@ -273,9 +303,15 @@ mod tests {
         let mut s = String::new();
         write_best_lap(&mut s, Some(5));
         texts.push(s.clone());
-        write_racer_name(&mut s, false, 4);
+        write_racer_name(&mut s, false, 4, None);
         assert_eq!(s, "Kart 5");
         texts.push(s.clone());
+        // Issue #9: another player's name, its accents dropped.
+        write_racer_name(&mut s, false, 4, Some("Éloïse ça va ✨"));
+        assert_eq!(s, "Eloise ca va ?");
+        texts.push(s.clone());
+        write_racer_name(&mut s, true, 4, Some("Max"));
+        assert_eq!(s, PLAYER_NAME);
         for text in texts {
             assert!(text.is_ascii(), "{text}");
         }

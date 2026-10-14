@@ -35,32 +35,51 @@ use bevy_rapier3d::prelude::{
     Sleeping, Velocity,
 };
 
+use super::NetSystems;
 use super::interp::{
-    Insert, Playback, PoseHistory, SampleKind, SampleLimits, SnapshotBuffer, TICK_MS, TickClock,
+    Insert, Playback, PoseHistory, SampleKind, SampleLimits, SnapshotBuffer, TickClock,
 };
 use super::netsim::NetSim;
-use super::protocol::{KartId, KartSnapshot, PeerKey};
+use super::protocol::{KartId, KartSnapshot, Message, PeerKey};
 use super::snapshot::{KartLook, KartPose, LookParts};
 use super::tuning::NetTuning;
-use super::{NetSession, NetStatus, NetSystems, STUCK_MS, now_ms};
 use crate::bots::bot_color;
 use crate::characters::{DriverLooks, Loadout, Roster};
+use crate::interactions::Paw;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{
     Boost, DriftMotion, Invincibility, Kart, KartAssists, KartState, KartSystems, KartTuning,
-    KartVisualAssets, KartWheels, PlayerKart, Slipstream, Stall, StatEffects, StatsTuning,
+    KartVisualAssets, KartWheels, PlayerKart, Remote, Slipstream, Stall, StatEffects, StatsTuning,
     kart_collider, spawn_kart_visual_with_driver,
 };
-use crate::level::{LevelScoped, LoadLevel};
-use crate::race::{RaceGrid, RaceMode};
+use crate::level::LevelScoped;
+use crate::race::{RaceMode, Racer, RacerName};
 use crate::track::{GRID_SLOTS, PlayerStart, TrackChoice};
 
 /// Our states waiting to be sent, at most (the socket takes them every frame).
 const MAX_OUTGOING: usize = 8;
 
-/// Where our kart starts online: the grid slot of our seat (`crate::spawn_player` reads it).
+/// Where our kart starts online: the grid slot of our seat in free driving, of our place on the
+/// race's grid in a race (issue #9). `crate::spawn_player` reads it, and gives our kart this
+/// network id ([`NetKart`]).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OnlineSlot(pub usize);
+
+/// A kart we have authority over online, and its network id (its grid slot): our player's kart,
+/// and the host's bots (issue #9). Its states go to every peer.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetKart(pub KartId);
+
+/// What a peer shows online (issue #9, `online.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Showing {
+    /// Not yet decided (just seated).
+    Nothing,
+    /// Free driving on the room's circuit (an index of `assets/tracks/index.ron`).
+    Free(u8),
+    /// The race of this number: on its grid, or watching it (not on it: free driving there).
+    Race(u16),
+}
 
 /// We drive online: the level we were on before, to get back to it when we leave the room.
 #[derive(Resource, Clone, Debug, PartialEq)]
@@ -69,6 +88,10 @@ pub struct OnlineLevel {
     pub me: PeerKey,
     pub solo_track: TrackChoice,
     pub solo_mode: RaceMode,
+    /// The solo grid (bots, seed): a race online changes it.
+    pub solo_grid: crate::race::RaceGrid,
+    /// What we show now.
+    pub showing: Showing,
 }
 
 /// Our kart's positions of the last 30 ticks, by common tick (issue #34: the victim compares
@@ -80,19 +103,48 @@ pub struct KartHistory(pub PoseHistory);
 /// (`KartState`, `Boost`... only for its visual: no driving system touches it).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteKartProxy {
+    /// The peer that drives it (its player, or the host for a bot).
     pub peer: PeerKey,
+    pub kart: KartId,
+}
+
+/// A kart of another peer, as the roster of the room says (issue #9): see
+/// [`KartSync::set_roster`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RosterEntry<'a> {
+    /// Its network id: the seat in free driving, the grid slot in a race.
+    pub kart: KartId,
+    /// The peer that has authority over it.
+    pub peer: PeerKey,
+    /// Its four parts (`None`: those it had: a player who left).
+    pub loadout: Option<[u8; 4]>,
+    /// The color of its kart (`bots::bot_color`).
+    pub color: usize,
+    /// Its player's name (a bot: none; `None` for a player: the one it had, a player who left).
+    pub name: Option<&'a str>,
+    /// It races: a racer of our race (its progress comes from its peer's events).
+    pub racer: bool,
+    /// Its player left the race: kept for the ranking, hidden, nothing to bump into.
+    pub left: bool,
 }
 
 /// A kart another peer drives, as we know it.
 #[derive(Clone, Debug)]
 pub struct RemoteKart {
+    /// The peer that drives it.
     pub peer: PeerKey,
     /// Its four parts (its `Hello`): its animal on screen.
     pub loadout: [u8; 4],
-    /// Its seat: the color of its kart.
+    /// The color of its kart: its seat, or its grid slot (issue #9).
     pub slot: usize,
-    /// The id it gives its kart on the wire (its grid slot).
-    pub kart: Option<KartId>,
+    /// The id it gives its kart on the wire.
+    pub kart: KartId,
+    /// Its player's name.
+    pub name: Option<String>,
+    /// A racer of our race (issue #9).
+    pub racer: bool,
+    /// Its player left the race.
+    pub left: bool,
     pub buffer: SnapshotBuffer,
     pub playback: Playback,
     /// Its body and its visual, once spawned (a new level despawns them: spawned again).
@@ -107,12 +159,15 @@ pub struct RemoteKart {
 }
 
 impl RemoteKart {
-    fn new(peer: PeerKey, loadout: [u8; 4], slot: usize) -> Self {
+    fn new(entry: &RosterEntry) -> Self {
         Self {
-            peer,
-            loadout,
-            slot,
-            kart: None,
+            peer: entry.peer,
+            loadout: entry.loadout.unwrap_or_default(),
+            slot: entry.color,
+            kart: entry.kart,
+            name: entry.name.map(str::to_string),
+            racer: entry.racer,
+            left: entry.left,
             buffer: SnapshotBuffer::default(),
             playback: Playback::default(),
             proxy: None,
@@ -145,6 +200,9 @@ impl RemoteKart {
 pub struct KartSync {
     me: PeerKey,
     kart: KartId,
+    /// What the kart ids mean (issue #9): 0 in free driving, the race's in a race
+    /// (`KartSnapshot::session`).
+    session: u8,
     /// The room's common tick of our local ticks.
     pub clock: TickClock,
     outgoing: Vec<KartSnapshot>,
@@ -152,6 +210,12 @@ pub struct KartSync {
     sim: NetSim<(PeerKey, KartSnapshot)>,
     /// Bodies and visuals of karts gone, to despawn.
     gone: Vec<Entity>,
+    /// The interactions between karts (issue #9): received from a peer, and to send to all.
+    events_in: Vec<(PeerKey, Message)>,
+    events_out: Vec<Message>,
+    /// The strike answers and tether ends written this tick from the network (`online.rs`): not
+    /// sent back.
+    pub(super) delivered: [u16; 2],
 }
 
 impl KartSync {
@@ -161,12 +225,38 @@ impl KartSync {
         Self {
             me,
             kart,
+            session: 0,
             clock: TickClock::default(),
-            outgoing: Vec::with_capacity(MAX_OUTGOING),
+            outgoing: Vec::with_capacity(MAX_OUTGOING * GRID_SLOTS),
             remotes: Vec::with_capacity(GRID_SLOTS),
             sim: NetSim::new(seed ^ me.0 as u64 ^ (me.0 >> 64) as u64),
             gone: Vec::new(),
+            events_in: Vec::new(),
+            events_out: Vec::new(),
+            delivered: [0; 2],
         }
+    }
+
+    /// What the kart ids mean now (issue #9): 0 in free driving, the race's in a race.
+    pub fn session(&self) -> u8 {
+        self.session
+    }
+
+    /// A new session (free driving, or a race): the ids mean other karts, every remote kart
+    /// starts over.
+    pub fn set_session(&mut self, session: u8) {
+        if session != self.session {
+            self.session = session;
+            let gone = &mut self.gone;
+            for remote in self.remotes.drain(..) {
+                gone.extend(remote.proxy.iter().chain(&remote.visual));
+            }
+        }
+    }
+
+    /// Our player's kart has this id now (its seat, or its grid slot).
+    pub fn set_kart(&mut self, kart: KartId) {
+        self.kart = kart;
     }
 
     pub fn me(&self) -> PeerKey {
@@ -182,30 +272,76 @@ impl KartSync {
         &self.remotes
     }
 
+    /// The kart of `peer` (its player's kart: the first it drives).
     pub fn remote(&self, peer: PeerKey) -> Option<&RemoteKart> {
         self.remotes.iter().find(|remote| remote.peer == peer)
     }
 
-    /// The other players of the room: their id, their parts and their seat. Those not listed
-    /// any more are gone (their kart disappears).
+    /// The remote kart of network id `kart`.
+    pub fn remote_kart(&self, kart: KartId) -> Option<&RemoteKart> {
+        self.remotes.iter().find(|remote| remote.kart == kart)
+    }
+
+    /// The other players of the room in free driving: their id, their parts and their seat (the
+    /// id of their kart, and its color). Those not listed any more are gone (their kart
+    /// disappears).
     pub fn set_players(&mut self, players: impl IntoIterator<Item = (PeerKey, [u8; 4], usize)>) {
+        let me = self.me;
+        self.set_roster(players.into_iter().filter(|(peer, ..)| *peer != me).map(
+            |(peer, loadout, slot)| RosterEntry {
+                kart: slot.min(GRID_SLOTS - 1) as KartId,
+                peer,
+                loadout: Some(loadout),
+                color: slot,
+                name: None,
+                racer: false,
+                left: false,
+            },
+        ));
+    }
+
+    /// The other peers' karts (issue #9): every kart we show and do not drive, by its network
+    /// id, with the peer that has authority over it now. Those not listed any more are gone
+    /// (their kart disappears); a kart whose peer changed (a new host takes the bots) starts its
+    /// buffer over; one whose parts changed is spawned again.
+    pub fn set_roster<'a>(&mut self, entries: impl IntoIterator<Item = RosterEntry<'a>>) {
         for remote in &mut self.remotes {
             remote.present = false;
         }
-        for (peer, loadout, slot) in players {
-            if peer == self.me {
-                continue;
-            }
-            match self.remotes.iter_mut().find(|remote| remote.peer == peer) {
+        for entry in entries {
+            match self
+                .remotes
+                .iter_mut()
+                .find(|remote| remote.kart == entry.kart)
+            {
                 Some(remote) => {
                     remote.present = true;
-                    if remote.loadout != loadout || remote.slot != slot {
+                    if remote.peer != entry.peer {
+                        remote.peer = entry.peer;
+                        remote.buffer.clear();
+                        remote.playback = Playback::default();
+                    }
+                    let loadout = entry.loadout.unwrap_or(remote.loadout);
+                    if remote.loadout != loadout
+                        || remote.slot != entry.color
+                        || remote.racer != entry.racer
+                        || remote.left != entry.left
+                    {
                         remote.loadout = loadout;
-                        remote.slot = slot;
+                        remote.slot = entry.color;
+                        remote.racer = entry.racer;
+                        remote.left = entry.left;
+                        remote.respawn = true;
+                    }
+                    // A player who left keeps its name (`None`: unknown now).
+                    if let Some(name) = entry.name
+                        && remote.name.as_deref() != Some(name)
+                    {
+                        remote.name = Some(name.to_string());
                         remote.respawn = true;
                     }
                 }
-                None => self.remotes.push(RemoteKart::new(peer, loadout, slot)),
+                None => self.remotes.push(RemoteKart::new(&entry)),
             }
         }
         let gone = &mut self.gone;
@@ -220,11 +356,34 @@ impl KartSync {
     /// A state from `from` arrived at `now_ms` (local virtual time): into its kart's buffer,
     /// through the network simulator when it is on.
     pub fn receive(&mut self, from: PeerKey, state: KartSnapshot, now_ms: f64, tuning: &NetTuning) {
+        if state.session != self.session {
+            return;
+        }
         if tuning.simulator.active() {
             self.sim.push(now_ms, (from, state), &tuning.simulator);
         } else {
             deliver(&mut self.remotes, from, state, now_ms, tuning);
         }
+    }
+
+    /// An interaction between karts from `from` (issue #9): applied in the next tick.
+    pub fn receive_event(&mut self, from: PeerKey, message: Message) {
+        self.events_in.push((from, message));
+    }
+
+    /// The interactions received, oldest first.
+    pub fn drain_events_in(&mut self) -> std::vec::Drain<'_, (PeerKey, Message)> {
+        self.events_in.drain(..)
+    }
+
+    /// An interaction to tell every peer.
+    pub fn send_event(&mut self, message: Message) {
+        self.events_out.push(message);
+    }
+
+    /// The interactions to send, oldest first.
+    pub fn drain_events_out(&mut self) -> std::vec::Drain<'_, Message> {
+        self.events_out.drain(..)
     }
 
     /// Once a frame, at `now_ms` (local virtual time), `dt_ms` after the last one: what the
@@ -240,11 +399,13 @@ impl KartSync {
         }
     }
 
-    /// Our kart's state, to send to every peer (the few newest, if nobody takes them).
-    pub fn send(&mut self, state: KartSnapshot) {
-        if self.outgoing.len() >= MAX_OUTGOING {
+    /// Our karts' state, to send to every peer (the newest, if nobody takes them), stamped with
+    /// the session.
+    pub fn send(&mut self, mut state: KartSnapshot) {
+        if self.outgoing.len() >= MAX_OUTGOING * GRID_SLOTS {
             self.outgoing.remove(0);
         }
+        state.session = self.session;
         self.outgoing.push(state);
     }
 
@@ -272,11 +433,13 @@ fn deliver(
     now_ms: f64,
     tuning: &NetTuning,
 ) {
-    let Some(remote) = remotes.iter_mut().find(|remote| remote.peer == from) else {
+    let Some(remote) = remotes
+        .iter_mut()
+        .find(|remote| remote.kart == state.kart && remote.peer == from)
+    else {
         return;
     };
     remote.received += 1;
-    remote.kart = Some(state.kart);
     if remote.buffer.insert(state.pose()) == Insert::Restarted {
         // Its clock jumped back (a new host): its lag starts over too.
         remote.playback = Playback::default();
@@ -286,8 +449,9 @@ fn deliver(
         .arrived(now_ms, state.tick, f64::from(tuning.lag_window_ms.max(1.0)));
 }
 
-/// The kart synchronization (issue #8). Its systems run only with a [`KartSync`] (online), and
-/// the switch to online driving only with a room: solo is unchanged.
+/// The kart synchronization (issue #8), and the race online (issue #9, `online.rs`). Its systems
+/// run only with a [`KartSync`] (online), and the switch to online driving only with a room:
+/// solo is unchanged.
 pub struct KartSyncPlugin;
 
 impl Plugin for KartSyncPlugin {
@@ -295,18 +459,11 @@ impl Plugin for KartSyncPlugin {
         app.init_resource::<NetTuning>()
             .add_systems(
                 Update,
-                (
-                    online_mode.run_if(
-                        |session: Option<Res<NetSession>>, online: Option<Res<OnlineLevel>>| {
-                            session.is_some() || online.is_some()
-                        },
-                    ),
-                    (update_remote_karts, spawn_remote_karts, report_karts)
-                        .chain()
-                        .run_if(resource_exists::<KartSync>),
-                )
+                (update_remote_karts, spawn_remote_karts, report_karts)
                     .chain()
-                    .after(NetSystems),
+                    .after(NetSystems)
+                    .after(super::online::OnlineSystems)
+                    .run_if(resource_exists::<KartSync>),
             )
             .add_systems(
                 FixedUpdate,
@@ -324,99 +481,15 @@ impl Plugin for KartSyncPlugin {
                 show_remote_karts
                     .run_if(resource_exists::<KartSync>)
                     .in_set(InterpolationSystems),
-            );
+            )
+            .add_plugins(super::online::OnlineRacePlugin);
     }
 }
 
 /// The local virtual time (ms): the clock of the playbacks. It stops while the game is paused
-/// (a menu), like the karts.
-fn virtual_ms(time: &Time<Virtual>) -> f64 {
+/// (solo only: online, nothing pauses, issue #9), like the karts.
+pub(super) fn virtual_ms(time: &Time<Virtual>) -> f64 {
     time.elapsed_secs_f64() * 1_000.0
-}
-
-/// Seated in a room: online free driving, on Prairie Pompon from our seat's grid slot (once the
-/// seat order is everyone's: `Lobby::seats_agreed`); out of it: back to the level we were on. In the room, the players and the common clock are passed
-/// to the synchronization.
-#[allow(clippy::too_many_arguments)]
-fn online_mode(
-    mut commands: Commands,
-    session: Option<Res<NetSession>>,
-    online: Option<Res<OnlineLevel>>,
-    sync: Option<ResMut<KartSync>>,
-    choice: Res<TrackChoice>,
-    mode: Res<RaceMode>,
-    grid: Res<RaceGrid>,
-    real: Res<Time<Real>>,
-    time: Res<Time<Virtual>>,
-    mut levels: MessageWriter<LoadLevel>,
-) {
-    let lobby = session
-        .as_deref()
-        .filter(|session| session.status == NetStatus::InRoom)
-        .and_then(|session| session.lobby.as_ref())
-        .filter(|lobby| lobby.seated());
-    // Our place on the grid: once everyone shares the seat order, and the peers being connected
-    // had their chance to sit with us (given up on after 10 s, like in the lobby). A link whose
-    // peer the lobby already knows is not waited for: natively, a note of the signaling can come
-    // after the connection and leave a stale link behind.
-    let now = now_ms(&real);
-    let connecting = session.as_deref().is_some_and(|session| {
-        session.links.pending().iter().any(|link| {
-            now.saturating_sub(link.since_ms) < STUCK_MS
-                && lobby.is_none_or(|lobby| lobby.peer(link.peer).is_none())
-        })
-    });
-
-    let agreed = lobby.is_some_and(|lobby| lobby.seats_agreed()) && !connecting;
-    match (online.as_deref(), lobby) {
-        (Some(online), lobby) if lobby.is_none_or(|lobby| lobby.me() != online.me) => {
-            info!("network: online driving ends, back to the level before");
-            if let Some(sync) = &sync {
-                for remote in sync.remotes() {
-                    for entity in remote.proxy.iter().chain(&remote.visual) {
-                        commands.entity(*entity).try_despawn();
-                    }
-                }
-            }
-            commands.remove_resource::<KartSync>();
-            commands.remove_resource::<OnlineSlot>();
-            commands.remove_resource::<OnlineLevel>();
-            levels.write(LoadLevel::on(online.solo_track.clone(), online.solo_mode));
-        }
-        (None, Some(lobby)) if agreed => {
-            let me = lobby.me();
-            let slot = lobby
-                .seats()
-                .iter()
-                .position(|key| *key == me)
-                .unwrap_or(0)
-                .min(GRID_SLOTS - 1);
-            info!("network: online driving, from grid slot {slot}");
-            commands.insert_resource(KartSync::new(me, slot as KartId, grid.seed));
-            commands.insert_resource(OnlineSlot(slot));
-            commands.insert_resource(OnlineLevel {
-                me,
-                solo_track: choice.clone(),
-                solo_mode: *mode,
-            });
-            levels.write(LoadLevel::on(TrackChoice::default(), RaceMode::FreeRoam));
-        }
-        (Some(_), Some(lobby)) => {
-            let Some(mut sync) = sync else {
-                return;
-            };
-            sync.set_players(lobby.seats().iter().enumerate().filter_map(|(slot, key)| {
-                let profile = lobby.peer(*key)?.profile.as_ref()?;
-                Some((*key, profile.loadout, slot))
-            }));
-            if let Some(host_ms) = lobby.host_time_ms(now) {
-                // The host's clock and ours now, in ticks: the common tick of our local ticks.
-                sync.clock
-                    .observe((host_ms as f64 - virtual_ms(&time)) / TICK_MS);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// The simulator's states arrive, the playbacks move on (once a frame).
@@ -460,7 +533,8 @@ fn report_karts(
             Some(transform) => {
                 let at = transform.translation;
                 info!(
-                    "network: kart of #{} at ({:.1}, {:.1}, {:.1}), tick {:.0}; {} states, the newest of tick {}",
+                    "network: kart {} of #{} at ({:.1}, {:.1}, {:.1}), tick {:.0}; {} states, the newest of tick {}",
+                    remote.kart,
                     remote.peer.tag(),
                     at.x,
                     at.y,
@@ -471,7 +545,8 @@ fn report_karts(
                 );
             }
             None => info!(
-                "network: kart of #{}: not shown yet, {} states",
+                "network: kart {} of #{}: not shown yet, {} states",
+                remote.kart,
                 remote.peer.tag(),
                 remote.received
             ),
@@ -483,7 +558,9 @@ fn report_karts(
 const REPORT_SECONDS: f64 = 3.0;
 
 /// Spawns the body and the visual of each remote kart once its first state arrived and the level
-/// is built; again after a new level, or when its player changed parts; despawns those gone.
+/// is built; again after a new level, or when its player changed parts; despawns those gone. In a
+/// race (issue #9) it is a racer (`Racer`: its progress comes from its peer's events, `online.rs`)
+/// with its player's name; a player who left keeps a body without visual, that nothing bumps into.
 #[allow(clippy::too_many_arguments)]
 fn spawn_remote_karts(
     mut commands: Commands,
@@ -525,6 +602,13 @@ fn spawn_remote_karts(
             .and_then(|tick| remote.buffer.sample(tick, &limits))
             .map(|sample| sample.pose)
             .or_else(|| remote.buffer.newest().copied())
+            .or_else(|| {
+                // A racer that left before any state of it came: where its grid slot is.
+                (remote.left && remote.racer).then(|| KartPose {
+                    position: Vec3::new(0.0, -100.0, 0.0),
+                    ..Default::default()
+                })
+            })
         else {
             continue;
         };
@@ -538,29 +622,50 @@ fn spawn_remote_karts(
         };
         let effects = StatEffects::new(&roster.stats(&loadout), &stats_tuning);
         let transform = Transform::from_translation(shown.position).with_rotation(shown.rotation);
-        let proxy = commands
-            .spawn((
-                Name::new(format!("En ligne #{}", remote.peer.tag())),
-                RemoteKartProxy { peer: remote.peer },
-                LevelScoped,
-                transform,
-                remote_body(),
-                // Solid once clear of our karts (`move_remote_karts`).
-                ColliderDisabled,
-                (
-                    KartState::default(),
-                    DriftMotion::default(),
-                    Boost::default(),
-                    Stall::default(),
-                    Invincibility::default(),
-                    Slipstream::default(),
-                    KartWheels::default(),
-                    KartAssists::default(),
-                    effects,
-                ),
-            ))
-            .id();
+        let mut proxy = commands.spawn((
+            Name::new(format!("En ligne {} #{}", remote.kart, remote.peer.tag())),
+            RemoteKartProxy {
+                peer: remote.peer,
+                kart: remote.kart,
+            },
+            LevelScoped,
+            transform,
+            remote_body(),
+            // Solid once clear of our karts (`move_remote_karts`); a player who left, never.
+            ColliderDisabled,
+            (
+                KartState::default(),
+                DriftMotion::default(),
+                Boost::default(),
+                Stall::default(),
+                Invincibility::default(),
+                Slipstream::default(),
+                KartWheels::default(),
+                KartAssists::default(),
+                effects,
+            ),
+            // Issue #9: what the slipstream, the bots and the paws see of it; its paw, for the
+            // visuals of what its peer tells.
+            (
+                Remote {
+                    seen: shown.tick,
+                    now: shown.position,
+                    now_velocity: shown.velocity,
+                },
+                Paw::default(),
+            ),
+        ));
+        if remote.racer {
+            proxy.insert(Racer::new(usize::from(remote.kart)));
+        }
+        if let Some(name) = &remote.name {
+            proxy.insert(RacerName(name.clone()));
+        }
+        let proxy = proxy.id();
         remote.proxy = Some(proxy);
+        if remote.left {
+            continue;
+        }
         if let (Some(visuals), Some(materials)) = (&visuals, materials.as_mut()) {
             let driver = looks.as_ref().and_then(|looks| looks.get(character));
             remote.visual = Some(spawn_kart_visual_with_driver(
@@ -625,7 +730,7 @@ fn move_remote_karts(
     let now = time.elapsed_secs_f64() * 1_000.0;
     let limits = tuning.limits();
     for remote in sync.remotes() {
-        let Some(proxy) = remote.proxy else {
+        let Some(proxy) = remote.proxy.filter(|_| !remote.left) else {
             continue;
         };
         let Ok((mut transform, mut velocity, ghost)) = proxies.get_mut(proxy) else {
@@ -675,8 +780,9 @@ fn move_remote_karts(
     }
 }
 
-/// After each tick: our kart's position into its history, and every few ticks its state to
-/// send, stamped with the common tick (nothing before the clock is set).
+/// After each tick: our karts' positions into their history, and every few ticks their state to
+/// send, stamped with the common tick (nothing before the clock is set). Our karts: our player's,
+/// and the bots when we host a race (issue #9: [`NetKart`]).
 #[allow(clippy::type_complexity)]
 fn record_our_kart(
     mut commands: Commands,
@@ -691,8 +797,9 @@ fn record_our_kart(
             (&KartState, &KartAssists, &StatEffects, &DriftMotion),
             (&Boost, &Stall, &Invincibility, &Slipstream, &KartWheels),
             Option<&mut KartHistory>,
+            Option<&NetKart>,
         ),
-        With<PlayerKart>,
+        (With<Kart>, Or<(With<PlayerKart>, With<NetKart>)>),
     >,
 ) {
     let local = (time.elapsed_secs_f64() * crate::TICK_HZ).round() as u32;
@@ -705,6 +812,7 @@ fn record_our_kart(
         (state, assists, effects, motion),
         (boost, stall, invincibility, slipstream, wheels),
         history,
+        net,
     ) in &mut karts
     {
         match history {
@@ -738,7 +846,7 @@ fn record_our_kart(
             spin: velocity.angular,
             look,
         };
-        let kart = sync.kart();
+        let kart = net.map_or(sync.kart(), |net| net.0);
         sync.send(KartSnapshot::quantize(kart, &pose));
     }
 }
@@ -770,7 +878,7 @@ fn show_remote_karts(
 ) {
     let now = virtual_ms(&time) - fixed.timestep().as_secs_f64() * 1_000.0;
     let limits = tuning.limits();
-    for remote in sync.remotes() {
+    for remote in sync.remotes().iter().filter(|remote| !remote.left) {
         let (Some(proxy), Some(sample)) = (
             remote.proxy,
             remote

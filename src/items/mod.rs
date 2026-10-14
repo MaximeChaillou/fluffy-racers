@@ -257,9 +257,10 @@ impl Plugin for ItemPlugin {
     }
 }
 
-/// The items are in the races (`ItemTuning::enabled`).
-pub fn items_on(tuning: Res<ItemTuning>) -> bool {
-    tuning.enabled
+/// The items are in the races (`ItemTuning::enabled`); not online yet (issue #9,
+/// `level::Online`: they are not shared yet).
+pub fn items_on(tuning: Res<ItemTuning>, online: Option<Res<crate::level::Online>>) -> bool {
+    tuning.enabled && online.is_none()
 }
 
 /// Items switched off: nothing held, nothing out, every box back (and hidden, `visual.rs`).

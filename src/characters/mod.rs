@@ -32,8 +32,8 @@ pub use ui::CharacterUiPlugin;
 
 use bevy::prelude::*;
 
-use crate::kart::{DriverLook, KeyboardLayout};
-use crate::level::LoadLevel;
+use crate::kart::{DriverLook, KeyboardLayout, PlayerInputMuted};
+use crate::level::{LoadLevel, Online};
 use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::RaceMode;
 
@@ -202,6 +202,7 @@ fn apply_selection_actions(
     mode: Res<RaceMode>,
     mut screen: ResMut<SelectionScreen>,
     mut loadout: ResMut<PlayerLoadout>,
+    online: Option<Res<Online>>,
     mut levels: MessageWriter<LoadLevel>,
 ) {
     for action in actions.read() {
@@ -231,7 +232,11 @@ fn apply_selection_actions(
             SelectionAction::Confirm => {
                 loadout.set_if_neq(PlayerLoadout(screen.choice));
                 screen.open = false;
-                levels.write(LoadLevel::restart(*mode));
+                // Online (issue #9), the race goes on: the new kart comes with the next level
+                // (the others already see it in the lobby). Free driving restarts at once.
+                if online.is_none() || *mode == RaceMode::FreeRoam {
+                    levels.write(LoadLevel::restart(*mode));
+                }
             }
             SelectionAction::Cancel => screen.open = false,
         }
@@ -240,18 +245,25 @@ fn apply_selection_actions(
 
 /// The game waits while the player chooses: virtual time is paused while the screen or the
 /// options menu (issue #17) is open (the fixed 60 Hz simulation does not run), and runs again
-/// once both are closed.
+/// once both are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
+/// player's kart coasts while a menu is open (its keys are the menu's).
 fn pause_in_menus(
     screen: Res<SelectionScreen>,
     options: Option<Res<OptionsMenu>>,
+    online: Option<Res<Online>>,
+    muted: Option<ResMut<PlayerInputMuted>>,
     mut was_open: Local<bool>,
     mut time: ResMut<Time<Virtual>>,
 ) {
     let open = screen.open || options.is_some_and(|menu| menu.open);
-    if open && !time.is_paused() {
+    let pause = open && online.is_none();
+    if pause && !time.is_paused() {
         time.pause();
-    } else if !open && *was_open && time.is_paused() {
+    } else if !pause && (*was_open || online.is_some()) && time.is_paused() {
         time.unpause();
     }
-    *was_open = open;
+    if let Some(mut muted) = muted {
+        muted.set_if_neq(PlayerInputMuted(open && online.is_some()));
+    }
+    *was_open = pause;
 }

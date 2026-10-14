@@ -34,6 +34,19 @@ pub fn rank<Id>(entries: &mut [RankEntry<Id>]) {
     });
 }
 
+/// Online (issue #9): the host's final order decides (grid slots, first to last), so that every
+/// peer shows the same results; a racer it does not list comes after, ranked by [`rank`]. No
+/// allocation: a stable sort of 12 entries at most.
+pub fn rank_by_order<Id>(entries: &mut [RankEntry<Id>], order: &[usize]) {
+    rank(entries);
+    entries.sort_by_key(|entry| {
+        order
+            .iter()
+            .position(|slot| *slot == entry.grid_slot)
+            .unwrap_or(usize::MAX)
+    });
+}
+
 /// Distance to the leader along the centerline, laps included (m): what the item distribution
 /// will use (GD § 8: "la distance au leader, pas la position"). 0 for the leader itself.
 pub fn distance_to_leader(leader_distance: f32, distance: f32) -> f32 {
@@ -159,6 +172,22 @@ mod tests {
         ];
         rank(&mut entries);
         assert_eq!(order(&entries), vec![3, 4, 1, 0, 5]);
+    }
+
+    /// Issue #9: the host's order wins over the distances seen here; a racer it does not list
+    /// comes after, ranked as usual.
+    #[test]
+    fn the_hosts_order_decides_online() {
+        let mut entries = vec![
+            entry(0, 900.0),
+            entry(1, 950.0),
+            entry(2, 100.0),
+            entry(3, 500.0),
+        ];
+        rank_by_order(&mut entries, &[2, 0]);
+        assert_eq!(order(&entries), vec![2, 0, 1, 3]);
+        rank_by_order(&mut entries, &[]);
+        assert_eq!(order(&entries), vec![1, 0, 3, 2]);
     }
 
     #[test]

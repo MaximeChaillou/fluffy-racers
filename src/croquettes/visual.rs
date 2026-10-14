@@ -143,6 +143,7 @@ fn animate_croquettes(
     time: Res<Time>,
     fixed: Res<Time<Fixed>>,
     tuning: Res<CroquetteTuning>,
+    online: Option<Res<crate::level::Online>>,
     mut track: Query<
         (
             &TrackCroquette,
@@ -165,7 +166,8 @@ fn animate_croquettes(
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
     for (croquette, mut transform, mut visibility, mut look) in &mut track {
-        if !croquette.available() {
+        // Online, no croquette yet (issue #9: not shared yet).
+        if !croquette.available() || online.is_some() {
             visibility.set_if_neq(Visibility::Hidden);
             look.shown_for = 0.0;
             continue;

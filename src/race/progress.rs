@@ -116,11 +116,24 @@ impl RaceProgress {
 
         // Validated: global checkpoint `self.passed` (one per tick at most: they are about
         // 25 m apart).
+        let event = self.validate(course, tick);
+        self.distance = if self.finished() {
+            projection.distance
+        } else {
+            clamp_to_window(course, self.passed, projection.distance)
+        };
+        Some(event)
+    }
+
+    /// Validates the next checkpoint (global checkpoint `passed`) at race tick `tick`: a lap
+    /// with its time, or the finish. Online (issue #9), what the peer that drives another kart
+    /// says of it: the same bookkeeping as for our own karts.
+    pub fn validate(&mut self, course: &Course, tick: u32) -> ProgressEvent {
         let validated = self.passed;
         self.passed += 1;
         let n = course.checkpoint_count();
-        let event = if validated > 0 && validated.is_multiple_of(n) {
-            self.lap_times.push(tick - self.lap_start);
+        if validated > 0 && validated.is_multiple_of(n) {
+            self.lap_times.push(tick.saturating_sub(self.lap_start));
             self.lap_start = tick;
             if self.passed >= course.checkpoints_to_finish() {
                 self.finish = Some(tick);
@@ -130,13 +143,16 @@ impl RaceProgress {
             }
         } else {
             ProgressEvent::Checkpoint
-        };
-        self.distance = if self.finished() {
-            projection.distance
-        } else {
-            clamp_to_window(course, self.passed, projection.distance)
-        };
-        Some(event)
+        }
+    }
+
+    /// A kart another peer drives (issue #9): its checkpoints come from that peer
+    /// ([`RaceProgress::validate`]); its live race distance, for the ranking, from where it is
+    /// shown here (`projection`, on the window of its checkpoints). Frozen once finished.
+    pub fn follow(&mut self, course: &Course, projection: &Projection) {
+        if !self.finished() {
+            self.distance = clamp_to_window(course, self.passed, projection.distance);
+        }
     }
 }
 
@@ -356,6 +372,43 @@ mod tests {
         }
         assert_eq!(kart.progress.laps_completed(&course), 1);
         assert_eq!(kart.progress.lap_times.len(), 1);
+    }
+
+    /// Issue #9: a kart another peer drives gets the same laps, times and finish from the ticks
+    /// of its checkpoints as the peer that drives it, and its distance from where it is shown.
+    #[test]
+    fn the_checkpoints_of_another_peer_give_the_same_progress() {
+        let (_, course) = prairie();
+        let length = course.length();
+        let mut kart = Driver::on_grid(&course, 2);
+        let mut copy = RaceProgress::on_grid(&course, course.grid[2].translation, 3);
+        kart.drive(-11.0, 3.0 * length + 2.0, 0.45, 0.0);
+        let ticks: Vec<u32> = kart.log.iter().map(|(tick, _)| *tick).collect();
+        assert_eq!(ticks.len() as u32, course.checkpoints_to_finish());
+        for (n, tick) in ticks.iter().enumerate() {
+            let event = copy.validate(&course, *tick);
+            assert_eq!(event, kart.log[n].1);
+        }
+        assert_eq!(copy.passed, kart.progress.passed);
+        assert_eq!(copy.lap_times, kart.progress.lap_times);
+        assert_eq!(copy.finish, kart.progress.finish);
+        assert_eq!(copy.best_lap(), kart.progress.best_lap());
+        // Its distance follows where it is shown, within its window, until it finished.
+        let mut follower = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
+        follower.validate(&course, 10);
+        let ahead = course.project(follower.passed, at(&course, 10.0, 0.0));
+        follower.follow(&course, &ahead);
+        assert!(
+            (follower.distance - 10.0).abs() < 0.3,
+            "{}",
+            follower.distance
+        );
+        let far = course.project(follower.passed, at(&course, 200.0, 0.0));
+        follower.follow(&course, &far);
+        assert!(follower.distance <= course.checkpoint_distance(follower.passed as i64));
+        let frozen = copy.distance;
+        copy.follow(&course, &ahead);
+        assert_eq!(copy.distance, frozen);
     }
 
     #[test]

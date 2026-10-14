@@ -15,8 +15,9 @@ use super::NetSystems;
 use super::ice::{is_loopback_host, signal_host};
 use super::{
     Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, NetTuning,
-    Stuck, default_signal, invite_link, is_local_signal, native_command, now_ms,
+    OnlineRace, Stuck, default_signal, invite_link, is_local_signal, native_command, now_ms,
 };
+use crate::admin::tracks::{TrackEntry, circuits};
 use crate::characters::{PartKind, Roster};
 
 const GOOD: Color32 = Color32::from_rgb(110, 210, 120);
@@ -38,7 +39,10 @@ impl Plugin for NetUiPlugin {
             auto_create_primary_context: false,
             ..default()
         })
-        .init_resource::<LobbyUiState>()
+        .insert_resource(LobbyUiState {
+            copied_at: None,
+            circuits: circuits(),
+        })
         .add_systems(Startup, join_launch_room)
         .add_systems(
             EguiPrimaryContextPass,
@@ -53,6 +57,8 @@ impl Plugin for NetUiPlugin {
 struct LobbyUiState {
     /// When « Copier » was last clicked (real time, s).
     copied_at: Option<f64>,
+    /// The circuits the host can choose (issue #9): `assets/tracks/index.ron`.
+    circuits: Vec<TrackEntry>,
 }
 
 /// `?room=CODE&signal=…&pseudo=…&stun=…&turn=…&netsim=…` in the page address, or `--room CODE
@@ -170,6 +176,7 @@ fn lobby_window(
     session: Option<Res<NetSession>>,
     settings: Res<NetSettings>,
     roster: Option<Res<Roster>>,
+    race: Option<Res<OnlineRace>>,
     time: Res<Time<Real>>,
     mut state: ResMut<LobbyUiState>,
     mut actions: MessageWriter<NetAction>,
@@ -196,6 +203,7 @@ fn lobby_window(
                     ui,
                     session,
                     roster.as_deref(),
+                    race.as_deref(),
                     now_ms(&time),
                     now,
                     &mut state,
@@ -239,10 +247,12 @@ fn signal_hint(ui: &mut egui::Ui, signal: &str) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn in_room(
     ui: &mut egui::Ui,
     session: &NetSession,
     roster: Option<&Roster>,
+    race: Option<&OnlineRace>,
     now_ms: u64,
     now: f64,
     state: &mut LobbyUiState,
@@ -306,6 +316,7 @@ fn in_room(
         NetStatus::InRoom => {
             if let Some(lobby) = &session.lobby {
                 lobby_list(ui, session, lobby, roster, now_ms, actions);
+                room_controls(ui, lobby, race, &state.circuits, actions);
             }
         }
     }
@@ -405,8 +416,85 @@ fn lobby_list(
     }
     if lobby.all_ready() {
         ui.label(RichText::new("Tout le monde est prêt !").color(GOOD));
-        ui.small("La course en ligne arrive avec une prochaine version : chacun court en solo.");
     }
+}
+
+/// The room's circuit and race (issue #9): the host chooses the circuit and starts the race once
+/// everyone is ready; the others see what is on.
+fn room_controls(
+    ui: &mut egui::Ui,
+    lobby: &super::Lobby,
+    race: Option<&OnlineRace>,
+    circuits: &[TrackEntry],
+    actions: &mut MessageWriter<NetAction>,
+) {
+    if !lobby.seated() {
+        return;
+    }
+    ui.separator();
+    let name = |track: u8| {
+        circuits
+            .get(usize::from(track))
+            .map_or("?", |entry| entry.name.as_str())
+    };
+    let racing = lobby.announced().filter(|start| {
+        race.is_none_or(|race| race.shared.race() != start.race || race.shared.over().is_none())
+    });
+    match (lobby.announced(), racing) {
+        (Some(start), Some(_)) => {
+            ui.label(format!(
+                "Course n° {} en cours sur {} : {} tours, {} bots.",
+                start.race,
+                name(start.track),
+                start.laps,
+                start.bots
+            ));
+            if race.is_some_and(|race| !race.racing) {
+                ui.small("Tu es arrivé pendant la course : tu roules librement, tu en seras à la prochaine.");
+            }
+        }
+        (Some(start), None) => {
+            ui.label(format!("Course n° {} terminée.", start.race));
+        }
+        (None, _) => {
+            ui.label(format!("Roulage libre sur {}.", name(lobby.circuit())));
+        }
+    }
+    if !lobby.is_host() {
+        ui.small("L'hôte choisit le circuit et lance la course quand tout le monde est prêt.");
+        return;
+    }
+    let free = racing.is_none();
+    ui.horizontal(|ui| {
+        ui.label("Circuit");
+        let mut chosen = lobby.circuit();
+        ui.add_enabled_ui(free, |ui| {
+            egui::ComboBox::from_id_salt("lobby-circuit")
+                .selected_text(name(chosen))
+                .show_ui(ui, |ui| {
+                    for (index, entry) in circuits.iter().enumerate() {
+                        ui.selectable_value(&mut chosen, index as u8, &entry.name);
+                    }
+                });
+        });
+        if chosen != lobby.circuit() {
+            actions.write(NetAction::ChooseCircuit(chosen));
+        }
+    });
+    let ready = lobby.all_ready();
+    if ui
+        .add_enabled(
+            free && ready,
+            egui::Button::new(RichText::new("Lancer la course").strong().size(16.0)),
+        )
+        .clicked()
+    {
+        actions.write(NetAction::StartRace);
+    }
+    if free && !ready {
+        ui.small("Il faut au moins deux joueurs, tous prêts.");
+    }
+    ui.small("Les bots complètent la grille de 12 ; tu les fais rouler pour tous.");
 }
 
 /// The Chrome setting that hides the local addresses behind `….local` names.

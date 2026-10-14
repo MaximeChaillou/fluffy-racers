@@ -733,7 +733,8 @@ fn letting_go_while_steering_throws_the_kart_held() {
 #[test]
 fn the_kart_struck_applies_the_message_itself() {
     let (mut arena, a, b) = side_by_side(10, 10, 2.2);
-    let message = |arena: &Arena, seen_ago: u32, from: Vec3| {
+    // Issue #9: an event's age counts from when it was sent (`tick`; solo, the tick it saw too).
+    let message = |arena: &Arena, ago: u32, from: Vec3| {
         let now = (arena
             .app
             .world()
@@ -744,8 +745,8 @@ fn the_kart_struck_applies_the_message_itself() {
         KartStruck {
             striker: a,
             target: b,
-            tick: now,
-            seen: now - seen_ago,
+            tick: now - ago,
+            seen: now - ago,
             striker_position: from,
             direction: Vec3::X,
             push: 7.0,

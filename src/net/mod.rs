@@ -27,6 +27,11 @@
 //!   the others show it about 100 ms later, interpolated (`interp.rs`), as a kinematic body our
 //!   kart bumps into. A network simulator (`netsim.rs`, `?netsim=120,20,5`) adds latency,
 //!   jitter and losses for the debug.
+//! - **The race online** (issue #9, `online.rs`, `race.rs`): the host chooses the room's circuit
+//!   and starts the races; everyone races on the same grid, on the room's clock (`clock.rs`), with
+//!   the host's bots; checkpoints and the end go to everyone (reliable), the same results on
+//!   every screen; the strikes and grabs between karts go to the peer that decides. A new host
+//!   takes the bots and the arbitration over. Online, the game never pauses.
 //!
 //! **Solo is unchanged**: without a room there is no socket; only the L key and the reading of
 //! the actions run each frame, the rest needs a [`NetSession`] (measured: no cost in the
@@ -40,7 +45,9 @@ mod interp;
 mod links;
 mod lobby;
 mod netsim;
+mod online;
 mod protocol;
+mod race;
 mod room;
 mod signaling;
 mod snapshot;
@@ -50,11 +57,13 @@ mod tuning;
 mod ui;
 
 #[cfg(test)]
+mod race_tests;
+#[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
 mod sync_tests;
 
-pub use clock::PeerClock;
+pub use clock::{PeerClock, ROOM_WAIT_MS, RoomClock};
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
@@ -67,11 +76,13 @@ pub use lobby::{
     Lobby, LobbyEvent, LobbyPeer, Outgoing, PING_INTERVAL_MS, PlayerRow, SETTLE_MS, SILENT_MS,
 };
 pub use netsim::{NetSim, NetSimTuning};
+pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
 pub use protocol::{
     Channel, DecodeError, Grab, KartId, KartSnapshot, MAX_KART_STATE_BYTES, MAX_NAME_CHARS,
-    MAX_PLAYERS, Message, PROTOCOL_VERSION, PeerKey, Profile, RaceStart, Strike, StrikeReply,
-    TetherBreak,
+    MAX_PLAYERS, Message, PROTOCOL_VERSION, PeerKey, Profile, Progress, RaceOver, RaceStart,
+    Strike, StrikeReply, TetherBreak,
 };
+pub use race::{Driver, RaceKart, SharedRace};
 pub use room::{
     CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SIGNAL_PORT,
     default_signal, invite_link, native_command, parse_signal, query_with_room, room_url,
@@ -80,16 +91,18 @@ pub use signaling::{ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuil
 pub use snapshot::{KartLook, KartPose, LookParts, Phase, pack_rotation, unpack_rotation};
 pub use socket::{NetSocket, SocketEvent};
 pub use sync::{
-    KartHistory, KartSync, KartSyncPlugin, OnlineLevel, OnlineSlot, RemoteKart, RemoteKartProxy,
-    remote_body,
+    KartHistory, KartSync, KartSyncPlugin, NetKart, OnlineLevel, OnlineSlot, RemoteKart,
+    RemoteKartProxy, RosterEntry, Showing, remote_body,
 };
 pub use tuning::NetTuning;
 pub use ui::NetUiPlugin;
 
 use bevy::prelude::*;
 
+use crate::bots::BotTuning;
 use crate::characters::{PartKind, PlayerLoadout, Roster};
 use crate::options::OptionsMenu;
+use crate::race::RaceTuning;
 
 /// Opens and closes the lobby window: « L » for « en ligne », a letter at the same place and
 /// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
@@ -168,6 +181,10 @@ pub enum NetAction {
     Leave,
     /// « Prêt » / « Pas prêt ».
     Ready(bool),
+    /// The host chooses the room's circuit (issue #9): an index of `assets/tracks/index.ron`.
+    ChooseCircuit(u8),
+    /// The host starts a race (issue #9) on the room's circuit, with everyone seated.
+    StartRace,
 }
 
 /// Where we are with the room.
@@ -261,6 +278,7 @@ fn lobby_key(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_net_actions(
     mut commands: Commands,
     mut actions: MessageReader<NetAction>,
@@ -269,6 +287,11 @@ fn apply_net_actions(
     mut session: Option<ResMut<NetSession>>,
     mut departures: ResMut<Departures>,
     time: Res<Time<Real>>,
+    (race_tuning, bot_tuning, net_tuning): (
+        Option<Res<RaceTuning>>,
+        Option<Res<BotTuning>>,
+        Option<Res<NetTuning>>,
+    ),
 ) {
     for action in actions.read() {
         match action {
@@ -321,6 +344,40 @@ fn apply_net_actions(
             NetAction::Ready(ready) => {
                 if let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut()) {
                     lobby.set_ready(*ready);
+                }
+            }
+            NetAction::ChooseCircuit(track) => {
+                if let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut())
+                    && lobby.choose_circuit(*track)
+                {
+                    info!("network: we choose circuit {track} for the room");
+                }
+            }
+            NetAction::StartRace => {
+                let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut()) else {
+                    continue;
+                };
+                let seed = random_seed(time.elapsed().as_nanos() as u64);
+                let difficulty = bot_tuning
+                    .as_ref()
+                    .map_or_else(Default::default, |t| t.grid_difficulty);
+                let tuning = net_tuning.as_deref().cloned().unwrap_or_default();
+                let laps = online::race_laps(race_tuning.as_deref());
+                match race_to_start(lobby, now_ms(&time), seed, laps, difficulty, &tuning) {
+                    Some(start) => {
+                        info!(
+                            "network: we start race {} on circuit {} at tick {}, {} players and {} bots",
+                            start.race,
+                            start.track,
+                            start.start_tick,
+                            start.players.len(),
+                            start.bots
+                        );
+                        lobby.announce_race(start);
+                    }
+                    None => {
+                        warn!("network: no race: we do not host, or the room's clock is unknown")
+                    }
                 }
             }
         }
@@ -392,6 +449,7 @@ fn poll_session(
     time: Res<Time<Real>>,
     game_time: Res<Time<Virtual>>,
     mut sync: Option<ResMut<KartSync>>,
+    mut race: Option<ResMut<OnlineRace>>,
     tuning: Option<Res<NetTuning>>,
 ) {
     let now = now_ms(&time);
@@ -436,10 +494,33 @@ fn poll_session(
             if let Some(lobby) = lobby.as_mut() {
                 match Message::decode(&bytes) {
                     Ok(message) => {
-                        if let (Message::KartState(state), Some(sync), Some(tuning)) =
-                            (&message, sync.as_deref_mut(), tuning.as_deref())
-                        {
-                            sync.receive(peer, *state, game_ms, tuning);
+                        let host = lobby.host();
+                        match (&message, sync.as_deref_mut(), race.as_deref_mut()) {
+                            (Message::KartState(state), Some(sync), _) => {
+                                if let Some(tuning) = tuning.as_deref() {
+                                    sync.receive(peer, *state, game_ms, tuning);
+                                }
+                            }
+                            (
+                                Message::Strike(_)
+                                | Message::StrikeReply(_)
+                                | Message::Grab(_)
+                                | Message::TetherBreak(_),
+                                Some(sync),
+                                _,
+                            ) => sync.receive_event(peer, message.clone()),
+                            (Message::Progress(progress), _, Some(race)) => {
+                                race.shared.receive(peer, host, progress);
+                            }
+                            (Message::RaceOver(over), _, Some(race)) => {
+                                if race.shared.receive_over(peer, host, over.clone()) {
+                                    info!(
+                                        "network: the host ended race {}: {:?}",
+                                        over.race, over.order
+                                    );
+                                }
+                            }
+                            _ => {}
                         }
                         lobby.receive(peer, message, now);
                     }
@@ -479,20 +560,35 @@ fn poll_session(
         for out in lobby.drain_outbox() {
             socket.send(out.to, &out.message);
         }
-        // Our kart's states, to every other seated player (issue #8).
-        if let Some(sync) = sync.as_deref_mut() {
-            let me = lobby.me();
-            for state in sync.drain_outgoing() {
-                let message = Message::KartState(state);
-                for peer in lobby.seats() {
-                    if *peer != me {
-                        socket.send(*peer, &message);
-                    }
+        // Our karts' states (issue #8), the interactions and the race's events (issue #9), to
+        // every other seated player.
+        let me = lobby.me();
+        let mut to_everyone = |message: &Message| {
+            for peer in lobby.seats() {
+                if *peer != me {
+                    socket.send(*peer, message);
                 }
+            }
+        };
+        if let Some(sync) = sync.as_deref_mut() {
+            for state in sync.drain_outgoing() {
+                to_everyone(&Message::KartState(state));
+            }
+            for message in sync.drain_events_out() {
+                to_everyone(&message);
+            }
+        }
+        if let Some(race) = race.as_deref_mut() {
+            for message in race.drain_outbox() {
+                to_everyone(&message);
             }
         }
         for event in lobby.drain_events() {
             info!("network: {event:?}");
+            // A player who leaves gives up the race (issue #9).
+            if let (LobbyEvent::Left(peer), Some(race)) = (&event, race.as_deref_mut()) {
+                race.shared.leave(*peer);
+            }
         }
         if lobby.full() {
             session.status = NetStatus::Full;

@@ -11,8 +11,9 @@
 //!    accelerator during the countdown and is judged on GO (GD § 4, issue #13: a boost, or a
 //!    stalled engine); then nothing moves before GO (the racers' `KartInput` is zeroed), and
 //!    finished racers coast.
-//! 3. [`RaceSystems::Rules`], after the physics step: checkpoints, laps, finish, tow pelican,
-//!    ranking and distance to the leader.
+//! 3. [`RaceSystems::Rules`], after the physics step: checkpoints, laps, finish, tow pelican;
+//!    then [`RaceSystems::Rank`]: ranking and distance to the leader (online, issue #9, the other
+//!    peers' karts get their progress in between).
 //!
 //! The race exists only on a circuit (`TrackLayout`): on the flat test ground there is none.
 
@@ -34,7 +35,7 @@ pub use course::{Course, Projection, drop_point};
 pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
 pub use pelican::{PelicanPlugin, PelicanVisual};
 pub use progress::{ProgressEvent, RaceProgress};
-pub use ranking::{RankEntry, distance_to_leader, rank};
+pub use ranking::{RankEntry, distance_to_leader, rank, rank_by_order};
 pub use tow::{Carry, Tow, TowObservation, TowReason, tow_pose};
 pub use tuning::{RaceTuning, seconds_to_ticks, ticks_to_seconds};
 
@@ -56,6 +57,11 @@ use crate::track::TrackLayout;
 pub struct Racer {
     pub grid_slot: usize,
 }
+
+/// The name of a racer on the results screen (issue #9: another player's, online). Without it:
+/// « Toi » for the local player, « Kart N » for the others.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct RacerName(pub String);
 
 /// A racer's rocket start (GD § 4, issue #13): its first press of the accelerator from the
 /// race (re)start to GO, judged on GO (`kart::start_outcome`) with the kart's own tuning.
@@ -130,6 +136,21 @@ pub enum RaceMode {
     FreeRoam,
 }
 
+/// Online (issue #9, `crate::net`): the race follows the room. The network writes it every tick;
+/// without it (solo), the race counts its own ticks, ends when the local players finished and
+/// restarts from the results screen.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct OnlineFlow {
+    /// The flow tick of this simulation tick (`RaceFlow::tick`): from the race's start tick on
+    /// the room's clock, 0 before it.
+    pub flow_tick: u32,
+    /// The flow tick the host ended the race on.
+    pub over_at: Option<u32>,
+    /// The host's final order (grid slots, first to last): the standings once the race is over,
+    /// the same on every peer ([`rank_by_order`]).
+    pub order: Option<Vec<usize>>,
+}
+
 /// A racer that keeps driving after the finish line instead of coasting (bots, issue #6:
 /// coasting bots would block the straight for the racers still finishing).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -180,6 +201,7 @@ pub enum RaceSystems {
     Flow,
     Gate,
     Rules,
+    Rank,
 }
 
 /// Keys and buttons of the results screen: race again (GD § 13 has no menu yet).
@@ -203,6 +225,7 @@ impl Plugin for RacePlugin {
                         .after(KartSystems::Input)
                         .before(KartSystems::Drive),
                     RaceSystems::Rules.after(PhysicsSet::Writeback),
+                    RaceSystems::Rank.after(RaceSystems::Rules),
                 ),
             )
             .add_systems(
@@ -222,9 +245,8 @@ impl Plugin for RacePlugin {
                     (judge_rocket_starts, gate_inputs)
                         .chain()
                         .in_set(RaceSystems::Gate),
-                    (update_progress, rank_racers)
-                        .chain()
-                        .in_set(RaceSystems::Rules),
+                    update_progress.in_set(RaceSystems::Rules),
+                    rank_racers.in_set(RaceSystems::Rank),
                 )
                     .run_if(resource_exists::<Race>),
             );
@@ -273,10 +295,12 @@ fn request_tow(
     }
 }
 
-/// Moves the race clock; on a restart, puts every racer back on its grid slot.
+/// Moves the race clock; on a restart, puts every racer back on its grid slot. Online (issue #9),
+/// the clock follows the room's ([`OnlineFlow`]): no local end, no restart.
 fn advance_race(
     mut race: ResMut<Race>,
     course: Res<Course>,
+    online: Option<Res<OnlineFlow>>,
     mut racers: Query<
         (
             &Racer,
@@ -293,6 +317,11 @@ fn advance_race(
         With<Kart>,
     >,
 ) {
+    if let Some(online) = online {
+        race.restart_requested = false;
+        race.flow.follow(online.flow_tick, online.over_at);
+        return;
+    }
     if racers.is_empty() {
         return;
     }
@@ -463,8 +492,13 @@ fn update_progress(
     }
 }
 
-/// Live ranking and distance to the leader.
-fn rank_racers(mut race: ResMut<Race>, mut racers: Query<(Entity, &Racer, &mut RaceProgress)>) {
+/// Live ranking and distance to the leader. Online (issue #9), every racer of the race is here,
+/// the other peers' karts too; once the race is over, the host's order.
+fn rank_racers(
+    mut race: ResMut<Race>,
+    online: Option<Res<OnlineFlow>>,
+    mut racers: Query<(Entity, &Racer, &mut RaceProgress)>,
+) {
     let race = &mut *race;
     race.entries.clear();
     race.entries
@@ -474,7 +508,10 @@ fn rank_racers(mut race: ResMut<Race>, mut racers: Query<(Entity, &Racer, &mut R
             distance: progress.distance,
             finish: progress.finish,
         }));
-    rank(&mut race.entries);
+    match online.as_ref().and_then(|online| online.order.as_deref()) {
+        Some(order) => rank_by_order(&mut race.entries, order),
+        None => rank(&mut race.entries),
+    }
     race.standings.clear();
     race.standings.extend(race.entries.iter().map(|e| e.id));
     let Some(leader) = race.entries.first().map(|e| e.distance) else {
