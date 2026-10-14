@@ -484,7 +484,10 @@ fn poll_session(
             *status = NetStatus::InRoom;
         }
         SocketEvent::Connected(peer) => {
-            info!("network: {}", links.connected(peer, now));
+            // Outside of `info!`: its arguments are not even computed when that level is off (no
+            // subscriber in the headless tests, `RUST_LOG=warn`), and the link stayed (issue #51).
+            let line = links.connected(peer, now);
+            info!("network: {line}");
             if let Some(lobby) = lobby.as_mut() {
                 lobby.connect(peer, now);
             }
