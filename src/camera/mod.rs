@@ -4,6 +4,9 @@
 //! It follows the *interpolated* visual of the kart (see `crate::interpolation`), not the
 //! physics body, so it is as smooth at 30 fps as at 144 fps.
 //!
+//! **Shake** (GD § 14, issue #34): a [`CameraShake`] on the followed kart (a paw strike
+//! received) moves the view for a moment, on top of the chase.
+//!
 //! **Looking behind** (GD § 2 and 13, issue #17): while the kart's `look_back` button is held (C,
 //! or X / Y on a gamepad), the camera cuts to the front of the kart and looks back, like MK8DX.
 //! The chase rig keeps running underneath: on release the camera is back exactly where the
@@ -103,6 +106,54 @@ impl ChaseCamera {
     }
 }
 
+/// A short screen shake (GD § 14: "un léger tremblement d'écran sur les chocs"), put on a kart
+/// body by what shakes it (issue #34: a paw strike or a throw received). The chase camera that
+/// follows this kart moves by [`shake_offset`]; its springs never see it, so the chase goes on
+/// exactly as without it once the shake is over.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CameraShake {
+    /// When it started (s, the frames' `Time::elapsed_secs`)...
+    pub started: f32,
+    /// ...how far it moves the camera at first (m)...
+    pub strength: f32,
+    /// ...and how long it lasts (s).
+    pub duration: f32,
+}
+
+impl CameraShake {
+    /// A shake starting at `now`.
+    pub fn new(now: f32, strength: f32, duration: f32) -> Self {
+        Self {
+            started: now,
+            strength,
+            duration,
+        }
+    }
+
+    /// How far it moves the camera at `now` (m, world).
+    pub fn offset(&self, now: f32) -> Vec3 {
+        shake_offset(now - self.started, self.strength, self.duration)
+    }
+}
+
+/// A shake `t` s after it started: a jolt of `strength` m at first, fading out over `duration`
+/// s (zero before and after). Three unrelated frequencies, so it never looks like a regular
+/// wobble.
+pub fn shake_offset(t: f32, strength: f32, duration: f32) -> Vec3 {
+    if !(0.0..duration).contains(&t) || strength <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let fade = 1.0 - t / duration;
+    let wave = |hz: f32, phase: f32| (std::f32::consts::TAU * hz * t + phase).sin();
+    Vec3::new(
+        wave(23.0, 0.4),
+        0.6 * wave(29.0, 1.3),
+        0.5 * wave(17.0, 2.1),
+    ) * strength
+        * fade
+        * fade
+}
+
 /// Side lean asked by the kart's state, from -1 (left) to 1 (right). Put it on a kart body:
 /// [`lean_into_drifts`] writes it from the drift, and the camera shifts by
 /// `CameraTuning::drift_side_offset` (smoothed by the rig's spring).
@@ -146,16 +197,23 @@ fn chase(
     kart_tuning: Res<KartTuning>,
     rapier: ReadRapierContext,
     visuals: Query<(&Transform, &InterpolatedFrom), Without<ChaseCamera>>,
-    bodies: Query<(&Velocity, &Boost, Option<&CameraLean>, Option<&KartInput>)>,
+    bodies: Query<(
+        &Velocity,
+        &Boost,
+        Option<&CameraLean>,
+        Option<&KartInput>,
+        Option<&CameraShake>,
+    )>,
     mut cameras: Query<(&mut ChaseCamera, &mut Transform, &mut Projection)>,
 ) {
     let dt = time.delta_secs();
+    let now = time.elapsed_secs();
     let context = rapier.single().ok();
     for (mut camera, mut transform, mut projection) in &mut cameras {
         let Ok((target, source)) = visuals.get(camera.target) else {
             continue;
         };
-        let Ok((velocity, boost, lean, kart_input)) = bodies.get(source.0) else {
+        let Ok((velocity, boost, lean, kart_input, shake)) = bodies.get(source.0) else {
             continue;
         };
         let input = RigInput {
@@ -190,8 +248,10 @@ fn chase(
             }
         }
 
-        transform.translation = eye;
-        transform.look_at(pose.look_at, Vec3::Y);
+        // A shake (a paw strike received) moves the whole view, on top of the chase.
+        let shake = shake.map_or(Vec3::ZERO, |shake| shake.offset(now));
+        transform.translation = eye + shake;
+        transform.look_at(pose.look_at + shake, Vec3::Y);
         if let Projection::Perspective(perspective) = &mut *projection {
             perspective.fov = pose.fov_degrees.to_radians();
         }
@@ -202,6 +262,26 @@ fn chase(
 mod tests {
     use super::*;
     use crate::kart::DriftSide;
+
+    /// Issue #34 (GD § 14): a light shake, strongest at first, gone after its duration.
+    #[test]
+    fn a_shake_jolts_then_fades_out() {
+        assert_eq!(shake_offset(-0.01, 0.2, 0.3), Vec3::ZERO);
+        assert_eq!(shake_offset(0.3, 0.2, 0.3), Vec3::ZERO);
+        assert_eq!(shake_offset(0.1, 0.0, 0.3), Vec3::ZERO);
+        let biggest = |from: f32, to: f32| {
+            (0..100)
+                .map(|i| shake_offset(from + (to - from) * i as f32 / 100.0, 0.2, 0.3).length())
+                .fold(0.0f32, f32::max)
+        };
+        let early = biggest(0.0, 0.1);
+        let late = biggest(0.2, 0.3);
+        assert!(early > 0.08 && early <= 0.2 * 1.3, "{early}");
+        assert!(late < early * 0.25, "{late} vs {early}");
+        let shake = CameraShake::new(5.0, 0.2, 0.3);
+        assert!(shake.offset(5.05).distance(shake_offset(0.05, 0.2, 0.3)) < 1e-4);
+        assert_eq!(shake.offset(6.0), Vec3::ZERO);
+    }
 
     #[test]
     fn drifts_lean_the_camera_toward_the_outside_of_the_turn() {

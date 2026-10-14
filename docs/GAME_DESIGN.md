@@ -348,6 +348,22 @@ Ils utilisent le bouton Interaction par leur `KartInput`, comme un joueur. Leur 
 - Ils ne frappent pas pendant leur propre drift (ils gardent leur trajectoire), ne visent pas deux fois le même kart en moins de 5 s, et n'ont aucune préférence pour le joueur.
 - Les interactions ne doivent pas dégrader leurs courses : les temps et l'absence de pélican mesurés sans interactions restent la référence.
 
+### Notre implémentation (#34)
+
+Toutes les valeurs sont dans la Resource `InteractionTuning` (panneau d'admin) ; celles des bots dans `BotSkill`.
+
+- **Bouton** : X ou F, RB à la manette. Tenu moins de 12 ticks (0,2 s), c'est un coup au relâchement ; à partir du 12ᵉ tick, une attrape.
+- **Coup de patte** : la poussée est une vitesse à part (`Shove`), ajoutée par-dessus la conduite et qui s'éteint seule ; le grip et le drift n'y touchent pas, un muret ou un kart qui l'arrête y met fin. Mesuré, une seconde après : 1,34 m d'écart à poids égal, 1,74 m du plus lourd sur le plus léger, 0,94 m dans l'autre sens ; vitesse × 0,90 ; 1 croquette (même protection d'1 s que les chocs de karts).
+- **Coup ou griffe dans le vide** : le kart glisse de 0,3 m du côté du coup et le personnage mouline des bras 0,6 s.
+- **Lien** : un ressort amorti qui ne fait que tirer (30 m/s² par mètre étiré, 10 /s sur la vitesse d'éloignement). L'attrapeur rejoint la vitesse de la cible : entre sa propre vitesse max et celle de la cible, seul le lien le tire.
+- **Frein de la cible** (ajout, à valider par Max) : 25 % de la force du lien ne suffisent pas à l'objectif de réglage. Le moteur, très fort près de la vitesse max, et les boosts (40 m/s²) rattrapent aussitôt quelques m/s² de freinage : mesuré, 0,4 % de vitesse perdue pour une cible en boost. Tant qu'elle est tenue, la vitesse max de la cible baisse donc aussi de 10 %, multiplié par son facteur de Poids (`tether_target_brake`). Mesuré sur une prise complète : 10,0 % à poids égal, 12,5 % pour une cible légère (Poids 0), 8,3 % pour une lourde (Poids 20). La cible récupère sa vitesse dès qu'elle est libre.
+- **Jet** : mesuré 2,0 m d'écart, contre 1,34 m pour un coup.
+- **Bots** : 10, 30 et 60 % des occasions. Les Difficile frappent un kart placé du côté du bord le plus proche avec une chance × 1,33, les autres × 0,67. Ils attrapent un kart qui va au moins 2 m/s plus vite qu'eux : jamais pour les Facile, 30 % des occasions pour les Normal, 70 % pour les Difficile. Ils tiennent 1,2 s (Normal) ou 1,6 s (Difficile), puis lâchent ; les Difficile jettent la cible de son côté, loin d'eux. Tenus, ils sautent après 1 s, 0,5 s ou 0,25 s selon leur niveau.
+- **Ressenti** :
+  - fait : le bras (capsule) et la patte qui se lève dès l'appui, frappe, s'étire pendant l'attrape (l'élastique) et revient en « boing » ; le « pof » (losange jaune) ; le personnage qui se penche en moulinant ou se retourne vers son attrapeur ; un léger tremblement d'écran pour le joueur frappé ; la jauge de recharge dans le HUD ;
+  - pas encore fait : le cri, la vibration de la manette, les sons et le mini-ragdoll (#12).
+- **Sans interactions** : `InteractionTuning::enabled` les coupe. Les tests de conduite des bots tournent ainsi.
+
 ## 16. Priorités
 
 | Phase | Contenu |

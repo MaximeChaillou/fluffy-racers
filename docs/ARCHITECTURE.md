@@ -28,6 +28,15 @@ Référence de ressenti : Mario Kart 8 Deluxe. Les règles et les valeurs sont d
 
   Pas de joint Rapier : la conduite réécrit la vitesse à chaque tick, et en ligne l'autre kart n'est qu'un proxy kinématique.
 
+  Dans le code (#34) :
+  - **le composant `Paw`** (`src/interactions/`) garde le bouton, la recharge, le lien côté attrapeur (`PawMotion::Holding`) ou côté cible (`Paw::held`), la protection d'1 s et l'état des visuels ;
+  - **la logique pure** est dans `interactions/logic.rs` : `step_paw`, `reach`, `pick_target`, les immunités, `held_end`, `tether_accel` ;
+  - **la conduite** applique deux composants du kart (`kart/push.rs`) :
+    - `Shove` : la poussée, retirée de la vitesse avant la conduite puis rajoutée après ; ce qu'un muret ou un kart a arrêté y met fin ;
+    - `TetherPull` : l'accélération du lien, et pour l'attrapeur la vitesse jusqu'à laquelle il est remorqué ;
+  - **la cible tenue** est freinée par `MaxSpeedFactors::tether`.
+  - Les systèmes (`InteractionSystems`) tournent en `FixedUpdate`, après les entrées, la porte de la course et les objets, avant les croquettes et la conduite.
+
 ## Objets (#16)
 
 - **Logique pure** dans `src/items/` :
@@ -112,6 +121,13 @@ Un coup de patte ou une attrape (`docs/GAME_DESIGN.md` § 15) agit sur le kart d
   - un jet est un `Coup` (`jet: true`) envoyé juste après la `FinAttrape` ; la victime le traite comme un coup.
 - **Déconnexion pendant une attrape** : le pair restant rompt le lien dès que `matchbox_socket` signale le départ de l'autre, ou après 0,5 s sans aucun état reçu de lui (à régler), et au plus tard au bout des 2 s. Pour lui, c'est un lâcher sans jet, sans pénalité ni effet. Un bot dont le simulateur change (l'hôte part) perd aussi son lien. Le reste (le kart du joueur parti, sa place au classement) relève de la course en ligne (#9).
 - **Rien de plus dans l'état diffusé à 30 Hz** : les autres pairs dessinent la patte, le bras élastique et le ragdoll à partir des événements. Le ragdoll reste purement visuel (voir « Personnages mous »).
+- **Dans le code (#34)**, ces événements sont déjà des messages Bevy ; en solo, tout passe par eux, sur le même tick :
+  - `Coup` est `KartStruck { striker, target, tick, seen, striker_position, direction, push, throw }`. `push` est la vitesse de poussée, Poids et jet compris ;
+  - `CoupReçu` et `CoupIgnoré` sont `StrikeAnswer { landed }` ;
+  - `Attrape` est `KartGrabbed { grabber, target, tick, seen, grabber_position, rest }` ;
+  - `FinAttrape` est `TetherEnded { reason: TetherEnd }`, avec un refus (`Refused`) ou un départ (`Gone`).
+
+  La victime vérifie l'événement avec `accepts` : portée plus 0,75 m, au plus 0,3 s d'âge. Elle prend aujourd'hui sa position actuelle ; l'historique de 30 ticks viendra avec #8.
 
 ### Mise en relation (signalisation)
 

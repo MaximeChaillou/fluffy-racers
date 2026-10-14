@@ -34,6 +34,11 @@ pub const DEBUG_RESET_KEY: KeyCode = KeyCode::KeyR;
 /// issue #5) rescues racers.
 pub const FALL_RESET_HEIGHT: f32 = -30.0;
 
+/// The gamepad's jump / drift / trick button: RT (Bevy's `RightTrigger2`, the trigger).
+pub const JUMP_BUTTON: GamepadButton = GamepadButton::RightTrigger2;
+/// The gamepad's Interaction button: RB (Bevy's `RightTrigger`, the bumper).
+pub const INTERACT_BUTTON: GamepadButton = GamepadButton::RightTrigger;
+
 /// Stick dead zone: smaller deflections are ignored.
 const STICK_DEAD_ZONE: f32 = 0.15;
 
@@ -108,6 +113,10 @@ impl KeyboardLayout {
 pub const JUMP_KEYS: [KeyCode; 1] = [KeyCode::Space];
 pub const ITEM_KEYS: [KeyCode; 3] = [KeyCode::ShiftLeft, KeyCode::ShiftRight, KeyCode::KeyE];
 pub const LOOK_BACK_KEYS: [KeyCode; 1] = [KeyCode::KeyC];
+/// The Interaction button (GD § 13 and 15, issue #34): X, by the left hand next to Shift and
+/// Espace for who drives with the arrows; F, the neighbour of E for who drives with W/A/S/D
+/// (Z/Q/S/D). Same letters at the same places in AZERTY and QWERTY, no Fn on a Mac.
+pub const INTERACT_KEYS: [KeyCode; 2] = [KeyCode::KeyX, KeyCode::KeyF];
 
 /// Reads the keyboard and every connected gamepad for the player kart. Not part of the
 /// headless simulation: bots and network peers produce `KartInput` their own way.
@@ -131,11 +140,13 @@ pub fn keyboard_input(keys: &ButtonInput<KeyCode>, layout: KeyboardLayout) -> Ka
         jump_drift: keys.any_pressed(JUMP_KEYS),
         item: keys.any_pressed(ITEM_KEYS),
         look_back: keys.any_pressed(LOOK_BACK_KEYS),
+        interact: keys.any_pressed(INTERACT_KEYS),
     }
 }
 
-/// Gamepad state → kart input (GD § 13: A accelerates, B brakes, RB/RT jump, LB/LT item,
-/// X/Y look behind).
+/// Gamepad state → kart input (GD § 13: A accelerates, B brakes, RT jumps, LB/LT item, RB
+/// Interaction, X/Y look behind). RB was the jump's too until issue #34: it held at the index
+/// finger while the thumb stays on A, the Interaction button needs it (a grab is held).
 pub fn gamepad_input(gamepad: &Gamepad) -> KartInput {
     let button = |b: GamepadButton| if gamepad.pressed(b) { 1.0 } else { 0.0 };
     let stick = gamepad.left_stick().x;
@@ -148,10 +159,10 @@ pub fn gamepad_input(gamepad: &Gamepad) -> KartInput {
         throttle: button(GamepadButton::South),
         brake: button(GamepadButton::East),
         steer,
-        jump_drift: gamepad
-            .any_pressed([GamepadButton::RightTrigger, GamepadButton::RightTrigger2]),
+        jump_drift: gamepad.pressed(JUMP_BUTTON),
         item: gamepad.any_pressed([GamepadButton::LeftTrigger, GamepadButton::LeftTrigger2]),
         look_back: gamepad.any_pressed([GamepadButton::West, GamepadButton::North]),
+        interact: gamepad.pressed(INTERACT_BUTTON),
     }
 }
 
@@ -164,6 +175,7 @@ pub fn combine(a: KartInput, b: KartInput) -> KartInput {
         jump_drift: a.jump_drift || b.jump_drift,
         item: a.item || b.item,
         look_back: a.look_back || b.look_back,
+        interact: a.interact || b.interact,
     }
 }
 
@@ -289,6 +301,60 @@ mod tests {
         assert_eq!(KeyboardLayout::default(), azerty);
         assert_eq!(azerty.letters(), ["Z", "Q", "S", "D"]);
         assert_eq!(qwerty.letters(), ["W", "A", "S", "D"]);
+    }
+
+    /// Issue #34 (GD § 13): X or F is the Interaction button, in both layouts; nothing else
+    /// presses it.
+    #[test]
+    fn x_or_f_is_the_interaction_button_in_both_layouts() {
+        for layout in KeyboardLayout::ALL {
+            for key in INTERACT_KEYS {
+                let mut keys = ButtonInput::<KeyCode>::default();
+                keys.press(key);
+                assert_eq!(
+                    keyboard_input(&keys, layout),
+                    KartInput {
+                        interact: true,
+                        ..default()
+                    },
+                    "{key:?} in {layout:?}"
+                );
+            }
+            let mut keys = ButtonInput::<KeyCode>::default();
+            for key in [
+                KeyCode::ArrowUp,
+                KeyCode::Space,
+                KeyCode::KeyE,
+                KeyCode::KeyC,
+                KeyCode::KeyZ,
+            ] {
+                keys.press(key);
+            }
+            assert!(!keyboard_input(&keys, layout).interact);
+        }
+    }
+
+    /// Issue #34 (GD § 13): on a gamepad, RB is the Interaction button and RT the jump / drift
+    /// one (RB used to jump too).
+    #[test]
+    fn rb_interacts_and_rt_jumps_on_a_gamepad() {
+        let mut gamepad = Gamepad::default();
+        gamepad.digital_mut().press(GamepadButton::RightTrigger);
+        let rb = gamepad_input(&gamepad);
+        assert!(rb.interact && !rb.jump_drift, "{rb:?}");
+        let mut gamepad = Gamepad::default();
+        gamepad.digital_mut().press(GamepadButton::RightTrigger2);
+        let rt = gamepad_input(&gamepad);
+        assert!(rt.jump_drift && !rt.interact, "{rt:?}");
+        let mut gamepad = Gamepad::default();
+        gamepad.digital_mut().press(GamepadButton::South);
+        gamepad.digital_mut().press(GamepadButton::LeftTrigger);
+        let a_lb = gamepad_input(&gamepad);
+        assert!(a_lb.throttle == 1.0 && a_lb.item && !a_lb.interact && !a_lb.jump_drift);
+        assert!(
+            combine(KartInput::default(), rb).interact,
+            "the keyboard and the gamepad add up"
+        );
     }
 
     #[test]

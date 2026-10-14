@@ -20,6 +20,7 @@ const FULL_THROTTLE: KartInput = KartInput {
     jump_drift: false,
     item: false,
     look_back: false,
+    interact: false,
 };
 const ITEM: KartInput = KartInput {
     throttle: 0.0,
@@ -28,6 +29,7 @@ const ITEM: KartInput = KartInput {
     jump_drift: false,
     item: true,
     look_back: false,
+    interact: false,
 };
 
 /// Karts on a large flat slab with the croquette and item rules (no race: the items are drawn

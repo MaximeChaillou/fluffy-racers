@@ -452,7 +452,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "CameraTuning",
             "RaceTuning",
             "StatsTuning",
-            "ItemTuning"
+            "ItemTuning",
+            "InteractionTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {
@@ -470,6 +471,15 @@ fn every_tuning_resource_is_in_the_panel() {
         tunings
             .set(world, "ItemTuning.enabled", Value::Bool(false))
             .unwrap();
+        // Issue #34: the interactions too.
+        assert!(
+            world
+                .resource::<crate::interactions::InteractionTuning>()
+                .enabled
+        );
+        tunings
+            .set(world, "InteractionTuning.enabled", Value::Bool(false))
+            .unwrap();
     });
     assert_eq!(
         app.world()
@@ -478,5 +488,10 @@ fn every_tuning_resource_is_in_the_panel() {
         crate::bots::BotDifficulty::Hard
     );
     assert!(!app.world().resource::<crate::items::ItemTuning>().enabled);
+    assert!(
+        !app.world()
+            .resource::<crate::interactions::InteractionTuning>()
+            .enabled
+    );
     let _ = app.world().resource::<KartTuning>();
 }

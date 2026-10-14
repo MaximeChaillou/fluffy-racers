@@ -943,6 +943,7 @@ pub fn drive(
         jump_drift: jump,
         item: false,
         look_back: false,
+        interact: false,
     }
 }
 

@@ -21,6 +21,7 @@ const FULL_THROTTLE: KartInput = KartInput {
     jump_drift: false,
     item: false,
     look_back: false,
+    interact: false,
 };
 
 /// Full throttle, jump/drift button held, steering `steer`.

@@ -34,8 +34,12 @@ pub struct CroquetteTuning {
     /// Croquettes lost when bumped by another kart (GD § 7: 1). What a bump is:
     /// `KartTuning::bump_min_speed`. Walls cost nothing (GD § 2: you bounce and slow down).
     pub bump_loss: u8,
-    /// After a bump, the kart cannot lose croquettes to bumps for this long: one messy
-    /// collision (bounces, karts rubbing) costs one croquette.
+    /// Croquettes lost to a paw strike or a throw of another kart (GD § 7 and 15: 1, whatever
+    /// the Weights).
+    pub strike_loss: u8,
+    /// After a bump or a paw strike, the kart cannot lose croquettes to bumps or strikes for
+    /// this long: one messy collision (bounces, karts rubbing), or a strike and the bump it
+    /// causes, cost one croquette (GD § 15).
     pub bump_grace: f32,
 
     // --- Scattered croquettes (lost ones) ---------------------------------------------------------
@@ -71,6 +75,7 @@ impl Default for CroquetteTuning {
 
             item_hit_loss: 3,
             bump_loss: 1,
+            strike_loss: 1,
             bump_grace: 1.0,
 
             scatter_distance: 2.5,
