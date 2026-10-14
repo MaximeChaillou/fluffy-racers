@@ -16,7 +16,8 @@
 
 use bevy::math::{Quat, Vec3};
 
-use super::protocol::{KartId, KartSnapshot};
+use super::protocol::{KartId, KartSnapshot, OUT_ITEMS};
+use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{
     Boost, DriftMotion, DriftSide, HitReaction, Invincibility, KartState, KartTuning, KartWheels,
     MiniTurbo, Slipstream, Stall,
@@ -95,6 +96,75 @@ pub struct KartLook {
     pub slip: f32,
     /// Each wheel's spring compression (m), `None` in the air.
     pub wheels: [Option<f32>; 4],
+    /// What the kart holds out (issue #53): its shields, drawn on every screen.
+    pub held: Option<HeldLook>,
+}
+
+/// What a kart holds out around it (issue #53, `ItemSlots::held_out`): a single pelure or pelote
+/// dragged behind, or an "x3" out (pelures in a row, pelotes or abeilles turning around).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeldLook {
+    pub item: ItemKind,
+    pub count: u8,
+    pub dragged: bool,
+}
+
+impl HeldLook {
+    /// What `slots` hold out.
+    pub fn of(slots: &ItemSlots) -> Option<Self> {
+        let (item, count) = slots.held_out()?;
+        OUT_ITEMS.contains(&item).then_some(Self {
+            item,
+            count: count.clamp(1, 3),
+            dragged: slots.dragging.is_some(),
+        })
+    }
+
+    /// Slots that hold the same out: a remote kart's on our screen, for its shields.
+    pub fn slots(held: Option<Self>) -> ItemSlots {
+        match held {
+            None => ItemSlots::default(),
+            Some(held) if held.dragged => ItemSlots {
+                dragging: Some(held.item),
+                ..Default::default()
+            },
+            Some(held) => ItemSlots {
+                hand: Slot::Ready {
+                    item: held.item,
+                    count: held.count,
+                },
+                deployed: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// On the wire (`KartSnapshot::items`).
+    fn byte(held: Option<Self>) -> u8 {
+        held.and_then(|held| {
+            let kind = OUT_ITEMS.iter().position(|i| *i == held.item)? as u8 + 1;
+            let count = if held.dragged {
+                1
+            } else {
+                held.count.clamp(1, 3)
+            };
+            Some(kind | count << 2 | u8::from(held.dragged && kind <= 2) << 4)
+        })
+        .unwrap_or(0)
+    }
+
+    /// From the wire (a value `protocol::valid_held_items` refuses: nothing).
+    fn from_byte(items: u8) -> Option<Self> {
+        if !super::protocol::valid_held_items(items) {
+            return None;
+        }
+        let item = *OUT_ITEMS.get(usize::from(items & 0b11).checked_sub(1)?)?;
+        Some(Self {
+            item,
+            count: (items >> 2) & 0b11,
+            dragged: items & 0b1_0000 != 0,
+        })
+    }
 }
 
 /// The parts of a kart that its look comes from.
@@ -265,6 +335,7 @@ impl KartSnapshot {
                 .slipstream
                 .map_or(0, |fill| (fill * 255.0).round().clamp(1.0, 255.0) as u8),
             wheels,
+            items: HeldLook::byte(look.held),
         }
     }
 
@@ -295,6 +366,7 @@ impl KartSnapshot {
                 let value = (self.wheels >> (4 * i)) & 0xf;
                 (value > 0).then(|| f32::from(value - 1) * WHEEL_STEP)
             }),
+            held: HeldLook::from_byte(self.items),
         };
         KartPose {
             tick: self.tick,
@@ -422,6 +494,11 @@ pub(crate) mod tests {
             slipstream: Some(0.4),
             slip: -0.21,
             wheels: [Some(0.12), Some(0.3), None, Some(0.0)],
+            held: Some(HeldLook {
+                item: ItemKind::Pelote,
+                count: 3,
+                dragged: false,
+            }),
         }
     }
 
@@ -509,6 +586,38 @@ pub(crate) mod tests {
         assert!((back.slip + 0.21).abs() <= SLIP_STEP / 2.0 + 1e-6);
         assert_eq!(back.wheels[2], None);
         assert_eq!(back.wheels[3], Some(0.0));
+        // Issue #53: what it holds out comes back, and gives slots that hold the same out.
+        assert_eq!(back.held, look().held);
+        for held in [
+            None,
+            Some(HeldLook {
+                item: ItemKind::Pelure,
+                count: 1,
+                dragged: true,
+            }),
+            Some(HeldLook {
+                item: ItemKind::Pelote,
+                count: 1,
+                dragged: true,
+            }),
+            Some(HeldLook {
+                item: ItemKind::Pelure,
+                count: 2,
+                dragged: false,
+            }),
+            Some(HeldLook {
+                item: ItemKind::Abeille,
+                count: 1,
+                dragged: false,
+            }),
+        ] {
+            let pose = KartPose {
+                look: KartLook { held, ..look() },
+                ..Default::default()
+            };
+            assert_eq!(KartSnapshot::quantize(0, &pose).pose().look.held, held);
+            assert_eq!(HeldLook::of(&HeldLook::slots(held)), held);
+        }
         for (wheel, sent) in back.wheels.iter().zip(look().wheels) {
             if let (Some(back), Some(sent)) = (wheel, sent) {
                 assert!((back - sent).abs() <= WHEEL_STEP / 2.0 + 1e-6);

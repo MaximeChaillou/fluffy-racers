@@ -22,13 +22,19 @@
 //! Version 2 (issue #8): the kart states. Version 3 (issue #9): the race online (the room's
 //! circuit, the race's start with its players, the checkpoints, the end of the race and its final
 //! order), the kart states' session, and the pongs tell whether they carry the room's clock.
+//! Version 4 (issue #53): the items and the croquettes online: a kart's claim on a box or a
+//! croquette and the host's verdict ([`Claim`], [`Verdict`]), an item thrown or dropped
+//! ([`ItemOut`]), an item that broke ([`ItemBreak`]: on a kart, the victim's decision), the
+//! croquettes a kart lost ([`Scatter`]), and in the kart states what a kart holds out
+//! (`KartSnapshot::items`, 49 bytes).
 
 use std::fmt;
 
 use crate::interactions::TetherEnd;
+use crate::items::ItemKind;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 3;
+pub const PROTOCOL_VERSION: u8 = 4;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -246,10 +252,180 @@ pub struct KartSnapshot {
     /// The 4 wheels, 4 bits each (front left first): 0 in the air, 1 to 15 on the ground with a
     /// spring compressed by 0 to 0.7 m.
     pub wheels: u16,
+    /// What the kart holds out (issue #53, `items::ItemSlots::held_out`): bits 0-1 the item
+    /// (0 nothing, 1 pelure, 2 pelote, 3 abeille), 2-3 how many (1 to 3), 4 dragged behind (a
+    /// single pelure or pelote; else an "x3" out); the others are 0. Every peer draws them and
+    /// knows the kart's shields.
+    pub items: u8,
 }
 
 /// A kart state fits in a small unreliable packet (issue #8: fewer than 64 bytes).
 pub const MAX_KART_STATE_BYTES: usize = 64;
+
+/// The items that go out on the track, in their wire order (`ItemOut::item`, the held items of
+/// `KartSnapshot::items` from 1).
+pub const OUT_ITEMS: [ItemKind; 3] = [ItemKind::Pelure, ItemKind::Pelote, ItemKind::Abeille];
+
+/// Whether `items` (`KartSnapshot::items`) is a possible value.
+pub fn valid_held_items(items: u8) -> bool {
+    let (kind, count, dragged) = (items & 0b11, (items >> 2) & 0b11, items & 0b1_0000 != 0);
+    if items & 0b1110_0000 != 0 {
+        return false;
+    }
+    if kind == 0 {
+        return items == 0;
+    }
+    // Only a single pelure or pelote is dragged.
+    count >= 1 && (!dragged || (count == 1 && kind <= 2))
+}
+
+/// An item out on the track (issue #53): the kart that threw it (or holds it out) and its number
+/// among that kart's items. `seq` [`ItemId::HELD`]: what the kart holds out (its shields), which
+/// are not numbered (the kart states say them).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ItemId {
+    pub owner: KartId,
+    pub seq: u16,
+}
+
+impl ItemId {
+    /// The number of a kart's items held out.
+    pub const HELD: u16 = u16::MAX;
+
+    /// One of the items `owner` holds out.
+    pub fn held(owner: KartId) -> Self {
+        Self {
+            owner,
+            seq: Self::HELD,
+        }
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.seq == Self::HELD
+    }
+}
+
+/// How an item thrown or dropped moves (`items::Motion`, issue #53), with the karts by id.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OutMotion {
+    /// A pelure on the ground.
+    Ground,
+    /// Rolling straight: a pelote, or an abeille thrown backwards.
+    Rolling { bounces_left: u8, fall: f32 },
+    /// An abeille along the track's centerline, after `target` (`None`: the leader's).
+    Track {
+        target: Option<KartId>,
+        distance: f32,
+        lateral: f32,
+    },
+    /// An abeille diving at `target`, or straight on without one.
+    Dive { target: Option<KartId> },
+}
+
+/// An item thrown or dropped by a kart (issue #53): the thrower has authority over its path. It
+/// tells every peer its state at the end of common tick `tick`; each peer simulates it from
+/// there (rays against the track, the centerline, its target).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemOut {
+    /// The kart states' session (`KartSnapshot::session`): what the kart ids mean.
+    pub session: u8,
+    pub id: ItemId,
+    pub item: ItemKind,
+    pub tick: u32,
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub motion: OutMotion,
+}
+
+/// An item broke (issue #53). On a kart (`kart`): the victim's peer decided whether it was hit
+/// (`landed`; an item touching an immune kart breaks anyway). Without a kart: it met another item
+/// (a shield, another projectile), told by the peer that judged it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemBreak {
+    pub session: u8,
+    pub id: ItemId,
+    pub kart: Option<KartId>,
+    pub landed: bool,
+}
+
+/// A scattered croquette (issue #53): the kart that lost it, the number of that loss among the
+/// kart's losses, and its place in the loss.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LooseId {
+    pub kart: KartId,
+    pub loss: u16,
+    pub index: u8,
+}
+
+/// The croquettes a kart lost (issue #53): the victim decided, and tells where they fly, from
+/// `from` to each of `to`, from common tick `tick`. Every peer shows them at the same places.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scatter {
+    pub session: u8,
+    pub kart: KartId,
+    pub loss: u16,
+    pub tick: u32,
+    pub from: [f32; 3],
+    pub to: Vec<[f32; 3]>,
+}
+
+/// Croquettes lost at once, at most (`CroquetteTuning::max_held`).
+pub const MAX_SCATTER: usize = 10;
+
+/// What a kart picks up on the track (issue #53): the host decides who got it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pickup {
+    /// An item box (its number on the circuit), and the draws its kart made from it: the first
+    /// draw's number (`ItemSlots::draws`), how many (0 to 2), its distance to the leader then.
+    /// Every peer can draw the same items (`items::draw_unit`).
+    Box {
+        index: u16,
+        draw: u16,
+        draws: u8,
+        gap: f32,
+    },
+    /// A croquette of the track (its number on the circuit).
+    Croquette { index: u16 },
+    /// A scattered croquette.
+    Loose(LooseId),
+}
+
+/// What is picked up, whatever the draws: a box, a croquette of the track, a scattered one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Spot {
+    Box(u16),
+    Croquette(u16),
+    Loose(LooseId),
+}
+
+impl Pickup {
+    pub fn spot(&self) -> Spot {
+        match *self {
+            Pickup::Box { index, .. } => Spot::Box(index),
+            Pickup::Croquette { index } => Spot::Croquette(index),
+            Pickup::Loose(id) => Spot::Loose(id),
+        }
+    }
+}
+
+/// A kart touched a box or a croquette at common tick `tick` (issue #53): its peer took it at
+/// once (prediction), and asks the host. Sent to every peer: a new host decides what the old one
+/// left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Claim {
+    pub session: u8,
+    pub pickup: Pickup,
+    pub kart: KartId,
+    pub tick: u32,
+}
+
+/// The host's decision on a claim (issue #53): granted (the box or the croquette is that kart's,
+/// gone for everyone), or refused (another kart had it first).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Verdict {
+    pub claim: Claim,
+    pub granted: bool,
+}
 
 /// Every message of the protocol.
 #[derive(Clone, Debug, PartialEq)]
@@ -278,6 +454,16 @@ pub enum Message {
     StrikeReply(StrikeReply),
     Grab(Grab),
     TetherBreak(TetherBreak),
+    /// A kart touched a box or a croquette (issue #53): its peer asks the host.
+    Claim(Claim),
+    /// The host's decision on a claim (issue #53).
+    Verdict(Verdict),
+    /// An item thrown or dropped (issue #53): its thrower has authority over its path.
+    ItemOut(ItemOut),
+    /// An item broke (issue #53): on a kart (the victim decided), or on another item.
+    ItemBreak(ItemBreak),
+    /// The croquettes a kart lost fly out (issue #53).
+    Scatter(Scatter),
     /// Latency and clock: `sent_ms` is the sender's clock, echoed back.
     Ping {
         sent_ms: u32,
@@ -306,6 +492,11 @@ const STRIKE: u8 = 16;
 const STRIKE_REPLY: u8 = 17;
 const GRAB: u8 = 18;
 const TETHER_BREAK: u8 = 19;
+const CLAIM: u8 = 24;
+const VERDICT: u8 = 25;
+const ITEM_OUT: u8 = 26;
+const ITEM_BREAK: u8 = 27;
+const SCATTER: u8 = 28;
 const PING: u8 = 32;
 const PONG: u8 = 33;
 const KART_STATE: u8 = 40;
@@ -341,6 +532,11 @@ impl Message {
             Message::StrikeReply(_) => STRIKE_REPLY,
             Message::Grab(_) => GRAB,
             Message::TetherBreak(_) => TETHER_BREAK,
+            Message::Claim(_) => CLAIM,
+            Message::Verdict(_) => VERDICT,
+            Message::ItemOut(_) => ITEM_OUT,
+            Message::ItemBreak(_) => ITEM_BREAK,
+            Message::Scatter(_) => SCATTER,
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
@@ -416,6 +612,53 @@ impl Message {
                 let reason = TETHER_ENDS.iter().position(|r| *r == end.reason);
                 out.extend_from_slice(&[end.grabber, end.target, reason.unwrap_or(0) as u8]);
             }
+            Message::Claim(claim) => put_claim(out, claim),
+            Message::Verdict(verdict) => {
+                put_claim(out, &verdict.claim);
+                out.push(u8::from(verdict.granted));
+            }
+            Message::ItemOut(item) => {
+                out.push(item.session);
+                put_item_id(out, item.id);
+                out.push(out_index(item.item));
+                put_u32(out, item.tick);
+                put_floats(out, &item.position);
+                put_floats(out, &item.velocity);
+                match item.motion {
+                    OutMotion::Ground => out.push(0),
+                    OutMotion::Rolling { bounces_left, fall } => {
+                        out.extend_from_slice(&[1, bounces_left]);
+                        put_floats(out, &[fall]);
+                    }
+                    OutMotion::Track {
+                        target,
+                        distance,
+                        lateral,
+                    } => {
+                        out.extend_from_slice(&[2, target.unwrap_or(NO_KART)]);
+                        put_floats(out, &[distance, lateral]);
+                    }
+                    OutMotion::Dive { target } => {
+                        out.extend_from_slice(&[3, target.unwrap_or(NO_KART)]);
+                    }
+                }
+            }
+            Message::ItemBreak(end) => {
+                out.push(end.session);
+                put_item_id(out, end.id);
+                out.extend_from_slice(&[end.kart.unwrap_or(NO_KART), u8::from(end.landed)]);
+            }
+            Message::Scatter(scatter) => {
+                out.extend_from_slice(&[scatter.session, scatter.kart]);
+                out.extend_from_slice(&scatter.loss.to_le_bytes());
+                put_u32(out, scatter.tick);
+                put_floats(out, &scatter.from);
+                let count = scatter.to.len().min(MAX_SCATTER);
+                out.push(count as u8);
+                for to in &scatter.to[..count] {
+                    put_floats(out, to);
+                }
+            }
             Message::Ping { sent_ms } => put_u32(out, *sent_ms),
             Message::Pong {
                 echo_ms,
@@ -442,6 +685,7 @@ impl Message {
                 out.extend_from_slice(&kart.slip.to_le_bytes());
                 out.push(kart.slipstream);
                 out.extend_from_slice(&kart.wheels.to_le_bytes());
+                out.push(kart.items);
             }
         }
     }
@@ -578,6 +822,98 @@ impl Message {
                     .get(usize::from(reader.u8()?))
                     .ok_or(DecodeError::Invalid("tether end"))?,
             }),
+            CLAIM => Message::Claim(reader.claim()?),
+            VERDICT => Message::Verdict(Verdict {
+                claim: reader.claim()?,
+                granted: reader.bool()?,
+            }),
+            ITEM_OUT => {
+                let session = reader.u8()?;
+                let id = reader.item_id()?;
+                let item = *OUT_ITEMS
+                    .get(usize::from(reader.u8()?))
+                    .ok_or(DecodeError::Invalid("item"))?;
+                let tick = reader.u32()?;
+                let position = reader.floats()?;
+                let velocity = reader.floats()?;
+                let motion = match reader.u8()? {
+                    0 => OutMotion::Ground,
+                    1 => OutMotion::Rolling {
+                        bounces_left: reader.u8()?,
+                        fall: reader.floats::<1>()?[0],
+                    },
+                    2 => {
+                        let target = reader.kart_or_none()?;
+                        let [distance, lateral] = reader.floats()?;
+                        OutMotion::Track {
+                            target,
+                            distance,
+                            lateral,
+                        }
+                    }
+                    3 => OutMotion::Dive {
+                        target: reader.kart_or_none()?,
+                    },
+                    _ => return Err(DecodeError::Invalid("item motion")),
+                };
+                // A pelure lies on the ground, a pelote rolls, an abeille flies (or rolls,
+                // thrown backwards).
+                let fits = match item {
+                    ItemKind::Pelure => motion == OutMotion::Ground,
+                    ItemKind::Pelote => matches!(motion, OutMotion::Rolling { .. }),
+                    _ => motion != OutMotion::Ground,
+                };
+                if !fits || id.is_held() {
+                    return Err(DecodeError::Invalid("item motion"));
+                }
+                Message::ItemOut(ItemOut {
+                    session,
+                    id,
+                    item,
+                    tick,
+                    position,
+                    velocity,
+                    motion,
+                })
+            }
+            ITEM_BREAK => {
+                let session = reader.u8()?;
+                let id = reader.item_id()?;
+                let kart = reader.kart_or_none()?;
+                let landed = reader.bool()?;
+                if landed && kart.is_none() {
+                    return Err(DecodeError::Invalid("a hit without a kart"));
+                }
+                Message::ItemBreak(ItemBreak {
+                    session,
+                    id,
+                    kart,
+                    landed,
+                })
+            }
+            SCATTER => {
+                let session = reader.u8()?;
+                let kart = reader.kart()?;
+                let loss = reader.u16()?;
+                let tick = reader.u32()?;
+                let from = reader.floats()?;
+                let count = usize::from(reader.u8()?);
+                if count == 0 || count > MAX_SCATTER {
+                    return Err(DecodeError::Invalid("scattered croquettes"));
+                }
+                let mut to = Vec::with_capacity(count);
+                for _ in 0..count {
+                    to.push(reader.floats()?);
+                }
+                Message::Scatter(Scatter {
+                    session,
+                    kart,
+                    loss,
+                    tick,
+                    from,
+                    to,
+                })
+            }
             PING => Message::Ping {
                 sent_ms: reader.u32()?,
             },
@@ -602,6 +938,7 @@ impl Message {
                     slip: i8::from_le_bytes(reader.array()?),
                     slipstream: reader.u8()?,
                     wheels: u16::from_le_bytes(reader.array()?),
+                    items: reader.u8()?,
                 };
                 if kart.rotation[5] & 0x80 != 0 {
                     return Err(DecodeError::Invalid("kart rotation"));
@@ -612,6 +949,9 @@ impl Message {
                 }
                 if kart.flags > 0b11 {
                     return Err(DecodeError::Invalid("kart flags"));
+                }
+                if !valid_held_items(kart.items) {
+                    return Err(DecodeError::Invalid("kart items"));
                 }
                 Message::KartState(kart)
             }
@@ -690,6 +1030,48 @@ fn put_floats(out: &mut Vec<u8>, values: &[f32]) {
     }
 }
 
+/// "No kart" on the wire (an abeille without a target, an item broken on another item).
+const NO_KART: u8 = u8::MAX;
+
+/// The wire number of an item that goes out (`OUT_ITEMS`).
+fn out_index(item: ItemKind) -> u8 {
+    OUT_ITEMS.iter().position(|i| *i == item).unwrap_or(0) as u8
+}
+
+fn put_item_id(out: &mut Vec<u8>, id: ItemId) {
+    out.push(id.owner);
+    out.extend_from_slice(&id.seq.to_le_bytes());
+}
+
+fn put_claim(out: &mut Vec<u8>, claim: &Claim) {
+    out.push(claim.session);
+    match claim.pickup {
+        Pickup::Box {
+            index,
+            draw,
+            draws,
+            gap,
+        } => {
+            out.push(0);
+            out.extend_from_slice(&index.to_le_bytes());
+            out.extend_from_slice(&draw.to_le_bytes());
+            out.push(draws);
+            put_floats(out, &[gap]);
+        }
+        Pickup::Croquette { index } => {
+            out.push(1);
+            out.extend_from_slice(&index.to_le_bytes());
+        }
+        Pickup::Loose(id) => {
+            out.extend_from_slice(&[2, id.kart]);
+            out.extend_from_slice(&id.loss.to_le_bytes());
+            out.push(id.index);
+        }
+    }
+    out.push(claim.kart);
+    put_u32(out, claim.tick);
+}
+
 fn put_name(out: &mut Vec<u8>, name: &str) {
     // A name longer than the wire allows is cut at a character boundary.
     let mut end = name.len().min(MAX_NAME_BYTES);
@@ -736,6 +1118,66 @@ impl Reader<'_> {
             keys.push(PeerKey(u128::from_le_bytes(self.array()?)));
         }
         Ok(keys)
+    }
+
+    /// A kart of the grid.
+    fn kart(&mut self) -> Result<KartId, DecodeError> {
+        let kart = self.u8()?;
+        if usize::from(kart) >= MAX_PLAYERS {
+            return Err(DecodeError::Invalid("kart"));
+        }
+        Ok(kart)
+    }
+
+    /// A kart of the grid, or none ([`NO_KART`]).
+    fn kart_or_none(&mut self) -> Result<Option<KartId>, DecodeError> {
+        match self.u8()? {
+            NO_KART => Ok(None),
+            kart if usize::from(kart) < MAX_PLAYERS => Ok(Some(kart)),
+            _ => Err(DecodeError::Invalid("kart")),
+        }
+    }
+
+    fn item_id(&mut self) -> Result<ItemId, DecodeError> {
+        Ok(ItemId {
+            owner: self.kart()?,
+            seq: self.u16()?,
+        })
+    }
+
+    fn claim(&mut self) -> Result<Claim, DecodeError> {
+        let session = self.u8()?;
+        let pickup = match self.u8()? {
+            0 => {
+                let index = self.u16()?;
+                let draw = self.u16()?;
+                let draws = self.u8()?;
+                let gap = self.floats::<1>()?[0];
+                // A double box gives two items at most.
+                if draws > 2 {
+                    return Err(DecodeError::Invalid("draws"));
+                }
+                Pickup::Box {
+                    index,
+                    draw,
+                    draws,
+                    gap,
+                }
+            }
+            1 => Pickup::Croquette { index: self.u16()? },
+            2 => Pickup::Loose(LooseId {
+                kart: self.kart()?,
+                loss: self.u16()?,
+                index: self.u8()?,
+            }),
+            _ => return Err(DecodeError::Invalid("pickup")),
+        };
+        Ok(Claim {
+            session,
+            pickup,
+            kart: self.kart()?,
+            tick: self.u32()?,
+        })
     }
 
     fn i32(&mut self) -> Result<i32, DecodeError> {
@@ -908,6 +1350,142 @@ mod tests {
                 slip: -128,
                 slipstream: 255,
                 wheels: 0xfedc,
+                items: 0b1_0110,
+            }),
+            Message::KartState(KartSnapshot {
+                items: 0b1111,
+                ..KartSnapshot::default()
+            }),
+            // Issue #53: the claims, the verdicts, the items and the croquettes.
+            Message::Claim(Claim {
+                session: 3,
+                pickup: Pickup::Box {
+                    index: 0xfedc,
+                    draw: 0x1234,
+                    draws: 2,
+                    gap: 132.5,
+                },
+                kart: 11,
+                tick: 4_000_000_001,
+            }),
+            Message::Claim(Claim {
+                session: 0,
+                pickup: Pickup::Croquette { index: 21 },
+                kart: 0,
+                tick: 0,
+            }),
+            Message::Verdict(Verdict {
+                claim: Claim {
+                    session: 255,
+                    pickup: Pickup::Loose(LooseId {
+                        kart: 7,
+                        loss: 0xabcd,
+                        index: 2,
+                    }),
+                    kart: 3,
+                    tick: 61,
+                },
+                granted: true,
+            }),
+            Message::Verdict(Verdict {
+                claim: Claim {
+                    session: 1,
+                    pickup: Pickup::Box {
+                        index: 2,
+                        draw: 0,
+                        draws: 0,
+                        gap: 0.0,
+                    },
+                    kart: 5,
+                    tick: 900,
+                },
+                granted: false,
+            }),
+            Message::ItemOut(ItemOut {
+                session: 2,
+                id: ItemId {
+                    owner: 11,
+                    seq: 0xfffe,
+                },
+                item: ItemKind::Pelure,
+                tick: 4_000_000_002,
+                position: [-120.5, 0.45, 301.25],
+                velocity: [0.0; 3],
+                motion: OutMotion::Ground,
+            }),
+            Message::ItemOut(ItemOut {
+                session: 2,
+                id: ItemId { owner: 0, seq: 1 },
+                item: ItemKind::Pelote,
+                tick: 600,
+                position: [1.0, 2.0, -3.0],
+                velocity: [42.0, 0.0, -0.5],
+                motion: OutMotion::Rolling {
+                    bounces_left: 5,
+                    fall: 2.5,
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 9,
+                id: ItemId { owner: 4, seq: 77 },
+                item: ItemKind::Abeille,
+                tick: 601,
+                position: [10.0, 1.4, 5.0],
+                velocity: [0.0, 0.0, -50.0],
+                motion: OutMotion::Track {
+                    target: Some(3),
+                    distance: 812.25,
+                    lateral: -1.5,
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 9,
+                id: ItemId { owner: 4, seq: 78 },
+                item: ItemKind::Abeille,
+                tick: 602,
+                position: [10.0, 1.4, 5.0],
+                velocity: [3.0, -1.0, -45.0],
+                motion: OutMotion::Dive { target: None },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 9,
+                id: ItemId { owner: 4, seq: 79 },
+                item: ItemKind::Abeille,
+                tick: 603,
+                position: [10.0, 1.4, 5.0],
+                velocity: [0.0, 0.0, 50.0],
+                motion: OutMotion::Rolling {
+                    bounces_left: 0,
+                    fall: 0.0,
+                },
+            }),
+            Message::ItemBreak(ItemBreak {
+                session: 4,
+                id: ItemId { owner: 2, seq: 9 },
+                kart: Some(11),
+                landed: true,
+            }),
+            Message::ItemBreak(ItemBreak {
+                session: 4,
+                id: ItemId::held(6),
+                kart: None,
+                landed: false,
+            }),
+            Message::Scatter(Scatter {
+                session: 4,
+                kart: 10,
+                loss: 0xffff,
+                tick: 4_000_000_003,
+                from: [1.5, 0.85, -2.0],
+                to: vec![[3.0, 0.4, -4.0], [1.0, 0.41, -4.5], [-0.5, 0.42, -3.0]],
+            }),
+            Message::Scatter(Scatter {
+                session: 0,
+                kart: 0,
+                loss: 0,
+                tick: 0,
+                from: [0.0; 3],
+                to: vec![[1.0; 3]; MAX_SCATTER],
             }),
         ]
         .into_iter()
@@ -937,8 +1515,10 @@ mod tests {
         // Every kind is tested, and no two messages share one.
         kinds.sort_unstable();
         kinds.dedup();
-        // 13 until issue #8; issue #9 adds the circuit, the checkpoints and the end of the race.
-        assert_eq!(kinds.len(), 16);
+        // 13 until issue #8; issue #9 adds the circuit, the checkpoints and the end of the race;
+        // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
+        // croquettes.
+        assert_eq!(kinds.len(), 21);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -978,11 +1558,11 @@ mod tests {
         let seats = Message::Seats(vec![PeerKey(1); MAX_PLAYERS]);
         assert_eq!(seats.to_bytes().len(), 3 + 16 * MAX_PLAYERS);
         // Issue #8: a kart state in fewer than 64 bytes, whatever its values (47, then 48 with
-        // the session of issue #9).
+        // the session of issue #9, 49 with the items held out of issue #53).
         for message in every_message() {
             if let Message::KartState(_) = message {
                 let length = message.to_bytes().len();
-                assert_eq!(length, 48);
+                assert_eq!(length, 49);
                 assert!(length < MAX_KART_STATE_BYTES);
             }
         }
@@ -1000,6 +1580,38 @@ mod tests {
             room: true,
         };
         assert_eq!(pong.to_bytes().len(), 11);
+        // Issue #53: a claim on a box in 18 bytes, on a croquette in 11; a verdict one more; an
+        // item thrown in 36 to 45; its break in 8; a croquette scattered in 23 + 12 each.
+        let claim = Claim {
+            session: 1,
+            pickup: Pickup::Box {
+                index: 1,
+                draw: 2,
+                draws: 1,
+                gap: 3.0,
+            },
+            kart: 4,
+            tick: 5,
+        };
+        assert_eq!(Message::Claim(claim).to_bytes().len(), 18);
+        let verdict = Verdict {
+            claim: Claim {
+                pickup: Pickup::Croquette { index: 3 },
+                ..claim
+            },
+            granted: true,
+        };
+        assert_eq!(Message::Claim(verdict.claim).to_bytes().len(), 11);
+        assert_eq!(Message::Verdict(verdict).to_bytes().len(), 12);
+        for message in every_message() {
+            let length = message.to_bytes().len();
+            match &message {
+                Message::ItemOut(_) => assert!((36..=45).contains(&length), "{message:?}"),
+                Message::ItemBreak(_) => assert_eq!(length, 8),
+                Message::Scatter(scatter) => assert_eq!(length, 23 + 12 * scatter.to.len()),
+                _ => {}
+            }
+        }
         for message in every_message() {
             match &message {
                 // Issue #9: a race's start lists its players (16 bytes each): 213 bytes with 12.
@@ -1150,6 +1762,122 @@ mod tests {
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 3]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 13]));
         assert!(invalid(&[v, PONG, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
+        // Issue #53: a kart holding out impossible items; a claim on an unknown pickup, with
+        // three draws, of a kart beyond the grid; a verdict's flag of 2; an item thrown that is
+        // not an object, held, or that moves as it cannot; a hit without a kart; a scatter of
+        // nothing or of too many croquettes.
+        let items_at = kart.len() - 1;
+        for value in [0b100, 0b0001, 0b1_1001, 0b1_1011, 0b10_0101, 0b1000_0101] {
+            let mut bad = kart.clone();
+            bad[items_at] = value;
+            assert!(invalid(&bad), "items {value:#b}");
+        }
+        for value in [0b0101, 0b1101, 0b1_0101, 0b1_0110] {
+            let mut good = kart.clone();
+            good[items_at] = value;
+            assert!(Message::decode(&good).is_ok(), "items {value:#b}");
+        }
+        let claim = Claim {
+            session: 1,
+            pickup: Pickup::Box {
+                index: 1,
+                draw: 2,
+                draws: 2,
+                gap: 3.0,
+            },
+            kart: 4,
+            tick: 5,
+        };
+        let bytes = Message::Claim(claim).to_bytes();
+        assert!(Message::decode(&bytes).is_ok());
+        let mut bad = bytes.clone();
+        bad[3] = 3;
+        assert!(invalid(&bad), "unknown pickup");
+        let mut bad = bytes.clone();
+        bad[8] = 3;
+        assert!(invalid(&bad), "three draws");
+        let mut bad = bytes.clone();
+        bad[13] = MAX_PLAYERS as u8;
+        assert!(invalid(&bad), "kart beyond the grid");
+        let mut verdict = Message::Verdict(Verdict {
+            claim,
+            granted: true,
+        })
+        .to_bytes();
+        *verdict.last_mut().unwrap() = 2;
+        assert!(invalid(&verdict));
+        let out = ItemOut {
+            session: 1,
+            id: ItemId { owner: 2, seq: 3 },
+            item: ItemKind::Pelote,
+            tick: 4,
+            position: [0.0; 3],
+            velocity: [42.0, 0.0, 0.0],
+            motion: OutMotion::Rolling {
+                bounces_left: 5,
+                fall: 0.0,
+            },
+        };
+        let bytes = Message::ItemOut(out).to_bytes();
+        assert!(Message::decode(&bytes).is_ok());
+        // Not an object (a piment), a kart beyond the grid, the number of what a kart holds
+        // out, an unknown motion, a pelote on the ground.
+        for changes in [
+            &[(6, 3)][..],
+            &[(6, 255)],
+            &[(3, MAX_PLAYERS as u8)],
+            &[(4, 0xff), (5, 0xff)],
+            &[(35, 4)],
+            &[(35, 0)],
+        ] {
+            let mut bad = bytes.clone();
+            for (at, value) in changes {
+                bad[*at] = *value;
+            }
+            assert!(invalid(&bad), "item out: {changes:?}");
+        }
+        for (item, motion) in [
+            (ItemKind::Pelure, OutMotion::Dive { target: None }),
+            (ItemKind::Abeille, OutMotion::Ground),
+            (ItemKind::Pelote, OutMotion::Dive { target: Some(1) }),
+        ] {
+            let bad = Message::ItemOut(ItemOut {
+                item,
+                motion,
+                ..out
+            })
+            .to_bytes();
+            assert!(invalid(&bad), "{item:?} {motion:?}");
+        }
+        let hit = Message::ItemBreak(ItemBreak {
+            session: 1,
+            id: ItemId { owner: 2, seq: 3 },
+            kart: Some(4),
+            landed: true,
+        })
+        .to_bytes();
+        let mut bad = hit.clone();
+        bad[6] = NO_KART;
+        assert!(invalid(&bad), "a hit without a kart");
+        let mut bad = hit.clone();
+        bad[6] = MAX_PLAYERS as u8;
+        assert!(invalid(&bad), "a kart beyond the grid");
+        let scatter = Message::Scatter(Scatter {
+            session: 1,
+            kart: 2,
+            loss: 3,
+            tick: 4,
+            from: [0.0; 3],
+            to: vec![[1.0; 3]],
+        })
+        .to_bytes();
+        let count_at = scatter.len() - 13;
+        for count in [0, MAX_SCATTER as u8 + 1] {
+            let mut bad = scatter.clone();
+            bad[count_at] = count;
+            bad.extend(std::iter::repeat_n(0, 12 * usize::from(count.max(1) - 1)));
+            assert!(invalid(&bad), "{count} croquettes");
+        }
         // A float that is not finite.
         let mut grab = Message::Grab(Grab {
             grabber: 0,

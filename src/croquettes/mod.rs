@@ -18,11 +18,11 @@
 //!
 //! Everything runs in `FixedUpdate` at 60 Hz ([`CroquetteSystems`]): after the karts' input and
 //! the race gate, before the karts drive, so a pick-up boosts the kart on this very tick. Online
-//! (issue #9, `level::Online`), nothing runs and the track's croquettes are hidden: they are not
-//! shared yet. Pure
-//! logic in `logic.rs`; visuals in `visual.rs` ([`CroquetteVisualPlugin`]); the HUD counter is in
-//! `crate::ui`, the sounds in `crate::audio`, both fed by [`CroquettePickedUp`] and
-//! [`CroquettesLost`].
+//! (issue #53), the same rules run for our karts, and `crate::net` shares them: the host decides
+//! who got a croquette ([`CroquetteTaken`]: the pick-up here is a prediction), the victim tells
+//! where its lost croquettes fly. Pure logic in `logic.rs`; visuals in `visual.rs`
+//! ([`CroquetteVisualPlugin`]); the HUD counter is in `crate::ui`, the sounds in `crate::audio`,
+//! both fed by [`CroquettePickedUp`] and [`CroquettesLost`].
 
 mod logic;
 mod tuning;
@@ -65,6 +65,16 @@ pub struct CroquettePickedUp {
     pub count: u8,
 }
 
+/// `kart` picked up `croquette` (a croquette of the track, or a scattered one, gone now), which
+/// gave it `gained` croquettes (0 at the maximum). Online (issue #53), its peer asks the host:
+/// given to another kart, the count goes back down (the mini-boost stays).
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct CroquetteTaken {
+    pub croquette: Entity,
+    pub kart: Entity,
+    pub gained: u8,
+}
+
 /// `kart` lost `lost` croquettes (they fly out), and now holds `count`.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct CroquettesLost {
@@ -88,6 +98,7 @@ impl Plugin for CroquettePlugin {
             .add_message::<LoseCroquettes>()
             .add_message::<CroquettePickedUp>()
             .add_message::<CroquettesLost>()
+            .add_message::<CroquetteTaken>()
             // Every kart holds croquettes; every croquette spot of the track is a croquette.
             .register_required_components::<Kart, Croquettes>()
             .register_required_components::<CroquetteSpot, TrackCroquette>()
@@ -108,7 +119,6 @@ impl Plugin for CroquettePlugin {
                     update_speed_factors,
                 )
                     .chain()
-                    .run_if(not(resource_exists::<crate::level::Online>))
                     .in_set(CroquetteSystems),
             );
     }
@@ -245,6 +255,7 @@ fn pick_up_croquettes(
     loose: Query<(Entity, &LooseCroquette)>,
     mut karts: Query<(Entity, &Transform, &KartState, &mut Croquettes, &mut Boost), With<Kart>>,
     mut picked: MessageWriter<CroquettePickedUp>,
+    mut taken: MessageWriter<CroquetteTaken>,
 ) {
     grid.clear();
     for (entity, transform, croquette) in &track {
@@ -280,12 +291,17 @@ fn pick_up_croquettes(
                         commands.entity(entry.entity).try_despawn();
                     }
                 }
-                held.gain(1, tuning.max_held);
+                let gained = held.gain(1, tuning.max_held);
                 boost.add(tuning.pickup_boost_strength, tuning.pickup_boost_duration);
                 picked.write(CroquettePickedUp {
                     kart,
                     at: entry.position,
                     count: held.count,
+                });
+                taken.write(CroquetteTaken {
+                    croquette: entry.entity,
+                    kart,
+                    gained,
                 });
             },
         );

@@ -26,8 +26,9 @@ use crate::ui::{CroquetteCounterAnimation, HudRoot, ResultsScreen};
 /// driving or a race). What follows from it, outside the network:
 /// - **no pause**: the menus (options, selection screen, admin panel) leave the game running, our
 ///   kart goes on existing for the others (it coasts while a menu is open);
-/// - **no item and no croquette** yet: they are not shared yet (issue #53, the next step),
-///   so they are off (`ItemTuning::enabled` and `CroquetteTuning` untouched);
+/// - **items and croquettes shared** (issue #53): each peer judges only what is its own (an item
+///   touching its karts, the shields its karts hold out), `crate::net` tells the others and the
+///   host decides who took a box or a croquette (`items::collide_items`);
 /// - **no local restart** of a race: the host starts the races.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Online;

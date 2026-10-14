@@ -14,7 +14,7 @@ use crate::level::LevelScoped;
 
 pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, ITEM_BOX_HEIGHT, ItemBoxSpot,
-    TrackHandle, TrickRamp,
+    SpotIndex, TrackHandle, TrickRamp,
 };
 pub use data::{OffroadZone, TrackData};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};

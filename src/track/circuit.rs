@@ -82,6 +82,12 @@ pub struct CroquetteSpot;
 /// Height of a croquette's center above the road (m): about the middle of a kart's body.
 pub const CROQUETTE_HEIGHT: f32 = 0.6;
 
+/// The number of an item box or a croquette of the circuit, in the order of the circuit file
+/// (boxes and croquettes counted apart): the same on every peer (issue #53, `crate::net`: the
+/// host decides who took it).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SpotIndex(pub u16);
+
 /// If the circuit file is missing or invalid, say why and fall back to the test ground
 /// instead of leaving a blank screen.
 pub fn fall_back_when_loading_fails(
@@ -348,10 +354,13 @@ fn spawn_spots(
             });
     }
 
+    let mut index = 0u16;
     for row in &data.item_boxes {
         let sample = at(row.at);
         for offset in &row.offsets {
+            index += 1;
             commands.spawn((
+                SpotIndex(index - 1),
                 LevelScoped,
                 Name::new(if row.double {
                     "Double item box"
@@ -365,11 +374,14 @@ fn spawn_spots(
         }
     }
 
+    let mut index = 0u16;
     for line in &data.croquettes {
         let start = center.param_to_distance(line.from);
         for i in 0..line.count {
             let sample = center.at(start + i as f32 * line.spacing);
+            index += 1;
             commands.spawn((
+                SpotIndex(index - 1),
                 LevelScoped,
                 Name::new("Croquette"),
                 CroquetteSpot,

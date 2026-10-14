@@ -24,13 +24,13 @@
 //!   another peer's kart goes to everyone; the peer that has authority over the target decides
 //!   (the victim decides), and its answer goes to everyone, for the visuals.
 //!
-//! The items and the croquettes are off online for now (`level::Online`): sharing them is issue
-//! #53, the next step.
+//! The items and the croquettes (issue #53) are shared by `items_online.rs`.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
 use super::interp::TICK_MS;
+use super::items_online::OnlineItems;
 use super::protocol::{
     Grab, KartId, Message, PeerKey, Progress, RaceStart, Strike, StrikeReply, TetherBreak,
 };
@@ -258,6 +258,7 @@ fn online_mode(
                 }
             }
             commands.remove_resource::<KartSync>();
+            commands.remove_resource::<OnlineItems>();
             commands.remove_resource::<OnlineSlot>();
             commands.remove_resource::<OnlineLevel>();
             commands.remove_resource::<OnlineRace>();
@@ -274,6 +275,7 @@ fn online_mode(
             let seat = seat_of(lobby);
             info!("network: online driving, seat {seat}");
             commands.insert_resource(KartSync::new(me, seat as KartId, grid.seed));
+            commands.insert_resource(OnlineItems::default());
             commands.insert_resource(OnlineSlot(seat));
             commands.insert_resource(Online);
             commands.insert_resource(OnlineLevel {
@@ -552,7 +554,7 @@ fn tag_local_bots(
 }
 
 /// The local tick of this simulation tick (the fixed clock at the end of the step).
-fn local_tick(time: &Time<Fixed>) -> u32 {
+pub(super) fn local_tick(time: &Time<Fixed>) -> u32 {
     (time.elapsed_secs_f64() * crate::TICK_HZ).round() as u32
 }
 

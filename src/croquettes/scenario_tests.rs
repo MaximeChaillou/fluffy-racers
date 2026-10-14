@@ -729,6 +729,7 @@ fn after_an_item_hit_the_invincibility_stat_protects_the_kart() {
                 kart,
                 by: Entity::PLACEHOLDER,
                 item: ItemKind::Pelure,
+                object: None,
             });
         }
         arena.tick(KartInput::default());
