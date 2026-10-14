@@ -80,7 +80,22 @@ Modèle inspiré des jeux de kart console : **chaque joueur fait autorité sur s
 - Deux canaux :
   - **non fiable** : états des karts à haute fréquence ;
   - **fiable** : événements (lobby, départ, objets, touches, interactions entre karts, arrivée).
-- **Hôte** = le pair au plus petit `PeerId`. Il arbitre l'état de la course : lobby, choix du circuit, compte à rebours et tick de départ, boîtes d'objets (qui a pris quoi), classement final. Si l'hôte part, le suivant prend le relais.
+- **Hôte** = le pair au plus petit `PeerId` parmi les joueurs assis (voir « Rooms et salon »). Il arbitre l'état de la course : lobby, choix du circuit, compte à rebours et tick de départ, boîtes d'objets (qui a pris quoi), classement final. Si l'hôte part, le suivant prend le relais.
+
+### Rooms et salon (#7)
+
+Le code est dans `src/net/`. Tout ce qui n'est pas le socket ou la fenêtre est de la logique pure, testée sans Bevy :
+
+- **`room.rs`** : le code d'une room (5 caractères sans 0, O, 1, I, L), `?room=CODE&signal=…&pseudo=…` ou `--room CODE --signal … --pseudo …`, le lien d'invitation. La room s'appelle `fluffy-racers-CODE` sur le serveur de mise en relation (`ws://localhost:3536` par défaut).
+- **`protocol.rs`** : un message par paquet, en petit-boutiste. Octet 0 : la version du protocole (`PROTOCOL_VERSION`) ; octet 1 : le type ; puis les champs. Le décodage ne panique jamais : un paquet vide, tronqué, trop long, d'un type inconnu, d'une autre version ou avec une valeur impossible (booléen à 2, flottant non fini) est refusé avec sa raison. Messages : `Hello` (nom, pièces du kart, prêt, assis), `Ready`, `Seats`, `RoomFull`, `Bye`, `StartRace` (graine, circuit, tours, bots, heure du compte à rebours sur l'horloge de l'hôte : envoyé par #9), les quatre événements d'interaction de #34 (`Strike`, `StrikeReply`, `Grab`, `TetherBreak`, conversions dans `net/interactions.rs`), `Ping` et `Pong`. Seuls les pings passent par le canal non fiable.
+- **`lobby.rs`** : le salon vu d'un pair. Il lit les messages reçus et les pairs qui arrivent ou partent, et produit les messages à envoyer :
+  - **places** : une room a 12 places. Les premiers pairs d'une room vide s'assoient d'eux-mêmes 2,5 s après leur arrivée, si aucun pair rencontré n'est assis (deux amis qui ouvrent le lien en même temps s'assoient tous les deux, puis se mettent d'accord). Ensuite, l'hôte assoit les nouveaux par ordre d'arrivée et envoie la liste des places (`Seats`) ; au-delà de 12, il répond `RoomFull` et le nouveau s'en va, avec un message ;
+  - **hôte** : le plus petit `PeerId` parmi les joueurs assis. Chacun le calcule de son côté ; s'il part, le suivant prend le relais sans rien échanger. Un nouveau n'est jamais hôte avant d'être assis ;
+  - **départs** : `Bye`, ou le socket qui signale le pair parti (onglet fermé : le serveur de mise en relation prévient les autres) ;
+  - **ping et horloge** (`clock.rs`) : un ping par seconde vers chaque pair. Le pong rapporte l'horloge de celui qui répond ; on garde le décalage de l'échange le plus rapide parmi les 8 derniers. `Lobby::host_time_ms` donne l'heure de l'hôte : c'est l'horloge commune dont #9 tirera le tick de course ;
+  - un pair d'une **autre version** est listé à part : il ne s'assoit pas, n'est jamais hôte et ne reçoit plus rien.
+- **`socket.rs`** : `matchbox_socket` 0.14 utilisé directement, deux canaux (fiable puis non fiable). Sa boucle de messages tourne sur le pool de tâches d'E/S de Bevy, en natif comme dans le navigateur. Un système la sonde à chaque image. Deux pièges de la crate sont évités : sa boucle panique si on envoie à un pair dont les canaux ne sont pas encore ouverts (on n'envoie qu'aux pairs annoncés connectés), et un paquet peut arriver avant l'annonce (il attend). En quittant, seul le canal fiable est fermé : le `Bye` part, puis la boucle s'arrête d'elle-même.
+- **`mod.rs`** : `NetPlugin`, avec `NetSession` (seulement quand on est dans une room) et les actions (`NetAction`) ; **`ui.rs`** : la fenêtre du salon (L) et la room demandée au démarrage. Sans room, pas de socket : seules la touche L et la lecture des actions tournent, le jeu solo est inchangé.
 
 ### Synchronisation
 

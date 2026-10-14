@@ -1,0 +1,378 @@
+//! The lobby window and the room asked for at startup (issue #7, see `super`). Only with a
+//! renderer: the headless tests drive the network with [`NetAction`]s, which the window's
+//! buttons write too.
+//!
+//! Like the other windows, it costs nothing once closed: the egui context only exists while one
+//! of them is open (`admin::ui::attach_egui_context`). It does not pause the game: the race goes
+//! on (solo, until issue #9) while the players gather.
+
+use bevy::prelude::*;
+use bevy_egui::egui::{self, Color32, RichText};
+use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
+
+#[cfg(target_arch = "wasm32")]
+use super::NetSystems;
+use super::{
+    DEFAULT_SIGNAL_URL, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus,
+    invite_link, native_command, now_ms,
+};
+use crate::characters::{PartKind, Roster};
+
+const GOOD: Color32 = Color32::from_rgb(110, 210, 120);
+const BAD: Color32 = Color32::from_rgb(240, 110, 90);
+const HOST: Color32 = Color32::from_rgb(255, 190, 70);
+
+/// « Copié ! » stays this long (s).
+const COPIED_SECONDS: f64 = 2.0;
+
+pub struct NetUiPlugin;
+
+impl Plugin for NetUiPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<EguiPlugin>() {
+            app.add_plugins(EguiPlugin::default());
+        }
+        app.insert_resource(EguiGlobalSettings {
+            // The context goes on the camera only while a window needs it.
+            auto_create_primary_context: false,
+            ..default()
+        })
+        .init_resource::<LobbyUiState>()
+        .add_systems(Startup, join_launch_room)
+        .add_systems(
+            EguiPrimaryContextPass,
+            lobby_window.run_if(|window: Res<LobbyWindow>| window.open),
+        );
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(Update, page_address.after(NetSystems));
+    }
+}
+
+#[derive(Resource, Default)]
+struct LobbyUiState {
+    /// When « Copier » was last clicked (real time, s).
+    copied_at: Option<f64>,
+}
+
+/// `?room=CODE&signal=…&pseudo=…` in the page address, or `--room CODE --signal … --pseudo …`
+/// natively: the settings, and the room to join.
+fn join_launch_room(mut settings: ResMut<NetSettings>, mut actions: MessageWriter<NetAction>) {
+    let options = platform::launch_options();
+    if let Some(signal) = options.signal {
+        settings.signal = signal;
+    }
+    if options.pseudo.is_some() {
+        settings.pseudo = options.pseudo;
+    }
+    if let Some(room) = options.room {
+        actions.write(NetAction::Join(room));
+    }
+}
+
+/// The room's code in the address bar (`?room=CODE`), so that a reload stays in it and the
+/// address is the invitation; removed when the player leaves.
+#[cfg(target_arch = "wasm32")]
+fn page_address(session: Option<Res<NetSession>>, mut shown: Local<Option<super::RoomCode>>) {
+    let room = session.map(|session| session.room.clone());
+    if *shown != room {
+        platform::show_room(room.as_ref());
+        *shown = room;
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod platform {
+    use super::super::{LaunchOptions, RoomCode, query_with_room};
+
+    pub fn launch_options() -> LaunchOptions {
+        web_sys::window()
+            .and_then(|window| window.location().search().ok())
+            .map(|query| LaunchOptions::from_query(&query))
+            .unwrap_or_default()
+    }
+
+    /// The game's page, without its query: the base of the invitation link.
+    pub fn page() -> Option<String> {
+        let location = web_sys::window()?.location();
+        Some(format!(
+            "{}{}",
+            location.origin().ok()?,
+            location.pathname().ok()?
+        ))
+    }
+
+    pub fn show_room(room: Option<&RoomCode>) {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let location = window.location();
+        let (Ok(path), Ok(query), Ok(hash)) =
+            (location.pathname(), location.search(), location.hash())
+        else {
+            return;
+        };
+        let address = format!("{path}{}{hash}", query_with_room(&query, room));
+        if let Ok(history) = window.history() {
+            let null = web_sys::wasm_bindgen::JsValue::NULL;
+            let _ = history.replace_state_with_url(&null, "", Some(&address));
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod platform {
+    use super::super::LaunchOptions;
+
+    pub fn launch_options() -> LaunchOptions {
+        LaunchOptions::from_args(std::env::args().skip(1))
+    }
+
+    /// Natively, no page: the invitation is a command line.
+    pub fn page() -> Option<String> {
+        None
+    }
+}
+
+fn lobby_window(
+    mut contexts: EguiContexts,
+    session: Option<Res<NetSession>>,
+    settings: Res<NetSettings>,
+    roster: Option<Res<Roster>>,
+    time: Res<Time<Real>>,
+    mut state: ResMut<LobbyUiState>,
+    mut actions: MessageWriter<NetAction>,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    // The game's keys (Espace, the arrows) must not click or move through the window's buttons:
+    // no widget keeps the keyboard focus.
+    if let Some(focused) = ctx.memory(|m| m.focused()) {
+        ctx.memory_mut(|m| m.surrender_focus(focused));
+    }
+    let now = time.elapsed_secs_f64();
+    egui::Window::new("En ligne")
+        .id(egui::Id::new("fluffy-lobby"))
+        .anchor(egui::Align2::LEFT_TOP, [10.0, 110.0])
+        .collapsible(false)
+        .resizable(false)
+        .default_width(340.0)
+        .show(ctx, |ui| {
+            match session.as_deref() {
+                None => offline(ui, &settings, &mut actions),
+                Some(session) => in_room(
+                    ui,
+                    session,
+                    roster.as_deref(),
+                    now_ms(&time),
+                    now,
+                    &mut state,
+                    &mut actions,
+                ),
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Fermer").clicked() {
+                    actions.write(NetAction::Close);
+                }
+                ui.small("L : ouvrir / fermer");
+            });
+        });
+}
+
+/// No room yet.
+fn offline(ui: &mut egui::Ui, settings: &NetSettings, actions: &mut MessageWriter<NetAction>) {
+    ui.label("Joue avec tes amis : crée une partie, puis envoie-leur le lien.");
+    if ui
+        .button(RichText::new("Créer une partie").strong().size(16.0))
+        .clicked()
+    {
+        actions.write(NetAction::CreateRoom);
+    }
+    ui.small("Pour rejoindre une partie : ouvre le lien d'invitation (?room=CODE).");
+    signal_hint(ui, &settings.signal);
+}
+
+fn signal_hint(ui: &mut egui::Ui, signal: &str) {
+    ui.small(format!("Mise en relation : {signal}"));
+    if signal == DEFAULT_SIGNAL_URL {
+        ui.small("matchbox_server doit tourner sur ton ordinateur (voir le README).");
+    }
+}
+
+fn in_room(
+    ui: &mut egui::Ui,
+    session: &NetSession,
+    roster: Option<&Roster>,
+    now_ms: u64,
+    now: f64,
+    state: &mut LobbyUiState,
+    actions: &mut MessageWriter<NetAction>,
+) {
+    let room = &session.room;
+    ui.label(RichText::new(format!("Partie {room}")).strong().size(18.0));
+    let link = platform::page()
+        .map(|page| invite_link(&page, room, &session.signal))
+        .unwrap_or_else(|| native_command(room, &session.signal));
+    ui.label(RichText::new(&link).monospace().small());
+    ui.horizontal(|ui| {
+        if ui.button("Copier le lien").clicked() {
+            ui.ctx().copy_text(link.clone());
+            state.copied_at = Some(now);
+        }
+        if state.copied_at.is_some_and(|at| now - at < COPIED_SECONDS) {
+            ui.label(RichText::new("Copié !").color(GOOD));
+        }
+    });
+    ui.separator();
+    match &session.status {
+        NetStatus::Connecting => {
+            ui.label("Connexion au serveur de mise en relation…");
+            signal_hint(ui, &session.signal);
+        }
+        NetStatus::Failed(reason) => {
+            ui.label(
+                RichText::new(format!(
+                    "Impossible de joindre le serveur de mise en relation {}.",
+                    session.signal
+                ))
+                .color(BAD),
+            );
+            if session.signal == DEFAULT_SIGNAL_URL {
+                ui.label(
+                    "Lance matchbox_server sur ton ordinateur (voir le README), puis réessaie.",
+                );
+            }
+            ui.small(reason);
+            if ui.button("Réessayer").clicked() {
+                actions.write(NetAction::Join(room.clone()));
+            }
+        }
+        NetStatus::Full => {
+            ui.label(
+                RichText::new(format!(
+                    "La partie {room} est pleine ({MAX_PLAYERS} joueurs)."
+                ))
+                .color(BAD),
+            );
+            if ui.button("Créer une autre partie").clicked() {
+                actions.write(NetAction::CreateRoom);
+            }
+        }
+        NetStatus::InRoom => {
+            if let Some(lobby) = &session.lobby {
+                lobby_list(ui, session, lobby, roster, now_ms, actions);
+            }
+        }
+    }
+    ui.separator();
+    if ui.button("Quitter la partie").clicked() {
+        actions.write(NetAction::Leave);
+    }
+}
+
+fn lobby_list(
+    ui: &mut egui::Ui,
+    session: &NetSession,
+    lobby: &super::Lobby,
+    roster: Option<&Roster>,
+    now_ms: u64,
+    actions: &mut MessageWriter<NetAction>,
+) {
+    if !lobby.seated() {
+        ui.label("En attente d'une place dans la partie…");
+    } else if lobby.is_host() {
+        ui.label("Tu es l'hôte de la partie.");
+    }
+    let rows = session.players(now_ms);
+    let seated = rows.iter().filter(|row| row.seated).count();
+    ui.small(format!("{seated} joueur(s) sur {MAX_PLAYERS}"));
+    egui::Grid::new("lobby-players")
+        .num_columns(4)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Joueur").strong());
+            ui.label(RichText::new("Animal").strong());
+            ui.label(RichText::new("Ping").strong());
+            ui.label(RichText::new("Prêt").strong());
+            ui.end_row();
+            for row in &rows {
+                let mut name = if row.name.is_empty() {
+                    "…".to_string()
+                } else {
+                    row.name.clone()
+                };
+                if row.me {
+                    name.push_str(" (toi)");
+                }
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(name).strong());
+                    ui.small(format!("#{}", row.key.tag()));
+                    if row.host {
+                        ui.label(RichText::new("hôte").color(HOST));
+                    }
+                });
+                if let Some(version) = row.other_version {
+                    ui.label(RichText::new(format!("autre version ({version})")).color(BAD));
+                    ui.label("");
+                    ui.label("");
+                    ui.end_row();
+                    continue;
+                }
+                let animal = roster
+                    .map(|r| r.name(PartKind::Character, usize::from(row.loadout[0])))
+                    .unwrap_or("");
+                ui.label(if row.seated || row.me {
+                    animal
+                } else {
+                    "arrive…"
+                });
+                let ping = match (row.me, row.silent, row.ping_ms) {
+                    (true, _, _) => RichText::new("—"),
+                    (_, true, _) => RichText::new("muet").color(BAD),
+                    (_, _, Some(ms)) => RichText::new(format!("{ms:.0} ms")),
+                    (_, _, None) => RichText::new("…"),
+                };
+                ui.label(ping);
+                ui.label(if row.ready {
+                    RichText::new("prêt").color(GOOD)
+                } else {
+                    RichText::new("—")
+                });
+                ui.end_row();
+            }
+        });
+    if rows.iter().any(|row| row.other_version.is_some()) {
+        ui.small("Un joueur a une autre version du jeu : rechargez tous la page.");
+    }
+    ui.add_space(4.0);
+    let ready = lobby.profile().ready;
+    let label = if ready { "Pas prêt" } else { "Prêt !" };
+    if ui
+        .add_enabled(
+            lobby.seated(),
+            egui::Button::new(RichText::new(label).strong().size(16.0)),
+        )
+        .clicked()
+    {
+        actions.write(NetAction::Ready(!ready));
+    }
+    if lobby.all_ready() {
+        ui.label(RichText::new("Tout le monde est prêt !").color(GOOD));
+        ui.small("La course en ligne arrive avec une prochaine version : chacun court en solo.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Natively, the invitation is the command line (no page address).
+    #[test]
+    fn natively_there_is_no_page() {
+        assert_eq!(platform::page(), None);
+        // `cargo test` gives no `--room`.
+        assert_eq!(platform::launch_options().room, None);
+    }
+}
