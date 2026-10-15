@@ -289,6 +289,41 @@ impl ItemSlots {
         }
     }
 
+    /// Online (issue #61): the host refused the oreiller géant this kart drew (its rules forbid
+    /// one now): the kart gets `count` of `item` instead (the same draw without the oreiller, as
+    /// solo), in the slot that holds the oreiller (the reserve first: the later draw), its
+    /// roulette going on. Returns false when no slot holds one (it was thrown already).
+    pub fn swap_pillow(&mut self, item: ItemKind, count: u8) -> bool {
+        for slot in [&mut self.reserve, &mut self.hand] {
+            match *slot {
+                Slot::Spinning {
+                    item: ItemKind::OreillerGeant,
+                    ticks,
+                    ..
+                } => {
+                    *slot = Slot::Spinning { item, count, ticks };
+                    return true;
+                }
+                Slot::Ready {
+                    item: ItemKind::OreillerGeant,
+                    ..
+                } => {
+                    *slot = Slot::Ready { item, count };
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Whether a slot holds `item` (ready, or in its roulette).
+    pub fn holds(&self, item: ItemKind) -> bool {
+        [self.hand, self.reserve]
+            .iter()
+            .any(|slot| slot.item().is_some_and(|(held, _)| held == item))
+    }
+
     /// Dégonflé (issue #18): its items fall: both slots (roulettes and the piment doré's window
     /// too) and what it held out. The draws go on counting. Returns whether it lost anything.
     pub fn drop_all(&mut self) -> bool {
@@ -666,5 +701,54 @@ mod tests {
         slots.tick();
         slots.revoke([true, false]);
         assert_eq!(slots.hand, ready(Abeille, 1));
+    }
+
+    /// Issue #61: the host refused an oreiller géant: the slot that holds it gets the other draw
+    /// instead, its roulette going on (the reserve first); nothing to swap once it is thrown.
+    #[test]
+    fn a_refused_oreiller_becomes_the_other_draw() {
+        let mut slots = ItemSlots::default();
+        slots.give(OreillerGeant, 1, 90);
+        slots.tick();
+        assert!(slots.holds(OreillerGeant));
+        assert!(slots.swap_pillow(Piment, 3));
+        assert_eq!(
+            slots.hand,
+            Slot::Spinning {
+                item: Piment,
+                count: 3,
+                ticks: 89
+            }
+        );
+        assert!(!slots.holds(OreillerGeant));
+        assert!(!slots.swap_pillow(Pelure, 1), "no oreiller left");
+        // Two oreillers (two boxes, two claims): the reserve's goes first; a ready one too.
+        let mut two = ItemSlots::default();
+        two.give(OreillerGeant, 1, 0);
+        two.give(OreillerGeant, 1, 30);
+        assert!(two.swap_pillow(Bombe, 1));
+        assert_eq!(two.hand, ready(OreillerGeant, 1));
+        assert!(matches!(
+            two.reserve,
+            Slot::Spinning {
+                item: Bombe,
+                ticks: 30,
+                ..
+            }
+        ));
+        assert!(two.swap_pillow(Chantilly, 1));
+        assert_eq!(two.hand, ready(Chantilly, 1));
+        // Thrown: the slots no longer hold it.
+        let mut thrown = ItemSlots::default();
+        thrown.give(OreillerGeant, 1, 0);
+        assert_eq!(
+            press(&mut thrown, false).0,
+            Use::Instant {
+                item: OreillerGeant,
+                back: false
+            }
+        );
+        assert!(!thrown.swap_pillow(Piment, 1));
+        assert_eq!(thrown, ItemSlots::default());
     }
 }

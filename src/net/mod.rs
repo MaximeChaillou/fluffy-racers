@@ -84,12 +84,13 @@ pub use lobby::{
 };
 pub use netsim::{NetSim, NetSimTuning};
 pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
-pub use pickups::{Arbiter, ClaimKey};
+pub use pickups::{Arbiter, ClaimKey, Pillow, PillowRules};
 pub use protocol::{
-    BlastOut, Channel, Claim, DecodeError, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId, ItemOut,
-    KartId, KartSnapshot, LooseId, MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER,
-    Message, OUT_ITEMS, OutMotion, PROTOCOL_VERSION, PeerKey, Pickup, Profile, Progress, RaceOver,
-    RaceStart, Scatter, Spot, Strike, StrikeReply, TetherBreak, Verdict,
+    BlastOut, Channel, Claim, DecodeError, EFFECT_ITEMS, EffectOut, Grab, HELD_ITEMS, Honk,
+    ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_KART_STATE_BYTES,
+    MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow,
+    PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS, RaceOver,
+    RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use room::{
@@ -521,7 +522,8 @@ fn poll_session(
                 match Message::decode(&bytes) {
                     Ok(message) => {
                         let host = lobby.host();
-                        // Issue #53: the items and the croquettes (#18: explosions, klaxons).
+                        // Issue #53: the items and the croquettes (#18: explosions, klaxons;
+                        // #61: effects, rams, oreillers).
                         if let (
                             Message::Claim(_)
                             | Message::Verdict(_)
@@ -529,7 +531,11 @@ fn poll_session(
                             | Message::ItemBreak(_)
                             | Message::Scatter(_)
                             | Message::Blast(_)
-                            | Message::Honk(_),
+                            | Message::Honk(_)
+                            | Message::Effect(_)
+                            | Message::Rammed(_)
+                            | Message::PillowGone(_)
+                            | Message::Retarget(_),
                             Some(items),
                         ) = (&message, items.as_deref_mut())
                         {

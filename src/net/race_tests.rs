@@ -1027,23 +1027,20 @@ fn two_games_race_through_a_local_signaling_server() {
         go, starts[0].start_tick
     );
     assert!(go[0].unwrap().abs_diff(go[1].unwrap()) <= 2);
-    // Issue #18: the players start with the items of phase 2 that play online (their bot
-    // brains use them): a bombe, and a klaxon-canard or a piment doré.
-    for (index, (_, app)) in games.iter_mut().enumerate() {
-        let mut slots = app
-            .world_mut()
-            .get_mut::<crate::items::ItemSlots>(drivers[index])
-            .unwrap();
-        slots.give(crate::items::ItemKind::Bombe, 1, 0);
-        let second = if index == 0 {
-            crate::items::ItemKind::KlaxonCanard
-        } else {
-            crate::items::ItemKind::PimentDore
-        };
-        slots.give(second, 1, 0);
-    }
+    // Issue #18: the players start with the items of phase 2 (their bot brains use them); since
+    // issue #61, every one of them, one after the other (each time their slots are empty): Ana
+    // an oreiller géant, a chantilly, a fusée, a bombe and a klaxon-canard; Bob a dégonflage, a
+    // super câlin, a bombe, an oreiller géant and a piment doré.
+    use crate::items::ItemKind::*;
+    let mut queues = [
+        vec![OreillerGeant, Chantilly, Fusee, Bombe, KlaxonCanard],
+        vec![Degonflage, SuperCalin, Bombe, OreillerGeant, PimentDore],
+    ];
     let mut next_print = Instant::now();
     loop {
+        for (index, (_, app)) in games.iter_mut().enumerate() {
+            super::item_tests::feed(app, drivers[index], &mut queues[index]);
+        }
         update(&mut games);
         if games
             .iter()
@@ -1116,16 +1113,26 @@ fn two_games_race_through_a_local_signaling_server() {
         println!("{name}: {}", items.summary());
     }
     super::item_tests::assert_same_story(&games[0].1, &games[1].1);
-    // Issue #18: the bombes went out (and exploded) on both screens.
+    // Issue #18: the bombes went out (and exploded) on both screens. Issue #61: the chantilly
+    // and the dégonflage were told, the oreillers went out.
     for (name, app) in &games {
         let items = app.world().resource::<OnlineItems>();
-        let bombes = items
-            .log
-            .thrown
-            .iter()
-            .filter(|(_, item, _)| *item == crate::items::ItemKind::Bombe)
-            .count();
-        assert!(bombes >= 2, "{name}: {}", items.summary());
+        let thrown = |kind| {
+            items
+                .log
+                .thrown
+                .iter()
+                .filter(|(_, item, _)| *item == kind)
+                .count()
+        };
+        println!("{name}: items left to give: {queues:?}");
+        assert!(thrown(Bombe) >= 1, "{name}: {}", items.summary());
+        assert!(thrown(OreillerGeant) >= 1, "{name}: {}", items.summary());
+        let effects: Vec<_> = items.log.effects.iter().map(|(_, item, _)| *item).collect();
+        assert!(
+            effects.contains(&Chantilly) && effects.contains(&Degonflage),
+            "{name}: {effects:?}"
+        );
     }
     println!("the whole race took {:.0} s", start.elapsed().as_secs_f32());
 }

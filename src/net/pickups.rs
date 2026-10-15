@@ -1,6 +1,7 @@
 //! Who picked up what (issue #53, `docs/ARCHITECTURE.md` § « Objets et croquettes en ligne »):
 //! the host decides which kart got an item box, a croquette of the track or a scattered
-//! croquette. Pure logic: no Bevy, no socket; unit-tested.
+//! croquette; since issue #61, whether a kart may have the oreiller géant it drew. Pure logic: no
+//! Bevy, no socket; unit-tested.
 //!
 //! - **Claims**: a kart touching a box or a croquette takes it at once on its own screen (its
 //!   roulette spins, its croquette counts: a prediction), and its peer sends a [`Claim`] to every
@@ -15,8 +16,19 @@
 //!   decides what the old one left undecided, from the same grants: nothing is given twice, and a
 //!   claim is never lost. A verdict that comes twice (the old host's and the new one's) counts
 //!   once: the first one stands.
+//! - **The oreiller géant** (issue #61, GD § 8): a box draw that gives one is also a claim
+//!   ([`Pickup::Pillow`]). The host grants it when its box was granted and the rules allow one
+//!   on the claim's common tick ([`PillowRules`], with `items::pillow_allowed`, the solo rules):
+//!   not before 20 s of race, none while another one is in the race, 30 s after the last one
+//!   granted. Two claims on the same tick: the better grid slot. The record knows every oreiller
+//!   in the race ([`Pillow`]): granted (in its kart's slots), thrown (`ItemOut`), until its flight
+//!   ends, its kart's peer says it is gone without a throw (`PillowGone`) or leaves. When the host
+//!   changes, every peer sends again the grants of the oreillers it knows, and the new host waits
+//!   a little ([`Arbiter::handover`]) before deciding an oreiller: a grant of the old host that
+//!   reached another peer but not it arrives first, and two oreillers are never in the race.
 
-use super::protocol::{Claim, KartId, PeerKey, Spot, Verdict};
+use super::protocol::{Claim, ItemId, KartId, PeerKey, Pickup, Spot, Verdict};
+use crate::items::pillow_allowed;
 
 /// A claim, whatever its draws: its spot, its kart, its tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -38,6 +50,42 @@ impl ClaimKey {
 
 /// The refused claims kept to recognize a repeat, at most.
 const REFUSED_KEPT: usize = 256;
+/// The oreillers known gone kept (a grant that comes after its kart's peer said it was gone), at
+/// most.
+const GONE_KEPT: usize = 32;
+
+/// An oreiller géant in the race, as the record knows it (issue #61).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pillow {
+    /// Its granted claim (`None`: seen thrown before its grant came).
+    pub claim: Option<Claim>,
+    /// The peer that claimed it (its kart's): if it leaves, the oreiller is gone.
+    pub from: Option<PeerKey>,
+    pub kart: KartId,
+    /// Thrown: its id (it flies until its copy here is gone); `None`: in its kart's slots.
+    pub thrown: Option<ItemId>,
+}
+
+/// The oreiller géant's rules on the common clock (issue #61), as the host applies them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PillowRules {
+    /// The common tick the race's ticks count from (its GO is race tick 1, as solo:
+    /// `Race::race_ticks`); `None`: no race, never an oreiller.
+    pub race_base: Option<u32>,
+    /// No oreiller before this race tick (20 s).
+    pub min_race_ticks: u32,
+    /// None within this many ticks of the last one granted (30 s).
+    pub cooldown_ticks: u32,
+}
+
+impl PillowRules {
+    /// No race: never an oreiller.
+    pub const NONE: Self = Self {
+        race_base: None,
+        min_race_ticks: 0,
+        cooldown_ticks: 0,
+    };
+}
 
 /// The record of the pickups of a session (a race, or free driving), the same on every peer;
 /// the host decides with it (see the module's documentation).
@@ -49,6 +97,14 @@ pub struct Arbiter {
     refused: Vec<ClaimKey>,
     /// The claims not decided yet, with the peer that sent them.
     pending: Vec<(PeerKey, Claim)>,
+    /// The oreillers géants in the race (issue #61).
+    pillows: Vec<Pillow>,
+    /// The latest oreillers known gone without a throw, by their claim.
+    gone: Vec<ClaimKey>,
+    /// The common tick of the last oreiller granted (its claim's).
+    last_pillow: Option<u32>,
+    /// After a change of host: no oreiller decided before this common tick.
+    hold_pillows_until: Option<u32>,
 }
 
 impl Arbiter {
@@ -88,29 +144,76 @@ impl Arbiter {
     }
 
     /// The host decides every claim it has (see the module's documentation): `respawn` gives the
-    /// respawn time of a spot in ticks (`None`: it never comes back). The verdicts go into `out`,
-    /// in their order, and into the record.
-    pub fn decide(&mut self, respawn: impl Fn(Spot) -> Option<u32>, out: &mut Vec<Verdict>) {
+    /// respawn time of a spot in ticks (`None`: it never comes back); the oreillers géants follow
+    /// `pillows` (issue #61), from common tick `now` on (after a change of host, they wait). The
+    /// verdicts go into `out`, in their order, and into the record.
+    pub fn decide(
+        &mut self,
+        respawn: impl Fn(Spot) -> Option<u32>,
+        pillows: &PillowRules,
+        now: u32,
+        out: &mut Vec<Verdict>,
+    ) {
         if self.pending.is_empty() {
             return;
         }
-        // Earlier first; on the same tick, the better grid slot.
-        self.pending
-            .sort_by_key(|(_, claim)| (claim.tick, claim.kart));
-        let pending = std::mem::take(&mut self.pending);
-        for (_, claim) in &pending {
-            let key = ClaimKey::of(claim);
-            let granted = self.taken(key.spot, key.tick, respawn(key.spot)).is_none();
-            let verdict = Verdict {
-                claim: *claim,
-                granted,
+        let mut pending = std::mem::take(&mut self.pending);
+        // Earlier first; on the same tick, the better grid slot; a box before the oreiller
+        // drawn from it.
+        pending.sort_by_key(|(_, claim)| {
+            (
+                claim.tick,
+                claim.kart,
+                matches!(claim.pickup, Pickup::Pillow { .. }),
+            )
+        });
+        let held = self.hold_pillows_until.is_some_and(|until| now < until);
+        let mut kept = 0;
+        for i in 0..pending.len() {
+            let (from, claim) = pending[i];
+            let pillow = matches!(claim.pickup, Pickup::Pillow { .. });
+            if pillow && held {
+                pending[kept] = pending[i];
+                kept += 1;
+                continue;
+            }
+            let key = ClaimKey::of(&claim);
+            let granted = if pillow {
+                self.pillow_allowed(&claim, pillows)
+            } else {
+                self.taken(key.spot, key.tick, respawn(key.spot)).is_none()
             };
-            self.record(&verdict);
+            let verdict = Verdict { claim, granted };
+            self.record_from(&verdict, Some(from));
             out.push(verdict);
         }
-        // Keep the allocation of the pending list.
+        // Keep the allocation of the pending list (nothing came in meanwhile).
+        pending.truncate(kept);
         self.pending = pending;
-        self.pending.clear();
+    }
+
+    /// Whether the oreiller géant of `claim` may be granted (issue #61): its box was, and the
+    /// solo rules allow one on its tick (`items::pillow_allowed`).
+    fn pillow_allowed(&self, claim: &Claim, rules: &PillowRules) -> bool {
+        let Pickup::Pillow { index, .. } = claim.pickup else {
+            return false;
+        };
+        let from_box = ClaimKey {
+            spot: Spot::Box(index),
+            kart: claim.kart,
+            tick: claim.tick,
+        };
+        let Some(base) = rules.race_base else {
+            return false;
+        };
+        self.grants.contains(&from_box)
+            && pillow_allowed(
+                claim.tick.checked_sub(base),
+                !self.pillows.is_empty(),
+                self.last_pillow.map(|tick| tick.saturating_sub(base)),
+                rules.min_race_ticks,
+                rules.cooldown_ticks,
+            )
     }
 
     /// A verdict (the host's, or ours as the host): into the record, its claim no longer
@@ -118,12 +221,25 @@ impl Arbiter {
     /// host: the first verdict stands).
     pub fn record(&mut self, verdict: &Verdict) -> bool {
         let key = ClaimKey::of(&verdict.claim);
+        let from = self
+            .pending
+            .iter()
+            .find(|(_, claim)| ClaimKey::of(claim) == key)
+            .map(|(from, _)| *from);
+        self.record_from(verdict, from)
+    }
+
+    fn record_from(&mut self, verdict: &Verdict, from: Option<PeerKey>) -> bool {
+        let key = ClaimKey::of(&verdict.claim);
         self.pending.retain(|(_, claim)| ClaimKey::of(claim) != key);
         if self.decided(&key).is_some() {
             return false;
         }
         if verdict.granted {
             self.grants.push(key);
+            if matches!(key.spot, Spot::Pillow(_)) {
+                self.pillow_granted(verdict.claim, from);
+            }
         } else {
             if self.refused.len() >= REFUSED_KEPT {
                 self.refused.remove(0);
@@ -133,10 +249,100 @@ impl Arbiter {
         true
     }
 
+    /// An oreiller géant granted: in its kart's slots (or already flying, its throw seen first).
+    fn pillow_granted(&mut self, claim: Claim, from: Option<PeerKey>) {
+        self.last_pillow = Some(self.last_pillow.map_or(claim.tick, |t| t.max(claim.tick)));
+        if self.gone.contains(&ClaimKey::of(&claim)) {
+            return;
+        }
+        match self
+            .pillows
+            .iter_mut()
+            .find(|p| p.kart == claim.kart && p.claim.is_none())
+        {
+            Some(thrown) => {
+                thrown.claim = Some(claim);
+                thrown.from = from;
+            }
+            None => self.pillows.push(Pillow {
+                claim: Some(claim),
+                from,
+                kart: claim.kart,
+                thrown: None,
+            }),
+        }
+    }
+
+    /// `kart` threw an oreiller géant (issue #61, its `ItemOut`, as `id`): it flies until its
+    /// flight ends ([`Arbiter::pillow_ended`]).
+    pub fn pillow_thrown(&mut self, kart: KartId, id: ItemId) {
+        if self.pillows.iter().any(|p| p.thrown == Some(id)) {
+            return;
+        }
+        match self
+            .pillows
+            .iter_mut()
+            .find(|p| p.kart == kart && p.thrown.is_none())
+        {
+            Some(held) => held.thrown = Some(id),
+            None => self.pillows.push(Pillow {
+                claim: None,
+                from: None,
+                kart,
+                thrown: Some(id),
+            }),
+        }
+    }
+
+    /// The oreiller géant `id` is no more (it exploded, a klaxon-canard destroyed it, its thrower
+    /// left): another one may come.
+    pub fn pillow_ended(&mut self, id: ItemId) {
+        self.pillows.retain(|p| p.thrown != Some(id));
+    }
+
+    /// The oreiller géant of claim `key` is gone without a throw (its kart's peer said so,
+    /// `PillowGone`): another one may come. Told before its grant came, the grant will not bring
+    /// it back.
+    pub fn pillow_gone(&mut self, key: ClaimKey) {
+        self.pillows.retain(|p| {
+            p.thrown.is_some() || p.claim.is_none_or(|claim| ClaimKey::of(&claim) != key)
+        });
+        if !self.gone.contains(&key) {
+            if self.gone.len() >= GONE_KEPT {
+                self.gone.remove(0);
+            }
+            self.gone.push(key);
+        }
+    }
+
+    /// The oreillers géants in the race.
+    pub fn pillows(&self) -> &[Pillow] {
+        &self.pillows
+    }
+
+    /// The host changed (issue #61): the oreillers wait until common tick `until` (the grants the
+    /// old host sent to the others, not to us, come first).
+    pub fn handover(&mut self, until: u32) {
+        self.hold_pillows_until = Some(until);
+    }
+
+    /// The grants of the oreillers we know in the race: sent again to a new host.
+    pub fn pillow_grants(&self) -> impl Iterator<Item = Verdict> + '_ {
+        self.pillows.iter().filter_map(|p| {
+            p.claim.map(|claim| Verdict {
+                claim,
+                granted: true,
+            })
+        })
+    }
+
     /// `peer` left the room: its claims are dropped (its karts are gone, or another peer drives
-    /// them now).
+    /// them now), and the oreillers its karts held (issue #61: a new host's bots start with empty
+    /// slots).
     pub fn forget(&mut self, peer: PeerKey) {
         self.pending.retain(|(from, _)| *from != peer);
+        self.pillows
+            .retain(|p| p.thrown.is_some() || p.from != Some(peer));
     }
 
     /// Every grant so far, in the host's order.
@@ -159,7 +365,7 @@ mod tests {
         match spot {
             Spot::Box(_) => Some(120),
             Spot::Croquette(_) => Some(600),
-            Spot::Loose(_) => None,
+            Spot::Loose(_) | Spot::Pillow(_) => None,
         }
     }
 
@@ -188,7 +394,7 @@ mod tests {
 
     fn decide(arbiter: &mut Arbiter) -> Vec<Verdict> {
         let mut out = Vec::new();
-        arbiter.decide(respawn, &mut out);
+        arbiter.decide(respawn, &PillowRules::NONE, 0, &mut out);
         out
     }
 
@@ -367,5 +573,237 @@ mod tests {
         assert_eq!(spots(&bob), spots(&cyd));
         assert_eq!(spots(&bob).len(), 3);
         assert_eq!(cyd.pending().count(), 0);
+    }
+
+    // --- Issue #61: the oreiller géant ------------------------------------------------------
+
+    /// The race's tick 0 at common tick 600; no oreiller before race tick 1200 (20 s), none
+    /// within 1800 ticks (30 s) of the last one.
+    const RULES: PillowRules = PillowRules {
+        race_base: Some(600),
+        min_race_ticks: 1200,
+        cooldown_ticks: 1800,
+    };
+
+    fn pillow(index: u16, kart: KartId, tick: u32) -> Claim {
+        Claim {
+            session: 1,
+            pickup: Pickup::Pillow { index, draw: 0 },
+            kart,
+            tick,
+        }
+    }
+
+    /// `kart` breaks box `index` at `tick` and draws an oreiller géant from it: two claims.
+    fn draw_pillow(arbiter: &mut Arbiter, from: PeerKey, index: u16, kart: KartId, tick: u32) {
+        arbiter.claim(from, on_box(index, kart, tick));
+        arbiter.claim(from, pillow(index, kart, tick));
+    }
+
+    fn decide_at(arbiter: &mut Arbiter, now: u32) -> Vec<Verdict> {
+        let mut out = Vec::new();
+        arbiter.decide(respawn, &RULES, now, &mut out);
+        out
+    }
+
+    /// The oreillers granted among `verdicts`: (kart, tick).
+    fn pillows_granted(verdicts: &[Verdict]) -> Vec<(KartId, u32)> {
+        verdicts
+            .iter()
+            .filter(|v| v.granted && matches!(v.claim.pickup, Pickup::Pillow { .. }))
+            .map(|v| (v.claim.kart, v.claim.tick))
+            .collect()
+    }
+
+    /// Issue #61 acceptance: two karts draw an oreiller géant on the same tick (two boxes): only
+    /// one gets it (the better grid slot), whatever the order the claims came in. Then none
+    /// while it is in the race (held, then flying), and none within 30 s of it, even once it is
+    /// gone; 30 s after it, one again.
+    #[test]
+    fn two_oreillers_drawn_at_once_only_one_is_granted() {
+        let mut arbiter = Arbiter::default();
+        draw_pillow(&mut arbiter, BOB, 5, 7, 2_000);
+        draw_pillow(&mut arbiter, ANA, 3, 4, 2_000);
+        let verdicts = decide_at(&mut arbiter, 2_010);
+        assert_eq!(verdicts.len(), 4);
+        // Both boxes are theirs; the oreiller is kart 4's only.
+        assert_eq!(granted(&verdicts).len(), 3);
+        assert_eq!(pillows_granted(&verdicts), vec![(4, 2_000)]);
+        assert_eq!(arbiter.pillows().len(), 1);
+        assert_eq!(arbiter.pillows()[0].kart, 4);
+        assert_eq!(arbiter.pillows()[0].from, Some(ANA));
+        // Held by kart 4: none for kart 7, nor for kart 4 again.
+        draw_pillow(&mut arbiter, BOB, 6, 7, 2_100);
+        draw_pillow(&mut arbiter, ANA, 8, 4, 2_100);
+        assert!(pillows_granted(&decide_at(&mut arbiter, 2_110)).is_empty());
+        // Thrown: it flies, still one in the race.
+        let id = ItemId { owner: 4, seq: 0 };
+        arbiter.pillow_thrown(4, id);
+        assert_eq!(arbiter.pillows()[0].thrown, Some(id));
+        draw_pillow(&mut arbiter, BOB, 9, 7, 2_300);
+        assert!(pillows_granted(&decide_at(&mut arbiter, 2_310)).is_empty());
+        // Its flight ended: none in the race, but 29 s after it, none yet; 30 s after, one.
+        arbiter.pillow_ended(id);
+        assert!(arbiter.pillows().is_empty());
+        draw_pillow(&mut arbiter, BOB, 10, 7, 3_799);
+        assert!(pillows_granted(&decide_at(&mut arbiter, 3_800)).is_empty());
+        draw_pillow(&mut arbiter, BOB, 11, 7, 3_800);
+        assert_eq!(
+            pillows_granted(&decide_at(&mut arbiter, 3_801)),
+            vec![(7, 3_800)]
+        );
+        // The record has no oreiller twice: the grants are its claims, one at a time.
+        let oreillers = arbiter
+            .grants()
+            .iter()
+            .filter(|g| matches!(g.spot, Spot::Pillow(_)))
+            .count();
+        assert_eq!(oreillers, 2);
+    }
+
+    /// Issue #61: no oreiller before 20 s of race (race tick 1200: common tick 1800 here), none
+    /// off a race, none from a box the kart did not get (its roulettes stopped).
+    #[test]
+    fn no_oreiller_before_20_s_nor_from_a_box_refused() {
+        let mut arbiter = Arbiter::default();
+        draw_pillow(&mut arbiter, ANA, 1, 4, 1_799);
+        assert!(pillows_granted(&decide_at(&mut arbiter, 1_800)).is_empty());
+        draw_pillow(&mut arbiter, ANA, 2, 4, 1_800);
+        assert_eq!(
+            pillows_granted(&decide_at(&mut arbiter, 1_801)),
+            vec![(4, 1_800)]
+        );
+        // Off a race: never.
+        let mut free = Arbiter::default();
+        draw_pillow(&mut free, ANA, 1, 4, 90_000);
+        let mut out = Vec::new();
+        free.decide(respawn, &PillowRules::NONE, 90_000, &mut out);
+        assert!(pillows_granted(&out).is_empty());
+        assert_eq!(granted(&out), vec![(4, 90_000)], "the box is still its own");
+        // Two karts on one box, both draw an oreiller: the box and its oreiller go to the better
+        // grid slot; the other one gets neither.
+        let mut boxed = Arbiter::default();
+        draw_pillow(&mut boxed, BOB, 4, 7, 5_000);
+        draw_pillow(&mut boxed, ANA, 4, 9, 5_000);
+        let verdicts = decide_at(&mut boxed, 5_001);
+        assert_eq!(granted(&verdicts), vec![(7, 5_000), (7, 5_000)]);
+        // A late box (refused: another kart had it) brings no oreiller, even when none is in
+        // the race.
+        let mut late = Arbiter::default();
+        late.claim(ANA, on_box(4, 4, 6_000));
+        decide_at(&mut late, 6_000);
+        draw_pillow(&mut late, BOB, 4, 7, 5_999);
+        assert!(granted(&decide_at(&mut late, 6_001)).is_empty());
+        assert!(late.pillows().is_empty());
+    }
+
+    /// Issue #61: an oreiller gone without a throw (its kart's peer says so: a dégonflage) or
+    /// whose kart's peer left is no longer in the race (another may come after the cooldown);
+    /// told gone before its grant came, the grant does not bring it back; thrown before its
+    /// grant came, the grant goes to the oreiller in flight.
+    #[test]
+    fn an_oreiller_gone_without_a_throw() {
+        let mut arbiter = Arbiter::default();
+        draw_pillow(&mut arbiter, ANA, 1, 4, 2_000);
+        decide_at(&mut arbiter, 2_000);
+        let claim = pillow(1, 4, 2_000);
+        arbiter.pillow_gone(ClaimKey::of(&claim));
+        assert!(arbiter.pillows().is_empty());
+        draw_pillow(&mut arbiter, BOB, 2, 7, 3_800);
+        assert_eq!(
+            pillows_granted(&decide_at(&mut arbiter, 3_800)),
+            vec![(7, 3_800)]
+        );
+        // Its peer leaves: gone (a new host's bots start with empty slots).
+        arbiter.forget(BOB);
+        assert!(arbiter.pillows().is_empty());
+        // Another peer, which never had the claims: the "gone" first, then the grant.
+        let mut late = Arbiter::default();
+        late.pillow_gone(ClaimKey::of(&claim));
+        assert!(late.record(&Verdict {
+            claim,
+            granted: true
+        }));
+        assert!(late.pillows().is_empty(), "gone before its grant came");
+        // Thrown before its grant came: one oreiller, flying, with its claim.
+        let mut early = Arbiter::default();
+        let id = ItemId { owner: 4, seq: 2 };
+        early.pillow_thrown(4, id);
+        early.record(&Verdict {
+            claim,
+            granted: true,
+        });
+        assert_eq!(early.pillows().len(), 1);
+        assert_eq!(early.pillows()[0].thrown, Some(id));
+        assert_eq!(early.pillows()[0].claim, Some(claim));
+        early.pillow_ended(id);
+        assert!(early.pillows().is_empty());
+        // A flying oreiller stays when its thrower's peer leaves (its copy goes with it here).
+        let mut flying = Arbiter::default();
+        flying.claim(ANA, on_box(1, 4, 2_000));
+        flying.claim(ANA, claim);
+        decide_at(&mut flying, 2_000);
+        flying.pillow_thrown(4, id);
+        flying.forget(ANA);
+        assert_eq!(flying.pillows().len(), 1);
+    }
+
+    /// Issue #61 acceptance: the host (Ana) grants Cyd's kart an oreiller and leaves; its
+    /// verdicts reached Cyd, not Bob, who never got Cyd's claims either (still on their way).
+    /// Bob hosts now, with Dan's oreiller claimed: he waits (`handover`), Cyd sends him the grant
+    /// he knows again, and Bob refuses Dan's: never two oreillers. Without the wait, Bob would
+    /// have granted Dan's.
+    #[test]
+    fn a_new_host_never_grants_a_second_oreiller() {
+        const DAN: PeerKey = PeerKey(4 << 100);
+        let mut ana = Arbiter::default();
+        let mut bob = Arbiter::default();
+        let mut cyd = Arbiter::default();
+        // Cyd's kart 9 draws an oreiller: Ana and Cyd have the claims.
+        for arbiter in [&mut ana, &mut cyd] {
+            draw_pillow(arbiter, CYD, 2, 9, 2_000);
+        }
+        let first = decide_at(&mut ana, 2_001);
+        assert_eq!(pillows_granted(&first), vec![(9, 2_000)]);
+        for verdict in &first {
+            assert!(cyd.record(verdict));
+        }
+        assert_eq!(cyd.pillows().len(), 1);
+        // Dan's kart 10 draws one too, after: Bob and Cyd have its claims. Ana leaves.
+        for arbiter in [&mut bob, &mut cyd] {
+            draw_pillow(arbiter, DAN, 5, 10, 2_005);
+            arbiter.forget(ANA);
+            arbiter.handover(2_010 + 30);
+        }
+        let hasty = {
+            let mut hasty = bob.clone();
+            decide_at(&mut hasty, 2_040)
+        };
+        assert_eq!(
+            pillows_granted(&hasty),
+            vec![(10, 2_005)],
+            "without Cyd's word, Bob would give a second one"
+        );
+        // Bob waits: Dan's box is decided, not its oreiller.
+        let waiting = decide_at(&mut bob, 2_012);
+        assert_eq!(granted(&waiting), vec![(10, 2_005)]);
+        assert_eq!(bob.pending().count(), 1);
+        // Cyd sends the grants he knows again: Bob records Ana's.
+        let again: Vec<Verdict> = cyd.pillow_grants().collect();
+        assert_eq!(again.len(), 1);
+        for verdict in &again {
+            assert!(bob.record(verdict));
+        }
+        let after = decide_at(&mut bob, 2_040);
+        assert!(pillows_granted(&after).is_empty(), "{after:?}");
+        assert_eq!(bob.pending().count(), 0);
+        // Cyd records Bob's verdicts: the same record, one oreiller, Cyd's kart's.
+        for verdict in waiting.iter().chain(&after) {
+            cyd.record(verdict);
+        }
+        for arbiter in [&bob, &cyd] {
+            assert_eq!(arbiter.pillows().len(), 1);
+            assert_eq!(arbiter.pillows()[0].kart, 9);
+        }
     }
 }

@@ -46,11 +46,11 @@ use super::tuning::NetTuning;
 use crate::characters::{DriverLooks, Loadout, Roster};
 use crate::interactions::Paw;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::items::ItemSlots;
+use crate::items::{EffectLook, ItemSlots};
 use crate::kart::{
-    Boost, DriftMotion, Invincibility, Kart, KartAssists, KartColor, KartPaint, KartState,
-    KartSystems, KartTuning, KartVisualAssets, KartWheels, PlayerKart, Remote, Slipstream, Stall,
-    StatEffects, StatsTuning, kart_collider, spawn_kart_visual_with_driver,
+    Boost, DriftMotion, Invincibility, ItemEffects, Kart, KartAssists, KartColor, KartPaint,
+    KartState, KartSystems, KartTuning, KartVisualAssets, KartWheels, PlayerKart, Remote,
+    Slipstream, Stall, StatEffects, StatsTuning, kart_collider, spawn_kart_visual_with_driver,
 };
 use crate::level::LevelScoped;
 use crate::race::{RaceMode, Racer, RacerName};
@@ -660,6 +660,8 @@ fn spawn_remote_karts(
                 KartWheels::default(),
                 KartAssists::default(),
                 effects,
+                // Issue #61: a super câlin, a fusée, a dégonflage, as its states say.
+                ItemEffects::default(),
             ),
             // Issue #9: what the slipstream, the bots and the paws see of it; its paw, for the
             // visuals of what its peer tells. Issue #53: what it holds out, as its states say.
@@ -814,7 +816,7 @@ fn record_our_kart(
             (&KartState, &KartAssists, &StatEffects, &DriftMotion),
             (&Boost, &Stall, &Invincibility, &Slipstream, &KartWheels),
             Option<&mut KartHistory>,
-            (Option<&NetKart>, Option<&ItemSlots>),
+            (Option<&NetKart>, Option<&ItemSlots>, &ItemEffects),
         ),
         (With<Kart>, Or<(With<PlayerKart>, With<NetKart>)>),
     >,
@@ -829,7 +831,7 @@ fn record_our_kart(
         (state, assists, effects, motion),
         (boost, stall, invincibility, slipstream, wheels),
         history,
-        (net, slots),
+        (net, slots, item_effects),
     ) in &mut karts
     {
         match history {
@@ -854,6 +856,7 @@ fn record_our_kart(
             slipstream,
             slipstream_fill: slipstream.fill(&own),
             wheels,
+            effects: item_effects,
         });
         // Issue #53: its shields, drawn by the others.
         look.held = slots.and_then(HeldLook::of);
@@ -870,9 +873,41 @@ fn record_our_kart(
     }
 }
 
+/// A remote kart's super câlin or fusée, while its states say it (issue #61): its time left on our
+/// screen, refreshed every frame (s).
+const SHOWN_EFFECT: f32 = 1.0;
+/// A remote kart deflated: for so long on our screen, until its states say it is over (s).
+const SHOWN_DEFLATED: f32 = 3_600.0;
+
+/// A remote kart's item effects as its states say (issue #61): its glow, its shell, its size on
+/// our screen; and a kart that rams ours (`items::ram_karts`). Deflated, it shrinks; back, it
+/// grows back as ours do (`ItemEffects::deflated_scale`).
+fn show_effects(effects: &mut ItemEffects, look: &KartLook) {
+    let shown = |left: f32, on: bool| match (on, left) {
+        (false, _) => 0.0,
+        (true, left) if left < 0.5 * SHOWN_EFFECT => SHOWN_EFFECT,
+        (true, left) => left,
+    };
+    let mut next = *effects;
+    next.calin = shown(next.calin, look.calin);
+    next.rocket = shown(next.rocket, look.rocket);
+    if look.deflated {
+        if next.deflated <= 0.0 {
+            next.deflated = SHOWN_DEFLATED;
+            next.deflated_for = SHOWN_DEFLATED;
+        }
+    } else {
+        next.deflated = next.deflated.min(ItemEffects::GROW_BACK_SECONDS);
+    }
+    if next != *effects {
+        *effects = next;
+    }
+}
+
 /// Each frame: each remote kart's visual where its buffer says, one tick behind like our karts'
 /// visuals (`crate::interpolation`), and its body's look (drift, sparks, flames, hit...) for the
-/// kart visuals.
+/// kart visuals; issue #61: its super câlin, fusée, dégonflage (their visuals around it follow
+/// it too).
 #[allow(clippy::type_complexity)]
 fn show_remote_karts(
     sync: Res<KartSync>,
@@ -891,10 +926,12 @@ fn show_remote_karts(
             ),
             &StatEffects,
             Option<&mut ItemSlots>,
+            Option<&mut ItemEffects>,
         ),
         With<RemoteKartProxy>,
     >,
     mut visuals: Query<&mut Transform, (With<InterpolatedFrom>, Without<RemoteKartProxy>)>,
+    looks: Query<(Entity, &EffectLook)>,
 ) {
     let now = virtual_ms(&time) - fixed.timestep().as_secs_f64() * 1_000.0;
     let limits = tuning.limits();
@@ -909,20 +946,32 @@ fn show_remote_karts(
             continue;
         };
         let pose = sample.pose;
+        let shown = Transform::from_translation(pose.position).with_rotation(pose.rotation);
         if let Some(mut transform) = remote.visual.and_then(|v| visuals.get_mut(v).ok()) {
-            let shown = Transform::from_translation(pose.position).with_rotation(pose.rotation);
             transform.set_if_neq(shown);
+        }
+        // Issue #61: its glow or its shell, around it.
+        for (entity, look) in &looks {
+            if look.kart == proxy
+                && let Ok(mut transform) = visuals.get_mut(entity)
+            {
+                transform.set_if_neq(shown);
+            }
         }
         let Ok((
             (mut state, mut motion, mut boost),
             (mut stall, mut invincibility, mut slipstream, mut wheels),
             effects,
             slots,
+            item_effects,
         )) = bodies.get_mut(proxy)
         else {
             continue;
         };
         let look = pose.look;
+        if let Some(mut item_effects) = item_effects {
+            show_effects(&mut item_effects, &look);
+        }
         // Issue #53: what it holds out, its shields on our screen (`items::move_items`).
         if let Some(mut slots) = slots {
             let held = HeldLook::slots(look.held);

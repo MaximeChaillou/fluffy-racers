@@ -375,6 +375,10 @@ impl Lobby {
             | Message::Scatter(_)
             | Message::Blast(_)
             | Message::Honk(_)
+            | Message::Effect(_)
+            | Message::Rammed(_)
+            | Message::PillowGone(_)
+            | Message::Retarget(_)
             | Message::KartState(_) => {}
             Message::Ping { sent_ms } => {
                 let (clock_ms, room) = self.room.pong(now_ms);
