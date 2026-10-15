@@ -31,6 +31,8 @@ pub fn build(
     materials: &mut Assets<StandardMaterial>,
 ) {
     commands.insert_resource(PlayerStart(Transform::from_xyz(0.0, 0.55, 0.0)));
+    // The sky and the light of a circuit without biome (issue #11), whatever circuit was there.
+    super::circuit::light_the_sky(commands, &super::biome::Palette::default());
 
     let mut solid = |commands: &mut Commands,
                      transform: Transform,

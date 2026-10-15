@@ -5,6 +5,24 @@
 // edge of the road) to 1 (right edge). Point 0 is the start line; karts drive toward point 1.
 (
     name: "Prairie Pompon",
+    // Dressing (issue #11): a meadow with a racing circuit's furniture (`assets/data/biomes.ron`),
+    // the same every time (seed), and a few pieces placed by hand (`props`: a model, where along
+    // the track, which side, its height and footprint in meters, its gap beyond the walls).
+    biome: "Prairie",
+    decor_seed: 11,
+    props: [
+        // Two grandstands along the grid, outside, and the checkered flags at the start line.
+        (model: "racing-kit/grandStandCovered", at: 23.3, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/grandStandCovered", at: 23.75, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.5, radius: 0.8, gap: 0.3),
+        // Banner towers before the hairpin and at the trick ramp, outside.
+        (model: "racing-kit/bannerTowerRed", at: 3.6, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
+        (model: "racing-kit/bannerTowerGreen", at: 9.8, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
+        // A tent in the infield, a stand outside the raised turn (nothing high inside a tight turn:
+        // the road out of it stays in sight).
+        (model: "racing-kit/tentClosed", at: 1.4, side: Right, height: 3.2, radius: 3.4, gap: 1.5),
+        (model: "racing-kit/grandStandAwning", at: 19.5, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+    ],
     checkpoint_spacing: 25.0,
     points: [
         // 0-3: long start straight, heading north (-Z).

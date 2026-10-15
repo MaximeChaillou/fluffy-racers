@@ -6,6 +6,14 @@
 // -Z), then turn right. The grid sits on the straight behind point 0.
 (
     name: "Anneau Guimauve",
+    // Dressing (issue #11): a pastry land (`assets/data/biomes.ron`), the same every time (seed),
+    // and pieces placed by hand: a giant cake in the infield, gingerbread men at the start line.
+    biome: "Guimauve",
+    decor_seed: 5,
+    props: [
+        (model: "food-kit/cake-birthday", at: 9.0, side: Right, height: 5.0, radius: 6.5, gap: 15.0),
+        (model: "holiday-kit/gingerbread-man", at: 0.15, side: Both, height: 3.5, radius: 1.2, gap: 0.4),
+    ],
     checkpoint_spacing: 25.0,
     points: [
         // 0-3: start straight, heading north.

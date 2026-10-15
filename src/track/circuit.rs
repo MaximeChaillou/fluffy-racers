@@ -1,15 +1,18 @@
-//! Loading a circuit file and building it: meshes, Rapier colliders, gameplay spots, decor. Every
-//! root entity built here is `LevelScoped`: reloading the level (issue #36) removes them all.
+//! Loading a circuit file and building it: meshes, Rapier colliders, gameplay spots, in the colors
+//! of its biome (issue #11; its decor comes once its models are there, `dressing.rs`). Every root
+//! entity built here is `LevelScoped`: reloading the level (issue #36) removes them all.
 
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext, RenderAssetUsages};
+use bevy::light::GlobalAmbientLight;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use super::biome::{Palette, Rgb};
 use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
-use super::mesh::{self, CURB_WIDTH, GROUND_HEIGHT, MeshData, WALL_THICKNESS};
+use super::mesh::{self, GROUND_HEIGHT, MeshData};
 use super::{PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
 use crate::level::LevelScoped;
 
@@ -116,7 +119,9 @@ pub fn build_circuit_when_loaded(
         return;
     };
     let layout = TrackLayout::new(data);
-    let generated = mesh::generate(&layout.center, data);
+    let palette = data.biome().map_or_else(Palette::default, |b| b.palette);
+    let generated = mesh::generate(&layout.center, data, &palette);
+    light_the_sky(&mut commands, &palette);
 
     // One mesh and one material (vertex colors) for the whole circuit: a single draw call.
     let track_material = materials.add(StandardMaterial {
@@ -157,16 +162,35 @@ pub fn build_circuit_when_loaded(
         TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,
     );
 
-    spawn_ground(&mut commands, &mut meshes, &mut materials, &layout);
+    spawn_ground(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &layout,
+        palette.ground,
+    );
     spawn_trick_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
     spawn_spots(&mut commands, &mut meshes, &mut materials, &layout, data);
-    spawn_trees(&mut commands, &mut meshes, &mut materials, &layout);
 
     commands.insert_resource(PlayerStart(layout.grid[0]));
     commands.insert_resource(layout);
 }
 
-fn to_mesh(data: &MeshData) -> Mesh {
+/// The sky (the clear color) and the ambient light of a palette (issue #11): the light in the
+/// shade, which keeps the walls' side away from the sun from being almost black (issue #47).
+pub fn light_the_sky(commands: &mut Commands, palette: &Palette) {
+    let srgb = |(r, g, b): Rgb| Color::srgb(r, g, b);
+    commands.insert_resource(ClearColor(srgb(palette.sky)));
+    commands.insert_resource(GlobalAmbientLight {
+        color: srgb(palette.ambient),
+        brightness: palette.ambient_brightness,
+        ..default()
+    });
+}
+
+/// A mesh of [`MeshData`]: flat normals and vertex colors, for the material of the circuit or of
+/// the models (white, its colors from the vertices).
+pub fn to_mesh(data: &MeshData) -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -205,12 +229,13 @@ fn spawn_trimesh(
     }
 }
 
-/// Grass all around, just below the road.
+/// Grass (or the biome's ground) all around, just below the road.
 fn spawn_ground(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     layout: &TrackLayout,
+    (r, g, b): Rgb,
 ) {
     let (min, max) = layout.center.samples().iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
@@ -232,7 +257,7 @@ fn spawn_ground(
     commands.entity(entity).insert((
         Mesh3d(meshes.add(Cuboid::new(half.x * 2.0, 1.0, half.y * 2.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.45, 0.75, 0.35),
+            base_color: Color::srgb(r, g, b),
             perceptual_roughness: 1.0,
             ..default()
         })),
@@ -390,67 +415,5 @@ fn spawn_spots(
                 Visibility::default(),
             ));
         }
-    }
-}
-
-/// A few primitive trees around the circuit, away from the road (deterministic).
-fn spawn_trees(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    layout: &TrackLayout,
-) {
-    let trunk_mesh = meshes.add(Cylinder::new(0.3, 2.4));
-    let trunk_material = materials.add(Color::srgb(0.50, 0.33, 0.20));
-    let leaves_mesh = meshes.add(Sphere::new(1.8));
-    let leaves_material = materials.add(Color::srgb(0.25, 0.60, 0.30));
-
-    let samples = layout.center.samples();
-    let mut seed: u32 = 0x9e37_79b9;
-    let mut random = move || {
-        // xorshift: cheap, deterministic, good enough for decor.
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        seed as f32 / u32::MAX as f32
-    };
-    let mut planted = 0;
-    for _ in 0..200 {
-        if planted >= 60 {
-            break;
-        }
-        let sample = &samples[(random() * samples.len() as f32) as usize % samples.len()];
-        let side = if random() < 0.5 { -1.0 } else { 1.0 };
-        let flat_right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
-        let reach = mesh::wall_offset(sample) + WALL_THICKNESS + 4.0 + random() * 20.0;
-        let mut position = sample.position + flat_right * side * reach;
-        position.y = GROUND_HEIGHT;
-        // Keep clear of every part of the circuit (the loop passes close to itself).
-        let clear = samples.iter().all(|s| {
-            let keep_out = s.half_width + CURB_WIDTH + s.shoulder + WALL_THICKNESS + 3.0;
-            Vec2::new(s.position.x - position.x, s.position.z - position.z).length() > keep_out
-        });
-        if !clear {
-            continue;
-        }
-        planted += 1;
-        commands
-            .spawn((
-                LevelScoped,
-                Transform::from_translation(position),
-                Visibility::default(),
-            ))
-            .with_children(|tree| {
-                tree.spawn((
-                    Mesh3d(trunk_mesh.clone()),
-                    MeshMaterial3d(trunk_material.clone()),
-                    Transform::from_xyz(0.0, 1.2, 0.0),
-                ));
-                tree.spawn((
-                    Mesh3d(leaves_mesh.clone()),
-                    MeshMaterial3d(leaves_material.clone()),
-                    Transform::from_xyz(0.0, 3.4, 0.0),
-                ));
-            });
     }
 }

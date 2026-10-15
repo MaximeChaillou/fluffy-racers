@@ -1,8 +1,12 @@
 //! Tracks and terrain: circuits generated from data files (`assets/tracks/*.track.ron`,
-//! issue #3), and the flat test ground of issue #1.
+//! issue #3), dressed after their biome (issue #11: colors, decor of 3D models), and the flat test
+//! ground of issue #1.
 
+pub mod biome;
 pub mod circuit;
 pub mod data;
+pub mod decor;
+pub mod dressing;
 pub mod layout;
 pub mod mesh;
 pub mod test_ground;
@@ -16,7 +20,8 @@ pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, ITEM_BOX_HEIGHT, ItemBoxSpot,
     SpotIndex, TrackHandle, TrickRamp,
 };
-pub use data::{OffroadZone, TrackData};
+pub use data::{OffroadZone, PropData, TrackData};
+pub use dressing::CircuitDecor;
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
 
 /// Which track to build. Defaults to the test circuit.
@@ -141,6 +146,15 @@ impl Plugin for TrackPlugin {
                     .chain()
                     .run_if(resource_exists::<TrackHandle>)
                     .run_if(not(resource_exists::<TrackLayout>)),
+            )
+            // Issue #11: the decor, once the circuit is built and its models baked (with a
+            // renderer only).
+            .add_systems(
+                Update,
+                dressing::dress_circuit
+                    .after(crate::models::ModelSystems)
+                    .run_if(resource_exists::<TrackLayout>)
+                    .run_if(dressing::can_load_models),
             );
     }
 }

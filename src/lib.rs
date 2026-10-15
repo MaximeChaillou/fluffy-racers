@@ -11,6 +11,7 @@ pub mod interpolation;
 pub mod items;
 pub mod kart;
 pub mod level;
+pub mod models;
 pub mod net;
 pub mod options;
 pub mod race;
@@ -35,6 +36,7 @@ use kart::{
     PlayerKart, SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
+use models::ModelPlugin;
 use net::{KartId, KartSyncPlugin, NetKart, NetPlugin, OnlineSlot};
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
@@ -81,6 +83,7 @@ impl Plugin for GamePlugin {
         app.insert_resource(ClearColor(Color::srgb(0.55, 0.80, 0.95)))
             .add_plugins((
                 SimulationPlugin,
+                ModelPlugin,
                 TrackPlugin,
                 RacePlugin,
                 (
