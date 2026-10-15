@@ -15,7 +15,7 @@
 //!   extrapolated for 250 ms at most, teleported across a jump. Each one is a **kinematic**
 //!   Rapier body with the same collider as ours ([`RemoteKartProxy`]: our kart bumps into it, it
 //!   is never pushed, and our suspension rays never take it for ground) and the same visual as
-//!   any kart, with its player's animal and parts (`Hello`) and the color of its seat. The body
+//!   any kart, with its player's animal, parts and color (`Hello`, issue #55). The body
 //!   follows the buffer each tick through its velocity (never faster than the kart drives, plus
 //!   a margin: a correction never throws our kart around); put in place at once across a
 //!   teleport, it goes through our karts until it is clear of them. The visual follows the
@@ -43,15 +43,14 @@ use super::netsim::NetSim;
 use super::protocol::{KartId, KartSnapshot, Message, PeerKey};
 use super::snapshot::{HeldLook, KartLook, KartPose, LookParts};
 use super::tuning::NetTuning;
-use crate::bots::bot_color;
 use crate::characters::{DriverLooks, Loadout, Roster};
 use crate::interactions::Paw;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::items::ItemSlots;
 use crate::kart::{
-    Boost, DriftMotion, Invincibility, Kart, KartAssists, KartState, KartSystems, KartTuning,
-    KartVisualAssets, KartWheels, PlayerKart, Remote, Slipstream, Stall, StatEffects, StatsTuning,
-    kart_collider, spawn_kart_visual_with_driver,
+    Boost, DriftMotion, Invincibility, Kart, KartAssists, KartColor, KartPaint, KartState,
+    KartSystems, KartTuning, KartVisualAssets, KartWheels, PlayerKart, Remote, Slipstream, Stall,
+    StatEffects, StatsTuning, kart_collider, spawn_kart_visual_with_driver,
 };
 use crate::level::LevelScoped;
 use crate::race::{RaceMode, Racer, RacerName};
@@ -119,8 +118,9 @@ pub struct RosterEntry<'a> {
     pub peer: PeerKey,
     /// Its four parts (`None`: those it had: a player who left).
     pub loadout: Option<[u8; 4]>,
-    /// The color of its kart (`bots::bot_color`).
-    pub color: usize,
+    /// The color of its kart (issue #55): its player's (`Lobby::color_of`), or a bot's
+    /// (`kart::bot_colors`).
+    pub color: KartColor,
     /// Its player's name (a bot: none; `None` for a player: the one it had, a player who left).
     pub name: Option<&'a str>,
     /// It races: a racer of our race (its progress comes from its peer's events).
@@ -136,8 +136,8 @@ pub struct RemoteKart {
     pub peer: PeerKey,
     /// Its four parts (its `Hello`): its animal on screen.
     pub loadout: [u8; 4],
-    /// The color of its kart: its seat, or its grid slot (issue #9).
-    pub slot: usize,
+    /// The color of its kart (issue #55): it can change without spawning it again.
+    pub color: KartColor,
     /// The id it gives its kart on the wire.
     pub kart: KartId,
     /// Its player's name.
@@ -164,7 +164,7 @@ impl RemoteKart {
         Self {
             peer: entry.peer,
             loadout: entry.loadout.unwrap_or_default(),
-            slot: entry.color,
+            color: entry.color,
             kart: entry.kart,
             name: entry.name.map(str::to_string),
             racer: entry.racer,
@@ -283,17 +283,20 @@ impl KartSync {
         self.remotes.iter().find(|remote| remote.kart == kart)
     }
 
-    /// The other players of the room in free driving: their id, their parts and their seat (the
-    /// id of their kart, and its color). Those not listed any more are gone (their kart
+    /// The other players of the room in free driving: their id, their parts, their seat (the id
+    /// of their kart) and their color (issue #55). Those not listed any more are gone (their kart
     /// disappears).
-    pub fn set_players(&mut self, players: impl IntoIterator<Item = (PeerKey, [u8; 4], usize)>) {
+    pub fn set_players(
+        &mut self,
+        players: impl IntoIterator<Item = (PeerKey, [u8; 4], usize, KartColor)>,
+    ) {
         let me = self.me;
         self.set_roster(players.into_iter().filter(|(peer, ..)| *peer != me).map(
-            |(peer, loadout, slot)| RosterEntry {
+            |(peer, loadout, slot, color)| RosterEntry {
                 kart: slot.min(GRID_SLOTS - 1) as KartId,
                 peer,
                 loadout: Some(loadout),
-                color: slot,
+                color,
                 name: None,
                 racer: false,
                 left: false,
@@ -304,7 +307,8 @@ impl KartSync {
     /// The other peers' karts (issue #9): every kart we show and do not drive, by its network
     /// id, with the peer that has authority over it now. Those not listed any more are gone
     /// (their kart disappears); a kart whose peer changed (a new host takes the bots) starts its
-    /// buffer over; one whose parts changed is spawned again.
+    /// buffer over; one whose parts changed is spawned again; one whose color changed is painted
+    /// again (issue #55).
     pub fn set_roster<'a>(&mut self, entries: impl IntoIterator<Item = RosterEntry<'a>>) {
         for remote in &mut self.remotes {
             remote.present = false;
@@ -323,13 +327,12 @@ impl KartSync {
                         remote.playback = Playback::default();
                     }
                     let loadout = entry.loadout.unwrap_or(remote.loadout);
+                    remote.color = entry.color;
                     if remote.loadout != loadout
-                        || remote.slot != entry.color
                         || remote.racer != entry.racer
                         || remote.left != entry.left
                     {
                         remote.loadout = loadout;
-                        remote.slot = entry.color;
                         remote.racer = entry.racer;
                         remote.left = entry.left;
                         remote.respawn = true;
@@ -570,17 +573,17 @@ const REPORT_SECONDS: f64 = 3.0;
 /// is built; again after a new level, or when its player changed parts; despawns those gone. In a
 /// race (issue #9) it is a racer (`Racer`: its progress comes from its peer's events, `online.rs`)
 /// with its player's name; a player who left keeps a body without visual, that nothing bumps into.
+/// Its body wears its color (issue #55, `KartPaint`: the visual follows when it changes).
 #[allow(clippy::too_many_arguments)]
 fn spawn_remote_karts(
     mut commands: Commands,
     mut sync: ResMut<KartSync>,
     start: Option<Res<PlayerStart>>,
-    proxies: Query<(), With<RemoteKartProxy>>,
+    mut proxies: Query<&mut KartPaint, With<RemoteKartProxy>>,
     roster: Res<Roster>,
     stats_tuning: Res<StatsTuning>,
     looks: Option<Res<DriverLooks>>,
     visuals: Option<Res<KartVisualAssets>>,
-    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     tuning: Res<NetTuning>,
     time: Res<Time<Virtual>>,
 ) {
@@ -593,7 +596,11 @@ fn spawn_remote_karts(
         return;
     }
     for remote in &mut sync.remotes {
-        let alive = remote.proxy.is_some_and(|proxy| proxies.contains(proxy));
+        let paint = remote.proxy.and_then(|proxy| proxies.get_mut(proxy).ok());
+        let alive = paint.is_some();
+        if let Some(mut paint) = paint {
+            paint.set_if_neq(KartPaint(remote.color));
+        }
         if alive && !remote.respawn {
             continue;
         }
@@ -640,6 +647,7 @@ fn spawn_remote_karts(
             LevelScoped,
             transform,
             remote_body(),
+            KartPaint(remote.color),
             // Solid once clear of our karts (`move_remote_karts`); a player who left, never.
             ColliderDisabled,
             (
@@ -676,14 +684,13 @@ fn spawn_remote_karts(
         if remote.left {
             continue;
         }
-        if let (Some(visuals), Some(materials)) = (&visuals, materials.as_mut()) {
+        if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|looks| looks.get(character));
             remote.visual = Some(spawn_kart_visual_with_driver(
                 &mut commands,
                 visuals,
-                materials,
                 proxy,
-                bot_color(remote.slot),
+                remote.color,
                 driver,
             ));
         }

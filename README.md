@@ -44,7 +44,7 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
 5. Dans la console du navigateur (F12, onglet Console), les étapes de la connexion : dans la première fenêtre, `network: #f599 announced by the signaling server: we make the offer`, `network: offer sent to #f599 after 0.01 s: 1 candidate (1 host .local)`, `network: answer received from #f599…` ; dans l'autre, `network: offer received…` et `network: answer sent…` ; puis dans les deux `network: #… connected, 0.05 s after it was announced…`.
 6. Clique sur **Prêt !** dans une fenêtre : « prêt » s'affiche aussi dans l'autre. Ferme un onglet : il disparaît du salon de l'autre (tout de suite avec **Quitter la partie**). Si c'était l'hôte, l'autre le devient.
 7. **Rouler ensemble** (#8) : environ 2,5 s après l'arrivée dans la partie, chaque fenêtre passe sur **Prairie Pompon en roulage libre** (le circuit de l'hôte ; la console écrit `network: free driving on circuit 0, from grid slot N`). Ferme l'écran « Pilote et kart » (**Entrée**) dans les deux fenêtres. Chaque kart part de la place de la grille de son siège : le premier arrivé en pole, le second à côté. Ce que tu dois voir :
-   - roule dans une fenêtre (flèches, ou Z/Q/S/D) : dans l'autre, ton kart avance **en douceur**, environ un dixième de seconde en retard, avec ton animal et une couleur de carrosserie à lui (chaque joueur voit son propre kart en rose) ;
+   - roule dans une fenêtre (flèches, ou Z/Q/S/D) : dans l'autre, ton kart avance **en douceur**, environ un dixième de seconde en retard, avec ton animal et la couleur que tu as choisie (point 10) ;
    - drift (Espace) : l'autre fenêtre montre la glisse et les étincelles bleues, oranges, violettes ; un boost (B, ou un mini-turbo) montre les flammes ; R te ramène sur ta place de la grille, et l'autre fenêtre te voit **sauter** jusqu'à elle, sans glisser ;
    - fonce dans l'autre kart : **ton** kart est repoussé, l'autre ne bouge pas sur ton écran (c'est son joueur qui le conduit) ; sur l'autre écran, c'est son kart qui est repoussé par le tien. Pas d'éjection, pas de kart qui monte sur l'autre ;
    - **Quitter la partie** : tu reviens au circuit et au mode d'avant ;
@@ -67,7 +67,12 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
    - **le piment et la croquette dorée** : l'autre fenêtre voit les flammes de ton boost ;
    - **les bots de l'hôte** prennent des boîtes et lancent leurs objets comme en solo, dans les deux fenêtres ;
    - **l'hôte s'en va** : l'autre décide des boîtes et des croquettes à sa place ; les objets lancés par l'hôte parti disparaissent.
-10. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
+10. **Les couleurs** (#55) : dans chaque fenêtre, **G** (« Pilote et kart »), monte sur la dernière ligne, **Couleur** (Haut depuis la première ligne), choisis avec Gauche / Droite (ou clique sur une pastille), puis **Entrée** :
+    - deux couleurs différentes : chaque fenêtre montre ton kart dans ta couleur et celui de l'autre dans la sienne ; la colonne **Couleur** du salon montre la pastille et le nom de chacun ;
+    - **la même couleur** des deux côtés : le premier arrivé dans la partie la garde, l'autre prend la couleur libre la plus proche (rouge → orange, bleu → violet, rose → violet…), **la même dans les deux fenêtres** ; son salon écrit « Couleur déjà prise : tu es en orange au lieu de rouge. », et la colonne **Couleur** montre « (rouge pris) » à côté de sa pastille. Si le premier quitte la partie, l'autre retrouve sa couleur ;
+    - **en course**, les bots gardent leurs couleurs, sauf celui qui porterait la couleur d'un joueur : il en prend une libre, la même dans les deux fenêtres ;
+    - la couleur est gardée : recharge la page, elle est toujours là (et en solo, le bot qui avait ta couleur en change aussi).
+11. Même chose avec **Chrome + Safari** : ouvre la même adresse dans Safari. Pour voir sa console : Safari > Réglages > Avancés > « Afficher les fonctionnalités pour les développeurs web », puis Développement > Afficher la console JavaScript.
 
 Si la connexion ne se fait pas, le salon le dit (« connexion directe en cours… », puis « n'aboutit pas » avec les pistes) : voir **Dépannage** plus bas.
 

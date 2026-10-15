@@ -61,6 +61,8 @@ mod ui;
 #[cfg(test)]
 mod item_tests;
 #[cfg(test)]
+mod paint_tests;
+#[cfg(test)]
 mod race_tests;
 #[cfg(test)]
 mod scenario_tests;
@@ -109,7 +111,8 @@ pub use ui::NetUiPlugin;
 use bevy::prelude::*;
 
 use crate::bots::BotTuning;
-use crate::characters::{PartKind, PlayerLoadout, Roster};
+use crate::characters::{PartKind, PlayerColor, PlayerLoadout, Roster};
+use crate::kart::KartColor;
 use crate::options::OptionsMenu;
 use crate::race::RaceTuning;
 
@@ -409,21 +412,30 @@ fn depart(session: &mut NetSession, departures: &mut Departures, time: &Time<Rea
     }
 }
 
-/// Our name and kart, told to the others when they change (selection screen).
+/// Our name, kart and color (issue #55), told to the others when they change (selection screen).
 fn send_profile(
     mut session: ResMut<NetSession>,
     settings: Res<NetSettings>,
     loadout: Option<Res<PlayerLoadout>>,
+    color: Option<Res<PlayerColor>>,
     roster: Option<Res<Roster>>,
 ) {
     // The lobby starts with the profile of its time (`poll_session`): only changes count.
-    if !settings.is_changed() && !loadout.as_ref().is_some_and(|l| l.is_changed()) {
+    if !settings.is_changed()
+        && !loadout.as_ref().is_some_and(|l| l.is_changed())
+        && !color.as_ref().is_some_and(|c| c.is_changed())
+    {
         return;
     }
     let (name, loadout) = profile_of(&settings, loadout.as_deref(), roster.as_deref());
     if let Some(lobby) = session.lobby.as_mut() {
-        lobby.set_profile(&name, loadout);
+        lobby.set_profile(&name, loadout, color_of(color.as_deref()));
     }
+}
+
+/// The color we ask for (issue #55): the player's choice.
+fn color_of(color: Option<&PlayerColor>) -> KartColor {
+    color.map(|color| color.0).unwrap_or_default()
 }
 
 /// The name and loadout we show: the pseudo, or our character's name.
@@ -453,7 +465,7 @@ fn profile_of(
 fn poll_session(
     mut session: ResMut<NetSession>,
     settings: Res<NetSettings>,
-    loadout: Option<Res<PlayerLoadout>>,
+    (loadout, color): (Option<Res<PlayerLoadout>>, Option<Res<PlayerColor>>),
     roster: Option<Res<Roster>>,
     time: Res<Time<Real>>,
     game_time: Res<Time<Virtual>>,
@@ -478,6 +490,7 @@ fn poll_session(
             let profile = Profile {
                 name,
                 loadout,
+                color: color_of(color.as_deref()),
                 ..Default::default()
             };
             *lobby = Some(Lobby::new(me, profile, now));

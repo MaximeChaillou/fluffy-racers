@@ -23,6 +23,10 @@
 //! - **Interactions** ([`deliver_interactions`], [`forward_interactions`]): a strike or a grab on
 //!   another peer's kart goes to everyone; the peer that has authority over the target decides
 //!   (the victim decides), and its answer goes to everyone, for the visuals.
+//! - **Colors** (issue #55, [`paint_online_karts`], [`race_colors`]): each player's kart wears the
+//!   color the lobby gives it (`Lobby::color_of`: its choice, unless a player of an earlier seat
+//!   chose it too), and the race's bots avoid the players' colors (`kart::bot_colors`). Every
+//!   peer computes the same from the seats and the `Hello`s, and follows when they change.
 //!
 //! The items and the croquettes (issue #53) are shared by `items_online.rs`.
 
@@ -41,14 +45,16 @@ use super::sync::{
 use super::tuning::NetTuning;
 use super::{Lobby, NetSession, NetStatus, NetSystems, STUCK_MS, now_ms};
 use crate::admin::tracks::circuits;
-use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_color, bot_loadout, bot_seed};
+use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_loadout, bot_seed};
 use crate::characters::{DriverLooks, Roster};
 use crate::interactions::{
     InteractionClock, InteractionSystems, InteractionTuning, KartGrabbed, KartStruck, Paw,
     PawMotion, StrikeAnswer, Swing, SwingKind, TetherEnded, ticks,
 };
+use crate::interpolation::InterpolationSystems;
 use crate::kart::{
-    Kart, KartSystems, KartTuning, KartVisualAssets, PlayerKart, Remote, SpawnPoint, StatsTuning,
+    ColorSet, Kart, KartColor, KartPaint, KartSystems, KartTuning, KartVisualAssets,
+    OnlinePlayerColors, PALETTE_SIZE, PlayerKart, Remote, SpawnPoint, StatsTuning, bot_colors,
     kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use crate::level::{LoadLevel, Online};
@@ -132,6 +138,26 @@ pub fn race_to_start(
     })
 }
 
+/// The color of every kart of the race `start` (issue #55), by grid slot: each player's, as the
+/// lobby says (`Lobby::color_of`; a player who left: its slot's bot color, it is hidden), and the
+/// bots', which avoid the players' (`kart::bot_colors`). With the colors the players wear. The
+/// same on every peer that knows the same `Hello`s; nothing allocated.
+pub fn race_colors(lobby: &Lobby, start: &RaceStart) -> ([KartColor; PALETTE_SIZE], ColorSet) {
+    let players: ColorSet = start
+        .players
+        .iter()
+        .filter_map(|peer| lobby.color_of(*peer))
+        .collect();
+    let bots = usize::from(start.bots);
+    let mut colors = bot_colors(bots, players);
+    for (index, peer) in start.players.iter().enumerate() {
+        if let (Some(color), Some(kart)) = (lobby.color_of(*peer), colors.get_mut(bots + index)) {
+            *kart = color;
+        }
+    }
+    (colors, players)
+}
+
 /// The circuit of index `track` in `assets/tracks/index.ron` (the first one if unknown).
 fn circuit(track: u8) -> TrackChoice {
     circuits()
@@ -195,6 +221,15 @@ impl Plugin for OnlineRacePlugin {
                     .run_if(resource_exists::<NetSession>)
                     .after(RaceSystems::Rank),
             ),
+        )
+        .add_systems(
+            PostUpdate,
+            // Before the visuals follow the karts' colors (`kart::KartVisualPlugin`), so that a
+            // kart spawned this frame shows its color at once.
+            paint_online_karts
+                .run_if(resource_exists::<KartSync>)
+                .run_if(resource_exists::<NetSession>)
+                .before(InterpolationSystems),
         );
     }
 }
@@ -263,6 +298,7 @@ fn online_mode(
             commands.remove_resource::<OnlineRace>();
             commands.remove_resource::<OnlineFlow>();
             commands.remove_resource::<Online>();
+            commands.remove_resource::<OnlinePlayerColors>();
             if let Some(clock) = interaction_clock.as_mut() {
                 clock.set_if_neq(InteractionClock::default());
             }
@@ -393,7 +429,8 @@ fn online_mode(
                     }
                     sync.set_players(lobby.seats().iter().enumerate().filter_map(|(slot, key)| {
                         let profile = lobby.peer(*key)?.profile.as_ref()?;
-                        Some((*key, profile.loadout, slot))
+                        let color = lobby.color_of(*key).unwrap_or(profile.color);
+                        Some((*key, profile.loadout, slot, color))
                     }))
                 }
             }
@@ -406,6 +443,7 @@ fn online_mode(
 /// unless we host (the host's).
 fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
     let (me, host, hosting) = (lobby.me(), lobby.host(), lobby.is_host());
+    let (colors, _) = race_colors(lobby, &race.shared.start);
     sync.set_roster(race.shared.karts().iter().filter_map(|kart| {
         let ours = match kart.driver {
             Driver::Player(peer) => peer == me,
@@ -428,7 +466,7 @@ fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
             kart: kart.kart,
             peer,
             loadout,
-            color: usize::from(kart.kart),
+            color: colors[usize::from(kart.kart) % PALETTE_SIZE],
             name,
             racer: race.racing,
             left: kart.left,
@@ -455,7 +493,6 @@ fn take_over_bots(
     ),
     looks: Option<Res<DriverLooks>>,
     visuals: Option<Res<KartVisualAssets>>,
-    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
     local: Query<&Racer, (With<Bot>, With<Kart>)>,
     proxies: Query<(
         &RemoteKartProxy,
@@ -466,7 +503,7 @@ fn take_over_bots(
 ) {
     let hosting = session.lobby.as_ref().is_some_and(Lobby::is_host);
     let showing = online.is_some_and(|o| o.showing == Showing::Race(race.shared.race()));
-    let (Some(layout), Some(course)) = (layout, course) else {
+    let (Some(layout), Some(course), Some(lobby)) = (layout, course, session.lobby.as_ref()) else {
         return;
     };
     if !hosting || !race.racing || !showing || race.bots_here {
@@ -474,6 +511,7 @@ fn take_over_bots(
     }
     race.bots_here = true;
     let start = &race.shared.start;
+    let (colors, _) = race_colors(lobby, start);
     let difficulty = BotDifficulty::ALL
         .get(usize::from(start.difficulty))
         .copied()
@@ -516,23 +554,58 @@ fn take_over_bots(
                 progress,
                 bot(difficulty, bot_seed(start.seed, slot), &tuning),
                 NetKart(kart.kart),
+                KartPaint(colors[slot % PALETTE_SIZE]),
             ))
             .insert(Velocity {
                 linear: velocity,
                 angular: Vec3::ZERO,
             })
             .id();
-        if let (Some(visuals), Some(materials)) = (&visuals, materials.as_mut()) {
+        if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
-            spawn_kart_visual_with_driver(
-                &mut commands,
-                visuals,
-                materials,
-                body,
-                bot_color(slot),
-                driver,
-            );
+            let color = colors[slot % PALETTE_SIZE];
+            spawn_kart_visual_with_driver(&mut commands, visuals, body, color, driver);
         }
+    }
+}
+
+/// Online (issue #55), every frame: our kart wears the color the lobby gives it (another player
+/// may have chosen ours first), the race's bots we drive theirs (they avoid the players'), and
+/// the bots that will spawn here avoid the race's players' colors (`OnlinePlayerColors`, read by
+/// `bots::BotPlugin`). The visuals follow (`kart::KartPaint`). Nothing changes, nothing is
+/// written.
+fn paint_online_karts(
+    mut commands: Commands,
+    session: Res<NetSession>,
+    race: Option<Res<OnlineRace>>,
+    online: Option<Res<OnlineLevel>>,
+    worn: Option<Res<OnlinePlayerColors>>,
+    mut ours: Query<&mut KartPaint, (With<PlayerKart>, With<Kart>)>,
+    mut bots: Query<(&Racer, &mut KartPaint), (With<Bot>, With<Kart>, Without<PlayerKart>)>,
+) {
+    let Some(lobby) = session.lobby.as_ref() else {
+        return;
+    };
+    if let Some(color) = lobby.color_of(lobby.me()) {
+        for mut paint in &mut ours {
+            paint.set_if_neq(KartPaint(color));
+        }
+    }
+    let shown = race
+        .as_deref()
+        .filter(|race| online.is_some_and(|o| o.showing == Showing::Race(race.shared.race())));
+    let players = match shown {
+        Some(race) => {
+            let (colors, players) = race_colors(lobby, &race.shared.start);
+            for (racer, mut paint) in &mut bots {
+                paint.set_if_neq(KartPaint(colors[racer.grid_slot % PALETTE_SIZE]));
+            }
+            players
+        }
+        None => ColorSet::default(),
+    };
+    if worn.is_none_or(|worn| worn.0 != players) {
+        commands.insert_resource(OnlinePlayerColors(players));
     }
 }
 

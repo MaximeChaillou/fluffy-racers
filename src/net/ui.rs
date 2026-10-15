@@ -19,6 +19,7 @@ use super::{
 };
 use crate::admin::tracks::{TrackEntry, circuits};
 use crate::characters::{PartKind, Roster};
+use crate::kart::KartColor;
 
 const GOOD: Color32 = Color32::from_rgb(110, 210, 120);
 const BAD: Color32 = Color32::from_rgb(240, 110, 90);
@@ -326,6 +327,31 @@ fn in_room(
     }
 }
 
+/// A swatch of a kart's color, then its name (issue #55).
+fn color_cell(ui: &mut egui::Ui, color: KartColor) {
+    let [r, g, b] = color.rgb();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 3.0, Color32::from_rgb(r, g, b));
+    ui.label(color.label());
+}
+
+/// What the lobby says when a color was taken (issue #55): `None` when every player wears the
+/// color it chose.
+pub fn color_notice(rows: &[super::PlayerRow]) -> Option<String> {
+    let mine = rows
+        .iter()
+        .find(|row| row.me && row.seated && row.chosen != row.color)?;
+    let (Some(chosen), Some(worn)) = (mine.chosen, mine.color) else {
+        return None;
+    };
+    Some(format!(
+        "Couleur déjà prise : tu es en {} au lieu de {}.",
+        worn.label(),
+        chosen.label()
+    ))
+}
+
 fn lobby_list(
     ui: &mut egui::Ui,
     session: &NetSession,
@@ -343,12 +369,13 @@ fn lobby_list(
     let seated = rows.iter().filter(|row| row.seated).count();
     ui.small(format!("{seated} joueur(s) sur {MAX_PLAYERS}"));
     egui::Grid::new("lobby-players")
-        .num_columns(4)
+        .num_columns(5)
         .spacing([10.0, 4.0])
         .striped(true)
         .show(ui, |ui| {
             ui.label(RichText::new("Joueur").strong());
             ui.label(RichText::new("Animal").strong());
+            ui.label(RichText::new("Couleur").strong());
             ui.label(RichText::new("Ping").strong());
             ui.label(RichText::new("Prêt").strong());
             ui.end_row();
@@ -372,6 +399,7 @@ fn lobby_list(
                     ui.label(RichText::new(format!("autre version ({version})")).color(BAD));
                     ui.label("");
                     ui.label("");
+                    ui.label("");
                     ui.end_row();
                     continue;
                 }
@@ -382,6 +410,18 @@ fn lobby_list(
                     animal
                 } else {
                     "arrive…"
+                });
+                // Issue #55: the color it wears (the one it chose, if another took it first).
+                ui.horizontal(|ui| match row.color {
+                    Some(color) => {
+                        color_cell(ui, color);
+                        if let Some(chosen) = row.chosen.filter(|chosen| *chosen != color) {
+                            ui.small(format!("({} pris)", chosen.label()));
+                        }
+                    }
+                    None => {
+                        ui.label("…");
+                    }
                 });
                 let ping = match (row.me, row.silent, row.ping_ms) {
                     (true, _, _) => RichText::new("—"),
@@ -400,6 +440,10 @@ fn lobby_list(
         });
     if rows.iter().any(|row| row.other_version.is_some()) {
         ui.small("Un joueur a une autre version du jeu : rechargez tous la page.");
+    }
+    if let Some(notice) = color_notice(&rows) {
+        ui.label(RichText::new(notice).color(HOST));
+        ui.small("Change de couleur avec G (Pilote et kart).");
     }
     connections(ui, session, now_ms);
     ui.add_space(4.0);

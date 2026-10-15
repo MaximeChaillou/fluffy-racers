@@ -18,7 +18,10 @@
 //!
 //! The driver (issue #15) is the character: a fluffy ball whose size shows its weight class and
 //! whose color and ears show the animal ([`DriverLook`]). Every character has one shared
-//! material; only the body material is the kart's own.
+//! material.
+//!
+//! The body wears a color of the palette (issue #55, `palette.rs`): one shared material per
+//! color, for every kart that wears it. It follows the kart's [`KartPaint`], even when it changes.
 
 use std::f32::consts::TAU;
 
@@ -27,6 +30,7 @@ use bevy::transform::TransformSystems;
 use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
+use super::palette::{KartColor, KartPaint, PALETTE_SIZE};
 use super::physics::HitReaction;
 use super::rocket::Stall;
 use super::slipstream::Slipstream;
@@ -110,6 +114,15 @@ pub struct DriverLook {
     pub ears: DriverEars,
 }
 
+/// The body of a kart visual, painted in the color of `kart`'s [`KartPaint`] (issue #55): `shown`
+/// is the color of its material now.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyPaint {
+    /// The kart (its simulated body, or the body of another peer's kart).
+    pub kart: Entity,
+    pub shown: KartColor,
+}
+
 /// The driver under a kart visual's pivot: its size (scale) shows the character's weight class.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct DriverVisual {
@@ -189,6 +202,7 @@ impl Plugin for KartVisualPlugin {
                     show_boost_flames,
                     show_stall_smoke,
                     show_wind_lines,
+                    repaint_bodies,
                 )
                     .after(InterpolationSystems)
                     .before(TransformSystems::Propagate),
@@ -197,7 +211,8 @@ impl Plugin for KartVisualPlugin {
 }
 
 /// Meshes and materials shared by every kart visual: 12 karts on the grid reuse the same assets
-/// (fewer GPU resources, better batching); only the body color differs per kart.
+/// (fewer GPU resources, better batching), the body's material too: one per color of the
+/// palette (issue #55).
 #[derive(Resource, Clone, Debug)]
 pub struct KartVisualAssets {
     body: Handle<Mesh>,
@@ -213,9 +228,16 @@ pub struct KartVisualAssets {
     flame_material: Handle<StandardMaterial>,
     smoke_material: Handle<StandardMaterial>,
     wind_material: Handle<StandardMaterial>,
+    /// The body's materials, by color ([`KartColor::index`]).
+    paints: [Handle<StandardMaterial>; PALETTE_SIZE],
 }
 
 impl KartVisualAssets {
+    /// The body's material of `color`, shared by every kart that wears it.
+    pub fn paint(&self, color: KartColor) -> Handle<StandardMaterial> {
+        self.paints[usize::from(color.index())].clone()
+    }
+
     pub fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         Self {
             body: meshes.add(Cuboid::new(1.2, 0.45, 2.0)),
@@ -250,6 +272,7 @@ impl KartVisualAssets {
                 unlit: true,
                 ..default()
             }),
+            paints: KartColor::ALL.map(|color| materials.add(color.color())),
         }
     }
 }
@@ -263,28 +286,27 @@ fn create_kart_visual_assets(
 }
 
 /// Spawns the visual of the kart `body` (colored box, fluffy ball driver, 4 wheels, drift
-/// sparks, boost flames, stall puffs, wind lines). Only the body material is new; everything
-/// else comes from `assets`. The driver is the default one (medium, cream, round ears).
+/// sparks, boost flames, stall puffs, wind lines), all from the shared `assets`. The box wears
+/// `color`, then the color of `body`'s [`KartPaint`] if it has one (and when it changes). The
+/// driver is the default one (medium, cream, round ears).
 pub fn spawn_kart_visual(
     commands: &mut Commands,
     assets: &KartVisualAssets,
-    materials: &mut Assets<StandardMaterial>,
     body: Entity,
-    color: Color,
+    color: KartColor,
 ) -> Entity {
-    spawn_kart_visual_with_driver(commands, assets, materials, body, color, None)
+    spawn_kart_visual_with_driver(commands, assets, body, color, None)
 }
 
 /// Same with the driver of a character (issue #15; `None`: the default one).
 pub fn spawn_kart_visual_with_driver(
     commands: &mut Commands,
     assets: &KartVisualAssets,
-    materials: &mut Assets<StandardMaterial>,
     body: Entity,
-    color: Color,
+    color: KartColor,
     driver: Option<&DriverLook>,
 ) -> Entity {
-    let body_material = materials.add(color);
+    let body_material = assets.paint(color);
     let assets = assets.clone();
     let (size, driver_material, ears) = match driver {
         Some(look) => (look.size, look.material.clone(), look.ears),
@@ -320,6 +342,10 @@ pub fn spawn_kart_visual_with_driver(
             ))
             .with_children(|pivot| {
                 pivot.spawn((
+                    BodyPaint {
+                        kart: body,
+                        shown: color,
+                    },
                     Mesh3d(assets.body.clone()),
                     MeshMaterial3d(body_material),
                     Transform::default(),
@@ -396,6 +422,27 @@ pub fn spawn_kart_visual_with_driver(
             });
         })
         .id()
+}
+
+/// Each body wears the color of its kart's [`KartPaint`] (issue #55): the shared material of that
+/// color, swapped only when the color changes (a dozen lookups a frame, nothing allocated).
+fn repaint_bodies(
+    assets: Option<Res<KartVisualAssets>>,
+    karts: Query<&KartPaint>,
+    mut bodies: Query<(&mut BodyPaint, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    for (mut body, mut material) in &mut bodies {
+        let Ok(KartPaint(color)) = karts.get(body.kart).copied() else {
+            continue;
+        };
+        if body.shown != color {
+            body.shown = color;
+            material.0 = assets.paint(color);
+        }
+    }
 }
 
 /// Puts each wheel where its suspension ray touches the ground (fully extended in the air).

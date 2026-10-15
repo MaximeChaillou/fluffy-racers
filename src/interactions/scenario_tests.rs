@@ -803,16 +803,13 @@ fn x_strikes_on_the_keyboard_the_paw_shows_and_the_camera_shakes() {
             .with_rotation(at.rotation);
         let kart = world.spawn(crate::kart::kart_body(&tuning, place)).id();
         let visuals = world.resource::<crate::kart::KartVisualAssets>().clone();
-        world.resource_scope(|world, mut materials: Mut<Assets<StandardMaterial>>| {
-            let mut commands = world.commands();
-            crate::kart::spawn_kart_visual(
-                &mut commands,
-                &visuals,
-                &mut materials,
-                kart,
-                Color::WHITE,
-            );
-        });
+        let mut commands = world.commands();
+        crate::kart::spawn_kart_visual(
+            &mut commands,
+            &visuals,
+            kart,
+            crate::kart::KartColor::White,
+        );
         world.flush();
         kart
     };

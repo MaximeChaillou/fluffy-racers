@@ -27,6 +27,11 @@
 //! A peer of another protocol version is listed apart ([`DecodeError::OtherVersion`]): it never
 //! sits, never hosts, and gets nothing more.
 //!
+//! **Colors** (issue #55): each player's `Hello` says the color it chose for its kart. Two
+//! players who chose the same one: the first seat keeps it, the other wears the closest free one
+//! ([`Lobby::color_of`], `kart::resolve_players`): the seats are the same on every peer, so every
+//! peer paints the karts the same, whatever the order the `Hello`s arrived in.
+//!
 //! **The room** (issue #9): the host chooses its circuit ([`Lobby::choose_circuit`], everyone
 //! drives freely on it) and starts the races ([`Lobby::announce_race`]); every peer it seats gets
 //! what is on. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's, and
@@ -34,6 +39,7 @@
 
 use super::clock::{PeerClock, RoomClock};
 use super::protocol::{DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceStart};
+use crate::kart::{KartColor, resolve_players};
 
 /// A ping to every peer this often (ms).
 pub const PING_INTERVAL_MS: u64 = 1_000;
@@ -101,6 +107,11 @@ pub struct PlayerRow {
     pub key: PeerKey,
     pub name: String,
     pub loadout: [u8; 4],
+    /// The color it chose (issue #55; `None`: its `Hello` has not arrived).
+    pub chosen: Option<KartColor>,
+    /// The color it wears ([`Lobby::color_of`]): the one it chose, unless a player of an earlier
+    /// seat chose it too.
+    pub color: Option<KartColor>,
     pub ready: bool,
     pub me: bool,
     pub host: bool,
@@ -462,14 +473,41 @@ impl Lobby {
         }
     }
 
-    /// Our name and loadout changed (selection screen).
-    pub fn set_profile(&mut self, name: &str, loadout: [u8; 4]) {
+    /// Our name, loadout or color changed (selection screen).
+    pub fn set_profile(&mut self, name: &str, loadout: [u8; 4], color: KartColor) {
         let name = Profile::clean_name(name);
-        if (self.profile.name != name || self.profile.loadout != loadout) && !self.stopped() {
+        let changed = self.profile.name != name
+            || self.profile.loadout != loadout
+            || self.profile.color != color;
+        if changed && !self.stopped() {
             self.profile.name = name;
             self.profile.loadout = loadout;
+            self.profile.color = color;
             self.broadcast(Message::Hello(self.profile.clone()));
         }
+    }
+
+    /// The color `key` chose (its `Hello`; ours: our profile).
+    fn chosen_color(&self, key: PeerKey) -> Option<KartColor> {
+        if key == self.me {
+            return Some(self.profile.color);
+        }
+        self.peer(key)?
+            .profile
+            .as_ref()
+            .map(|profile| profile.color)
+    }
+
+    /// The color `key`'s kart wears (issue #55): for a seated player, the one it chose unless a
+    /// player of an earlier seat chose it too (then the closest free one,
+    /// `kart::resolve_players`); for a peer waiting for its seat, the one it chose. `None`: an
+    /// unknown peer, or its `Hello` has not arrived. Nothing allocated (12 seats at most).
+    pub fn color_of(&self, key: PeerKey) -> Option<KartColor> {
+        let Some(seat) = self.seats.iter().position(|seated| *seated == key) else {
+            return self.chosen_color(key);
+        };
+        let worn = resolve_players(self.seats.iter().map(|seated| self.chosen_color(*seated)));
+        worn.get(seat).copied().flatten()
     }
 
     /// We leave: `Bye` to everyone, then nothing more.
@@ -518,11 +556,14 @@ impl Lobby {
     pub fn players(&self, now_ms: u64) -> Vec<PlayerRow> {
         let mut rows: Vec<PlayerRow> = Vec::with_capacity(self.peers.len() + 1);
         let row_of_peer = |peer: &LobbyPeer| {
+            let chosen = peer.profile.as_ref().map(|profile| profile.color);
             let profile = peer.profile.clone().unwrap_or_default();
             PlayerRow {
                 key: peer.key,
                 name: profile.name,
                 loadout: profile.loadout,
+                chosen,
+                color: self.color_of(peer.key),
                 ready: profile.ready,
                 me: false,
                 host: self.host == Some(peer.key),
@@ -536,6 +577,8 @@ impl Lobby {
             key: self.me,
             name: self.profile.name.clone(),
             loadout: self.profile.loadout,
+            chosen: Some(self.profile.color),
+            color: self.color_of(self.me),
             ready: self.profile.ready,
             me: true,
             host: self.is_host(),
@@ -956,11 +999,64 @@ mod tests {
         mesh.run(100);
         assert!(!mesh.view(a).all_ready());
         // A changed name or kart reaches them too.
-        mesh.lobby(c).set_profile("  Max ", [4, 1, 1, 0]);
+        mesh.lobby(c)
+            .set_profile("  Max ", [4, 1, 1, 0], KartColor::Teal);
         mesh.run(100);
         let rows = mesh.view(a).players(mesh.local(a));
         let row = rows.iter().find(|r| r.key == c).unwrap();
         assert_eq!((row.name.as_str(), row.loadout), ("Max", [4, 1, 1, 0]));
+        // Issue #55: and a changed color.
+        assert_eq!(row.color, Some(KartColor::Teal));
+    }
+
+    /// Issue #55: the colors the players chose reach everyone; two players of the same color:
+    /// every lobby says the first seat keeps it and the other wears the closest free one, and
+    /// the rows say both. A departure gives the color back.
+    #[test]
+    fn the_same_color_twice_is_resolved_the_same_everywhere() {
+        use KartColor::*;
+        let mut mesh = Mesh::new();
+        let a = mesh.join(1);
+        mesh.run(SETTLE_MS + 100);
+        let b = mesh.join(2);
+        let c = mesh.join(3);
+        mesh.run(1_000);
+        let (_, seats) = mesh.agreed();
+        assert_eq!(seats.len(), 3);
+        let colors = |mesh: &Mesh| -> Vec<Vec<Option<KartColor>>> {
+            [a, b, c]
+                .iter()
+                .map(|key| seats.iter().map(|s| mesh.view(*key).color_of(*s)).collect())
+                .collect()
+        };
+        // Nobody chose: all pink; the first seat keeps it, the others the closest free colors.
+        for seen in colors(&mesh) {
+            assert_eq!(seen, [Some(Pink), Some(Violet), Some(Orange)]);
+        }
+        // The first two seats choose blue, the third red.
+        mesh.lobby(seats[0]).set_profile("Ana", [1, 2, 0, 1], Blue);
+        mesh.lobby(seats[1]).set_profile("Bob", [1, 2, 0, 1], Blue);
+        mesh.lobby(seats[2]).set_profile("Cyd", [1, 2, 0, 1], Red);
+        mesh.run(200);
+        for seen in colors(&mesh) {
+            assert_eq!(seen, [Some(Blue), Some(Violet), Some(Red)]);
+        }
+        for key in [a, b, c] {
+            let rows = mesh.view(key).players(mesh.local(key));
+            let second = rows.iter().find(|r| r.key == seats[1]).unwrap();
+            assert_eq!((second.chosen, second.color), (Some(Blue), Some(Violet)));
+            let first = rows.iter().find(|r| r.key == seats[0]).unwrap();
+            assert_eq!((first.chosen, first.color), (Some(Blue), Some(Blue)));
+        }
+        // The first one leaves: the second wears blue now, on every screen.
+        mesh.close(seats[0]);
+        mesh.run(1_000);
+        for key in [seats[1], seats[2]] {
+            assert_eq!(mesh.view(key).color_of(seats[1]), Some(Blue));
+            assert_eq!(mesh.view(key).color_of(seats[2]), Some(Red));
+        }
+        // An unknown peer has no color.
+        assert_eq!(mesh.view(seats[1]).color_of(Mesh::key(99)), None);
     }
 
     /// A player who leaves disappears from every lobby; if it hosted, the next smallest id

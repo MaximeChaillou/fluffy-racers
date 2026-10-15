@@ -14,7 +14,7 @@ use bevy_rapier3d::prelude::{ColliderDisabled, Velocity};
 
 use super::*;
 use crate::characters::Roster;
-use crate::kart::{Kart, KartInput, KartTuning, KartWheels, PlayerKart, kart_body};
+use crate::kart::{Kart, KartInput, KartTuning, KartWheels, PlayerKart, bot_color, kart_body};
 use crate::level::LoadLevel;
 use crate::race::{RaceGrid, RaceMode};
 use crate::track::{PlayerStart, Surface, TrackChoice, spawn_static_box};
@@ -54,7 +54,7 @@ fn online_game(me: PeerKey, slot: usize, other: PeerKey, other_slot: usize) -> A
     let mut app = crate::tests::game_app_unloaded(TrackChoice::default(), 0);
     let mut sync = KartSync::new(me, slot as KartId, 1);
     sync.clock = TickClock::with_offset(0);
-    sync.set_players([(other, [3, 1, 2, 1], other_slot)]);
+    sync.set_players([(other, [3, 1, 2, 1], other_slot, bot_color(other_slot))]);
     app.insert_resource(RaceMode::FreeRoam)
         .insert_resource(OnlineSlot(slot))
         .insert_resource(sync)
@@ -304,7 +304,7 @@ impl Arena {
         app.cleanup();
         let mut sync = KartSync::new(PeerKey(1), 0, 0);
         sync.clock = TickClock::with_offset(0);
-        sync.set_players([(REMOTE, [0, 0, 0, 0], 1)]);
+        sync.set_players([(REMOTE, [0, 0, 0, 0], 1, bot_color(1))]);
         app.insert_resource(sync);
         let world = app.world_mut();
         let mut commands = world.commands();
@@ -594,7 +594,7 @@ fn the_roster_keeps_the_karts_by_id_and_authority() {
         kart,
         peer,
         loadout: Some([1, 0, 0, 0]),
-        color: usize::from(kart),
+        color: bot_color(usize::from(kart)),
         name: None,
         racer: true,
         left: false,

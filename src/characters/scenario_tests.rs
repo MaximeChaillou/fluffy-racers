@@ -10,7 +10,8 @@ use bevy_rapier3d::prelude::ColliderMassProperties;
 use super::*;
 use crate::bots::{Bot, bot_loadout};
 use crate::kart::{
-    DriverVisual, Kart, KartStats, MaxSpeedFactors, MaxSpeedScale, PlayerKart, Stat, StatEffects,
+    BOT_COLORS, BodyPaint, ColorSet, DriverVisual, Kart, KartColor, KartPaint, KartStats,
+    KartVisualAssets, MaxSpeedFactors, MaxSpeedScale, PlayerKart, Stat, StatEffects,
 };
 use crate::race::{Race, RaceGrid, RacePhase, Racer};
 use crate::tests::{app_on, app_with_bots, player};
@@ -129,12 +130,17 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
     tap(&mut app, KeyCode::KeyD, Key::Character("d".into()));
     tap(&mut app, KeyCode::KeyS, Key::Character("s".into()));
     tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
-    // Up twice and back: the rows wrap around (wheels → kart → character → wing → character).
+    // Up twice and back: the rows wrap around (wheels → kart → character → color → character;
+    // the color's line, issue #55, is the last one, under the wing's).
     tap(&mut app, KeyCode::KeyW, Key::Character("w".into()));
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
+    assert!(screen(&app).on_color_row());
+    tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     assert_eq!(screen(&app).kind(), PartKind::Wing);
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    assert_eq!(screen(&app).row, 0);
     let choice = screen(&app).choice;
     let names = PartKind::ALL.map(|kind| roster.name(kind, choice.get(kind)).to_string());
     assert_eq!(
@@ -284,6 +290,101 @@ fn the_bots_race_with_their_own_characters_and_parts() {
     assert!(sizes.len() >= 6, "{sizes:?}");
     let karts = world.query_filtered::<(), With<Kart>>().iter(world).count();
     assert_eq!(karts, 12);
+}
+
+/// The colors of the karts (issue #55): each kart's paint by grid slot (the player's: `None`),
+/// and whether every body's visual wears its kart's paint, with the shared material of that
+/// color.
+fn paints(app: &mut App) -> Vec<(Option<usize>, KartColor)> {
+    let world = app.world_mut();
+    let assets = world.resource::<KartVisualAssets>().clone();
+    let mut bodies = world.query::<(&BodyPaint, &MeshMaterial3d<StandardMaterial>)>();
+    let bodies: Vec<(BodyPaint, Handle<StandardMaterial>)> = bodies
+        .iter(world)
+        .map(|(paint, material)| (*paint, material.0.clone()))
+        .collect();
+    let mut karts =
+        world.query_filtered::<(Entity, Option<&Racer>, &KartPaint, Has<Bot>), With<Kart>>();
+    let mut paints: Vec<(Option<usize>, KartColor)> = karts
+        .iter(world)
+        .map(|(kart, racer, paint, is_bot)| {
+            let body = bodies.iter().find(|(body, _)| body.kart == kart);
+            let (body, material) = body.expect("a kart without its visual");
+            assert_eq!(body.shown, paint.0, "the visual wears the kart's color");
+            assert_eq!(*material, assets.paint(paint.0), "the shared material");
+            (racer.filter(|_| is_bot).map(|r| r.grid_slot), paint.0)
+        })
+        .collect();
+    paints.sort_by_key(|(slot, _)| slot.map_or(0, |s| s + 1));
+    paints
+}
+
+/// Issue #55: without a choice, the player's kart is pink and the 11 bots wear the colors they
+/// always had; on the selection screen, the color's line goes through the palette and Entrée
+/// races with it: the player's kart wears it, the bot that wore it takes the only free color
+/// (12 karts, 12 colors), and every body has the shared material of its color. Échap keeps it.
+#[test]
+fn the_color_line_paints_the_kart_and_the_bots_avoid_it() {
+    let mut app = app_with_bots(TrackChoice::default(), 11);
+    wait_for_the_level(&mut app);
+    app.update();
+    assert_eq!(app.world().resource::<PlayerColor>().0, KartColor::Pink);
+    let by_default = paints(&mut app);
+    assert_eq!(by_default.len(), 12);
+    assert_eq!(by_default[0], (None, KartColor::Pink));
+    for (slot, color) in &by_default[1..] {
+        assert_eq!(*color, BOT_COLORS[slot.unwrap()], "slot {slot:?}");
+    }
+    let distinct: ColorSet = by_default.iter().map(|(_, color)| *color).collect();
+    assert_eq!(distinct.len(), 12);
+
+    // G, up from the character's line: the color's (the last one); right three times: brown,
+    // white, red. Nothing applied before Entrée.
+    tap(&mut app, KeyCode::KeyG, Key::Character("g".into()));
+    assert_eq!(screen(&app).color, KartColor::Pink);
+    tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
+    assert!(screen(&app).on_color_row());
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
+    }
+    assert_eq!(screen(&app).color, KartColor::Red);
+    assert_eq!(
+        screen(&app).choice,
+        app.world().resource::<PlayerLoadout>().0
+    );
+    assert_eq!(app.world().resource::<PlayerColor>().0, KartColor::Pink);
+    tap(&mut app, KeyCode::Enter, Key::Enter);
+    assert_eq!(app.world().resource::<PlayerColor>().0, KartColor::Red);
+    wait_for_the_level(&mut app);
+    app.update();
+    let red = paints(&mut app);
+    assert_eq!(red[0], (None, KartColor::Red));
+    // The red bot (slot 0) wears the only color nobody wears: pink. The others keep theirs.
+    assert_eq!(red[1], (Some(0), KartColor::Pink));
+    for (slot, color) in &red[2..] {
+        assert_eq!(*color, BOT_COLORS[slot.unwrap()], "slot {slot:?}");
+    }
+    let distinct: ColorSet = red.iter().map(|(_, color)| *color).collect();
+    assert_eq!(distinct.len(), 12);
+
+    // Échap: the color chosen on the screen is not kept.
+    tap(&mut app, KeyCode::KeyG, Key::Character("g".into()));
+    assert_eq!(screen(&app).color, KartColor::Red);
+    app.world_mut()
+        .write_message(SelectionAction::PickColor(KartColor::Teal));
+    app.update();
+    assert_eq!(screen(&app).color, KartColor::Teal);
+    tap(&mut app, KeyCode::Escape, Key::Escape);
+    assert_eq!(app.world().resource::<PlayerColor>().0, KartColor::Red);
+
+    // A kart's paint that changes (online, issue #55): its visual follows, with the shared
+    // material of the new color (the blue bot's too).
+    let me = player(&mut app);
+    app.world_mut().get_mut::<KartPaint>(me).unwrap().0 = KartColor::Blue;
+    app.update();
+    let blue = paints(&mut app);
+    assert_eq!(blue[0], (None, KartColor::Blue));
+    assert!(blue.contains(&(Some(7), KartColor::Blue)));
 }
 
 /// Issue #15: the bounds of the stats are in the admin panel (`StatsTuning`, by reflection, like
