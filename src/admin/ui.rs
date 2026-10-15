@@ -221,7 +221,8 @@ pub(super) fn attach_egui_context(
 ) {
     let choosing =
         selection.is_some_and(|screen| screen.open) || options.is_some_and(|menu| menu.open);
-    let wanted = panel.open || choosing || lobby.is_some_and(|window| window.open);
+    // Issue #64: the room's banner too (`LobbyWindow::banner`: in a room, out of a race).
+    let wanted = panel.open || choosing || lobby.is_some_and(|window| window.open || window.banner);
     for (camera, attached) in &cameras {
         if wanted && !attached {
             commands.entity(camera).insert(PrimaryEguiContext);
