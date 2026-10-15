@@ -23,6 +23,7 @@
 mod bump;
 mod drift;
 mod input;
+mod palette;
 mod physics;
 mod push;
 mod rocket;
@@ -39,6 +40,10 @@ pub use input::{
     JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
     SpawnPoint, gamepad_input, keyboard_input,
 };
+pub use palette::{
+    BOT_COLORS, ColorSet, KartColor, KartPaint, OnlinePlayerColors, PALETTE_SIZE, bot_color,
+    bot_colors, resolve_players,
+};
 pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
 pub use push::{Shove, TetherPull, towed_forward_speed, towed_top_speed};
 pub use rocket::{
@@ -52,9 +57,9 @@ pub use stats::{
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
-    BoostFlame, DriftSpark, DriverEars, DriverLook, DriverVisual, KartBodyPivot, KartVisualAssets,
-    KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose, shown_while_invincible,
-    spawn_kart_visual, spawn_kart_visual_with_driver,
+    BodyPaint, BoostFlame, DriftSpark, DriverEars, DriverLook, DriverVisual, KartBodyPivot,
+    KartVisualAssets, KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose,
+    shown_while_invincible, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;

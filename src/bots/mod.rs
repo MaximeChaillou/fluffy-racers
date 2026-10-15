@@ -27,6 +27,9 @@
 //! The race seed (issue #40, `RaceGrid::seed`) draws every bot of a race: same seed, same bots.
 //! The game keeps one seed (`RaceGrid::GAME_SEED`, the bots of every race before #40); the race
 //! tests run several, and the network will share the host's.
+//!
+//! Each bot wears the color of its grid slot (`kart::BOT_COLORS`), unless a player wears it
+//! (issue #55): then the closest free color (`kart::bot_colors`).
 
 mod driver;
 mod interactions;
@@ -49,14 +52,15 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
 use crate::TICK_HZ;
-use crate::characters::{DriverLooks, Loadout, PartKind, Roster, WeightClass};
+use crate::characters::{DriverLooks, Loadout, PartKind, PlayerColor, Roster, WeightClass};
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::interactions::{InteractionTuning, Paw, PawMotion};
 use crate::items::{ItemBox, ItemSlots, ItemTuning, Slot};
 use crate::kart::{
-    Boost, Kart, KartAssists, KartInput, KartState, KartSystems, KartTuning, KartVisualAssets,
-    MaxSpeedFactors, MaxSpeedScale, PlayerKart, Remote, StatEffects, StatsTuning, TrickTracker,
-    kart_body_with_stats, spawn_kart_visual_with_driver,
+    Boost, ColorSet, Kart, KartAssists, KartInput, KartPaint, KartState, KartSystems, KartTuning,
+    KartVisualAssets, MaxSpeedFactors, MaxSpeedScale, OnlinePlayerColors, PlayerKart, Remote,
+    StatEffects, StatsTuning, TrickTracker, bot_colors, kart_body_with_stats,
+    spawn_kart_visual_with_driver,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
 use crate::track::TrackLayout;
@@ -65,28 +69,6 @@ use crate::track::TrackLayout;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bot {
     pub difficulty: BotDifficulty,
-}
-
-/// Body colors of the karts by grid slot (primitive placeholders until the real models, #11).
-/// The player's kart is pink.
-pub const KART_COLORS: [Color; 12] = [
-    Color::srgb(0.90, 0.20, 0.20), // red
-    Color::srgb(1.00, 0.55, 0.15), // orange
-    Color::srgb(0.95, 0.85, 0.20), // yellow
-    Color::srgb(0.55, 0.85, 0.25), // lime
-    Color::srgb(0.15, 0.60, 0.30), // green
-    Color::srgb(0.10, 0.70, 0.70), // teal
-    Color::srgb(0.35, 0.70, 1.00), // sky blue
-    Color::srgb(0.20, 0.30, 0.85), // blue
-    Color::srgb(0.55, 0.30, 0.85), // violet
-    Color::srgb(0.55, 0.35, 0.20), // brown
-    Color::srgb(0.95, 0.95, 0.95), // white
-    Color::srgb(0.25, 0.25, 0.30), // charcoal
-];
-
-/// Color of the bot on grid slot `slot`.
-pub fn bot_color(slot: usize) -> Color {
-    KART_COLORS[slot % KART_COLORS.len()]
 }
 
 /// Seed of the bot on grid slot `slot` in a race of seed `race_seed` (issue #40,
@@ -178,7 +160,10 @@ fn build_racing_line(mut commands: Commands, layout: Res<TrackLayout>, tuning: R
 }
 
 /// Fills the front of the grid with bots once the circuit is built (`RaceGrid`), each with its
-/// own character and parts ([`bot_loadout`]) and its seed, from the race seed.
+/// own character and parts ([`bot_loadout`]) and its seed, from the race seed. Their colors avoid
+/// the players' (issue #55): the local player's solo, every player's of the race online
+/// (`OnlinePlayerColors`).
+#[allow(clippy::too_many_arguments)]
 fn spawn_bots(
     mut commands: Commands,
     layout: Res<TrackLayout>,
@@ -187,10 +172,16 @@ fn spawn_bots(
     kart_tuning: Res<KartTuning>,
     stats_tuning: Res<StatsTuning>,
     roster: Res<Roster>,
+    (player_color, online_colors): (Option<Res<PlayerColor>>, Option<Res<OnlinePlayerColors>>),
     looks: Option<Res<DriverLooks>>,
     visuals: Option<Res<KartVisualAssets>>,
-    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
 ) {
+    let players = match (online_colors, player_color) {
+        (Some(online), _) => online.0,
+        (None, Some(player)) => [player.0].into_iter().collect(),
+        (None, None) => ColorSet::default(),
+    };
+    let colors = bot_colors(grid.bot_count(), players);
     for slot in grid.bot_slots() {
         let Some(spawn) = layout.grid.get(slot).copied() else {
             break;
@@ -202,18 +193,12 @@ fn spawn_bots(
                 kart_body_with_stats(&kart_tuning, &stats_tuning, roster.stats(&loadout), spawn),
                 Racer::new(slot),
                 bot(tuning.grid_difficulty, bot_seed(grid.seed, slot), &tuning),
+                KartPaint(colors[slot]),
             ))
             .id();
-        if let (Some(visuals), Some(materials)) = (&visuals, materials.as_mut()) {
+        if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
-            spawn_kart_visual_with_driver(
-                &mut commands,
-                visuals,
-                materials,
-                body,
-                bot_color(slot),
-                driver,
-            );
+            spawn_kart_visual_with_driver(&mut commands, visuals, body, colors[slot], driver);
         }
     }
 }
@@ -535,15 +520,21 @@ fn drive_bots(
 mod tests {
     use super::*;
 
+    /// Every kart its own color (issue #55: the bots' colors of the palette, `kart::BOT_COLORS`;
+    /// none of the 11 bots wears the player's default pink) and its own seed.
     #[test]
     fn every_kart_has_its_own_color_and_seed() {
-        for (i, color) in KART_COLORS.iter().enumerate() {
-            assert_ne!(*color, crate::PLAYER_COLOR, "slot {i}");
-            for other in &KART_COLORS[i + 1..] {
+        use crate::kart::{BOT_COLORS, KartColor, bot_color};
+        let bots = RaceGrid::default().bot_count();
+        for (i, color) in BOT_COLORS.iter().enumerate() {
+            if i < bots {
+                assert_ne!(*color, KartColor::default(), "slot {i}");
+            }
+            for other in &BOT_COLORS[i + 1..] {
                 assert_ne!(color, other);
             }
         }
-        assert_eq!(bot_color(3), KART_COLORS[3]);
+        assert_eq!(bot_color(3), BOT_COLORS[3]);
         let mut seeds: Vec<u64> = (0..12).map(|slot| bot_seed(0, slot)).collect();
         seeds.dedup();
         assert_eq!(seeds.len(), 12);

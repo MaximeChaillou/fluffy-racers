@@ -3,13 +3,17 @@
 //!
 //! Like the admin panel (#36), it costs nothing once closed: the egui context only exists while
 //! one of them is open (`admin::ui::attach_egui_context` puts it on the camera and removes it).
+//!
+//! The player's color (issue #55) is kept here between sessions, like the options (#17): read
+//! before anything is built, written when it changes. The headless tests never touch the storage.
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Color32, RichText};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 
-use super::{PartKind, Roster, SelectionAction, SelectionScreen};
-use crate::kart::{KeyboardLayout, MAX_LEVEL, Stat, display_level};
+use super::{COLOR_STORAGE_KEY, PartKind, PlayerColor, Roster, SelectionAction, SelectionScreen};
+use crate::admin::storage;
+use crate::kart::{KartColor, KeyboardLayout, MAX_LEVEL, Stat, display_level};
 
 /// The line being changed.
 const HIGHLIGHT: Color32 = Color32::from_rgb(255, 190, 70);
@@ -26,7 +30,9 @@ impl Plugin for CharacterUiPlugin {
             auto_create_primary_context: false,
             ..default()
         })
+        .add_systems(PreStartup, load_stored_color)
         .add_systems(Startup, open_at_launch)
+        .add_systems(Update, store_color)
         .add_systems(
             EguiPrimaryContextPass,
             selection_window.run_if(|screen: Res<SelectionScreen>| screen.open),
@@ -37,6 +43,38 @@ impl Plugin for CharacterUiPlugin {
 /// The game starts on the selection screen: Entrée races with the default loadout.
 fn open_at_launch(mut actions: MessageWriter<SelectionAction>) {
     actions.write(SelectionAction::Open);
+}
+
+/// The color kept from the previous sessions, before anything is built (the karts, the `Hello`
+/// online). An unreadable text is ignored (pink stays), with a warning.
+fn load_stored_color(mut color: ResMut<PlayerColor>) {
+    let Some(text) = storage::load_key(COLOR_STORAGE_KEY) else {
+        return;
+    };
+    match KartColor::from_stored(&text) {
+        Ok(stored) => color.0 = stored,
+        Err(error) => warn!("selection: stored color ignored: {error}"),
+    }
+}
+
+/// A new color is kept at once (not the one loaded at startup: nothing changed).
+fn store_color(color: Res<PlayerColor>) {
+    if color.is_changed() && !color.is_added() {
+        storage::save_key(COLOR_STORAGE_KEY, &color.0.to_stored());
+    }
+}
+
+/// The palette's color for egui.
+fn egui_color(color: KartColor) -> Color32 {
+    let [r, g, b] = color.rgb();
+    Color32::from_rgb(r, g, b)
+}
+
+/// A swatch of `color`, the size of a line.
+fn swatch(ui: &mut egui::Ui, color: KartColor) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    ui.painter().rect_filled(rect, 4.0, egui_color(color));
+    response
 }
 
 /// `3.25` written the French way: `3,25`.
@@ -74,7 +112,7 @@ fn selection_window(
                 .spacing([8.0, 8.0])
                 .show(ui, |ui| {
                     for kind in PartKind::ALL {
-                        let current = screen.kind() == kind;
+                        let current = !screen.on_color_row() && screen.kind() == kind;
                         let mut label = RichText::new(kind.label());
                         if current {
                             label = label.strong().color(HIGHLIGHT);
@@ -101,7 +139,46 @@ fn selection_window(
                         }
                         ui.end_row();
                     }
+                    // Issue #55: the kart's color, with a swatch.
+                    let current = screen.on_color_row();
+                    let mut label = RichText::new("Couleur");
+                    if current {
+                        label = label.strong().color(HIGHLIGHT);
+                    }
+                    if ui.selectable_label(current, label).clicked() {
+                        actions.write(SelectionAction::PickColor(screen.color));
+                    }
+                    if ui.button("<").clicked() {
+                        actions.write(SelectionAction::Color(-1));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.set_min_width(200.0);
+                        swatch(ui, screen.color);
+                        ui.label(RichText::new(screen.color.title()).strong().size(16.0));
+                    });
+                    if ui.button(">").clicked() {
+                        actions.write(SelectionAction::Color(1));
+                    }
+                    ui.end_row();
                 });
+            // Every color of the palette, to click on.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for color in KartColor::ALL {
+                    let response = swatch(ui, color).on_hover_text(color.title());
+                    if color == screen.color {
+                        ui.painter().rect_stroke(
+                            response.rect.expand(2.0),
+                            4.0,
+                            egui::Stroke::new(2.0, HIGHLIGHT),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if response.clicked() {
+                        actions.write(SelectionAction::PickColor(color));
+                    }
+                }
+            });
             ui.separator();
             egui::Grid::new("selection-stats")
                 .num_columns(2)

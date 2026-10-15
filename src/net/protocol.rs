@@ -26,15 +26,17 @@
 //! croquette and the host's verdict ([`Claim`], [`Verdict`]), an item thrown or dropped
 //! ([`ItemOut`]), an item that broke ([`ItemBreak`]: on a kart, the victim's decision), the
 //! croquettes a kart lost ([`Scatter`]), and in the kart states what a kart holds out
-//! (`KartSnapshot::items`, 49 bytes).
+//! (`KartSnapshot::items`, 49 bytes). Version 5 (issue #55): the kart's color in the `Hello`
+//! ([`Profile::color`], a byte of the palette).
 
 use std::fmt;
 
 use crate::interactions::TetherEnd;
 use crate::items::ItemKind;
+use crate::kart::KartColor;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 4;
+pub const PROTOCOL_VERSION: u8 = 5;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -89,6 +91,9 @@ pub struct Profile {
     pub ready: bool,
     /// The player has a seat in the room (see `lobby`): newcomers wait for the host's.
     pub seated: bool,
+    /// The color it chose for its kart (issue #55): it wears it unless a player of an earlier
+    /// seat chose it too (`Lobby::color_of`).
+    pub color: KartColor,
 }
 
 impl Profile {
@@ -563,6 +568,7 @@ impl Message {
                 put_name(out, &profile.name);
                 out.extend_from_slice(&profile.loadout);
                 out.push(u8::from(profile.ready) | u8::from(profile.seated) << 1);
+                out.push(profile.color.index());
             }
             Message::Ready(ready) => out.push(u8::from(*ready)),
             Message::Seats(seats) => put_keys(out, seats),
@@ -713,11 +719,14 @@ impl Message {
                 if flags > 0b11 {
                     return Err(DecodeError::Invalid("profile flags"));
                 }
+                let color = KartColor::from_index(reader.u8()?)
+                    .ok_or(DecodeError::Invalid("kart color"))?;
                 Message::Hello(Profile {
                     name,
                     loadout,
                     ready: flags & 1 != 0,
                     seated: flags & 2 != 0,
+                    color,
                 })
             }
             READY => Message::Ready(reader.bool()?),
@@ -1232,6 +1241,7 @@ mod tests {
                 loadout: [3, 0, 2, 1],
                 ready: false,
                 seated: true,
+                color: KartColor::SkyBlue,
             }),
             Message::Hello(Profile {
                 name: "Éloïse la très rapide"
@@ -1241,6 +1251,8 @@ mod tests {
                 loadout: [8, 2, 2, 1],
                 ready: true,
                 seated: false,
+                // The last color of the palette.
+                color: KartColor::White,
             }),
             Message::Hello(Profile::default()),
             Message::Ready(true),
@@ -1554,7 +1566,8 @@ mod tests {
             name: "Max".into(),
             ..Default::default()
         });
-        assert_eq!(hello.to_bytes().len(), 2 + 1 + 3 + 4 + 1);
+        // Issue #55: one more byte, the color.
+        assert_eq!(hello.to_bytes().len(), 2 + 1 + 3 + 4 + 1 + 1);
         let seats = Message::Seats(vec![PeerKey(1); MAX_PLAYERS]);
         assert_eq!(seats.to_bytes().len(), 3 + 16 * MAX_PLAYERS);
         // Issue #8: a kart state in fewer than 64 bytes, whatever its values (47, then 48 with
@@ -1687,6 +1700,11 @@ mod tests {
         assert!(invalid(&[v, READY, 2]));
         // Unknown profile flags.
         assert!(invalid(&[v, HELLO, 0, 0, 0, 0, 0, 0b100]));
+        // Issue #55: a color outside the palette.
+        assert!(Message::decode(&[v, HELLO, 0, 0, 0, 0, 0, 0, 11]).is_ok());
+        for color in [12, 13, 0x7f, 0xff] {
+            assert!(invalid(&[v, HELLO, 0, 0, 0, 0, 0, 0, color]), "{color}");
+        }
         assert!(invalid(&[v, STRIKE_REPLY, 0, 0, 0b100]));
         // A name too long, a name that is not UTF-8.
         let mut long = vec![v, HELLO, MAX_NAME_BYTES as u8 + 1];
@@ -1927,6 +1945,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Issue #55: the `Hello` carries the kart's color, every color of the palette comes back the
+    /// same (its byte, the last of the message), and a byte outside the palette is refused.
+    #[test]
+    fn the_hello_carries_the_kart_color() {
+        for color in KartColor::ALL {
+            let hello = Message::Hello(Profile {
+                name: "Ana".into(),
+                loadout: [1, 2, 0, 1],
+                ready: true,
+                seated: true,
+                color,
+            });
+            let bytes = hello.to_bytes();
+            assert_eq!(bytes.last(), Some(&color.index()));
+            assert_eq!(Message::decode(&bytes), Ok(hello));
+        }
+        let mut bytes = Message::Hello(Profile::default()).to_bytes();
+        let Ok(Message::Hello(read)) = Message::decode(&bytes) else {
+            panic!("not read back");
+        };
+        assert_eq!(read.color, KartColor::Pink, "pink by default");
+        for outside in KartColor::ALL.len() as u8..=255 {
+            *bytes.last_mut().unwrap() = outside;
+            assert_eq!(
+                Message::decode(&bytes),
+                Err(DecodeError::Invalid("kart color")),
+                "{outside}"
+            );
+        }
+        // A `Hello` of version 4 (no color) is not misread: the version says it.
+        let mut old = Message::Hello(Profile::default()).to_bytes();
+        old[0] = 4;
+        old.pop();
+        assert_eq!(Message::decode(&old), Err(DecodeError::OtherVersion(4)));
     }
 
     #[test]

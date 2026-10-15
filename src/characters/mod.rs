@@ -8,9 +8,13 @@
 //!   (`kart::kart_body_with_stats`).
 //! - **Looks**: one shared material per character ([`DriverLooks`]); the driver's size shows its
 //!   weight class, its color and ears the animal.
+//! - **Color** (issue #55): the player's kart's color ([`PlayerColor`]), a color of the palette
+//!   (`kart::KartColor`), pink until it chooses. Kept between sessions like the options
+//!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
+//!   players of the same color: the first seat keeps it (`net`).
 //! - **Selection screen** ([`SelectionScreen`]): character, kart, wheels and wing, with the stat
-//!   bars `(level + 3) / 4`. It opens when the game starts (with a renderer: not in the headless
-//!   tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
+//!   bars `(level + 3) / 4`, then the color. It opens when the game starts (with a renderer: not
+//!   in the headless tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
 //!   Mac). Arrows (or the player's layout's letters: Z/S and Q/D in AZERTY, W/S and A/D in
 //!   QWERTY, issue #17) move through it, **Entrée** races with the choice (the level is rebuilt
 //!   by `LoadLevel`), **Échap** or G closes it unchanged. While it is open the game is paused (as
@@ -32,7 +36,7 @@ pub use ui::CharacterUiPlugin;
 
 use bevy::prelude::*;
 
-use crate::kart::{DriverLook, KeyboardLayout, PlayerInputMuted};
+use crate::kart::{DriverLook, KartColor, KeyboardLayout, PlayerInputMuted};
 use crate::level::{LoadLevel, Online};
 use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::RaceMode;
@@ -46,6 +50,14 @@ pub const SELECTION_KEY: KeyCode = KeyCode::KeyG;
 /// keyboard.
 const CONFIRM_KEYS: [KeyCode; 2] = [KeyCode::Enter, KeyCode::NumpadEnter];
 const CANCEL_KEYS: [KeyCode; 2] = [KeyCode::Escape, SELECTION_KEY];
+
+/// Local storage key (web) / file name (native) of the player's color (issue #55).
+pub const COLOR_STORAGE_KEY: &str = "fluffy-racers/kart-color";
+
+/// The local player's kart's color (issue #55), kept between sessions: pink until it chooses.
+/// Online, it is the color it asks for: another player may have it first (`net`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Deref)]
+pub struct PlayerColor(pub KartColor);
 
 /// The local player's four parts, kept for the whole session: restarts and new levels use it.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Deref, DerefMut)]
@@ -74,18 +86,32 @@ impl DriverLooks {
 }
 
 /// The selection screen: whether it is open, the line being changed (0 = character, 1 = kart,
-/// 2 = wheels, 3 = wing) and the parts chosen on it (applied by « Course ! »).
+/// 2 = wheels, 3 = wing, 4 = color) and the parts and color chosen on it (applied by
+/// « Course ! »).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SelectionScreen {
     pub open: bool,
     pub row: usize,
     pub choice: Loadout,
+    /// Issue #55.
+    pub color: KartColor,
 }
 
 impl SelectionScreen {
-    /// The part of the line being changed.
+    /// The color's line (issue #55), after the parts.
+    pub const COLOR_ROW: usize = PartKind::ALL.len();
+    /// Lines of the screen.
+    pub const ROWS: usize = Self::COLOR_ROW + 1;
+
+    /// The part of the line being changed (the wing's on the color's line: see
+    /// [`SelectionScreen::on_color_row`]).
     pub fn kind(&self) -> PartKind {
         PartKind::ALL[self.row.min(PartKind::ALL.len() - 1)]
+    }
+
+    /// The line being changed is the color's.
+    pub fn on_color_row(&self) -> bool {
+        self.row == Self::COLOR_ROW
     }
 }
 
@@ -100,6 +126,10 @@ pub enum SelectionAction {
     Change(PartKind, i32),
     /// Picks this entry of a part.
     Pick(PartKind, usize),
+    /// Picks the previous (-1) or next (+1) color of the palette (issue #55).
+    Color(i32),
+    /// Picks this color.
+    PickColor(KartColor),
     /// « Course ! »: the choice becomes the player's loadout and the race starts over with it.
     Confirm,
     /// Closes it, the loadout unchanged.
@@ -112,6 +142,7 @@ impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Roster::embedded())
             .init_resource::<PlayerLoadout>()
+            .init_resource::<PlayerColor>()
             .init_resource::<SelectionScreen>()
             .add_message::<SelectionAction>()
             .add_systems(Startup, create_driver_looks)
@@ -178,6 +209,13 @@ fn selection_keys(
         return;
     }
     let kind = screen.kind();
+    let change = |step| {
+        if screen.on_color_row() {
+            SelectionAction::Color(step)
+        } else {
+            SelectionAction::Change(kind, step)
+        }
+    };
     let pressed = |set: &[KeyCode]| keys.any_just_pressed(set.iter().copied());
     if pressed(&CONFIRM_KEYS) {
         actions.write(SelectionAction::Confirm);
@@ -188,20 +226,22 @@ fn selection_keys(
     } else if pressed(layout.down_keys()) {
         actions.write(SelectionAction::Row(1));
     } else if pressed(layout.left_keys()) {
-        actions.write(SelectionAction::Change(kind, -1));
+        actions.write(change(-1));
     } else if pressed(layout.right_keys()) {
-        actions.write(SelectionAction::Change(kind, 1));
+        actions.write(change(1));
     }
 }
 
 /// Applies the actions of this frame. « Course ! » rebuilds the level (`LoadLevel`) with the new
-/// loadout: every kart spawns again, the race starts over from the grid.
+/// loadout and color: every kart spawns again, the race starts over from the grid.
+#[allow(clippy::too_many_arguments)]
 fn apply_selection_actions(
     mut actions: MessageReader<SelectionAction>,
     roster: Res<Roster>,
     mode: Res<RaceMode>,
     mut screen: ResMut<SelectionScreen>,
     mut loadout: ResMut<PlayerLoadout>,
+    mut color: ResMut<PlayerColor>,
     online: Option<Res<Online>>,
     mut levels: MessageWriter<LoadLevel>,
 ) {
@@ -212,12 +252,21 @@ fn apply_selection_actions(
                     open: true,
                     row: 0,
                     choice: loadout.0,
+                    color: color.0,
                 };
             }
             _ if !screen.open => {}
             SelectionAction::Row(step) => {
-                let rows = PartKind::ALL.len() as i32;
+                let rows = SelectionScreen::ROWS as i32;
                 screen.row = (screen.row as i32 + step).rem_euclid(rows) as usize;
+            }
+            SelectionAction::Color(step) => {
+                screen.color = screen.color.cycled(step);
+                screen.row = SelectionScreen::COLOR_ROW;
+            }
+            SelectionAction::PickColor(pick) => {
+                screen.color = pick;
+                screen.row = SelectionScreen::COLOR_ROW;
             }
             SelectionAction::Change(kind, step) => {
                 screen.choice = roster.cycle(screen.choice, kind, step);
@@ -231,9 +280,11 @@ fn apply_selection_actions(
             }
             SelectionAction::Confirm => {
                 loadout.set_if_neq(PlayerLoadout(screen.choice));
+                color.set_if_neq(PlayerColor(screen.color));
                 screen.open = false;
                 // Online (issue #9), the race goes on: the new kart comes with the next level
-                // (the others already see it in the lobby). Free driving restarts at once.
+                // (the others already see it in the lobby), the new color at once (issue #55,
+                // the same on every screen). Free driving restarts at once.
                 if online.is_none() || *mode == RaceMode::FreeRoam {
                     levels.write(LoadLevel::restart(*mode));
                 }

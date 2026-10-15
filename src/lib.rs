@@ -25,14 +25,14 @@ use admin::AdminPlugin;
 use audio::SoundPlugin;
 use bots::BotPlugin;
 use camera::{CameraLean, CameraPlugin, CameraTuning, ChaseCamera};
-use characters::{CharacterPlugin, DriverLooks, PlayerLoadout, Roster};
+use characters::{CharacterPlugin, DriverLooks, PlayerColor, PlayerLoadout, Roster};
 use croquettes::{CroquettePlugin, CroquetteVisualPlugin};
 use interactions::{InteractionPlugin, InteractionVisualPlugin};
 use interpolation::InterpolationPlugin;
 use items::{ItemPlugin, ItemVisualPlugin};
 use kart::{
-    KartInputPlugin, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin, PlayerKart,
-    SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
+    KartInputPlugin, KartPaint, KartPlugin, KartTuning, KartVisualAssets, KartVisualPlugin,
+    PlayerKart, SpawnPoint, StatsTuning, kart_body_with_stats, spawn_kart_visual_with_driver,
 };
 use level::LevelPlugin;
 use net::{KartId, KartSyncPlugin, NetKart, NetPlugin, OnlineSlot};
@@ -115,26 +115,23 @@ impl Plugin for GamePlugin {
     }
 }
 
-/// Body color of the player's kart.
-pub const PLAYER_COLOR: Color = Color::srgb(0.95, 0.45, 0.65);
-
 /// Spawns the player's kart, when the track says where to start, and the camera the first time
 /// (a reloaded level, issue #36, gives the same camera the new kart to follow). In a race the
 /// player is a racer on its `RaceGrid` slot, behind the bots (alone on the pole without bots);
 /// on the test ground, or driving freely on a circuit (`RaceMode::FreeRoam`), it just drives,
 /// and falls back to its spawn point. Its character and parts are the player's loadout
-/// (issue #15): their stats, and the driver on the kart. Online (issue #8, `net::OnlineSlot`),
+/// (issue #15): their stats, and the driver on the kart; its color, the player's (issue #55;
+/// online, `net` paints it the color it wears in the room). Online (issue #8, `net::OnlineSlot`),
 /// it starts from the grid slot of its seat, so that the players do not start on top of each
 /// other; in a race online (issue #9), from its place on the race's grid (behind the bots), and
 /// that slot is its network id (`net::NetKart`).
 fn spawn_player(
     mut commands: Commands,
     visuals: Res<KartVisualAssets>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     tuning: Res<KartTuning>,
     stats_tuning: Res<StatsTuning>,
     roster: Res<Roster>,
-    loadout: Res<PlayerLoadout>,
+    (loadout, color): (Res<PlayerLoadout>, Option<Res<PlayerColor>>),
     looks: Option<Res<DriverLooks>>,
     camera_tuning: Res<CameraTuning>,
     start: Res<PlayerStart>,
@@ -162,10 +159,12 @@ fn spawn_player(
             .unwrap_or(start.0),
     };
     let stats = roster.stats(&loadout);
+    let color = color.map(|color| color.0).unwrap_or_default();
     let mut kart = commands.spawn((
         kart_body_with_stats(&tuning, &stats_tuning, stats, spawn),
         PlayerKart,
         CameraLean::default(),
+        KartPaint(color),
     ));
     match slot {
         Some(slot) => kart.insert(Racer::new(slot)),
@@ -178,14 +177,7 @@ fn spawn_player(
     let driver = looks
         .as_ref()
         .and_then(|looks| looks.get(loadout.character));
-    let visual = spawn_kart_visual_with_driver(
-        &mut commands,
-        &visuals,
-        &mut materials,
-        body,
-        PLAYER_COLOR,
-        driver,
-    );
+    let visual = spawn_kart_visual_with_driver(&mut commands, &visuals, body, color, driver);
     let projection = Projection::Perspective(PerspectiveProjection {
         fov: camera_tuning.base_fov.to_radians(),
         ..default()
