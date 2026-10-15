@@ -11,6 +11,7 @@ Modèles 3D (#11) : une ligne par pack, avec chacun de ses fichiers. Seuls les G
 | `models/racing-kit/` (8 modèles, licence dans `License.txt`) : bannerTowerGreen.glb, bannerTowerRed.glb, flagCheckers.glb, flagGreen.glb, flagRed.glb, grandStandAwning.glb, grandStandCovered.glb, tentClosed.glb | [Racing Kit](https://kenney.nl/assets/racing-kit) 2.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 | `models/food-kit/` (12 modèles + `Textures/colormap.png`, licence dans `License.txt`) : cake-birthday.glb, cherries.glb, cookie-chocolate.glb, cupcake.glb, donut-chocolate.glb, donut-sprinkles.glb, lollypop.glb, muffin.glb, popsicle.glb, strawberry.glb, sundae.glb, whipped-cream.glb | [Food Kit](https://kenney.nl/assets/food-kit) 2.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 | `models/holiday-kit/` (5 modèles + `Textures/colormap.png`, licence dans `License.txt`) : candy-cane-green.glb, candy-cane-red.glb, gingerbread-man.glb, present-a-cube.glb, present-b-round.glb | [Holiday Kit](https://kenney.nl/assets/holiday-kit) 2.0 | Kenney (www.kenney.nl) | CC0 1.0 |
+| `models/cube-pets/` (9 modèles + `Textures/colormap.png`, licence dans `License.txt`) : animal-chick.glb, animal-penguin.glb, animal-parrot.glb, animal-cat.glb, animal-bunny.glb, animal-fox.glb, animal-pig.glb, animal-cow.glb, animal-elephant.glb (les pilotes, #69) | [Cube Pets](https://kenney.nl/assets/cube-pets) 1.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 
 ## Polices embarquées par une crate (pas des fichiers du dépôt)
 

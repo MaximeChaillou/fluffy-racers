@@ -17,9 +17,11 @@
 //! Hit by an item (issue #16), the body spins out (two turns) or is thrown in a forward flip,
 //! then blinks while the kart is invincible.
 //!
-//! The driver (issue #15) is the character: a fluffy ball whose size shows its weight class and
-//! whose color and ears show the animal ([`DriverLook`]). Every character has one shared
-//! material.
+//! The driver (issue #15) is the character: its size shows its weight class. It is spawned in
+//! primitives, a fluffy ball whose color and ears show the animal ([`DriverLook`], one shared
+//! material per character); once its animal's model is ready (issue #69, Kenney's Cube Pets),
+//! `characters::visual` swaps them for the animated animal (and keeps them headless, or when the
+//! file is missing).
 //!
 //! The body wears a color of the palette (issue #55, `palette.rs`): one shared material per
 //! color, for every kart that wears it. It follows the kart's [`KartPaint`], even when it changes.
@@ -107,24 +109,27 @@ const EYE_RADIUS: f32 = 0.075;
 const EYE_SPREAD: f32 = 0.16;
 const EYE_HEIGHT: f32 = 0.58;
 
-/// The ears of a driver (issue #15), primitives until the real models (#11).
+/// The ears of a driver in primitives (issue #15): until its model is ready (issue #69),
+/// headless, or without its file.
 #[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum DriverEars {
-    /// Two balls (mouse, hamster, bear, cow).
+    /// Two balls (cow, elephant).
     #[default]
     Round,
     /// Two long ones standing up (rabbit).
     Long,
-    /// Two cones (cat, fox).
+    /// Two cones (cat, fox, pig).
     Pointy,
-    /// None (chick, walrus).
+    /// None (chick, penguin, parrot).
     None,
 }
 
-/// How a kart's driver looks (issue #15): its size (1 = medium; the weight class shows), its
-/// shared material (one per character: its color) and its ears.
+/// How a kart's driver looks (issue #15): its character (its index in the roster, issue #69: its
+/// animal's model), its size (1 = medium; the weight class shows), and in primitives its shared
+/// material (one per character: its color) and its ears.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DriverLook {
+    pub character: usize,
     pub size: f32,
     pub material: Handle<StandardMaterial>,
     pub ears: DriverEars,
@@ -139,11 +144,19 @@ pub struct BodyPaint {
     pub shown: KartColor,
 }
 
-/// The driver under a kart visual's pivot: its size (scale) shows the character's weight class.
+/// The driver under a kart visual's pivot: its size (scale) shows the character's weight class;
+/// `character`: its index in the roster (None: the default driver, in primitives for good).
+/// Its children are its primitives ([`DriverPrimitive`]) until its animal is there (issue #69).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct DriverVisual {
     pub size: f32,
+    pub character: Option<usize>,
 }
+
+/// A primitive of a driver (its ball, eyes and ears): removed once its animal is there
+/// (issue #69, `characters::visual`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DriverPrimitive;
 
 /// The pivot under a kart visual that carries every visible part. `slip` is the current visual
 /// slip angle (radians, positive = nose to the right); `spin` the time into the current trick's
@@ -489,9 +502,14 @@ pub fn spawn_kart_visual_with_driver(
 ) -> Entity {
     let body_material = assets.paint(color);
     let assets = assets.clone();
-    let (size, driver_material, ears) = match driver {
-        Some(look) => (look.size, look.material.clone(), look.ears),
-        None => (1.0, assets.driver_material.clone(), DriverEars::Round),
+    let (character, size, driver_material, ears) = match driver {
+        Some(look) => (
+            Some(look.character),
+            look.size,
+            look.material.clone(),
+            look.ears,
+        ),
+        None => (None, 1.0, assets.driver_material.clone(), DriverEars::Round),
     };
 
     commands
@@ -534,12 +552,13 @@ pub fn spawn_kart_visual_with_driver(
                 // The driver: its bottom on the seat, scaled with its size (ears included).
                 pivot
                     .spawn((
-                        DriverVisual { size },
+                        DriverVisual { size, character },
                         Transform::from_translation(DRIVER_SEAT).with_scale(Vec3::splat(size)),
                         Visibility::default(),
                     ))
                     .with_children(|driver| {
                         driver.spawn((
+                            DriverPrimitive,
                             Mesh3d(assets.driver.clone()),
                             MeshMaterial3d(driver_material.clone()),
                             Transform::from_xyz(0.0, DRIVER_RADIUS, 0.0),
@@ -557,6 +576,7 @@ pub fn spawn_kart_visual_with_driver(
                         .sqrt();
                         for x in [-EYE_SPREAD, EYE_SPREAD] {
                             driver.spawn((
+                                DriverPrimitive,
                                 Mesh3d(assets.eye.clone()),
                                 MeshMaterial3d(assets.eye_material.clone()),
                                 Transform::from_xyz(x, EYE_HEIGHT, -depth + EYE_RADIUS * 0.4),
@@ -565,6 +585,7 @@ pub fn spawn_kart_visual_with_driver(
                         if let Some((mesh, height, tilt)) = ear {
                             for x in [-0.25f32, 0.25] {
                                 driver.spawn((
+                                    DriverPrimitive,
                                     Mesh3d(mesh.clone()),
                                     MeshMaterial3d(driver_material.clone()),
                                     Transform::from_xyz(x, height, 0.0)

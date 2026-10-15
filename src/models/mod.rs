@@ -8,6 +8,11 @@
 //! (`track::dressing`): a handful of draw calls for hundreds of pieces. The files' own meshes and
 //! textures stay on the CPU (never sent to the GPU) and are dropped once baked.
 //!
+//! An animated model (issue #69, the Cube Pets drivers) is asked for with its animations
+//! ([`Models::request_animated`]): its clips ([`Models::clips`], Bevy's `AnimationClip`s, by
+//! name) and the tree of its nodes ([`BakedModel::nodes`]) come with its baked parts, so that each
+//! node can be an entity the clips move (`characters::visual`).
+//!
 //! Only with a renderer: without Bevy's glTF plugin (the headless tests, `MinimalPlugins`),
 //! every model is missing at once, and what wanted it stands in primitives, as before the models
 //! (a missing or broken file too: a warning, no panic).
@@ -17,12 +22,13 @@ pub mod bake;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bevy::animation::AnimationClip;
 use bevy::asset::{LoadState, RenderAssetUsages};
 use bevy::gltf::{Gltf, GltfLoaderSettings, GltfMaterial, GltfMesh, GltfNode};
 use bevy::mesh::{Indices, VertexAttributeValues};
 use bevy::prelude::*;
 
-pub use bake::{BakedModel, BakedPart, Primitive};
+pub use bake::{BakedModel, BakedNode, BakedPart, Primitive};
 
 use crate::track::biome::model_path;
 
@@ -35,10 +41,15 @@ pub enum Keep {
     Level,
 }
 
+/// A model's animation clips (issue #69), by name, as its file has them.
+pub type Clips = Arc<[(String, Handle<AnimationClip>)]>;
+
 #[derive(Clone, Debug)]
 enum Slot {
-    Loading(Handle<Gltf>),
-    Ready(Arc<BakedModel>),
+    /// `animated`: its animation clips are loaded too.
+    Loading { gltf: Handle<Gltf>, animated: bool },
+    /// Its clips: empty unless it was asked for with them.
+    Ready(Arc<BakedModel>, Clips),
     /// Not found, broken, or no glTF loader (headless).
     Missing,
 }
@@ -55,6 +66,16 @@ impl Models {
     /// becomes kept always if asked so). `server`: the asset server when the game can load glTF
     /// files, None headless (the model is missing at once).
     pub fn request(&mut self, id: &str, keep: Keep, server: Option<&AssetServer>) {
+        self.request_with(id, keep, server, false);
+    }
+
+    /// Same, with its animation clips (issue #69, [`Models::clips`]). A model is loaded once:
+    /// ask for an animated one this way first.
+    pub fn request_animated(&mut self, id: &str, keep: Keep, server: Option<&AssetServer>) {
+        self.request_with(id, keep, server, true);
+    }
+
+    fn request_with(&mut self, id: &str, keep: Keep, server: Option<&AssetServer>, animated: bool) {
         if let Some((_, kept)) = self.slots.get_mut(id) {
             if keep == Keep::Always {
                 *kept = Keep::Always;
@@ -64,19 +85,20 @@ impl Models {
         let slot = match server {
             Some(server) => {
                 self.loading += 1;
-                Slot::Loading(
-                    server
+                Slot::Loading {
+                    gltf: server
                         .load_builder()
-                        .with_settings(|settings: &mut GltfLoaderSettings| {
+                        .with_settings(move |settings: &mut GltfLoaderSettings| {
                             // Read on the CPU to be baked, never drawn as they are.
                             settings.load_meshes = RenderAssetUsages::MAIN_WORLD;
                             settings.load_materials = RenderAssetUsages::MAIN_WORLD;
                             settings.load_cameras = false;
                             settings.load_lights = false;
-                            settings.load_animations = false;
+                            settings.load_animations = animated;
                         })
                         .load(model_path(id)),
-                )
+                    animated,
+                }
             }
             None => Slot::Missing,
         };
@@ -86,7 +108,16 @@ impl Models {
     /// The baked model, once it is there.
     pub fn get(&self, id: &str) -> Option<&Arc<BakedModel>> {
         match self.slots.get(id) {
-            Some((Slot::Ready(model), _)) => Some(model),
+            Some((Slot::Ready(model, _), _)) => Some(model),
+            _ => None,
+        }
+    }
+
+    /// The animation clips of the baked model `id` asked for with them (issue #69), by name;
+    /// None until it is there.
+    pub fn clips(&self, id: &str) -> Option<&Clips> {
+        match self.slots.get(id) {
+            Some((Slot::Ready(_, clips), _)) => Some(clips),
             _ => None,
         }
     }
@@ -95,7 +126,7 @@ impl Models {
     pub fn settled(&self, id: &str) -> bool {
         matches!(
             self.slots.get(id),
-            Some((Slot::Ready(_) | Slot::Missing, _))
+            Some((Slot::Ready(..) | Slot::Missing, _))
         )
     }
 
@@ -109,7 +140,7 @@ impl Models {
         let mut dropped_loading = 0;
         self.slots.retain(|id, (slot, keep)| {
             let kept = *keep == Keep::Always || wanted.iter().any(|w| w == id);
-            if !kept && matches!(slot, Slot::Loading(_)) {
+            if !kept && matches!(slot, Slot::Loading { .. }) {
                 dropped_loading += 1;
             }
             kept
@@ -122,7 +153,7 @@ impl Models {
         let ready = self
             .slots
             .values()
-            .filter(|(slot, _)| matches!(slot, Slot::Ready(_)))
+            .filter(|(slot, _)| matches!(slot, Slot::Ready(..)))
             .count();
         (self.slots.len(), ready)
     }
@@ -180,9 +211,14 @@ fn bake_models(
 ) {
     let models = &mut *models;
     for (id, (slot, _)) in models.slots.iter_mut() {
-        let Slot::Loading(handle) = slot else {
+        let Slot::Loading {
+            gltf: handle,
+            animated,
+        } = slot
+        else {
             continue;
         };
+        let animated = *animated;
         match server.load_state(handle.id()) {
             LoadState::Failed(error) => {
                 warn!("model {id}: {error}; standing in primitives");
@@ -199,11 +235,21 @@ fn bake_models(
                     continue;
                 };
                 let baked = bake_gltf(gltf, &nodes, &gltf_meshes, &meshes, &materials, &images);
+                // Issue #69: its clips, in a fixed order (the file's names).
+                let mut clips: Vec<(String, Handle<AnimationClip>)> = if animated {
+                    gltf.named_animations
+                        .iter()
+                        .map(|(name, clip)| (name.to_string(), clip.clone()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                clips.sort_by(|a, b| a.0.cmp(&b.0));
                 *slot = if baked.triangle_count() == 0 {
                     warn!("model {id}: no triangle; standing in primitives");
                     Slot::Missing
                 } else {
-                    Slot::Ready(Arc::new(baked))
+                    Slot::Ready(Arc::new(baked), clips.into())
                 };
                 models.loading -= 1;
             }
@@ -214,7 +260,8 @@ fn bake_models(
 
 /// Reads a loaded glTF file into a [`BakedModel`]: every node with a mesh, from the file's roots
 /// down (transforms accumulated), each primitive colored by its material's base color times its
-/// base color texture's texel at each vertex (nearest texel).
+/// base color texture's texel at each vertex (nearest texel); and the tree of every node
+/// (issue #69), in the file's order of siblings.
 pub fn bake_gltf(
     gltf: &Gltf,
     nodes: &Assets<GltfNode>,
@@ -233,18 +280,29 @@ pub fn bake_gltf(
         })
     };
     let mut model = BakedModel::default();
-    let mut stack: Vec<(&GltfNode, Mat4)> = all
+    // A node, its parent's transform in the model, its parent's index in `model.nodes`. Popped
+    // from the end: the first root and the first child first.
+    let mut stack: Vec<(&GltfNode, Mat4, Option<usize>)> = all
         .iter()
+        .rev()
         .filter(|node| !is_child(node))
-        .map(|node| (*node, Mat4::IDENTITY))
+        .map(|node| (*node, Mat4::IDENTITY, None))
         .collect();
-    while let Some((node, parent)) = stack.pop() {
+    while let Some((node, parent, parent_index)) = stack.pop() {
         let transform = parent * node.transform.to_matrix();
+        let index = model.nodes.len();
+        model.nodes.push(BakedNode {
+            name: node.name.clone(),
+            parent: parent_index,
+            local: node.transform,
+            part: None,
+        });
         stack.extend(
             node.children
                 .iter()
+                .rev()
                 .filter_map(|child| nodes.get(child))
-                .map(|child| (child, transform)),
+                .map(|child| (child, transform, Some(index))),
         );
         let Some(mesh) = node.mesh.as_ref().and_then(|m| gltf_meshes.get(m)) else {
             continue;
@@ -265,10 +323,23 @@ pub fn bake_gltf(
                 .and_then(|t| images.get(t));
             add_primitive(&mut part, data, base, texture);
         }
+        model.nodes[index].part = Some(model.parts.len());
         model.parts.push(part);
     }
-    // The file's order, whatever the walk's.
-    model.parts.sort_by(|a, b| a.name.cmp(&b.name));
+    // The parts by name, whatever the walk's order; the nodes follow their part.
+    let mut order: Vec<usize> = (0..model.parts.len()).collect();
+    order.sort_by(|a, b| model.parts[*a].name.cmp(&model.parts[*b].name));
+    let mut rank = vec![0; order.len()];
+    for (new, old) in order.iter().enumerate() {
+        rank[*old] = new;
+    }
+    for node in &mut model.nodes {
+        if let Some(part) = &mut node.part {
+            *part = rank[*part];
+        }
+    }
+    let mut parts: Vec<Option<BakedPart>> = model.parts.drain(..).map(Some).collect();
+    model.parts = order.iter().filter_map(|i| parts[*i].take()).collect();
     model
 }
 

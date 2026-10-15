@@ -44,6 +44,8 @@ const MODIFIED: Color32 = Color32::from_rgb(255, 175, 60);
 /// Values only read when the level is built: they apply at the next « Relancer » (prefixes of
 /// `Resource.path`).
 const ON_RESTART: &[&str] = &[
+    "DriverTuning.model_scale",
+    "DriverTuning.seat_sink",
     "KartTuning.mass",
     "KartTuning.center_of_mass_height",
     "KartTuning.inertia",

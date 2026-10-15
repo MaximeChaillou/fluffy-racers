@@ -1542,8 +1542,9 @@ fn tight_drift_radius(stats: KartStats) -> (f32, f32) {
     (speed / -scenario.velocity().angular.y, speed)
 }
 
-/// The light and the heavy loadouts of the roster: a mouse in a wicker basket on spools with
-/// a feather wing, a bear in a bathtub on tractor tyres with the standard wing.
+/// The light and the heavy loadouts of the roster: a chick in a wicker basket on spools with
+/// a feather wing, a pig in a bathtub on tractor tyres with the standard wing (issue #69: the
+/// mouse's and the bear's stats, under the Cube Pets' names).
 fn light_and_heavy() -> (KartStats, KartStats) {
     use crate::characters::{Loadout, PartKind, Roster};
     let roster = Roster::embedded();
@@ -1555,8 +1556,13 @@ fn light_and_heavy() -> (KartStats, KartStats) {
         roster.stats(&loadout)
     };
     (
-        pick(["Souris", "Panier en osier", "Bobines de fil", "Plume"]),
-        pick(["Ours", "Baignoire", "Pneus de tracteur", "Taie d'oreiller"]),
+        pick(["Poussin", "Panier en osier", "Bobines de fil", "Plume"]),
+        pick([
+            "Cochon",
+            "Baignoire",
+            "Pneus de tracteur",
+            "Taie d'oreiller",
+        ]),
     )
 }
 

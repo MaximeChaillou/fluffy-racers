@@ -118,13 +118,13 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
     }
     assert_eq!(race_tick(&app), frozen);
 
-    // Character: Chat → Lapin → Renard → Ours (right three times), then down to the kart:
+    // Character: Chat → Lapin → Renard → Cochon (right three times), then down to the kart:
     // Caisse à savon → Baignoire (D, the right of W/A/S/D), down to the wheels (S), right to
     // the tractor tyres.
     for _ in 0..3 {
         tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
     }
-    assert_eq!(roster.character(&screen(&app).choice).name, "Ours");
+    assert_eq!(roster.character(&screen(&app).choice).name, "Cochon");
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     assert_eq!(screen(&app).kind(), PartKind::Kart);
     tap(&mut app, KeyCode::KeyD, Key::Character("d".into()));
@@ -145,7 +145,12 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
     let names = PartKind::ALL.map(|kind| roster.name(kind, choice.get(kind)).to_string());
     assert_eq!(
         names,
-        ["Ours", "Baignoire", "Pneus de tracteur", "Taie d'oreiller"]
+        [
+            "Cochon",
+            "Baignoire",
+            "Pneus de tracteur",
+            "Taie d'oreiller"
+        ]
     );
     // Nothing applied yet.
     assert_eq!(
@@ -169,7 +174,8 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
     assert!((factors.stats - 1.04).abs() < 1e-5, "{factors:?}");
     assert!(mass(&app, kart) > 170.0, "{}", mass(&app, kart));
     assert_eq!(app.world().resource::<Race>().phase(), RacePhase::Grid);
-    // A big bear in the player's kart (the two bots: a mouse and a cat).
+    // A big pig in the player's kart (the two bots: a chick and a cat; issue #69: the Cube
+    // Pets' sizes).
     let world = app.world_mut();
     let mut sizes: Vec<f32> = world
         .query::<&DriverVisual>()
@@ -177,7 +183,7 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
         .map(|d| d.size)
         .collect();
     sizes.sort_by(f32::total_cmp);
-    assert_eq!(sizes, [0.78, 1.0, 1.25]);
+    assert_eq!(sizes, [0.75, 1.0, 1.22]);
 
     // A restart keeps the choice.
     app.world_mut()
@@ -233,7 +239,7 @@ fn closing_the_selection_screen_changes_nothing() {
         roster
             .character(&app.world().resource::<PlayerLoadout>().0)
             .name,
-        "Souris"
+        "Poussin"
     );
     assert_eq!(
         app.world().get::<KartStats>(me),
@@ -395,9 +401,9 @@ fn a_stats_tuning_edited_in_the_admin_panel_applies_at_the_restart() {
     use crate::admin::{Tunings, Value};
     let mut app = app_on(TrackChoice::TestGround);
     let roster = app.world().resource::<Roster>().clone();
-    let mut bear = roster.default_loadout();
-    bear.character = roster.find(PartKind::Character, "Ours").unwrap();
-    app.world_mut().resource_mut::<PlayerLoadout>().0 = bear;
+    let mut pig = roster.default_loadout();
+    pig.character = roster.find(PartKind::Character, "Cochon").unwrap();
+    app.world_mut().resource_mut::<PlayerLoadout>().0 = pig;
     let restart = |app: &mut App| {
         let old = player(app);
         app.world_mut()
@@ -417,7 +423,7 @@ fn a_stats_tuning_edited_in_the_admin_panel_applies_at_the_restart() {
         }
         panic!("the level was never rebuilt");
     };
-    // The bear with the standard parts: Speed 6 + 3 + 2 + 1 = 12, 1 + 0.08 × 0.2.
+    // The pig with the standard parts: Speed 6 + 3 + 2 + 1 = 12, 1 + 0.08 × 0.2.
     let speed = restart(&mut app);
     assert!((speed - 1.016).abs() < 1e-5, "{speed}");
     app.world_mut()

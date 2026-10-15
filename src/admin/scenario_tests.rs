@@ -527,7 +527,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "StatsTuning",
             "ItemTuning",
             "InteractionTuning",
-            "NetTuning"
+            "NetTuning",
+            "DriverTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {

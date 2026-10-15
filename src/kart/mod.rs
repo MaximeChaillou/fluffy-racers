@@ -64,10 +64,10 @@ pub use stats::{
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
-    BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverVisual,
-    KartBodyPivot, KartDressed, KartModel, KartVisualAssets, KartVisualPlugin, StallSmoke,
-    WheelVisual, WindLine, flame_size, hit_pose, shown_while_invincible, shown_with_effects,
-    spawn_kart_visual, spawn_kart_visual_with_driver,
+    BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverPrimitive,
+    DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets, KartVisualPlugin,
+    StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, shown_while_invincible,
+    shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;
