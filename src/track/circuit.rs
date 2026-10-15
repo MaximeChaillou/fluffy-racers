@@ -133,7 +133,8 @@ pub fn build_circuit_when_loaded(
     ));
 
     // Colliders, one per surface. Internal edges are fixed so karts slide along triangle
-    // seams without bumps or snags. Floors are one-sided (seen from above), walls two-sided.
+    // seams without bumps or snags. Floors are one-sided (seen from above), walls two-sided. The
+    // walls' collider is their drawn mesh: solid exactly as high as they are drawn (issue #47).
     spawn_trimesh(
         &mut commands,
         &generated.road,
@@ -150,7 +151,7 @@ pub fn build_circuit_when_loaded(
     );
     spawn_trimesh(
         &mut commands,
-        &generated.wall_collider,
+        &generated.walls,
         Surface::Wall,
         WALL_RESTITUTION,
         TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,

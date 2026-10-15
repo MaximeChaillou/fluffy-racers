@@ -7,7 +7,8 @@
 use bevy::prelude::*;
 use serde::Deserialize;
 
-/// A whole circuit, as written in its RON file.
+/// A whole circuit, as written in its RON file. The walls are the same on every circuit
+/// (`mesh::WALL_HEIGHT`, `mesh::WALL_THICKNESS`): a file has no say in their height (issue #47).
 #[derive(Asset, TypePath, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct TrackData {
@@ -18,9 +19,6 @@ pub struct TrackData {
     /// Distance between two checkpoints (m).
     #[serde(default = "default_checkpoint_spacing")]
     pub checkpoint_spacing: f32,
-    /// Height of the low walls (m).
-    #[serde(default = "default_wall_height")]
-    pub wall_height: f32,
     /// Length of the generated mesh segments (m).
     #[serde(default = "default_sample_step")]
     pub sample_step: f32,
@@ -132,9 +130,6 @@ pub struct CroquetteLine {
 fn default_checkpoint_spacing() -> f32 {
     25.0
 }
-fn default_wall_height() -> f32 {
-    0.8
-}
 fn default_sample_step() -> f32 {
     1.0
 }
@@ -192,9 +187,6 @@ impl TrackData {
                 "checkpoint_spacing {} below 5 m",
                 self.checkpoint_spacing
             ));
-        }
-        if self.wall_height < 0.0 {
-            return fail(format!("negative wall_height {}", self.wall_height));
         }
         for (i, point) in self.points.iter().enumerate() {
             if point.width < 4.0 || point.shoulder < 0.0 || point.bank.abs() > 45.0 {
