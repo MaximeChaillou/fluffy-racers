@@ -13,13 +13,15 @@ use super::layout::{CenterLine, TrackSample};
 pub const CURB_WIDTH: f32 = 1.0;
 /// Thickness of the low walls (m).
 pub const WALL_THICKNESS: f32 = 0.5;
-/// Lowest height of the walls' collider (m, above the road), whatever the height they are drawn
-/// at (`TrackData::wall_height`: 0.8 m on Prairie Pompon). Issue #27: the top of a kart's body is
-/// 0.8 m above the road too; with a collider exactly as high, a kart pushing into the wall caught
-/// its top edge, which pushed its nose down until it stood on it, or let it ride up onto the
-/// wall. 0.4 m higher, a kart only ever meets the wall's face. It stays below the chase camera's line of sight, which
-/// starts 1.35 m above the road at the kart (`CameraTuning::look_height`) and rises from there.
-pub const WALL_COLLIDER_HEIGHT: f32 = 1.2;
+/// Height of the low walls above the road (m), on every circuit: as drawn and as solid. Their
+/// collider is the drawn mesh itself ([`TrackMeshes::walls`]): one constant, nothing solid that is
+/// not drawn (issue #47). Issue #27: the top of a kart's body is 0.8 m above the road; with walls
+/// exactly as high, a kart pushing into a wall caught its top edge, which pushed its nose down
+/// until it stood on it, or let it ride up onto the wall. 0.4 m higher, a kart only ever meets
+/// the wall's face. It stays below the chase camera's line of sight, which starts 1.35 m above
+/// the road at the kart (`CameraTuning::look_height` above the kart's center) and rises from
+/// there: the camera's anti-wall ray never meets a wall on a lap (tested on both circuits).
+pub const WALL_HEIGHT: f32 = 1.2;
 /// Height of the surrounding grass ground. A bit below the road: no z-fighting, and the
 /// spline may dip a few centimeters below its control points (Catmull-Rom overshoot).
 pub const GROUND_HEIGHT: f32 = -0.25;
@@ -117,10 +119,9 @@ pub struct TrackMeshes {
     pub road: MeshData,
     /// Grass shoulders and off-road patches: `Surface::Offroad`.
     pub offroad: MeshData,
-    /// Low walls, as drawn (`TrackData::wall_height` high).
+    /// Low walls, [`WALL_HEIGHT`] high: drawn, and their collider too, `Surface::Wall` (the same
+    /// triangles, issue #47).
     pub walls: MeshData,
-    /// The walls' collider: the same walls, [`WALL_COLLIDER_HEIGHT`] high at least (issue #27).
-    pub wall_collider: MeshData,
     /// Skirts under raised parts: visual only.
     pub decor: MeshData,
 }
@@ -151,7 +152,6 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
             CURB_WHITE
         }
     };
-    let h = data.wall_height;
 
     // Road and curbs.
     let road = &mut meshes.road;
@@ -197,14 +197,8 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
         offroad_patch(offroad, center, zone);
     }
 
-    // Low walls: inner face, top, outer face on each side; their collider is a little higher
-    // (issue #27).
-    wall_strips(&mut meshes.walls, samples, h);
-    wall_strips(
-        &mut meshes.wall_collider,
-        samples,
-        h.max(WALL_COLLIDER_HEIGHT),
-    );
+    // Low walls: inner face, top, outer face on each side.
+    wall_strips(&mut meshes.walls, samples);
 
     // Skirts from the wall bottoms down to the ground, so raised parts do not float.
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
@@ -228,8 +222,9 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
     meshes
 }
 
-/// The walls of both sides, `height` high: inner face, flat top, outer face.
-fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], height: f32) {
+/// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face.
+fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample]) {
+    let height = WALL_HEIGHT;
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     mesh.strip(
         samples,
@@ -376,28 +371,51 @@ mod tests {
         assert_eq!(meshes.road.triangle_count(), 3 * 2 * center.samples().len());
     }
 
-    /// Issue #27: the walls' collider is the drawn walls, only higher: every vertex of their top
-    /// is raised from the drawn height (0.8 m) to `WALL_COLLIDER_HEIGHT`, the others are the same.
+    /// Issue #47: the walls are drawn [`WALL_HEIGHT`] high, the height they are solid at (their
+    /// collider is this mesh, `circuit.rs`), and that is 0.4 m above the top of a kart's body
+    /// (issue #27). Each wall vertex stands on the road or `WALL_HEIGHT` above it, on its sample:
+    /// the whole flat top and the upper edge of both faces, 2 vertices in 3. Before #47 they were
+    /// drawn 0.8 m high, under a collider raised to 1.2 m: 40 cm of invisible wall.
     #[test]
-    fn the_wall_collider_is_the_drawn_walls_raised() {
-        let data = test_track();
-        assert!(data.wall_height < WALL_COLLIDER_HEIGHT);
-        let center = CenterLine::new(&data.points, data.sample_step);
-        let meshes = generate(&center, &data);
-        let (drawn, collider) = (&meshes.walls, &meshes.wall_collider);
-        assert_eq!(drawn.indices, collider.indices);
-        let raise = WALL_COLLIDER_HEIGHT - data.wall_height;
-        let mut raised = 0;
-        for (a, b) in drawn.positions.iter().zip(&collider.positions) {
-            let gap = Vec3::from_array(*b) - Vec3::from_array(*a);
-            if gap.length() > 1e-4 {
-                assert!((gap.length() - raise).abs() < 1e-3, "{gap}");
-                assert!(gap.y > 0.9 * raise, "not upward: {gap}");
-                raised += 1;
+    fn the_walls_are_drawn_as_high_as_they_are_solid() {
+        // A kart on its wheels: its body's center at `GRID_HEIGHT`, its top 0.8 m above the road.
+        let kart_top = crate::track::GRID_HEIGHT + crate::kart::KART_HALF_EXTENTS.y;
+        assert!(WALL_HEIGHT >= kart_top + 0.4 - 1e-4, "{WALL_HEIGHT}");
+        for data in [
+            test_track(),
+            TrackData::from_ron(include_str!("../../assets/tracks/anneau.track.ron")).unwrap(),
+        ] {
+            let center = CenterLine::new(&data.points, data.sample_step);
+            let meshes = generate(&center, &data);
+            let samples = center.samples();
+            let walls = &meshes.walls;
+            // 6 strips (inner face, top, outer face, on both sides), one quad per sample.
+            assert_eq!(walls.positions.len(), 6 * 4 * samples.len());
+            let mut on_top = 0;
+            for (v, p) in walls.positions.iter().enumerate() {
+                // Corners 0 and 1 of a quad come from its sample, 2 and 3 from the next one.
+                let quad = v / 4 % samples.len();
+                let s = &samples[(quad + usize::from(v % 4 >= 2)) % samples.len()];
+                let height = (Vec3::from_array(*p) - s.position).dot(s.up);
+                if (height - WALL_HEIGHT).abs() < 1e-3 {
+                    on_top += 1;
+                } else {
+                    assert!(
+                        height.abs() < 1e-3,
+                        "{}: vertex {v} at {height} m",
+                        data.name
+                    );
+                }
             }
+            assert_eq!(3 * on_top, 2 * walls.positions.len(), "{}", data.name);
+            // What is drawn is all of it: the walls are in the circuit's single mesh.
+            let all = meshes.combined();
+            let start = meshes.road.positions.len() + meshes.offroad.positions.len();
+            assert_eq!(
+                all.positions[start..start + walls.positions.len()],
+                walls.positions[..]
+            );
         }
-        // The flat top whole, and the upper edge of the inner and outer faces: 2 vertices in 3.
-        assert_eq!(3 * raised, 2 * drawn.positions.len());
     }
 
     #[test]

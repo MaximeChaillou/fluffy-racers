@@ -1811,8 +1811,11 @@ fn a_light_kart_is_pushed_aside_further_than_a_heavy_one() {
 
 // --- Issue #27: walls and other karts are never ground, and never tip the kart -----------------
 
-/// The height of the circuit's walls (Prairie Pompon, `TrackData::wall_height`).
-const WALL_HEIGHT: f32 = 0.8;
+/// A wall only as high as a kart's body (0.8 m): the circuits' walls were drawn that high before
+/// issue #47 (they are 1.2 m high now, `track::mesh::WALL_HEIGHT`, drawn and solid). These tests
+/// keep it: it is the hard case, its top edge level with the top of the kart, and the center of
+/// mass and the suspension rays of #27 must hold there even without the higher walls.
+const LOW_WALL_HEIGHT: f32 = 0.8;
 
 impl Scenario {
     /// Puts the kart at `position`, at rest, keeping its heading.
@@ -1828,7 +1831,7 @@ impl Scenario {
 }
 
 /// Issue #27: the suspension rays only stand on the ground. A kart lowered onto a block as high
-/// as the circuit's walls stands on its wheels on a block of road, but finds no ground on a wall:
+/// as a kart's body stands on its wheels on a block of road, but finds no ground on a wall:
 /// it rests on its body there, its wheels in the air. Nor on the roof of another kart. Before the
 /// fix, a ray found ground on the flat top of a wall, or on another kart's roof, and its spring
 /// lifted that side of the kart further onto it.
@@ -1845,14 +1848,14 @@ fn the_wheels_stand_on_the_ground_never_on_a_wall_or_another_kart() {
             );
             spawn_static_box(
                 commands,
-                Transform::from_xyz(0.0, WALL_HEIGHT / 2.0, -20.0),
-                Vec3::new(3.0, WALL_HEIGHT / 2.0, 3.0),
+                Transform::from_xyz(0.0, LOW_WALL_HEIGHT / 2.0, -20.0),
+                Vec3::new(3.0, LOW_WALL_HEIGHT / 2.0, 3.0),
                 surface,
                 WALL_RESTITUTION,
             );
         });
         let kart = scenario.kart;
-        scenario.place(kart, Vec3::new(0.0, WALL_HEIGHT + 0.6, -20.0));
+        scenario.place(kart, Vec3::new(0.0, LOW_WALL_HEIGHT + 0.6, -20.0));
         scenario.run(0.5, KartInput::default());
         let height = scenario.transform().translation.y;
         assert_eq!(
@@ -1860,7 +1863,7 @@ fn the_wheels_stand_on_the_ground_never_on_a_wall_or_another_kart() {
             wheels,
             "on a block of {surface:?}, at {height} m"
         );
-        assert!(height > WALL_HEIGHT, "fell off the block: {height}");
+        assert!(height > LOW_WALL_HEIGHT, "fell off the block: {height}");
     }
 
     // On another kart's roof, at rest: no ground either, and the kart below is not pushed down
@@ -1896,7 +1899,7 @@ struct WallCrash {
     bounce: f32,
 }
 
-/// Full throttle from a standstill into a wall as high as the circuit's (0.8 m), 40 m ahead,
+/// Full throttle from a standstill into a low wall ([`LOW_WALL_HEIGHT`]), 40 m ahead,
 /// whose face makes `angle_deg` with the kart's line (90: head on). Steering stays straight: the
 /// kart keeps pushing against the wall once it has bounced.
 fn crash_into_a_low_wall(stats: KartStats, angle_deg: f32) -> WallCrash {
@@ -1914,10 +1917,10 @@ fn crash_into_a_low_wall(stats: KartStats, angle_deg: f32) -> WallCrash {
         spawn_static_box(
             commands,
             Transform::from_translation(
-                face - normal * half_thickness + Vec3::Y * WALL_HEIGHT / 2.0,
+                face - normal * half_thickness + Vec3::Y * LOW_WALL_HEIGHT / 2.0,
             )
             .looking_to(normal, Vec3::Y),
-            Vec3::new(40.0, WALL_HEIGHT / 2.0, half_thickness),
+            Vec3::new(40.0, LOW_WALL_HEIGHT / 2.0, half_thickness),
             Surface::Wall,
             WALL_RESTITUTION,
         );
