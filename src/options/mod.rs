@@ -325,6 +325,8 @@ mod tests {
             crate::ui::DEBUG_OVERLAY_KEY,
             crate::kart::DEBUG_BOOST_KEY,
             DEBUG_RESET_KEY,
+            // Issue #18: an item in the hand.
+            crate::items::DEBUG_ITEM_KEY,
             KeyCode::Escape,
             KeyCode::Enter,
         ];

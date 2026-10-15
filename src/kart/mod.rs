@@ -14,7 +14,11 @@
 //! goes through the one `Boost` component (GD § 2). Hit by an item (issue #16), the kart spins
 //! out or tumbles (`KartState::Hit`: deaf to its driver, slowing down hard), then starts its
 //! invincibility. Every top speed multiplier (bots' catch-up, croquettes, stats, a tether
-//! holding the kart) goes through `MaxSpeedFactors`.
+//! holding the kart, the items of phase 2) goes through `MaxSpeedFactors`.
+//!
+//! The items of phase 2 (issue #18, `effects.rs`) leave their effects on the kart
+//! ([`ItemEffects`]: super câlin, fusée, dégonflage, chantilly), counted down with the boosts; a
+//! fusée drives the kart by its [`Autopilot`] instead of the driver.
 //!
 //! The stats of the kart (GD § 9, issue #15, `stats.rs`) are converted once when it spawns into
 //! multipliers ([`StatEffects`]); every tick the driving applies them to `KartTuning` for this
@@ -22,6 +26,7 @@
 
 mod bump;
 mod drift;
+mod effects;
 mod input;
 mod palette;
 mod physics;
@@ -35,6 +40,7 @@ mod visual;
 
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
+pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use input::{
     DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
     JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
@@ -57,9 +63,9 @@ pub use stats::{
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
-    BodyPaint, BoostFlame, DriftSpark, DriverEars, DriverLook, DriverVisual, KartBodyPivot,
-    KartVisualAssets, KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose,
-    shown_while_invincible, spawn_kart_visual, spawn_kart_visual_with_driver,
+    BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverVisual,
+    KartBodyPivot, KartVisualAssets, KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose,
+    shown_while_invincible, shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;
@@ -116,7 +122,9 @@ pub struct KartInput {
     StatEffects,
     Invincibility,
     Shove,
-    TetherPull
+    TetherPull,
+    ItemEffects,
+    Autopilot
 )]
 pub struct Kart;
 
@@ -177,6 +185,9 @@ pub struct MaxSpeedFactors {
     /// Held by another kart's paw (GD § 15, issue #34): braked a little while the tether lasts
     /// (0.9 at the middle Weight, with the default `InteractionTuning::tether_target_brake`).
     pub tether: f32,
+    /// The items of phase 2 (issue #18, [`ItemEffects::speed_factor`]): faster in a super
+    /// câlin, slower deflated.
+    pub items: f32,
 }
 
 impl Default for MaxSpeedFactors {
@@ -186,13 +197,23 @@ impl Default for MaxSpeedFactors {
             croquettes: 1.0,
             stats: 1.0,
             tether: 1.0,
+            items: 1.0,
         }
     }
 }
 
 impl MaxSpeedFactors {
     pub fn product(&self) -> f32 {
-        self.catch_up * self.croquettes * self.stats * self.tether
+        self.catch_up * self.croquettes * self.stats * self.tether * self.items
+    }
+}
+
+/// Moves `value` toward `target` by at most `max_delta`.
+fn approach(value: f32, target: f32, max_delta: f32) -> f32 {
+    if value < target {
+        (value + max_delta).min(target)
+    } else {
+        (value - max_delta).max(target)
     }
 }
 
@@ -358,8 +379,14 @@ fn tick_timers(
     mut boosts: Query<&mut Boost>,
     mut stalls: Query<&mut Stall>,
     mut invincibilities: Query<&mut Invincibility>,
+    mut effects: Query<&mut ItemEffects>,
 ) {
     let dt = time.delta_secs();
+    for mut effects in &mut effects {
+        if effects.is_active() {
+            effects.tick(dt);
+        }
+    }
     for mut invincibility in &mut invincibilities {
         if invincibility.is_active() {
             invincibility.tick(dt);
@@ -587,7 +614,7 @@ fn drive_karts(
             &mut DriftMotion,
             &mut KartWheels,
             &mut Velocity,
-            (&mut Shove, &TetherPull),
+            (&mut Shove, &TetherPull, &ItemEffects, &Autopilot),
             &mut ExternalForce,
             &mut GravityScale,
         ),
@@ -630,7 +657,7 @@ fn drive_karts(
         mut motion,
         mut wheels,
         mut velocity,
-        (mut shove, pull),
+        (mut shove, pull, item_effects, autopilot),
         mut force,
         mut gravity,
     ) in &mut karts
@@ -667,7 +694,9 @@ fn drive_karts(
             KartState::Hit { reaction, .. } => Some(reaction),
             _ => None,
         };
-        let effective = if hit.is_some() {
+        // A fusée (issue #18) drives itself: deaf to its driver too.
+        let rocket = item_effects.rocket > 0.0 && autopilot.speed > 0.0;
+        let effective = if hit.is_some() || rocket {
             KartInput {
                 look_back: driver.look_back,
                 ..default()
@@ -808,6 +837,34 @@ fn drive_karts(
             KartState::Drifting { .. } | KartState::Hit { .. } => on_ground,
             KartState::Airborne | KartState::Trick | KartState::Respawning => false,
         };
+        if rocket {
+            // The fusée's autopilot (issue #18): toward its point of the racing line, at its
+            // speed, on the ground and in the air alike; no slide, no push, no tether. It hugs
+            // the track: never thrown upward off a bump or a ramp.
+            let forward_speed = linvel.dot(ahead);
+            let new_forward = approach(
+                forward_speed,
+                autopilot.speed,
+                autopilot.accel.max(0.0) * dt,
+            );
+            let new_yaw = autopilot_yaw_rate(
+                ahead,
+                autopilot.target - transform.translation,
+                normal,
+                autopilot.turn_response,
+                autopilot.max_turn_rate,
+            );
+            let travel = Quat::from_axis_angle(normal, new_yaw * dt) * ahead;
+            let mut up_speed = linvel.dot(normal);
+            if grounded == 0 {
+                up_speed = up_speed.min(0.0);
+            }
+            velocity.linear = travel * new_forward + normal * up_speed;
+            let tilt = angvel - normal * angvel.dot(normal);
+            velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
+            shove.set_if_neq(Shove::default());
+            continue;
+        }
         if ground_handling {
             let forward_speed = linvel.dot(ahead);
             // Towed by a tether (GD § 15), the kart neither accelerates by itself nor slows down

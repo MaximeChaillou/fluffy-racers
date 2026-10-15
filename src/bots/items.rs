@@ -14,6 +14,16 @@
 //!   throws it back at a kart close behind);
 //! - an **"x3"**: out at once, then one at a time with the same rules (the abeilles about once a
 //!   second, the pelures behind it when a kart follows close or every few seconds).
+//! - phase 2 (issue #18):
+//!   - **piment doré**: on a straight, then a boost after the other while its window lasts;
+//!   - **bombe**: thrown at a kart ahead in its sights (a wider cone than a pelote: it blows up
+//!     around), dropped behind for a kart close behind;
+//!   - **chantilly**, **dégonflage**, **oreiller géant**: as soon as a kart is ahead in the race
+//!     (the leader keeps its oreiller; the others go anyway after a while);
+//!   - **super câlin**: with a kart close by to knock over, or on a straight;
+//!   - **fusée**: when it is ready (the autopilot follows the racing line);
+//!   - **klaxon-canard**: when another kart's item comes close (an oreiller géant above it), or
+//!     after a while.
 //!
 //! The bots also go for the item boxes a little (`driver.rs`, `Senses::item_box`).
 
@@ -50,6 +60,10 @@ pub struct ItemSenses {
     pub boosting: bool,
     /// It may use items (racing, not spinning or towed).
     pub can_act: bool,
+    /// Its piment doré's window is open (issue #18).
+    pub golden: bool,
+    /// Another kart's item is close (issue #18: for the klaxon-canard).
+    pub danger: bool,
     /// Tick duration (s).
     pub dt: f32,
 }
@@ -204,7 +218,47 @@ fn decide(
     }
     let patience_over = brain.ready_for >= skill.item_delay + tuning.item_patience;
     let behind = followed_close(senses.behind);
+    let ahead_in_race = senses.rank > 1;
     let press = match (item, count) {
+        // Issue #18.
+        (ItemKind::PimentDore, _) if senses.golden => (!senses.boosting
+            && senses.straight >= tuning.item_piment_straight * tuning.item_golden_straight)
+            .then_some(false),
+        (ItemKind::PimentDore, _) => {
+            ((senses.straight >= tuning.item_piment_straight && !senses.boosting) || patience_over)
+                .then_some(false)
+        }
+        (ItemKind::Bombe, _) => {
+            let [near, far] = tuning.item_bomb_range;
+            let aimed = senses.ahead.is_some_and(|(distance, angle)| {
+                (near..=far).contains(&distance)
+                    && angle.abs() <= skill.item_aim * tuning.item_bomb_cone
+            });
+            if aimed {
+                Some(false)
+            } else if behind {
+                Some(true)
+            } else {
+                patience_over.then_some(false)
+            }
+        }
+        (ItemKind::Chantilly | ItemKind::Degonflage, _) => {
+            (ahead_in_race || patience_over).then_some(false)
+        }
+        // Never on itself: the leader keeps it.
+        (ItemKind::OreillerGeant, _) => ahead_in_race.then_some(false),
+        (ItemKind::SuperCalin, _) => {
+            let close = |around: Option<(f32, f32)>| {
+                around.is_some_and(|(distance, _)| distance <= tuning.item_ram_range)
+            };
+            (close(senses.ahead)
+                || close(senses.behind)
+                || senses.straight >= tuning.item_piment_straight
+                || patience_over)
+                .then_some(false)
+        }
+        (ItemKind::Fusee, _) => Some(false),
+        (ItemKind::KlaxonCanard, _) => (senses.danger || patience_over).then_some(false),
         (ItemKind::CroquetteDoree, _) => {
             (senses.croquettes < senses.max_croquettes || patience_over).then_some(false)
         }
@@ -242,6 +296,93 @@ mod tests {
     use crate::bots::BotDifficulty;
 
     const DT: f32 = 1.0 / 60.0;
+
+    /// Issue #18: each item of phase 2 goes at its moment, from the item's delay on.
+    #[test]
+    fn phase_two_items_go_at_their_moment() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Normal);
+        let ticks = (skill.item_delay / DT) as usize + 5;
+        let press = |senses: &ItemSenses| {
+            first_press(&mut BotItemBrain::new(6), skill, &tuning, senses, ticks)
+                .map(|(_, buttons)| buttons)
+        };
+        let ahead = ItemButtons {
+            item: true,
+            back: false,
+        };
+        let back = ItemButtons {
+            item: true,
+            back: true,
+        };
+        // A bombe: at a kart ahead in the blast's range, dropped for one close behind.
+        let mut bomb = senses(Some((ItemKind::Bombe, 1)));
+        assert_eq!(press(&bomb), None);
+        bomb.ahead = Some((15.0, 0.2));
+        assert_eq!(press(&bomb), Some(ahead));
+        bomb.ahead = Some((3.0, 0.0));
+        assert_eq!(press(&bomb), None, "too close: its own blast");
+        bomb.ahead = None;
+        bomb.behind = Some((5.0, 0.1));
+        assert_eq!(press(&bomb), Some(back));
+        // Chantilly, dégonflage, oreiller géant: with a kart ahead in the race.
+        for item in [
+            ItemKind::Chantilly,
+            ItemKind::Degonflage,
+            ItemKind::OreillerGeant,
+        ] {
+            let mut leader = senses(Some((item, 1)));
+            leader.rank = 1;
+            assert_eq!(press(&leader), None, "{item:?}");
+            assert_eq!(press(&senses(Some((item, 1)))), Some(ahead), "{item:?}");
+        }
+        // The leader never throws its oreiller, even after a long while.
+        let mut leader = senses(Some((ItemKind::OreillerGeant, 1)));
+        leader.rank = 1;
+        let long = ((skill.item_delay + 3.0 * tuning.item_patience) / DT) as usize;
+        assert!(first_press(&mut BotItemBrain::new(6), skill, &tuning, &leader, long).is_none());
+        // Super câlin: a kart close by (or a straight).
+        let mut calin = senses(Some((ItemKind::SuperCalin, 1)));
+        calin.straight = 10.0;
+        assert_eq!(press(&calin), None);
+        calin.behind = Some((6.0, 0.4));
+        assert_eq!(press(&calin), Some(ahead));
+        // Fusée: when ready.
+        assert_eq!(press(&senses(Some((ItemKind::Fusee, 1)))), Some(ahead));
+        // Klaxon: when an item comes close.
+        let mut horn = senses(Some((ItemKind::KlaxonCanard, 1)));
+        assert_eq!(press(&horn), None);
+        horn.danger = true;
+        assert_eq!(press(&horn), Some(ahead));
+    }
+
+    /// Issue #18: a piment doré on a straight, then a boost after the other while its window is
+    /// open (when the last boost is over), none in a turn.
+    #[test]
+    fn a_piment_dore_boosts_one_after_the_other() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Hard);
+        let mut brain = BotItemBrain::new(7);
+        let ticks = (skill.item_delay / DT) as usize + 3;
+        let golden = senses(Some((ItemKind::PimentDore, 1)));
+        assert!(first_press(&mut brain, skill, &tuning, &golden, ticks).is_some());
+        let open = ItemSenses {
+            golden: true,
+            ..golden
+        };
+        // Unboosted: again (the button up one tick, down the next).
+        assert_eq!(run(&mut brain, skill, &tuning, &open, 2).len(), 1);
+        let boosted = ItemSenses {
+            boosting: true,
+            ..open
+        };
+        assert!(run(&mut brain, skill, &tuning, &boosted, 60).is_empty());
+        let turn = ItemSenses {
+            straight: 5.0,
+            ..open
+        };
+        assert!(run(&mut brain, skill, &tuning, &turn, 60).is_empty());
+    }
 
     fn senses(hand: Option<(ItemKind, u8)>) -> ItemSenses {
         ItemSenses {

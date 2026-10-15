@@ -128,6 +128,29 @@ Toutes les valeurs sont dans la Resource `ItemTuning` (panneau d'admin), la tabl
   - l'abeille dès qu'un kart est devant au classement.
 - **Sans objets** : `ItemTuning::enabled` les retire de la course (ni boîtes, ni objets). Les tests de conduite des bots tournent ainsi.
 
+### Notre implémentation (phase 2, #18)
+
+Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots dans `BotTuning`. Toute la table est en jeu : chaque objet a la part que lui donne le tableau ci-dessous.
+
+- **Piment doré** : le premier appui ouvre une fenêtre de 7 s ; chaque appui pendant ce temps est le boost d'un piment (+30 %, 1,2 s). Il reste en main jusqu'à la fin de la fenêtre (la réserve attend), puis il est épuisé.
+- **Bombe à confettis** : lancée devant, elle part en cloche (20 m/s de plus que le kart, 7 m/s vers le haut) et explose là où elle retombe, environ 17 m devant son lanceur : hors de sa propre explosion. Lancée derrière (Bas/S ou C), elle est posée au sol et explose au bout de 3 s. Dans les deux cas, elle explose aussi sur le premier kart ou objet qu'elle touche. **Explosion** : tout kart à moins de 6 m fait une culbute ; ce qu'il traîne ne le protège pas.
+- **Chantilly** : les coureurs devant son lanceur au classement (hors course : devant lui) ont de la crème sur l'écran pendant 4 s ; elle s'efface pendant la dernière seconde. Un bot crémé conduit moins précisément : l'amplitude de son flottement autour de sa ligne grandit de 2,5 m (`BotTuning::creamed_wobble`).
+- **Super câlin** : 7 s d'invincibilité (le kart ne clignote pas : un halo rose), +15 % de vitesse max ; tout kart qu'il touche fait une culbute.
+- **Fusée à confettis** : pendant 6 s, un pilote automatique conduit le kart à 42 m/s le long de la ligne de course des bots, sans écouter son pilote ; le kart est invincible et renverse (culbute) ceux qu'il touche. Il ne s'envole pas sur les tremplins. À l'arrivée, il s'arrête.
+- **Dégonflage** : tous les autres karts rapetissent (taille × 0,6) et roulent moins vite (vitesse max × 0,8) ; leurs objets tombent (les deux emplacements, la roulette, ce qu'ils tiennent dehors). Durée : 7 s pour le leader, 3 s pour le dernier, entre les deux selon le rang.
+- **Oreiller géant** : il vole à 60 m/s, 4 m au-dessus de la piste, vers le **leader du moment** (même si le leader change en route, et même si c'est son lanceur), plane 0,8 s au-dessus de lui, puis tombe : culbute pour tout kart à moins de 3,5 m. Seul le klaxon-canard l'arrête (les objets traînés, non). **Règles** : une boîte ne le donne pas avant 20 s de course, ni tant qu'un autre existe (dans un emplacement, une roulette ou en vol), ni moins de 30 s après le tirage du précédent ; son poids va alors aux autres objets de la ligne.
+- **Klaxon-canard** : tous les objets à moins de 9 m de son lanceur, sauf les siens, sont détruits : posés, lancés, traînés ou tournant autour d'un autre kart, l'oreiller géant compris. Il ne touche pas les karts.
+- **Réactions** : la bombe, l'oreiller géant, le super câlin et la fusée font une **culbute** ; la victime décide, comme pour tout objet.
+- **Invincibilité et immunités** :
+  - ce qui touche ou explose (bombe, oreiller géant, karts en super câlin ou en fusée) épargne un kart déjà touché, invincible (après un objet, en super câlin, en fusée), avec le pélican ou arrivé ; l'objet casse quand même ;
+  - la chantilly et le dégonflage épargnent un kart invincible, avec le pélican ou arrivé, mais pas un kart en tête-à-queue ou en culbute ;
+  - le super câlin et la fusée rendent invincible : ni objet, ni coup de patte, ni attrape (§ 15) ;
+  - le piment doré ne protège de rien (un boost) ;
+  - le klaxon-canard ne s'occupe que des objets.
+- **Bots** (`BotSkill::item_delay` avant tout objet) : le piment doré en ligne droite, puis un boost après l'autre ; la bombe sur un kart devant entre 7 et 24 m, ou posée devant un kart qui suit ; la chantilly, le dégonflage et l'oreiller géant dès qu'un kart est devant au classement (le leader garde son oreiller) ; le super câlin avec un kart à moins de 12 m ou en ligne droite ; la fusée dès qu'elle est prête ; le klaxon-canard quand l'objet d'un autre arrive à moins de 9 m.
+- **En ligne** (#18, première étape) : le piment doré, la bombe et le klaxon-canard. Les cinq autres sont retirés de la table en ligne, leur poids redistribué, jusqu'à leur partie réseau (#61).
+- **Debug** : la touche **I** met dans la main du joueur l'objet suivant de la liste (tous les objets, « x3 » compris), prêt à servir ; le panneau d'admin (P) a un menu « Donner un objet ». En ligne, seulement dans une version de développement (`cargo run`, `trunk serve`), et seulement les objets qui marchent en ligne.
+
 ### Nos objets (originaux)
 
 Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un nom et un visuel à nous.
@@ -238,7 +261,7 @@ Le confort qui existe déjà (#17) :
 - **Options** (#17) : **O** ouvre et ferme le menu (même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac), en course comme depuis l'écran de sélection, par-dessus lequel il s'ouvre. Haut / Bas : la ligne ; Gauche / Droite (ou Entrée, Espace) : changer ; **Échap** ou O : fermer. Le jeu est en pause tant qu'il est ouvert (en ligne, non : voir plus bas), et un changement s'applique tout de suite. Le menu liste aussi les commandes, avec les lettres du clavier choisi.
 - **Interaction** : X se tient de la main gauche à côté de Shift et d'Espace quand on conduit aux flèches ; F est l'équivalent de E pour qui conduit avec W/A/S/D (Z/Q/S/D). À la manette, RB se tient à l'index pendant que le pouce garde A (accélérer) : RB quitte donc le saut/drift, qui reste sur RT.
 - **Ni Ctrl ni Alt** : Ctrl + W (Cmd + W sur Mac) ferme l'onglet et le navigateur ne laisse pas la page l'empêcher ; Alt ouvre les menus de certains navigateurs.
-- Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay) ; Entrée et Espace relancent la course depuis le classement.
+- Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay), I (un objet dans la main, #18 : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ; Entrée et Espace relancent la course depuis le classement.
 - **Choix du pilote et du kart** (#15) : l'écran de sélection s'ouvre au lancement du jeu et avec **G** (« garage » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac). Flèches haut et bas (ou Z/S en AZERTY, W/S en QWERTY) : la ligne ; gauche et droite (Q/D ou A/D) : le choix ; **Entrée** lance la course avec ce choix ; **Échap** ou G referment l'écran sans rien changer. Le jeu est en pause tant qu'il est ouvert (en ligne, non : voir plus bas).
 - **En ligne** (#7) : **L** (« en ligne » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ouvre et ferme le salon : « Créer une partie », le lien d'invitation, la liste des joueurs (nom, animal, ping, hôte), « Prêt » et « Quitter la partie ». Il s'ouvre tout seul avec `?room=CODE` dans l'adresse (`--room CODE` en natif). Il se manie à la souris et **ne met pas le jeu en pause**. Tant que le menu d'options est ouvert, L ne fait rien. L'hôte y choisit le circuit et lance la course quand tout le monde est prêt (#9).
 - **Pas de pause en ligne** (#9, décision de Max) : dans une partie en ligne, aucun menu ne met le jeu en pause (options, « Pilote et kart », panneau d'admin, salon) : les autres continuent de courir. Le kart du joueur roule en roue libre tant qu'un menu a les touches. Un nouveau kart choisi pendant une course sert à la course suivante.

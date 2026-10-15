@@ -1,4 +1,4 @@
-//! Item tuning (GD § 8, issue #16). Values marked "GD" come from `docs/GAME_DESIGN.md` ("à régler"
+//! Item tuning (GD § 8, issues #16 and #18). Values marked "GD" come from `docs/GAME_DESIGN.md` ("à régler"
 //! there); the others are our own starting points. Tweak them here (or in the admin panel), never
 //! hard-code them in systems. The distribution of the items by distance to the leader is data, not
 //! a tuning value: `assets/data/items.ron` (`table.rs`).
@@ -91,6 +91,91 @@ pub struct ItemTuning {
     // --- Croquette dorée (GD § 8: +2 croquettes) -----------------------------------------------
     /// Croquettes it gives (GD § 8: 2), up to the most a kart holds (`CroquetteTuning::max_held`).
     pub golden_croquettes: u8,
+
+    // --- Piment doré (GD § 8, issue #18: boosts at will for about 7 s) -----------------------
+    /// Its window opens at the first press (GD § 8: about 7 s); each press meanwhile is a
+    /// piment's boost (`piment_strength`, `piment_duration`). It stays in the hand meanwhile.
+    pub golden_piment_time: f32,
+
+    // --- Bombe à confettis (GD § 8, issue #18: thrown ahead or behind, explodes: tumble) ----
+    /// What touches it (a kart, an item: it explodes).
+    pub bombe_radius: f32,
+    /// Thrown ahead: this much faster than its thrower (m/s, along its heading)...
+    pub bombe_throw_speed: f32,
+    /// ...and this fast upward (m/s): a lob that lands, and explodes, about 13 m ahead of its
+    /// thrower (out of its own blast), whatever its speed.
+    pub bombe_throw_up: f32,
+    /// Dropped behind: it rolls back this fast (m/s) and stops.
+    pub bombe_drop_speed: f32,
+    /// On the ground, it slows down this hard (m/s²).
+    pub bombe_ground_decel: f32,
+    /// Dropped behind, it explodes this long after, unless something touched it before.
+    pub bombe_fuse: f32,
+    /// Every kart within this distance of the explosion (m, center to center) tumbles.
+    pub bombe_blast_radius: f32,
+    /// How long the explosion shows (s, a visual).
+    pub blast_show_time: f32,
+
+    // --- Chantilly (GD § 8, issue #18: cream on the screen of the racers ahead) -------------
+    /// The cream stays this long on a screen (s). The bots' driving meanwhile:
+    /// `BotTuning::creamed_wobble`.
+    pub chantilly_time: f32,
+
+    // --- Super câlin (GD § 8, issue #18: about 7 s invincible, faster, rams) ----------------
+    pub super_calin_time: f32,
+    /// Top speed increase meanwhile (0.15 = +15 %), on top of the boosts.
+    pub super_calin_speed: f32,
+
+    // --- Fusée à confettis (GD § 8, issue #18: a fast autopilot along the racing line) ------
+    pub fusee_time: f32,
+    /// Its speed (m/s): a pelote's, half again a kart at top speed.
+    pub fusee_speed: f32,
+    /// It gets there this hard (m/s²).
+    pub fusee_accel: f32,
+    /// It aims at the racing line this far ahead (m).
+    pub fusee_lookahead: f32,
+    /// How fast it turns to its heading (1/s)...
+    pub fusee_turn_response: f32,
+    /// ...at most this fast (rad/s): tight enough for the hairpin at its speed.
+    pub fusee_max_turn_rate: f32,
+
+    // --- Dégonflage (GD § 8, issue #18: the opponents shrink, slow down, drop their items) --
+    /// Their size meanwhile (a visual).
+    pub degonflage_scale: f32,
+    /// Their top speed meanwhile (× this).
+    pub degonflage_speed: f32,
+    /// How long: the leader this long...
+    pub degonflage_time_first: f32,
+    /// ...the last this long, in between with their rank (GD § 8: the first ones stay small
+    /// longer).
+    pub degonflage_time_last: f32,
+
+    // --- Oreiller géant (GD § 8, issue #18: flies to the leader, crushes it) ----------------
+    pub oreiller_radius: f32,
+    /// Speed along the track (following the centerline), far above the karts...
+    pub oreiller_speed: f32,
+    /// ...moving sideways toward its target's lane at most this fast (m/s)...
+    pub oreiller_lateral_speed: f32,
+    /// ...this high above the road...
+    pub oreiller_height: f32,
+    /// ...then over the leader once this close (m, along the track) it hovers this long (a
+    /// klaxon-canard can still destroy it)...
+    pub oreiller_hover_time: f32,
+    pub oreiller_reach: f32,
+    /// ...and drops on it this fast (m/s).
+    pub oreiller_drop_speed: f32,
+    /// Every kart within this distance of where it lands (m) tumbles: a small zone.
+    pub oreiller_blast_radius: f32,
+    /// It gives up this long after the throw.
+    pub oreiller_lifetime: f32,
+    /// GD § 8: none before this long after GO (s)...
+    pub oreiller_min_race_time: f32,
+    /// ...and this long between two (s, from the draw of the last one). One at a time.
+    pub oreiller_cooldown: f32,
+
+    // --- Klaxon-canard (GD § 8, issue #18: a shock wave that destroys the items close by) ---
+    /// The items within this distance of the kart's center are destroyed (m).
+    pub klaxon_radius: f32,
 }
 
 impl Default for ItemTuning {
@@ -132,6 +217,48 @@ impl Default for ItemTuning {
             piment_duration: 1.2,
 
             golden_croquettes: 2,
+
+            golden_piment_time: 7.0,
+
+            bombe_radius: 0.55,
+            bombe_throw_speed: 20.0,
+            bombe_throw_up: 7.0,
+            bombe_drop_speed: 3.0,
+            bombe_ground_decel: 30.0,
+            bombe_fuse: 3.0,
+            bombe_blast_radius: 6.0,
+            blast_show_time: 0.6,
+
+            chantilly_time: 4.0,
+
+            super_calin_time: 7.0,
+            super_calin_speed: 0.15,
+
+            fusee_time: 6.0,
+            fusee_speed: 42.0,
+            fusee_accel: 40.0,
+            fusee_lookahead: 7.0,
+            fusee_turn_response: 12.0,
+            fusee_max_turn_rate: 6.0,
+
+            degonflage_scale: 0.6,
+            degonflage_speed: 0.8,
+            degonflage_time_first: 7.0,
+            degonflage_time_last: 3.0,
+
+            oreiller_radius: 1.0,
+            oreiller_speed: 60.0,
+            oreiller_lateral_speed: 15.0,
+            oreiller_height: 4.0,
+            oreiller_hover_time: 0.8,
+            oreiller_reach: 8.0,
+            oreiller_drop_speed: 20.0,
+            oreiller_blast_radius: 3.5,
+            oreiller_lifetime: 30.0,
+            oreiller_min_race_time: 20.0,
+            oreiller_cooldown: 30.0,
+
+            klaxon_radius: 9.0,
         }
     }
 }
@@ -161,5 +288,31 @@ mod tests {
         // A dragged item sits behind the kart's body (1 m from its center to its back).
         assert!(t.drag_distance - t.pelure_radius > 1.0);
         assert!(t.drag_distance - t.pelote_radius > 1.0);
+    }
+
+    /// GD § 8, issue #18: the piment doré about 7 s, the super câlin about 7 s, the fusée about
+    /// 6 s; the oreiller géant none before 20 s of race and 30 s between two; the fusée outruns
+    /// the karts, the oreiller flies over them; the first ones stay small longer.
+    #[test]
+    fn phase_two_defaults_follow_the_game_design() {
+        let t = ItemTuning::default();
+        assert_eq!(t.golden_piment_time, 7.0);
+        assert_eq!(t.super_calin_time, 7.0);
+        assert_eq!(t.fusee_time, 6.0);
+        assert_eq!(t.oreiller_min_race_time, 20.0);
+        assert_eq!(t.oreiller_cooldown, 30.0);
+        assert!(t.fusee_speed > 28.5 * (1.0 + t.piment_strength));
+        assert!(t.oreiller_speed > t.abeille_speed);
+        assert!(t.oreiller_height - t.oreiller_radius > 2.0);
+        assert!(t.degonflage_time_first > t.degonflage_time_last);
+        assert!(t.degonflage_scale < 1.0 && t.degonflage_speed < 1.0);
+        // The oreiller's zone is small, the bombe's bigger.
+        assert!(t.oreiller_blast_radius < t.bombe_blast_radius);
+        // A thrown bombe lands (and explodes) ahead of its thrower, out of its own blast.
+        let flight = 2.0 * t.bombe_throw_up / crate::items::objects::ITEM_GRAVITY;
+        assert!(
+            t.bombe_throw_speed * flight > t.bombe_blast_radius + 4.0,
+            "{flight}"
+        );
     }
 }

@@ -27,7 +27,9 @@
 //! ([`ItemOut`]), an item that broke ([`ItemBreak`]: on a kart, the victim's decision), the
 //! croquettes a kart lost ([`Scatter`]), and in the kart states what a kart holds out
 //! (`KartSnapshot::items`, 49 bytes). Version 5 (issue #55): the kart's color in the `Hello`
-//! ([`Profile::color`], a byte of the palette).
+//! ([`Profile::color`], a byte of the palette). Version 6 (issue #18): the bombe à confettis
+//! thrown or dropped ([`OutMotion::Bomb`]), its explosion ([`BlastOut`]: where, when), the
+//! klaxon-canard ([`Honk`]).
 
 use std::fmt;
 
@@ -36,7 +38,7 @@ use crate::items::ItemKind;
 use crate::kart::KartColor;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 5;
+pub const PROTOCOL_VERSION: u8 = 6;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -267,9 +269,17 @@ pub struct KartSnapshot {
 /// A kart state fits in a small unreliable packet (issue #8: fewer than 64 bytes).
 pub const MAX_KART_STATE_BYTES: usize = 64;
 
-/// The items that go out on the track, in their wire order (`ItemOut::item`, the held items of
-/// `KartSnapshot::items` from 1).
-pub const OUT_ITEMS: [ItemKind; 3] = [ItemKind::Pelure, ItemKind::Pelote, ItemKind::Abeille];
+/// The items that go out on the track, in their wire order (`ItemOut::item`). Issue #18: the
+/// bombe à confettis.
+pub const OUT_ITEMS: [ItemKind; 4] = [
+    ItemKind::Pelure,
+    ItemKind::Pelote,
+    ItemKind::Abeille,
+    ItemKind::Bombe,
+];
+
+/// The items a kart can hold out, in their wire order (`KartSnapshot::items`, from 1).
+pub const HELD_ITEMS: [ItemKind; 3] = [ItemKind::Pelure, ItemKind::Pelote, ItemKind::Abeille];
 
 /// Whether `items` (`KartSnapshot::items`) is a possible value.
 pub fn valid_held_items(items: u8) -> bool {
@@ -325,6 +335,13 @@ pub enum OutMotion {
     },
     /// An abeille diving at `target`, or straight on without one.
     Dive { target: Option<KartId> },
+    /// A bombe à confettis (issue #18): its vertical speed, on the ground or not, and whether it
+    /// explodes where it lands (thrown ahead) or at the end of its fuse (dropped behind).
+    Bomb {
+        vertical: f32,
+        grounded: bool,
+        impact: bool,
+    },
 }
 
 /// An item thrown or dropped by a kart (issue #53): the thrower has authority over its path. It
@@ -351,6 +368,29 @@ pub struct ItemBreak {
     pub id: ItemId,
     pub kart: Option<KartId>,
     pub landed: bool,
+}
+
+/// An item exploded (issue #18): a bombe à confettis that touched a kart or a shield of the peer
+/// that tells it, at `position` on common tick `tick`. Every peer makes it explode there (its own
+/// copy is gone), and judges its own karts in the blast. A bombe whose fuse ran out explodes on
+/// every screen by itself (the same path, the same tick): no message.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlastOut {
+    pub session: u8,
+    pub id: ItemId,
+    pub tick: u32,
+    pub position: [f32; 3],
+}
+
+/// A kart sounded its klaxon-canard (issue #18) at `position`, on common tick `tick`: its peer
+/// judged the items it destroyed (and told each with an [`ItemBreak`]); the others see the shock
+/// wave.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Honk {
+    pub session: u8,
+    pub kart: KartId,
+    pub tick: u32,
+    pub position: [f32; 3],
 }
 
 /// A scattered croquette (issue #53): the kart that lost it, the number of that loss among the
@@ -469,6 +509,10 @@ pub enum Message {
     ItemBreak(ItemBreak),
     /// The croquettes a kart lost fly out (issue #53).
     Scatter(Scatter),
+    /// A bombe à confettis exploded on what touched it (issue #18).
+    Blast(BlastOut),
+    /// A klaxon-canard sounded (issue #18).
+    Honk(Honk),
     /// Latency and clock: `sent_ms` is the sender's clock, echoed back.
     Ping {
         sent_ms: u32,
@@ -502,6 +546,8 @@ const VERDICT: u8 = 25;
 const ITEM_OUT: u8 = 26;
 const ITEM_BREAK: u8 = 27;
 const SCATTER: u8 = 28;
+const BLAST: u8 = 29;
+const HONK: u8 = 30;
 const PING: u8 = 32;
 const PONG: u8 = 33;
 const KART_STATE: u8 = 40;
@@ -542,6 +588,8 @@ impl Message {
             Message::ItemOut(_) => ITEM_OUT,
             Message::ItemBreak(_) => ITEM_BREAK,
             Message::Scatter(_) => SCATTER,
+            Message::Blast(_) => BLAST,
+            Message::Honk(_) => HONK,
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
@@ -647,6 +695,14 @@ impl Message {
                     OutMotion::Dive { target } => {
                         out.extend_from_slice(&[3, target.unwrap_or(NO_KART)]);
                     }
+                    OutMotion::Bomb {
+                        vertical,
+                        grounded,
+                        impact,
+                    } => {
+                        out.extend_from_slice(&[4, u8::from(grounded) | u8::from(impact) << 1]);
+                        put_floats(out, &[vertical]);
+                    }
                 }
             }
             Message::ItemBreak(end) => {
@@ -664,6 +720,17 @@ impl Message {
                 for to in &scatter.to[..count] {
                     put_floats(out, to);
                 }
+            }
+            Message::Blast(blast) => {
+                out.push(blast.session);
+                put_item_id(out, blast.id);
+                put_u32(out, blast.tick);
+                put_floats(out, &blast.position);
+            }
+            Message::Honk(honk) => {
+                out.extend_from_slice(&[honk.session, honk.kart]);
+                put_u32(out, honk.tick);
+                put_floats(out, &honk.position);
             }
             Message::Ping { sent_ms } => put_u32(out, *sent_ms),
             Message::Pong {
@@ -863,14 +930,26 @@ impl Message {
                     3 => OutMotion::Dive {
                         target: reader.kart_or_none()?,
                     },
+                    4 => {
+                        let flags = reader.u8()?;
+                        if flags > 0b11 {
+                            return Err(DecodeError::Invalid("bombe flags"));
+                        }
+                        OutMotion::Bomb {
+                            grounded: flags & 1 != 0,
+                            impact: flags & 2 != 0,
+                            vertical: reader.floats::<1>()?[0],
+                        }
+                    }
                     _ => return Err(DecodeError::Invalid("item motion")),
                 };
                 // A pelure lies on the ground, a pelote rolls, an abeille flies (or rolls,
-                // thrown backwards).
+                // thrown backwards), a bombe is a bombe.
                 let fits = match item {
                     ItemKind::Pelure => motion == OutMotion::Ground,
                     ItemKind::Pelote => matches!(motion, OutMotion::Rolling { .. }),
-                    _ => motion != OutMotion::Ground,
+                    ItemKind::Bombe => matches!(motion, OutMotion::Bomb { .. }),
+                    _ => !matches!(motion, OutMotion::Ground | OutMotion::Bomb { .. }),
                 };
                 if !fits || id.is_held() {
                     return Err(DecodeError::Invalid("item motion"));
@@ -923,6 +1002,25 @@ impl Message {
                     to,
                 })
             }
+            BLAST => {
+                let session = reader.u8()?;
+                let id = reader.item_id()?;
+                if id.is_held() {
+                    return Err(DecodeError::Invalid("a held item exploded"));
+                }
+                Message::Blast(BlastOut {
+                    session,
+                    id,
+                    tick: reader.u32()?,
+                    position: reader.floats()?,
+                })
+            }
+            HONK => Message::Honk(Honk {
+                session: reader.u8()?,
+                kart: reader.kart()?,
+                tick: reader.u32()?,
+                position: reader.floats()?,
+            }),
             PING => Message::Ping {
                 sent_ms: reader.u32()?,
             },
@@ -1499,6 +1597,45 @@ mod tests {
                 from: [0.0; 3],
                 to: vec![[1.0; 3]; MAX_SCATTER],
             }),
+            // Issue #18: a bombe lobbed ahead, one dropped on the ground; an explosion, a klaxon.
+            Message::ItemOut(ItemOut {
+                session: 3,
+                id: ItemId { owner: 7, seq: 2 },
+                item: ItemKind::Bombe,
+                tick: 77,
+                position: [1.0, 1.35, -2.0],
+                velocity: [0.0, 0.0, -48.0],
+                motion: OutMotion::Bomb {
+                    vertical: 7.0,
+                    grounded: false,
+                    impact: true,
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 3,
+                id: ItemId { owner: 7, seq: 3 },
+                item: ItemKind::Bombe,
+                tick: 78,
+                position: [1.0, 0.55, 2.0],
+                velocity: [0.0; 3],
+                motion: OutMotion::Bomb {
+                    vertical: 0.0,
+                    grounded: true,
+                    impact: false,
+                },
+            }),
+            Message::Blast(BlastOut {
+                session: 3,
+                id: ItemId { owner: 7, seq: 2 },
+                tick: 120,
+                position: [1.0, 0.55, -18.0],
+            }),
+            Message::Honk(Honk {
+                session: 3,
+                kart: 11,
+                tick: 4_000_000_000,
+                position: [-5.0, 0.55, 30.0],
+            }),
         ]
         .into_iter()
         .chain(TETHER_ENDS.iter().map(|reason| {
@@ -1529,8 +1666,8 @@ mod tests {
         kinds.dedup();
         // 13 until issue #8; issue #9 adds the circuit, the checkpoints and the end of the race;
         // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
-        // croquettes.
-        assert_eq!(kinds.len(), 21);
+        // croquettes; issue #18 the explosions and the klaxons.
+        assert_eq!(kinds.len(), 23);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -1622,6 +1759,9 @@ mod tests {
                 Message::ItemOut(_) => assert!((36..=45).contains(&length), "{message:?}"),
                 Message::ItemBreak(_) => assert_eq!(length, 8),
                 Message::Scatter(scatter) => assert_eq!(length, 23 + 12 * scatter.to.len()),
+                // Issue #18: an explosion in 22 bytes, a klaxon in 20.
+                Message::Blast(_) => assert_eq!(length, 22),
+                Message::Honk(_) => assert_eq!(length, 20),
                 _ => {}
             }
         }
@@ -1838,15 +1978,16 @@ mod tests {
         };
         let bytes = Message::ItemOut(out).to_bytes();
         assert!(Message::decode(&bytes).is_ok());
-        // Not an object (a piment), a kart beyond the grid, the number of what a kart holds
-        // out, an unknown motion, a pelote on the ground.
+        // Not an object (beyond the bombe, issue #18), a kart beyond the grid, the number of what
+        // a kart holds out, an unknown motion, a pelote on the ground, a bombe that rolls.
         for changes in [
-            &[(6, 3)][..],
+            &[(6, 4)][..],
             &[(6, 255)],
             &[(3, MAX_PLAYERS as u8)],
             &[(4, 0xff), (5, 0xff)],
-            &[(35, 4)],
+            &[(35, 5)],
             &[(35, 0)],
+            &[(6, 3)],
         ] {
             let mut bad = bytes.clone();
             for (at, value) in changes {
@@ -1854,10 +1995,19 @@ mod tests {
             }
             assert!(invalid(&bad), "item out: {changes:?}");
         }
+        let bomb = OutMotion::Bomb {
+            vertical: 0.0,
+            grounded: true,
+            impact: false,
+        };
         for (item, motion) in [
             (ItemKind::Pelure, OutMotion::Dive { target: None }),
             (ItemKind::Abeille, OutMotion::Ground),
             (ItemKind::Pelote, OutMotion::Dive { target: Some(1) }),
+            // Issue #18: a bombe moves as a bombe, and only it.
+            (ItemKind::Pelote, bomb),
+            (ItemKind::Abeille, bomb),
+            (ItemKind::Bombe, OutMotion::Ground),
         ] {
             let bad = Message::ItemOut(ItemOut {
                 item,
@@ -1867,6 +2017,35 @@ mod tests {
             .to_bytes();
             assert!(invalid(&bad), "{item:?} {motion:?}");
         }
+        // Issue #18: the bombe's flags are 2 bits; a held item never explodes; a klaxon of a kart
+        // beyond the grid.
+        let mut bad = Message::ItemOut(ItemOut {
+            item: ItemKind::Bombe,
+            motion: bomb,
+            ..out
+        })
+        .to_bytes();
+        assert!(Message::decode(&bad).is_ok());
+        bad[36] = 4;
+        assert!(invalid(&bad), "bombe flags");
+        let blast = Message::Blast(BlastOut {
+            session: 1,
+            id: ItemId::held(2),
+            tick: 3,
+            position: [0.0; 3],
+        })
+        .to_bytes();
+        assert!(invalid(&blast), "a held item exploded");
+        let mut honk = Message::Honk(Honk {
+            session: 1,
+            kart: 2,
+            tick: 3,
+            position: [0.0; 3],
+        })
+        .to_bytes();
+        assert!(Message::decode(&honk).is_ok());
+        honk[3] = MAX_PLAYERS as u8;
+        assert!(invalid(&honk), "a klaxon beyond the grid");
         let hit = Message::ItemBreak(ItemBreak {
             session: 1,
             id: ItemId { owner: 2, seq: 3 },

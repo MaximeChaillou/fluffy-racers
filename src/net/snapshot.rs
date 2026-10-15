@@ -16,7 +16,7 @@
 
 use bevy::math::{Quat, Vec3};
 
-use super::protocol::{KartId, KartSnapshot, OUT_ITEMS};
+use super::protocol::{HELD_ITEMS, KartId, KartSnapshot};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{
     Boost, DriftMotion, DriftSide, HitReaction, Invincibility, KartState, KartTuning, KartWheels,
@@ -113,7 +113,7 @@ impl HeldLook {
     /// What `slots` hold out.
     pub fn of(slots: &ItemSlots) -> Option<Self> {
         let (item, count) = slots.held_out()?;
-        OUT_ITEMS.contains(&item).then_some(Self {
+        HELD_ITEMS.contains(&item).then_some(Self {
             item,
             count: count.clamp(1, 3),
             dragged: slots.dragging.is_some(),
@@ -142,7 +142,7 @@ impl HeldLook {
     /// On the wire (`KartSnapshot::items`).
     fn byte(held: Option<Self>) -> u8 {
         held.and_then(|held| {
-            let kind = OUT_ITEMS.iter().position(|i| *i == held.item)? as u8 + 1;
+            let kind = HELD_ITEMS.iter().position(|i| *i == held.item)? as u8 + 1;
             let count = if held.dragged {
                 1
             } else {
@@ -158,7 +158,7 @@ impl HeldLook {
         if !super::protocol::valid_held_items(items) {
             return None;
         }
-        let item = *OUT_ITEMS.get(usize::from(items & 0b11).checked_sub(1)?)?;
+        let item = *HELD_ITEMS.get(usize::from(items & 0b11).checked_sub(1)?)?;
         Some(Self {
             item,
             count: (items >> 2) & 0b11,
