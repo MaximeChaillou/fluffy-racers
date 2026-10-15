@@ -14,9 +14,12 @@ use super::socket::memory::Hub;
 use super::*;
 use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_seed};
 use crate::interactions::{InteractionTuning, Paw, PawMotion, PawStats};
-use crate::kart::{Kart, KartInput, PlayerKart, Shove, SpawnPoint};
+use crate::kart::{Kart, KartInput, KartSystems, PlayerKart, Shove, SpawnPoint};
 use crate::options::{OptionsAction, OptionsMenu};
-use crate::race::{OnlineFlow, Race, RaceGrid, RaceMode, RacePhase, RaceProgress, Racer};
+use crate::race::{
+    OnlineFlow, Race, RaceGrid, RaceMode, RacePhase, RaceProgress, RaceSystems, RaceTuning, Racer,
+    ResultTime,
+};
 use crate::track::{TrackChoice, TrackLayout};
 
 pub(super) const ANA: PeerKey = PeerKey(1 << 100);
@@ -447,6 +450,135 @@ fn a_race_online_ends_with_the_same_results_for_everyone() {
             .as_deref(),
         Some(ana_order.as_slice())
     );
+}
+
+/// The grid slot of each line of the results screen, from the top: the closed results', or the
+/// standings until then.
+fn results_slots(app: &App) -> Vec<usize> {
+    let race = app.world().resource::<Race>();
+    let slot = |entity: &Entity| app.world().get::<Racer>(*entity).unwrap().grid_slot;
+    if race.results_closed() {
+        race.results.iter().map(|line| slot(&line.id)).collect()
+    } else {
+        race.standings.iter().map(slot).collect()
+    }
+}
+
+/// The bot of grid slot 0 stops 5 s after GO (it is Ana's: she hosts the bots).
+fn stop_the_first_bot(race: Res<Race>, mut karts: Query<(&Racer, &mut KartInput), With<Bot>>) {
+    if race.race_ticks() < 300 {
+        return;
+    }
+    for (racer, mut input) in &mut karts {
+        if racer.grid_slot == 0 {
+            *input = KartInput::default();
+        }
+    }
+}
+
+/// Issue #70 acceptance (in memory): the results online. A race of two players and three bots,
+/// one of them stopped on its way. Once the race is over, the results follow the karts that
+/// finish; Bob's game does not close them on its own (its delay is 0), it waits for the host's
+/// table: Ana closes them `results_close_seconds` after they appeared (2 s here), the stopped
+/// bot gets its estimate, and both screens show the same lines (each one's own kart aside: its
+/// name).
+#[test]
+fn online_the_results_close_with_the_hosts_table_for_everyone() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    for (key, seconds) in [(ANA, 2.0), (BOB, 0.0)] {
+        room.app(key)
+            .world_mut()
+            .resource_mut::<RaceTuning>()
+            .results_close_seconds = seconds;
+    }
+    start_race(&mut room, ANA, 3, 1);
+    bots_drive_the_players(&mut room);
+    room.app(ANA).add_systems(
+        FixedUpdate,
+        stop_the_first_bot
+            .after(KartSystems::Input)
+            .before(RaceSystems::Gate),
+    );
+    room.until(150.0, "the results", |app| {
+        app.world().resource::<Race>().phase() == RacePhase::Results
+    });
+    // The results are live on both screens: the stopped bot is on its way.
+    for _ in 0..30 {
+        room.frame();
+    }
+    for key in [ANA, BOB] {
+        let app = room.app(key);
+        assert!(!app.world().resource::<Race>().results_closed());
+        let slots = results_slots(app);
+        let row = slots.iter().position(|slot| *slot == 0).unwrap();
+        let lines = crate::ui::results_tests::results_lines(app);
+        assert_eq!(&lines[row][2..], ["en course", "Tour 1/1"], "{lines:?}");
+    }
+    room.until(5.0, "the closed results", |app| {
+        app.world().resource::<Race>().results_closed()
+    });
+    for _ in 0..3 {
+        room.frame();
+    }
+    let host = room
+        .view(ANA)
+        .world()
+        .resource::<OnlineRace>()
+        .shared
+        .results()
+        .cloned()
+        .expect("the host closed them");
+    let mut screens = Vec::new();
+    for key in [ANA, BOB] {
+        let app = room.app(key);
+        let slots = results_slots(app);
+        let times: Vec<ResultTime> = app
+            .world()
+            .resource::<Race>()
+            .results
+            .iter()
+            .map(|line| line.time)
+            .collect();
+        let lines = crate::ui::results_tests::results_lines(app);
+        println!("{key:?}: {slots:?} {lines:?}");
+        screens.push((slots, times, lines));
+    }
+    let (ana, bob) = (&screens[0], &screens[1]);
+    // The host's table, on both screens.
+    let table: Vec<(usize, ResultTime)> = host
+        .lines
+        .iter()
+        .map(|line| (usize::from(line.id), line.time))
+        .collect();
+    for (slots, times, _) in [ana, bob] {
+        let shown: Vec<(usize, ResultTime)> = slots.iter().copied().zip(times.clone()).collect();
+        assert_eq!(shown, table);
+    }
+    assert_eq!(table.len(), 5);
+    // The same lines: rank, time and detail; the name too, but for each one's own kart.
+    for (row, (a, b)) in ana.2.iter().zip(&bob.2).enumerate() {
+        assert_eq!([&a[0], &a[2], &a[3]], [&b[0], &b[2], &b[3]], "line {row}");
+        let own = |slot: usize| slot == 3 || slot == 4;
+        if !own(ana.0[row]) {
+            assert_eq!(a[1], b[1], "line {row}");
+        }
+    }
+    // The stopped bot: estimated, last of those with a time.
+    let row = ana.0.iter().position(|slot| *slot == 0).unwrap();
+    let ResultTime::Estimated(estimate) = ana.1[row] else {
+        panic!("{:?}", ana.1);
+    };
+    assert!(ana.2[row][2].starts_with('~'), "{:?}", ana.2[row]);
+    assert_eq!(ana.2[row][3], "Temps estime");
+    for time in &ana.1[..row] {
+        assert!(time.ticks().unwrap() <= estimate);
+    }
+    let finished = ana
+        .1
+        .iter()
+        .filter(|time| matches!(time, ResultTime::Finished(_)))
+        .count();
+    assert!(finished >= 2, "both players finished: {:?}", ana.1);
 }
 
 /// Bob's kart stands 2.4 m to the right of Ana's, and shows there on Ana's screen.

@@ -7,7 +7,9 @@
 use std::fmt::Write;
 
 use crate::TICK_HZ;
-use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, seconds_to_ticks};
+use crate::race::{
+    Course, Race, RacePhase, RaceProgress, RaceTuning, ResultTime, seconds_to_ticks,
+};
 
 /// Big message in the middle of the screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -179,6 +181,73 @@ pub const RESULTS_FOOTER: &str = "ESPACE ou ENTREE (manette : A) : rejouer";
 /// Online (issue #9): the host starts the next race.
 pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hote la lance depuis le salon (L)";
 pub const PLAYER_NAME: &str = "Toi";
+/// Issue #70: the results screen, for a racer still on track, one that gave up (online: its
+/// player left), and an estimated time (`ESTIMATE_MARK` before it).
+pub const RESULTS_RACING: &str = "en course";
+pub const RESULTS_GAVE_UP: &str = "abandon";
+pub const RESULTS_ESTIMATED: &str = "Temps estime";
+pub const ESTIMATE_MARK: char = '~';
+
+/// What a line of the results screen says of its racer's race (issue #70). Times in hundredths
+/// of a second (what is displayed). Compared from frame to frame: a line is rewritten only when
+/// it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultsTime {
+    /// Still on track, on lap `lap` of `laps`.
+    Racing { lap: u32, laps: u32 },
+    /// Crossed the line: its time and best lap.
+    Finished { time: u32, best_lap: Option<u32> },
+    /// Still on track when the results closed: its estimated time.
+    Estimated(u32),
+    /// Gave up (online: its player left).
+    GaveUp,
+}
+
+impl ResultsTime {
+    /// A racer's line: live from its progress, or its line of the closed results (`closed`).
+    pub fn of(progress: &RaceProgress, course: &Course, closed: Option<ResultTime>) -> Self {
+        let best_lap = progress.best_lap().map(hundredths);
+        match closed.map_or_else(|| progress.finish.map(ResultTime::Finished), Some) {
+            Some(ResultTime::Finished(ticks)) => Self::Finished {
+                time: hundredths(ticks),
+                best_lap,
+            },
+            Some(ResultTime::Estimated(ticks)) => Self::Estimated(hundredths(ticks)),
+            Some(ResultTime::GaveUp) => Self::GaveUp,
+            None => Self::Racing {
+                lap: progress.current_lap(course),
+                laps: course.laps,
+            },
+        }
+    }
+
+    /// The time column: "1:02.35", "en course", "~1:45.20", "abandon".
+    pub fn write_time(&self, out: &mut String) {
+        out.clear();
+        match *self {
+            Self::Racing { .. } => out.push_str(RESULTS_RACING),
+            Self::Finished { time, .. } => write_time(out, Some(time)),
+            Self::Estimated(time) => {
+                out.push(ESTIMATE_MARK);
+                write_time(out, Some(time));
+            }
+            Self::GaveUp => out.push_str(RESULTS_GAVE_UP),
+        }
+    }
+
+    /// The column after it: "Meilleur tour 0:20.12", "Tour 2/3", "Temps estime", nothing.
+    pub fn write_detail(&self, out: &mut String) {
+        match *self {
+            Self::Racing { lap, laps } => write_lap(out, lap, laps),
+            Self::Finished { best_lap, .. } => write_best_lap(out, best_lap),
+            Self::Estimated(_) => {
+                out.clear();
+                out.push_str(RESULTS_ESTIMATED);
+            }
+            Self::GaveUp => out.clear(),
+        }
+    }
+}
 
 /// Name of a racer on the results screen. `name`: another player's (online, issue #9), written
 /// in the HUD's font: its accented letters without their accents, any other letter it lacks as
@@ -281,6 +350,84 @@ mod tests {
         }
     }
 
+    /// Issue #70: a line of the results screen, by the state of its racer's race: finished (its
+    /// time and best lap), still on track (its lap), estimated once the results closed (marked),
+    /// gave up. Rewriting a line does not allocate again.
+    #[test]
+    fn a_results_line_says_how_its_racers_race_went() {
+        let (_, course) = crate::race::course_for_tests();
+        let mut progress = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
+        assert_eq!(
+            ResultsTime::of(&progress, &course, None),
+            ResultsTime::Racing { lap: 1, laps: 3 }
+        );
+        // Two laps done, the third one on.
+        let n = course.checkpoint_count();
+        for tick in 1..=2 * n + 1 {
+            progress.validate(&course, tick * 30);
+        }
+        let racing = ResultsTime::of(&progress, &course, None);
+        assert_eq!(racing, ResultsTime::Racing { lap: 3, laps: 3 });
+        let lap1 = progress.lap_times[0];
+        let best = hundredths(progress.best_lap().unwrap());
+        assert_eq!(best, hundredths(lap1.min(progress.lap_times[1])));
+        // Once the results closed: its estimate.
+        let estimated = ResultsTime::of(&progress, &course, Some(ResultTime::Estimated(6_321)));
+        assert_eq!(estimated, ResultsTime::Estimated(10_535));
+        // Then it finishes.
+        for tick in 2 * n + 2..=3 * n + 1 {
+            progress.validate(&course, tick * 30);
+        }
+        let finish = progress.finish.unwrap();
+        let finished = ResultsTime::of(&progress, &course, None);
+        assert_eq!(
+            finished,
+            ResultsTime::Finished {
+                time: hundredths(finish),
+                best_lap: Some(best),
+            }
+        );
+        // Its line of the closed results says the same.
+        assert_eq!(
+            ResultsTime::of(&progress, &course, Some(ResultTime::Finished(finish))),
+            finished
+        );
+        assert_eq!(
+            ResultsTime::of(&progress, &course, Some(ResultTime::GaveUp)),
+            ResultsTime::GaveUp
+        );
+
+        let mut time = String::with_capacity(32);
+        let mut detail = String::with_capacity(32);
+        let capacity = (time.capacity(), detail.capacity());
+        let mut cells = |line: ResultsTime| {
+            line.write_time(&mut time);
+            line.write_detail(&mut detail);
+            assert_eq!((time.capacity(), detail.capacity()), capacity);
+            (time.clone(), detail.clone())
+        };
+        assert_eq!(cells(racing), ("en course".into(), "Tour 3/3".into()));
+        assert_eq!(
+            cells(ResultsTime::Finished {
+                time: 6_235,
+                best_lap: Some(2_012)
+            }),
+            ("1:02.35".into(), "Meilleur tour 0:20.12".into())
+        );
+        assert_eq!(
+            cells(ResultsTime::Finished {
+                time: 6_235,
+                best_lap: None
+            }),
+            ("1:02.35".into(), "Meilleur tour -:--.--".into())
+        );
+        assert_eq!(cells(estimated), ("~1:45.35".into(), "Temps estime".into()));
+        assert_eq!(
+            cells(ResultsTime::GaveUp),
+            ("abandon".into(), String::new())
+        );
+    }
+
     /// The built-in font only has ASCII glyphs.
     #[test]
     fn every_text_is_ascii() {
@@ -289,6 +436,10 @@ mod tests {
             RESULTS_FOOTER.to_string(),
             RESULTS_FOOTER_ONLINE.to_string(),
             PLAYER_NAME.to_string(),
+            RESULTS_RACING.to_string(),
+            RESULTS_GAVE_UP.to_string(),
+            RESULTS_ESTIMATED.to_string(),
+            ESTIMATE_MARK.to_string(),
         ];
         for banner in [
             Banner::Count(3),

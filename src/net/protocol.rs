@@ -37,16 +37,19 @@
 //! câlin, the fusée and the dégonflage (`KartSnapshot::flags`). Version 8 (issue #63): the star
 //! around the host: a client's message for the others goes to the host, which relays it with its
 //! origin ([`Message::Relayed`]), and the host sends each client one packet with every kart's
-//! newest state ([`Message::KartStates`], grouped by the peer that drives them).
+//! newest state ([`Message::KartStates`], grouped by the peer that drives them). Version 9 (issue
+//! #70): the host's closed results ([`RaceResults`]: every racer's time, estimated for those
+//! still on track).
 
 use std::fmt;
 
 use crate::interactions::TetherEnd;
 use crate::items::ItemKind;
 use crate::kart::KartColor;
+use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 8;
+pub const PROTOCOL_VERSION: u8 = 9;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -179,6 +182,15 @@ pub struct RaceOver {
     pub race: u16,
     pub tick: u32,
     pub order: Vec<KartId>,
+}
+
+/// The host closes the results (issue #70, `race::close_results`): the final table, first to
+/// last, every racer once, each with its time: finished, estimated (still on track when the
+/// results closed), or none (gave up). Everyone shows these lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RaceResults {
+    pub race: u16,
+    pub lines: Vec<ResultLine<KartId>>,
 }
 
 /// A kart on the network: its slot on the grid (issue #8 maps it to the kart's entity).
@@ -596,6 +608,8 @@ pub enum Message {
     Progress(Progress),
     /// The host ends the race, with its final order (issue #9).
     RaceOver(RaceOver),
+    /// The host closes the results, with every racer's time (issue #70).
+    RaceResults(RaceResults),
     Strike(Strike),
     StrikeReply(StrikeReply),
     Grab(Grab),
@@ -661,6 +675,7 @@ const START_RACE: u8 = 6;
 const CIRCUIT: u8 = 7;
 const PROGRESS: u8 = 8;
 const RACE_OVER: u8 = 9;
+const RACE_RESULTS: u8 = 11;
 const STRIKE: u8 = 16;
 const STRIKE_REPLY: u8 = 17;
 const GRAB: u8 = 18;
@@ -709,6 +724,7 @@ impl Message {
             Message::Circuit(_) => CIRCUIT,
             Message::Progress(_) => PROGRESS,
             Message::RaceOver(_) => RACE_OVER,
+            Message::RaceResults(_) => RACE_RESULTS,
             Message::Strike(_) => STRIKE,
             Message::StrikeReply(_) => STRIKE_REPLY,
             Message::Grab(_) => GRAB,
@@ -733,8 +749,8 @@ impl Message {
     }
 
     /// Issue #63: a message a client tells every peer, which the host relays to the other clients
-    /// with its origin ([`Message::Relayed`]). Not the host's own (the seats, the race's start and
-    /// end, the verdicts), nor the pings (each link has its own), nor the kart states (the host
+    /// with its origin ([`Message::Relayed`]). Not the host's own (the seats, the race's start,
+    /// end and results, the verdicts), nor the pings (each link has its own), nor the kart states (the host
     /// bundles them, [`Message::KartStates`]).
     pub fn relayable(&self) -> bool {
         !matches!(
@@ -744,6 +760,7 @@ impl Message {
                 | Message::StartRace(_)
                 | Message::Circuit(_)
                 | Message::RaceOver(_)
+                | Message::RaceResults(_)
                 | Message::Verdict(_)
                 | Message::Ping { .. }
                 | Message::Pong { .. }
@@ -806,6 +823,21 @@ impl Message {
                 let count = over.order.len().min(MAX_PLAYERS);
                 out.push(count as u8);
                 out.extend_from_slice(&over.order[..count]);
+            }
+            Message::RaceResults(results) => {
+                out.extend_from_slice(&results.race.to_le_bytes());
+                let count = results.lines.len().min(MAX_PLAYERS);
+                out.push(count as u8);
+                for line in &results.lines[..count] {
+                    out.push(line.id);
+                    let (kind, ticks) = match line.time {
+                        ResultTime::Finished(ticks) => (0, ticks),
+                        ResultTime::Estimated(ticks) => (1, ticks),
+                        ResultTime::GaveUp => (2, 0),
+                    };
+                    out.push(kind);
+                    put_u32(out, ticks);
+                }
             }
             Message::Strike(strike) => {
                 out.extend_from_slice(&[strike.striker, strike.target]);
@@ -1073,6 +1105,31 @@ impl Message {
                     return Err(DecodeError::Invalid("a racer twice in the order"));
                 }
                 Message::RaceOver(RaceOver { race, tick, order })
+            }
+            RACE_RESULTS => {
+                let race = reader.u16()?;
+                let count = usize::from(reader.u8()?);
+                if count > MAX_PLAYERS {
+                    return Err(DecodeError::Invalid("more racers than grid slots"));
+                }
+                let mut lines = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let id = reader.u8()?;
+                    let time = match (reader.u8()?, reader.u32()?) {
+                        (0, ticks) => ResultTime::Finished(ticks),
+                        (1, ticks) => ResultTime::Estimated(ticks),
+                        (2, 0) => ResultTime::GaveUp,
+                        _ => return Err(DecodeError::Invalid("result time")),
+                    };
+                    if usize::from(id) >= MAX_PLAYERS {
+                        return Err(DecodeError::Invalid("kart"));
+                    }
+                    lines.push(ResultLine { id, time });
+                }
+                if has_duplicates(lines.iter().map(|line| u128::from(line.id))) {
+                    return Err(DecodeError::Invalid("a racer twice in the results"));
+                }
+                Message::RaceResults(RaceResults { race, lines })
             }
             STRIKE => Message::Strike(Strike {
                 striker: reader.u8()?,
@@ -1794,6 +1851,24 @@ mod tests {
                 tick: 4_000_000_000,
                 order: vec![11, 0, 5, 1, 2, 3, 4, 6, 7, 8, 9, 10],
             }),
+            Message::RaceResults(RaceResults {
+                race: 0xfffe,
+                lines: (0..MAX_PLAYERS as u8)
+                    .rev()
+                    .map(|kart| ResultLine {
+                        id: kart,
+                        time: match kart % 3 {
+                            0 => ResultTime::Finished(4_000_000_000 + u32::from(kart)),
+                            1 => ResultTime::Estimated(u32::MAX - u32::from(kart)),
+                            _ => ResultTime::GaveUp,
+                        },
+                    })
+                    .collect(),
+            }),
+            Message::RaceResults(RaceResults {
+                race: 3,
+                lines: vec![],
+            }),
             Message::RaceOver(RaceOver {
                 race: 2,
                 tick: 1,
@@ -2218,8 +2293,8 @@ mod tests {
         // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
         // croquettes; issue #18 the explosions and the klaxons; issue #61 the effects, the karts
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
-        // bundles of kart states.
-        assert_eq!(kinds.len(), 29);
+        // bundles of kart states; issue #70 the closed results.
+        assert_eq!(kinds.len(), 30);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -2517,6 +2592,20 @@ mod tests {
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 12]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 3]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 13]));
+        // Issue #70: closed results with a kart beyond the grid, a kart twice, an unknown kind of
+        // time, a time for a racer that gave up, more lines than grid slots.
+        let line = |kart: u8, kind: u8, tick: u8| [kart, kind, tick, 0, 0, 0];
+        let results = |lines: &[[u8; 6]]| {
+            let mut bytes = vec![v, RACE_RESULTS, 1, 0, lines.len() as u8];
+            bytes.extend(lines.iter().flatten());
+            bytes
+        };
+        assert!(Message::decode(&results(&[line(3, 0, 9), line(4, 1, 9), line(5, 2, 0)])).is_ok());
+        assert!(invalid(&results(&[line(12, 0, 9)])));
+        assert!(invalid(&results(&[line(3, 0, 9), line(3, 1, 9)])));
+        assert!(invalid(&results(&[line(3, 3, 9)])));
+        assert!(invalid(&results(&[line(3, 2, 1)])));
+        assert!(invalid(&results(&[line(0, 0, 0); MAX_PLAYERS + 1])));
         assert!(invalid(&[v, PONG, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
         // Issue #53: a kart holding out impossible items; a claim on an unknown pickup, with
         // three draws, of a kart beyond the grid; a verdict's flag of 2; an item thrown that is

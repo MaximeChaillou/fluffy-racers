@@ -105,6 +105,13 @@ impl RaceFlow {
                 .is_some_and(|over| self.tick + 1 >= over + timings.finish + timings.restart_delay)
     }
 
+    /// Issue #70: whether the results have been on screen for `close` ticks (0: from their first
+    /// tick): their table closes, the racers still on track get an estimated time.
+    pub fn results_closed(&self, timings: &FlowTimings, close: u32) -> bool {
+        self.over_at
+            .is_some_and(|over| self.tick >= over + timings.finish + close)
+    }
+
     /// Racing ticks simulated so far, the current one included: the race clock (0 before GO).
     /// It keeps running after the race is over, for the racers still on track.
     pub fn race_ticks(&self, timings: &FlowTimings) -> u32 {
@@ -306,6 +313,39 @@ mod tests {
         assert_eq!(flow.over_at, None);
         assert_eq!(flow.phase(&t), RacePhase::Grid);
         assert_eq!(flow.race_ticks(&t), 0);
+    }
+
+    /// Issue #70: the results close `close` ticks after they appeared, and stay closed; never
+    /// while the race runs or on the finish banner.
+    #[test]
+    fn the_results_close_after_their_delay() {
+        let t = timings();
+        let close = seconds_to_ticks(RaceTuning::default().results_close_seconds);
+        assert_eq!(close, 600, "10 s after the results appear");
+        let mut flow = RaceFlow::default();
+        run(&mut flow, &t, t.before_go() + 300);
+        assert!(!flow.results_closed(&t, 0));
+        flow.advance(&t, true, false);
+        let over = flow.tick;
+        while flow.phase(&t) != RacePhase::Results {
+            assert!(!flow.results_closed(&t, 0), "the finish banner");
+            flow.advance(&t, true, false);
+        }
+        assert_eq!(flow.tick, over + t.finish);
+        assert!(flow.results_closed(&t, 0), "no delay: closed at once");
+        for _ in 0..close - 1 {
+            assert!(!flow.results_closed(&t, close));
+            flow.advance(&t, true, false);
+        }
+        assert!(!flow.results_closed(&t, close));
+        flow.advance(&t, true, false);
+        assert_eq!(flow.tick, over + t.finish + close);
+        assert!(flow.results_closed(&t, close));
+        run(&mut flow, &t, 100);
+        assert!(flow.results_closed(&t, close));
+        // A restart opens the next race's results again.
+        flow.advance(&t, true, true);
+        assert!(!flow.results_closed(&t, 0));
     }
 
     #[test]

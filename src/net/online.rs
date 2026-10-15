@@ -19,7 +19,9 @@
 //!   peer ranks every racer.
 //! - **The end** ([`arbitrate`]): the host ends the race when every player finished (or
 //!   `NetTuning::finish_grace_s` after the first one did), with its final order: the same results
-//!   on every screen.
+//!   on every screen. Issue #70: the results follow the karts still on track (their checkpoints
+//!   keep coming), then the host closes them ([`close_results_for_everyone`]): its table, with
+//!   the estimated times, is everyone's.
 //! - **Interactions** ([`deliver_interactions`], [`forward_interactions`]): a strike or a grab on
 //!   another peer's kart goes to everyone; the peer that has authority over the target decides
 //!   (the victim decides), and its answer goes to everyone, for the visuals.
@@ -58,7 +60,7 @@ use crate::kart::{
 use crate::level::{LoadLevel, Online};
 use crate::race::{
     Course, OnlineFlow, Race, RaceGrid, RaceMode, RaceProgress, RaceSystems, RaceTuning, Racer,
-    seconds_to_ticks,
+    ResultLine, Standing, close_results, seconds_to_ticks,
 };
 use crate::track::{GRID_SLOTS, TrackChoice, TrackLayout};
 
@@ -211,7 +213,8 @@ impl Plugin for OnlineRacePlugin {
                     .run_if(resource_exists::<Course>)
                     .after(RaceSystems::Rules)
                     .before(RaceSystems::Rank),
-                arbitrate
+                (arbitrate, close_results_for_everyone)
+                    .chain()
                     .run_if(resource_exists::<OnlineRace>)
                     .run_if(resource_exists::<Race>)
                     .run_if(resource_exists::<NetSession>)
@@ -523,7 +526,8 @@ pub(super) fn local_tick(time: &Time<Fixed>) -> u32 {
 }
 
 /// Before the race's flow: where the room's clock says the race is (`race::OnlineFlow`), the
-/// host's end and final order once it came. The race's laps are the host's.
+/// host's end and final order once it came, and its closed results (issue #70). The race's laps
+/// are the host's.
 fn follow_room_clock(
     sync: Res<KartSync>,
     online: Res<OnlineRace>,
@@ -552,6 +556,20 @@ fn follow_room_clock(
         if flow.order.is_none() {
             flow.order = Some(over.order.iter().map(|kart| usize::from(*kart)).collect());
         }
+    }
+    if flow.results.is_none()
+        && let Some(results) = online.shared.results()
+    {
+        flow.results = Some(
+            results
+                .lines
+                .iter()
+                .map(|line| ResultLine {
+                    id: usize::from(line.id),
+                    time: line.time,
+                })
+                .collect(),
+        );
     }
 }
 
@@ -845,6 +863,67 @@ fn arbitrate(
     info!("network: the race is over at race tick {tick}: {order:?}");
     let over = online.shared.end(tick, order);
     online.outbox.push(Message::RaceOver(over));
+}
+
+/// Issue #70: the host closes the results `RaceTuning::results_close_seconds` after they
+/// appeared, like solo (`race::close_results`): its final order then (the finishers by their
+/// finish, those still on track by checkpoints and distance, those who left last), the finishers'
+/// times, an estimate for the others, none for those who left. Its table goes to everyone.
+fn close_results_for_everyone(
+    session: Res<NetSession>,
+    mut online: ResMut<OnlineRace>,
+    race: Res<Race>,
+    course: Res<Course>,
+    tuning: Res<RaceTuning>,
+    racers: Query<(&Racer, &RaceProgress)>,
+) {
+    let hosting = session.lobby.as_ref().is_some_and(Lobby::is_host);
+    if !hosting
+        || !online.racing
+        || online.shared.over().is_none()
+        || online.shared.results().is_some()
+    {
+        return;
+    }
+    let close = seconds_to_ticks(tuning.results_close_seconds);
+    if !race.flow.results_closed(&race.timings, close) {
+        return;
+    }
+    let of = |kart: KartId| {
+        racers
+            .iter()
+            .find(|(racer, _)| racer.grid_slot == usize::from(kart))
+    };
+    let order = online
+        .shared
+        .final_order(|kart| of(kart).map_or(f32::MIN, |(_, progress)| progress.distance));
+    let standings = order.iter().map(|kart| {
+        let shared = online.shared.kart(*kart);
+        let gave_up = shared.is_some_and(|k| k.left && k.finish.is_none());
+        match of(*kart) {
+            Some((_, progress)) => Standing::of(*kart, progress, &course, gave_up),
+            None => Standing {
+                id: *kart,
+                finish: shared.and_then(|k| k.finish),
+                gave_up: true,
+                covered: 0.0,
+                remaining: 0.0,
+            },
+        }
+    });
+    let mut lines = Vec::with_capacity(order.len());
+    close_results(
+        standings,
+        race.race_ticks(),
+        tuning.results_min_speed,
+        &mut lines,
+    );
+    info!(
+        "network: the results close at race tick {}: {lines:?}",
+        race.race_ticks()
+    );
+    let results = online.shared.close(lines);
+    online.outbox.push(Message::RaceResults(results));
 }
 
 /// What the race tuning gives a new race: its laps.

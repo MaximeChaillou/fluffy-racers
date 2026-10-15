@@ -104,8 +104,8 @@ pub use protocol::{
     ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES,
     MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
     OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS,
-    RaceOver, RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply, TetherBreak,
-    Verdict,
+    RaceOver, RaceResults, RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply,
+    TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
@@ -677,6 +677,16 @@ fn to_the_game(
                 info!(
                     "network: the host ended race {}: {:?}",
                     over.race, over.order
+                );
+            }
+        }
+        Message::RaceResults(results) => {
+            if let Some(race) = race
+                && race.shared.receive_results(from, host, results.clone())
+            {
+                info!(
+                    "network: the host closed the results of race {}: {:?}",
+                    results.race, results.lines
                 );
             }
         }

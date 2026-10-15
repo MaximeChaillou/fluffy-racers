@@ -441,6 +441,7 @@ impl Lobby {
             // the kart states: they go in its bundles; not the verdicts: only its own count).
             Message::Progress(_)
             | Message::RaceOver(_)
+            | Message::RaceResults(_)
             | Message::Strike(_)
             | Message::StrikeReply(_)
             | Message::Grab(_)

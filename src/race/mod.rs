@@ -13,7 +13,8 @@
 //!    finished racers coast.
 //! 3. [`RaceSystems::Rules`], after the physics step: checkpoints, laps, finish, tow pelican;
 //!    then [`RaceSystems::Rank`]: ranking and distance to the leader (online, issue #9, the other
-//!    peers' karts get their progress in between).
+//!    peers' karts get their progress in between), and the closing of the results (issue #70,
+//!    `results.rs`: the racers still on track get an estimated time).
 //!
 //! The race exists only on a circuit (`TrackLayout`): on the flat test ground there is none.
 
@@ -22,6 +23,7 @@ mod flow;
 mod pelican;
 mod progress;
 mod ranking;
+mod results;
 mod tow;
 mod tuning;
 
@@ -36,6 +38,7 @@ pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
 pub use pelican::{PelicanPlugin, PelicanVisual};
 pub use progress::{ProgressEvent, RaceProgress};
 pub use ranking::{RankEntry, distance_to_leader, rank, rank_by_order};
+pub use results::{ResultLine, ResultTime, Standing, close_results, estimate_finish};
 pub use tow::{Carry, Tow, TowObservation, TowReason, tow_pose};
 pub use tuning::{RaceTuning, seconds_to_ticks, ticks_to_seconds};
 
@@ -149,6 +152,9 @@ pub struct OnlineFlow {
     /// The host's final order (grid slots, first to last): the standings once the race is over,
     /// the same on every peer ([`rank_by_order`]).
     pub order: Option<Vec<usize>>,
+    /// Issue #70: the host's closed results (grid slots, first to last): every screen shows
+    /// them ([`Race::results`]).
+    pub results: Option<Vec<ResultLine<usize>>>,
 }
 
 /// A racer that keeps driving after the finish line instead of coasting (bots, issue #6:
@@ -165,6 +171,9 @@ pub struct Race {
     pub standings: Vec<Entity>,
     /// A local player asked to race again (taken into account on the results screen only).
     pub restart_requested: bool,
+    /// Issue #70: the closed results, first to last (empty until they close): the results
+    /// screen shows them instead of the live standings. Online, the host's.
+    pub results: Vec<ResultLine<Entity>>,
     /// Scratch buffer of the ranking, kept between ticks so it never allocates.
     entries: Vec<RankEntry<Entity>>,
 }
@@ -176,6 +185,7 @@ impl Race {
             timings: FlowTimings::new(tuning),
             standings: Vec::with_capacity(crate::track::GRID_SLOTS),
             restart_requested: false,
+            results: Vec::with_capacity(crate::track::GRID_SLOTS),
             entries: Vec::with_capacity(crate::track::GRID_SLOTS),
         }
     }
@@ -192,6 +202,11 @@ impl Race {
     /// Whether the karts may drive (from GO on).
     pub fn started(&self) -> bool {
         self.flow.started(&self.timings)
+    }
+
+    /// Issue #70: whether the results closed ([`Race::results`]).
+    pub fn results_closed(&self) -> bool {
+        !self.results.is_empty()
     }
 }
 
@@ -246,7 +261,9 @@ impl Plugin for RacePlugin {
                         .chain()
                         .in_set(RaceSystems::Gate),
                     update_progress.in_set(RaceSystems::Rules),
-                    rank_racers.in_set(RaceSystems::Rank),
+                    (rank_racers, close_the_results)
+                        .chain()
+                        .in_set(RaceSystems::Rank),
                 )
                     .run_if(resource_exists::<Race>),
             );
@@ -335,6 +352,7 @@ fn advance_race(
     if !race.flow.advance(&race.timings, over, restart) {
         return;
     }
+    race.results.clear();
     for (
         racer,
         mut progress,
@@ -523,6 +541,52 @@ fn rank_racers(
             progress.gap_to_leader = distance_to_leader(leader, entry.distance);
         }
     }
+}
+
+/// Issue #70: the results close [`RaceTuning::results_close_seconds`] after they appeared: the
+/// racers still on track get an estimated time (`results.rs`), in the order of the standings,
+/// and the table is final. Online, every peer shows the host's table once it came
+/// ([`OnlineFlow::results`]).
+fn close_the_results(
+    mut race: ResMut<Race>,
+    course: Res<Course>,
+    tuning: Res<RaceTuning>,
+    online: Option<Res<OnlineFlow>>,
+    racers: Query<(Entity, &Racer, &RaceProgress)>,
+) {
+    if race.results_closed() || race.phase() != RacePhase::Results {
+        return;
+    }
+    let race = &mut *race;
+    if let Some(online) = online {
+        let Some(lines) = online.results.as_deref() else {
+            return;
+        };
+        race.results.extend(lines.iter().filter_map(|line| {
+            let (entity, ..) = racers
+                .iter()
+                .find(|(_, racer, _)| racer.grid_slot == line.id)?;
+            Some(ResultLine {
+                id: entity,
+                time: line.time,
+            })
+        }));
+        return;
+    }
+    let close = seconds_to_ticks(tuning.results_close_seconds);
+    if !race.flow.results_closed(&race.timings, close) {
+        return;
+    }
+    let standings = race.standings.iter().filter_map(|entity| {
+        let (_, _, progress) = racers.get(*entity).ok()?;
+        Some(Standing::of(*entity, progress, &course, false))
+    });
+    close_results(
+        standings,
+        race.flow.race_ticks(&race.timings),
+        tuning.results_min_speed,
+        &mut race.results,
+    );
 }
 
 #[cfg(test)]
