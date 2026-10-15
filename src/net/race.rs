@@ -5,8 +5,8 @@
 //!
 //! - **Grid** ([`RaceStart`]): the bots on the front slots (0, 1...), the players behind them in
 //!   the host's order. A kart's network id ([`KartId`]) is its grid slot.
-//! - **Authority**: a player's kart is its player's; a bot is the host's, whoever hosts now (a new
-//!   host takes the bots over).
+//! - **Authority**: a player's kart is its player's; a bot is the host's (issue #63: the room's
+//!   creator, from start to end; if it leaves, the room is over).
 //! - **Checkpoints** ([`Progress`]): the peer that has authority over a kart tells everyone each
 //!   checkpoint its kart validates, with its race tick. Every peer gets the same laps, lap times
 //!   and finish (`race::RaceProgress::validate`).
@@ -155,7 +155,7 @@ impl SharedRace {
         if passed <= entry.passed() || entry.finish.is_some() {
             return false;
         }
-        // Reliable and in order, one at a time; a gap (a kart taken over by a new host) takes the
+        // Reliable and in order, one at a time; a gap (a checkpoint missed: never seen) takes the
         // same tick.
         while entry.passed() < passed {
             entry.checkpoints.push(tick);
@@ -322,7 +322,8 @@ mod tests {
     }
 
     /// The grid: the bots in front, the players behind in the host's order; each kart's
-    /// authority, the bots the host's (whoever it is now).
+    /// authority, the bots the host's (issue #63: was « whoever it is now »; the room's creator,
+    /// whoever it is: a host with a bigger id than a player's too).
     #[test]
     fn the_grid_and_who_drives_what() {
         let race = race();
@@ -332,9 +333,9 @@ mod tests {
         assert_eq!(race.slot_of(PeerKey(99)), None);
         assert_eq!(race.authority(3, Some(ANA)), Some(ANA));
         assert_eq!(
-            race.authority(3, Some(BOB)),
-            Some(BOB),
-            "a new host takes the bots"
+            race.authority(3, Some(CYD)),
+            Some(CYD),
+            "the host's, whatever its id"
         );
         assert_eq!(race.authority(10, Some(ANA)), Some(BOB));
         assert_eq!(race.authority(12, Some(ANA)), None);
@@ -369,8 +370,9 @@ mod tests {
             ),
             "another race"
         );
-        // A gap (a bot taken over by a new host): filled with the same tick.
-        assert!(race.receive(BOB, Some(BOB), &progress(2, 4, 30)));
+        // A gap (issue #63: was « a bot taken over by a new host »; the host's checkpoints that
+        // skip some): filled with the same tick.
+        assert!(race.receive(ANA, Some(ANA), &progress(2, 4, 30)));
         assert_eq!(race.kart(2).unwrap().checkpoints, vec![9, 30, 30, 30]);
     }
 
@@ -484,21 +486,20 @@ mod tests {
         assert_eq!(mine.over(), Some(&sent));
     }
 
-    /// A new host takes the bots over: their checkpoints come from it now, going on from where
-    /// they were; the old host's are ignored.
+    /// Issue #63 (was « a new host takes the bots over », issue #9): the bots are the host's
+    /// alone. Another player's word on a bot is refused, before and after the host left; the
+    /// host's own kart gives up (the room is over for the others: the game stops the race).
     #[test]
-    fn a_new_host_takes_the_bots_over() {
+    fn the_bots_are_the_hosts_alone() {
         let mut race = race();
         drive(&mut race, ANA, ANA, 3, 20, 50);
-        // Ana (the host) leaves: Bob hosts.
+        assert!(!race.receive(BOB, Some(ANA), &progress(3, 21, 1_050)));
+        // Ana (the host) leaves: nobody takes her bots, nor tells their checkpoints.
         race.leave(ANA);
-        assert!(!race.receive(ANA, Some(BOB), &progress(3, 21, 1_050)));
-        assert!(race.receive(BOB, Some(BOB), &progress(3, 21, 1_050)));
-        assert_eq!(race.kart(3).unwrap().passed(), 21);
-        // Ana's own kart gave up; the race waits for Bob and Cyd.
-        drive(&mut race, BOB, BOB, 10, 64, 50);
-        assert!(!race.should_end(3_200, 1_800));
-        drive(&mut race, CYD, BOB, 11, 64, 51);
-        assert!(race.should_end(3_264, 1_800));
+        assert!(!race.receive(BOB, Some(ANA), &progress(3, 21, 1_050)));
+        assert!(!race.receive(CYD, Some(ANA), &progress(3, 21, 1_050)));
+        assert_eq!(race.kart(3).unwrap().passed(), 20);
+        assert!(race.kart(9).unwrap().left, "her own kart gave up");
+        assert_eq!(race.authority(3, Some(ANA)), Some(ANA));
     }
 }

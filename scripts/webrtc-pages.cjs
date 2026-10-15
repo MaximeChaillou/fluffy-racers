@@ -11,6 +11,9 @@
 //
 // GAME_URL: http://127.0.0.1:8080/ by default (http://192.168.1.20:8080/ for the local network).
 // Each page is its own browser context (like two windows of two profiles), with its own pseudo.
+// Issue #63: Ana creates the room (`&host=1`: she hosts it); Bob opens its invitation link once
+// Ana is in the room (a client finds no host otherwise). --pages N opens N pages (Ana and N - 1
+// clients: Bob, Cyd, Dan...), each connected to Ana only.
 // The game's network lines of both consoles are printed; the script ends with 0 once both pages
 // logged « connected », with 1 after 60 s (--seconds).
 //
@@ -41,6 +44,7 @@ const extra = option("--query");
 const limit = Number(option("--seconds") || 60) * 1000;
 const screenshot = option("--screenshot");
 const drive = Number(option("--drive") || 0) * 1000;
+const count = Math.max(2, Number(option("--pages") || 2));
 const base = args[0] || "http://127.0.0.1:8080/";
 
 const interesting = /network:|\[fluffy-net\]|matchbox_socket|panicked|ERROR/;
@@ -54,8 +58,10 @@ const interesting = /network:|\[fluffy-net\]|matchbox_socket|panicked|ERROR/;
   const seconds = () => ((Date.now() - start) / 1000).toFixed(2).padStart(6);
   const connected = new Set();
   const online = new Set();
+  const seated = new Set();
   const pages = [];
-  for (const name of ["Ana", "Bob"]) {
+  const names = ["Ana", "Bob", "Cyd", "Dan", "Eve", "Fil", "Gus", "Hal", "Ivy", "Jo", "Kim", "Lou"];
+  for (const name of names.slice(0, count)) {
     const context = await browser.newContext(
       media ? { permissions: ["camera", "microphone"] } : {},
     );
@@ -68,21 +74,27 @@ const interesting = /network:|\[fluffy-net\]|matchbox_socket|panicked|ERROR/;
       console.log(`${seconds()} ${name}: ${text.split("\\r\\n")[0].slice(0, 300)}`);
       if (/network: #\w+ connected/.test(text)) connected.add(name);
       if (/network: online driving/.test(text)) online.add(name);
+      if (/network: Seated/.test(text)) seated.add(name);
     });
     page.on("pageerror", (error) => console.log(`${seconds()} ${name}: page error ${error}`));
-    const url = `${base}?room=${room}&pseudo=${name}${extra ? `&${extra}` : ""}`;
+    const host = name === "Ana" ? "&host=1" : "";
+    const url = `${base}?room=${room}${host}&pseudo=${name}${extra ? `&${extra}` : ""}`;
     console.log(`${seconds()} ${name}: ${url}`);
     await page.goto(url);
-  }
-  while (connected.size < 2 && Date.now() - start < limit) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  let ok = connected.size === 2;
-  if (ok && drive > 0) {
-    while (online.size < 2 && Date.now() - start < limit + 30000) {
+    // The host first in the room (seated at once), then its clients.
+    while (name === "Ana" && !seated.has("Ana") && Date.now() - start < limit) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    ok = online.size === 2;
+  }
+  while (connected.size < count && Date.now() - start < limit) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  let ok = connected.size === count;
+  if (ok && drive > 0) {
+    while (online.size < count && Date.now() - start < limit + 30000) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    ok = online.size === count;
     console.log(`${seconds()} both drive online: ${ok}`);
     for (const [, page] of pages) {
       // The keys go to the game's canvas; Entrée closes « Pilote et kart » (« Course ! »).
@@ -109,7 +121,7 @@ const interesting = /network:|\[fluffy-net\]|matchbox_socket|panicked|ERROR/;
       await page.screenshot({ path: `${screenshot}-${name}.png` });
     }
   }
-  console.log(ok ? `both connected after ${seconds()} s` : `not connected: ${[...connected]}`);
+  console.log(ok ? `all ${count} connected after ${seconds()} s` : `not connected: ${[...connected]}`);
   await browser.close();
   process.exit(ok ? 0 : 1);
 })();

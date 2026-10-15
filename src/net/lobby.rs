@@ -1,31 +1,30 @@
 //! The lobby of a room (issue #7, `docs/ARCHITECTURE.md` § « Réseau »): who is there, who is
-//! ready, who hosts, the ping of each one. Pure logic: no Bevy, no socket. It reads the
+//! ready, the host, the ping of each one. Pure logic: no Bevy, no socket. It reads the
 //! [`Message`]s that arrive and the peers that come and go, and writes the messages to send
 //! ([`Lobby::drain_outbox`]); the tests connect several lobbies to each other in memory.
 //!
-//! **Seats.** A room holds [`MAX_PLAYERS`] players. Every peer the signaling server puts in the
-//! room connects to all the others (full mesh), so a newcomer is only a player once it has a
-//! seat:
-//! - the first peers of an empty room sit down by themselves, [`SETTLE_MS`] after joining, when
-//!   no peer they met is seated (two friends who open the link at the same moment both do, and
-//!   merge);
-//! - after that, the **host** seats the newcomers in their arrival order, and sends the list of
-//!   seats to everyone ([`Message::Seats`]); a newcomer beyond 12 gets [`Message::RoomFull`] and
-//!   leaves, with a message.
+//! **A star around the host** (issue #63). The peer that created the room is its host, from the
+//! start to the end ([`Lobby::new`] says which one we are): nothing to elect, whatever the ids.
+//! Each client has a single link, with the host (the signaling keeps the others from opening,
+//! `signaling::SignalFilter`); the host relays what a client tells everyone to the other clients,
+//! with its origin ([`Message::Relayed`], [`Lobby::relay`]).
 //!
-//! **Host**: the seated player with the smallest [`PeerKey`] (`PeerId`), as the architecture
-//! says. If it leaves, the next one takes over at once, with nothing to exchange: every peer
-//! computes the same. A newcomer never takes over before it is seated. While a race is on (issue
-//! #9), only its players still here can host: a newcomer, seated during the race (it only
-//! watches), never takes the race's bots and arbitration over.
+//! **Seats.** A room holds [`MAX_PLAYERS`] players. The host is seated from the start; it seats
+//! each client once its `Hello` came, in their order of arrival, and sends the list to every
+//! client ([`Message::Seats`]): **one list, the host's**, that every client takes as it is. A
+//! newcomer beyond 12 gets [`Message::RoomFull`] and leaves, with a message. A client seated
+//! learns the others from the host: their `Hello` (relayed), and what is on in the room.
 //!
-//! **Arrivals and departures**: a peer that connects gets our [`Message::Hello`]; one that says
-//! [`Message::Bye`] or that the socket reports gone leaves the lobby (and its seat). The pings
-//! ([`PING_INTERVAL_MS`]) measure each one's latency and clock (`clock`); a peer silent for
-//! [`SILENT_MS`] shows as such until the socket gives up on it.
+//! **Arrivals and departures**: a peer that connects gets our [`Message::Hello`]. A client that
+//! says [`Message::Bye`] or that the socket reports gone leaves the host's list; the host tells
+//! the others (its `Bye`, relayed, and the new list). **The host leaving** ends the room for its
+//! clients ([`LobbyEvent::HostLeft`]: « L'hôte a quitté la partie »); nobody takes over (a
+//! possible improvement). The pings ([`PING_INTERVAL_MS`]) go between the host and each client
+//! only: each one's latency and clock (`clock`); a peer silent for [`SILENT_MS`] shows as such
+//! until the socket gives up on it.
 //!
 //! A peer of another protocol version is listed apart ([`DecodeError::OtherVersion`]): it never
-//! sits, never hosts, and gets nothing more.
+//! sits and gets nothing more.
 //!
 //! **Colors** (issue #55): each player's `Hello` says the color it chose for its kart. Two
 //! players who chose the same one: the first seat keeps it, the other wears the closest free one
@@ -33,23 +32,26 @@
 //! peer paints the karts the same, whatever the order the `Hello`s arrived in.
 //!
 //! **The room** (issue #9): the host chooses its circuit ([`Lobby::choose_circuit`], everyone
-//! drives freely on it) and starts the races ([`Lobby::announce_race`]); every peer it seats gets
-//! what is on. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's, and
-//! goes on when the host changes: the race's ticks are counted on it.
+//! drives freely on it) and starts the races ([`Lobby::announce_race`]); every client it seats
+//! gets what is on. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's:
+//! the race's ticks are counted on it.
 
 use super::clock::{PeerClock, RoomClock};
+use super::links::Stuck;
 use super::protocol::{DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceStart};
 use crate::kart::{KartColor, resolve_players};
 
-/// A ping to every peer this often (ms).
+/// A ping to every peer we are linked with this often (ms).
 pub const PING_INTERVAL_MS: u64 = 1_000;
-
-/// A peer alone (or among newcomers) sits down this long after joining the room (ms): enough for
-/// the peers already there to connect and say they are seated.
-pub const SETTLE_MS: u64 = 2_500;
 
 /// A peer we heard nothing from for this long is shown as silent (ms).
 pub const SILENT_MS: u64 = 3_000;
+
+/// Issue #63: a client that met no host this long after joining the room (no offer, no
+/// connection): the room has no host, the lobby says so (ms). The host offers at once to a
+/// newcomer; in the browser, its offer leaves once its candidates are gathered (3 s at most,
+/// `NetSettings::ice_gathering_max_ms`).
+pub const NO_HOST_MS: u64 = 5_000;
 
 /// A message to send to one peer (on its channel, `Message::channel`).
 #[derive(Clone, Debug, PartialEq)]
@@ -65,9 +67,10 @@ pub enum LobbyEvent {
     Connected(PeerKey),
     /// A player got a seat (us included).
     Seated(PeerKey),
-    /// A peer left (`Bye`, or gone from the socket).
+    /// A player left (`Bye`, gone from the socket, or from the host's list).
     Left(PeerKey),
-    HostChanged(Option<PeerKey>),
+    /// Issue #63: the host left the room: it is over for its clients.
+    HostLeft,
     /// The host refused us: the room is full.
     RoomFull,
     /// A peer runs another version of the protocol.
@@ -78,7 +81,7 @@ pub enum LobbyEvent {
     CircuitChosen(u8),
 }
 
-/// Another peer of the room, as we know it.
+/// Another player of the room (or a peer waiting for its seat), as we know it.
 #[derive(Clone, Debug)]
 pub struct LobbyPeer {
     pub key: PeerKey,
@@ -89,16 +92,48 @@ pub struct LobbyPeer {
     pub refused: bool,
     /// The version it speaks, when not ours.
     pub other_version: Option<u8>,
+    /// Issue #63: we have a link with it (the host with each client, a client with its host).
+    /// The other players, a client knows from its host.
+    pub direct: bool,
     pub clock: PeerClock,
     pub last_heard_ms: u64,
     next_ping_ms: u64,
 }
 
 impl LobbyPeer {
+    fn new(key: PeerKey, direct: bool, now_ms: u64) -> Self {
+        Self {
+            key,
+            profile: None,
+            seated: false,
+            refused: false,
+            other_version: None,
+            direct,
+            clock: PeerClock::default(),
+            last_heard_ms: now_ms,
+            next_ping_ms: now_ms,
+        }
+    }
+
     /// It takes part in the lobby: same version, not refused.
     fn talks(&self) -> bool {
         !self.refused && self.other_version.is_none()
     }
+}
+
+/// Issue #63: how the peer of a row is linked with us (the lobby's column « Lien »).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowLink {
+    /// Our own row.
+    Me,
+    /// Linked with us: the host, or one of our clients.
+    Direct,
+    /// Another client: there through the host.
+    ViaHost,
+    /// The link with the host being made (`links.rs`, issue #49).
+    Connecting,
+    /// It does not come, and why.
+    Stuck(Stuck),
 }
 
 /// A line of the lobby's list, for the screen.
@@ -116,9 +151,12 @@ pub struct PlayerRow {
     pub me: bool,
     pub host: bool,
     pub seated: bool,
-    /// Smoothed round trip (ms); `None` for us, or before the first pong.
+    /// Issue #63: how we are linked with it.
+    pub link: RowLink,
+    /// Smoothed round trip (ms); `None` for us, a player we are not linked with, or before the
+    /// first pong.
     pub ping_ms: Option<f32>,
-    /// Nothing heard from it for [`SILENT_MS`].
+    /// Nothing heard from it for [`SILENT_MS`] (a peer we are linked with).
     pub silent: bool,
     pub other_version: Option<u8>,
 }
@@ -129,51 +167,62 @@ pub struct Lobby {
     me: PeerKey,
     /// Ours: name, loadout, ready, seated.
     profile: Profile,
+    /// We host the room (we created it).
+    hosting: bool,
     joined_ms: u64,
-    /// The other peers, in the order they connected.
+    /// The other players and peers, in the order we met them.
     peers: Vec<LobbyPeer>,
-    /// Seated players (us included), in seat order: the host's, as last received.
+    /// Seated players (us included), in seat order: the host's list.
     seats: Vec<PeerKey>,
+    /// Us, or the client's host once connected.
     host: Option<PeerKey>,
     /// The seats changed since we, the host, last sent them.
     seats_dirty: bool,
     full: bool,
     left: bool,
+    /// Issue #63: our host left: the room is over.
+    host_left: bool,
     announced: Option<RaceStart>,
     /// The room's circuit (issue #9): the host's choice, index in `assets/tracks/index.ron`.
     circuit: u8,
     /// The number of the last race announced (0: none yet): the next one counts on.
     last_race: u16,
-    /// The room's clock (issue #9).
+    /// The room's clock (issue #9): the host's.
     room: RoomClock,
-    /// The host whose list of seats we last received (issue #8: the seat order everyone shares).
-    seats_from: Option<PeerKey>,
     outbox: Vec<Outgoing>,
     events: Vec<LobbyEvent>,
 }
 
 impl Lobby {
-    /// We just joined the room as `me` (the id the signaling server gave us), at `now_ms`.
-    pub fn new(me: PeerKey, mut profile: Profile, now_ms: u64) -> Self {
+    /// We just joined the room as `me` (the id the signaling server gave us), at `now_ms`: as its
+    /// host (`hosting`: we created it; seated at once, the room's clock ours), or as a client.
+    pub fn new(me: PeerKey, mut profile: Profile, now_ms: u64, hosting: bool) -> Self {
         profile.name = Profile::clean_name(&profile.name);
-        profile.seated = false;
+        profile.seated = hosting;
+        let mut room = RoomClock::default();
+        room.update(hosting, None);
         Self {
             me,
             profile,
+            hosting,
             joined_ms: now_ms,
             peers: Vec::new(),
-            seats: Vec::new(),
-            host: None,
+            seats: if hosting { vec![me] } else { Vec::new() },
+            host: hosting.then_some(me),
             seats_dirty: false,
             full: false,
             left: false,
+            host_left: false,
             announced: None,
             circuit: 0,
             last_race: 0,
-            room: RoomClock::default(),
-            seats_from: None,
+            room,
             outbox: Vec::new(),
-            events: Vec::new(),
+            events: if hosting {
+                vec![LobbyEvent::Seated(me)]
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -185,13 +234,18 @@ impl Lobby {
         &self.profile
     }
 
-    /// The host (see the module's documentation); `None` before anyone is seated.
+    /// The host: us, or the one a client connected to (`None` before).
     pub fn host(&self) -> Option<PeerKey> {
         self.host
     }
 
     pub fn is_host(&self) -> bool {
-        self.host == Some(self.me)
+        self.hosting
+    }
+
+    /// When we joined the room (ms).
+    pub fn joined_ms(&self) -> u64 {
+        self.joined_ms
     }
 
     /// We have a seat.
@@ -204,17 +258,14 @@ impl Lobby {
         self.full
     }
 
-    /// Seated players, us included, in seat order.
-    pub fn seats(&self) -> &[PeerKey] {
-        &self.seats
+    /// Issue #63: our host left the room.
+    pub fn host_left(&self) -> bool {
+        self.host_left
     }
 
-    /// We are seated, and our seat order is everyone's: we host, or the host's list arrived
-    /// (issue #8: our place on the grid comes from it). Two peers who sat down by themselves at
-    /// the same moment each put themselves first, until the host's list.
-    pub fn seats_agreed(&self) -> bool {
-        self.profile.seated
-            && (self.is_host() || (self.host.is_some() && self.seats_from == self.host))
+    /// Seated players, us included, in seat order: the host's list.
+    pub fn seats(&self) -> &[PeerKey] {
+        &self.seats
     }
 
     pub fn peers(&self) -> &[LobbyPeer] {
@@ -244,11 +295,11 @@ impl Lobby {
     pub fn all_ready(&self) -> bool {
         self.seats.len() >= 2
             && self.profile.ready
-            && self
-                .peers
-                .iter()
-                .filter(|peer| peer.seated && peer.talks())
-                .all(|peer| peer.profile.as_ref().is_some_and(|p| p.ready))
+            && self.seats.iter().filter(|key| **key != self.me).all(|key| {
+                self.peer(*key)
+                    .and_then(|peer| peer.profile.as_ref())
+                    .is_some_and(|profile| profile.ready)
+            })
     }
 
     /// The host's clock at our `now_ms`: the room's clock (issue #9, [`Lobby::room_time_ms`]).
@@ -256,8 +307,8 @@ impl Lobby {
         self.room_time_ms(now_ms)
     }
 
-    /// The room's clock at our `now_ms` (ms): the host's, kept going when the host changes
-    /// (`clock::RoomClock`). `None` until a pong of the host told it.
+    /// The room's clock at our `now_ms` (ms): the host's (`clock::RoomClock`). `None` until a
+    /// pong of the host told it a client.
     pub fn room_time_ms(&self, now_ms: u64) -> Option<u64> {
         self.room.time_ms(now_ms)
     }
@@ -272,43 +323,55 @@ impl Lobby {
         self.events.drain(..)
     }
 
-    /// The socket connected us to `peer`. Unknown peers only: a second report changes nothing.
+    /// The socket connected us to `peer`: a client of ours, or our host. A client takes only one
+    /// (the signaling lets only its host's offer through); a second report changes nothing.
     pub fn connect(&mut self, peer: PeerKey, now_ms: u64) {
         if peer == self.me || self.peer(peer).is_some() || self.stopped() {
             return;
         }
-        self.peers.push(LobbyPeer {
-            key: peer,
-            profile: None,
-            seated: false,
-            refused: false,
-            other_version: None,
-            clock: PeerClock::default(),
-            last_heard_ms: now_ms,
-            next_ping_ms: now_ms,
-        });
+        if !self.hosting {
+            if self.host.is_some() {
+                return;
+            }
+            self.host = Some(peer);
+        }
+        self.peers.push(LobbyPeer::new(peer, true, now_ms));
         self.events.push(LobbyEvent::Connected(peer));
         self.send(peer, Message::Hello(self.profile.clone()));
         self.refresh();
     }
 
-    /// `peer` is gone (the socket says so, or it said `Bye`).
+    /// `peer` is gone (the socket says so, or it said `Bye`): a client of ours leaves the room;
+    /// our host gone, the room is over.
     pub fn disconnect(&mut self, peer: PeerKey) {
+        if !self.hosting {
+            if self.host == Some(peer) && !self.host_left {
+                self.host_left = true;
+                self.events.push(LobbyEvent::HostLeft);
+            }
+            return;
+        }
         let Some(index) = self.peers.iter().position(|p| p.key == peer) else {
             return;
         };
-        self.peers.remove(index);
-        if let Some(seat) = self.seats.iter().position(|key| *key == peer) {
-            self.seats.remove(seat);
+        if self.peers[index].seated {
+            // The others learn it from us: its `Bye`, then the new list.
+            self.relay(peer, &Message::Bye);
+            self.seats.retain(|key| *key != peer);
             self.seats_dirty = true;
         }
+        self.peers.remove(index);
         self.events.push(LobbyEvent::Left(peer));
         self.refresh();
     }
 
-    /// A message from `from` arrived at `now_ms`.
+    /// A message from `from` arrived at `now_ms`. A client only listens to its host (the others'
+    /// come relayed by it).
     pub fn receive(&mut self, from: PeerKey, message: Message, now_ms: u64) {
         if self.stopped() {
+            return;
+        }
+        if !self.hosting && self.host != Some(from) {
             return;
         }
         let Some(index) = self.peers.iter().position(|p| p.key == from) else {
@@ -322,21 +385,28 @@ impl Lobby {
         match message {
             Message::Hello(mut profile) => {
                 profile.name = Profile::clean_name(&profile.name);
-                let sits = profile.seated && !peer.seated;
-                peer.profile = Some(profile);
-                if sits {
-                    self.sit(from);
+                let seated = peer.seated;
+                peer.profile = Some(profile.clone());
+                // A newcomer: seated by `refresh`; a player: the others learn its new profile.
+                if self.hosting && seated {
+                    self.relay(from, &Message::Hello(profile));
                 }
             }
             Message::Ready(ready) => {
                 if let Some(profile) = &mut peer.profile {
                     profile.ready = ready;
                 }
+                if self.hosting && peer.seated {
+                    self.relay(from, &Message::Ready(ready));
+                }
             }
-            Message::Seats(list) => self.receive_seats(from, &list),
+            Message::Seats(list) => {
+                if !self.hosting {
+                    self.take_seats(list, now_ms);
+                }
+            }
             Message::RoomFull => {
-                // From a seated player (the host, as it sees it): we leave.
-                if peer.seated {
+                if !self.hosting {
                     self.full = true;
                     self.events.push(LobbyEvent::RoomFull);
                 }
@@ -346,7 +416,7 @@ impl Lobby {
                 return;
             }
             Message::StartRace(start) => {
-                if self.host == Some(from) {
+                if !self.hosting {
                     self.circuit = start.track;
                     self.last_race = start.race;
                     self.announced = Some(start.clone());
@@ -354,14 +424,21 @@ impl Lobby {
                 }
             }
             Message::Circuit(track) => {
-                if self.host == Some(from) {
+                if !self.hosting {
                     self.circuit = track;
                     self.announced = None;
                     self.events.push(LobbyEvent::CircuitChosen(track));
                 }
             }
-            // The race's events, the interactions between karts (issue #9) and the kart states
-            // (issue #8) go to the race and the synchronization (`poll_session`).
+            Message::Relayed { origin, message } => {
+                if !self.hosting {
+                    self.relayed(origin, *message, now_ms);
+                }
+            }
+            // The race's events, the interactions between karts (issue #9), the items (issue
+            // #53) and the kart states (issue #8) go to the race, the synchronization and the
+            // items (`poll_session`). Issue #63: the host relays a client's to the others (not
+            // the kart states: they go in its bundles; not the verdicts: only its own count).
             Message::Progress(_)
             | Message::RaceOver(_)
             | Message::Strike(_)
@@ -379,7 +456,12 @@ impl Lobby {
             | Message::Rammed(_)
             | Message::PillowGone(_)
             | Message::Retarget(_)
-            | Message::KartState(_) => {}
+            | Message::KartState(_)
+            | Message::KartStates(_) => {
+                if self.hosting {
+                    self.relay(from, &message);
+                }
+            }
             Message::Ping { sent_ms } => {
                 let (clock_ms, room) = self.room.pong(now_ms);
                 let pong = Message::Pong {
@@ -398,28 +480,113 @@ impl Lobby {
             }
         }
         self.refresh();
-        self.update_room(now_ms);
+        self.update_room();
     }
 
-    /// The room's clock follows the host's, or goes on (issue #9, `clock::RoomClock`).
-    fn update_room(&mut self, now_ms: u64) {
-        let we_host = self.is_host();
-        let Lobby {
-            room,
-            peers,
-            host,
-            me,
-            ..
-        } = self;
-        let host_clock = host
-            .filter(|host| host != me)
-            .and_then(|host| peers.iter().find(|peer| peer.key == host))
-            .map(|peer| &peer.clock);
-        let others = peers
+    /// Issue #63: we, the host, pass what the client `origin` told everyone to the other seated
+    /// clients, with its origin (`Message::Relayed`). Only what a client tells everyone
+    /// ([`Message::relayable`]), and only a seated client's. A client relays nothing.
+    pub fn relay(&mut self, origin: PeerKey, message: &Message) {
+        if !self.hosting || !message.relayable() || !self.seats.contains(&origin) {
+            return;
+        }
+        for peer in &self.peers {
+            if peer.key != origin && peer.seated && peer.talks() {
+                self.outbox.push(Outgoing {
+                    to: peer.key,
+                    message: Message::Relayed {
+                        origin,
+                        message: Box::new(message.clone()),
+                    },
+                });
+            }
+        }
+    }
+
+    /// A client: what another player told everyone, relayed by our host. Its `Hello`, « Prêt »,
+    /// its `Bye`; the rest goes to the game (`poll_session`).
+    fn relayed(&mut self, origin: PeerKey, message: Message, now_ms: u64) {
+        if origin == self.me || Some(origin) == self.host {
+            return;
+        }
+        match message {
+            Message::Hello(mut profile) => {
+                profile.name = Profile::clean_name(&profile.name);
+                let seated = self.seats.contains(&origin);
+                match self.peers.iter_mut().find(|p| p.key == origin) {
+                    Some(peer) => peer.profile = Some(profile),
+                    None => {
+                        let mut peer = LobbyPeer::new(origin, false, now_ms);
+                        peer.profile = Some(profile);
+                        peer.seated = seated;
+                        self.peers.push(peer);
+                    }
+                }
+            }
+            Message::Ready(ready) => {
+                if let Some(profile) = self
+                    .peers
+                    .iter_mut()
+                    .find(|p| p.key == origin)
+                    .and_then(|p| p.profile.as_mut())
+                {
+                    profile.ready = ready;
+                }
+            }
+            Message::Bye => self.forget(origin),
+            _ => {}
+        }
+    }
+
+    /// A client: the host's list of seats, taken as it is. The players it no longer lists left.
+    fn take_seats(&mut self, list: Vec<PeerKey>, now_ms: u64) {
+        let gone: Vec<PeerKey> = self
+            .peers
             .iter()
-            .filter(|peer| peer.talks())
+            .filter(|peer| !peer.direct && !list.contains(&peer.key))
+            .map(|peer| peer.key)
+            .collect();
+        for key in gone {
+            self.forget(key);
+        }
+        for key in &list {
+            if *key != self.me && self.peer(*key).is_none() {
+                self.peers.push(LobbyPeer::new(*key, false, now_ms));
+            }
+        }
+        for peer in &mut self.peers {
+            let seated = list.contains(&peer.key);
+            if seated && !peer.seated {
+                self.events.push(LobbyEvent::Seated(peer.key));
+            }
+            peer.seated = seated;
+        }
+        let seated = list.contains(&self.me);
+        if seated && !self.profile.seated {
+            self.events.push(LobbyEvent::Seated(self.me));
+        }
+        self.profile.seated = seated;
+        self.seats = list;
+    }
+
+    /// A client: another player left (its `Bye` relayed, or gone from the host's list).
+    fn forget(&mut self, key: PeerKey) {
+        let Some(index) = self.peers.iter().position(|p| p.key == key && !p.direct) else {
+            return;
+        };
+        self.peers.remove(index);
+        self.seats.retain(|seat| *seat != key);
+        self.events.push(LobbyEvent::Left(key));
+    }
+
+    /// The room's clock: ours when we host, the host's for a client (`clock::RoomClock`).
+    fn update_room(&mut self) {
+        let host_clock = self
+            .host
+            .filter(|host| *host != self.me && !self.host_left)
+            .and_then(|host| self.peers.iter().find(|peer| peer.key == host))
             .map(|peer| &peer.clock);
-        room.update(now_ms, we_host, host_clock, others);
+        self.room.update(self.hosting, host_clock);
     }
 
     /// A packet from `from` could not be read. Another version: the peer is listed apart and
@@ -433,21 +600,25 @@ impl Lobby {
             && peer.other_version.is_none()
         {
             peer.other_version = Some(version);
+            let was_seated = peer.seated;
             peer.seated = false;
-            self.seats.retain(|key| *key != from);
+            if was_seated {
+                self.seats.retain(|key| *key != from);
+                self.seats_dirty = true;
+            }
             self.events.push(LobbyEvent::OtherVersion(from, version));
             self.refresh();
         }
     }
 
-    /// Time passes: the pings, and sitting down in an empty room.
+    /// Time passes: the pings.
     pub fn update(&mut self, now_ms: u64) {
         if self.stopped() {
             return;
         }
         for index in 0..self.peers.len() {
             let peer = &mut self.peers[index];
-            if peer.talks() && now_ms >= peer.next_ping_ms {
+            if peer.direct && peer.talks() && now_ms >= peer.next_ping_ms {
                 peer.next_ping_ms = now_ms + PING_INTERVAL_MS;
                 let key = peer.key;
                 self.send(
@@ -458,17 +629,8 @@ impl Lobby {
                 );
             }
         }
-        let alone = !self.peers.iter().any(|p| p.seated && p.talks());
-        let everyone_said_hello = self.peers.iter().all(|p| p.profile.is_some() || !p.talks());
-        if !self.profile.seated
-            && alone
-            && everyone_said_hello
-            && now_ms >= self.joined_ms + SETTLE_MS
-        {
-            self.sit(self.me);
-        }
         self.refresh();
-        self.update_room(now_ms);
+        self.update_room();
     }
 
     /// « Prêt » or not.
@@ -516,7 +678,7 @@ impl Lobby {
         worn.get(seat).copied().flatten()
     }
 
-    /// We leave: `Bye` to everyone, then nothing more.
+    /// We leave: `Bye` to the peers we are linked with, then nothing more.
     pub fn leave(&mut self) {
         if !self.stopped() {
             self.broadcast(Message::Bye);
@@ -526,7 +688,7 @@ impl Lobby {
 
     /// The host starts the race (issue #9): only the host may.
     pub fn announce_race(&mut self, start: RaceStart) -> bool {
-        if !self.is_host() || self.stopped() {
+        if !self.hosting || self.stopped() {
             return false;
         }
         self.circuit = start.track;
@@ -539,7 +701,7 @@ impl Lobby {
     /// The host chooses the room's circuit (issue #9): everyone drives freely on it, and the
     /// race that was on (or over) is gone. Only the host may.
     pub fn choose_circuit(&mut self, track: u8) -> bool {
-        if !self.is_host() || self.stopped() {
+        if !self.hosting || self.stopped() {
             return false;
         }
         self.circuit = track;
@@ -548,7 +710,7 @@ impl Lobby {
         true
     }
 
-    /// What is on in the room, for a peer we (the host) just seated: the circuit, and the race.
+    /// What is on in the room, for a client we (the host) just seated: the circuit, and the race.
     fn tell_room(&mut self, to: PeerKey) {
         let message = match &self.announced {
             Some(start) => Message::StartRace(start.clone()),
@@ -574,8 +736,13 @@ impl Lobby {
                 me: false,
                 host: self.host == Some(peer.key),
                 seated: peer.seated,
-                ping_ms: peer.clock.rtt_ms(),
-                silent: now_ms.saturating_sub(peer.last_heard_ms) >= SILENT_MS,
+                link: if peer.direct {
+                    RowLink::Direct
+                } else {
+                    RowLink::ViaHost
+                },
+                ping_ms: peer.clock.rtt_ms().filter(|_| peer.direct),
+                silent: peer.direct && now_ms.saturating_sub(peer.last_heard_ms) >= SILENT_MS,
                 other_version: peer.other_version,
             }
         };
@@ -587,8 +754,9 @@ impl Lobby {
             color: self.color_of(self.me),
             ready: self.profile.ready,
             me: true,
-            host: self.is_host(),
+            host: self.hosting,
             seated: self.profile.seated,
+            link: RowLink::Me,
             ping_ms: None,
             silent: false,
             other_version: None,
@@ -613,19 +781,19 @@ impl Lobby {
         rows
     }
 
-    /// Nothing more to do: refused, or gone.
+    /// Nothing more to do: refused, gone, or our host gone.
     fn stopped(&self) -> bool {
-        self.full || self.left
+        self.full || self.left || self.host_left
     }
 
     fn send(&mut self, to: PeerKey, message: Message) {
         self.outbox.push(Outgoing { to, message });
     }
 
-    /// To every peer that takes part.
+    /// To every peer we are linked with that takes part (a client: its host).
     fn broadcast(&mut self, message: Message) {
         for peer in &self.peers {
-            if peer.talks() {
+            if peer.direct && peer.talks() {
                 self.outbox.push(Outgoing {
                     to: peer.key,
                     message: message.clone(),
@@ -634,75 +802,47 @@ impl Lobby {
         }
     }
 
-    /// `key` (us or a peer) gets a seat.
+    /// We, the host, seat the client `key`: it learns the others (their `Hello`, relayed) and
+    /// what is on in the room; the others learn it (its `Hello`, relayed); everyone gets the new
+    /// list of seats (`refresh`).
     fn sit(&mut self, key: PeerKey) {
-        if key == self.me {
-            if self.profile.seated {
-                return;
-            }
-            self.profile.seated = true;
-            // The others learn it from our Hello (and the host's list).
-            self.broadcast(Message::Hello(self.profile.clone()));
-        } else {
-            let Some(peer) = self.peers.iter_mut().find(|p| p.key == key) else {
-                return;
-            };
-            if peer.seated || !peer.talks() {
-                return;
-            }
-            peer.seated = true;
-            if self.is_host() {
-                self.tell_room(key);
-            }
-        }
-        if !self.seats.contains(&key) {
-            self.seats.push(key);
-        }
-        self.seats_dirty = true;
-        self.events.push(LobbyEvent::Seated(key));
-    }
-
-    /// The seats as `from` sees them: every one of them is seated. The host's list also gives
-    /// the order (seats we know of that it does not list yet stay at the end).
-    fn receive_seats(&mut self, from: PeerKey, list: &[PeerKey]) {
-        for key in list {
-            self.sit(*key);
-        }
-        if self.host == Some(from) {
-            self.seats_from = Some(from);
-            let mut ordered: Vec<PeerKey> = list
-                .iter()
-                .copied()
-                .filter(|key| self.seats.contains(key))
-                .collect();
-            for key in &self.seats {
-                if !ordered.contains(key) {
-                    ordered.push(*key);
-                }
-            }
-            self.seats = ordered;
-            // What the host sent is what everyone has now.
-            self.seats_dirty = false;
-        }
-    }
-
-    /// After every change: the host, and what the host does (seats newcomers, refuses those
-    /// beyond 12, sends the seats).
-    fn refresh(&mut self) {
-        self.elect_host();
-        if !self.is_host() || self.stopped() {
+        let Some(index) = self.peers.iter().position(|p| p.key == key) else {
+            return;
+        };
+        if self.peers[index].seated || !self.peers[index].talks() {
             return;
         }
-        // Too many seated (newcomers who sat down by themselves at the same time): the last
-        // ones in seat order leave.
-        while self.seats.len() > MAX_PLAYERS {
-            let Some(index) = self.seats.iter().rposition(|key| *key != self.me) else {
-                break;
-            };
-            let key = self.seats.remove(index);
-            self.refuse(key);
+        self.peers[index].seated = true;
+        self.seats.push(key);
+        self.seats_dirty = true;
+        self.events.push(LobbyEvent::Seated(key));
+        let others: Vec<Outgoing> = self
+            .peers
+            .iter()
+            .filter(|peer| peer.key != key && peer.seated && peer.talks())
+            .filter_map(|peer| {
+                Some(Outgoing {
+                    to: key,
+                    message: Message::Relayed {
+                        origin: peer.key,
+                        message: Box::new(Message::Hello(peer.profile.clone()?)),
+                    },
+                })
+            })
+            .collect();
+        self.outbox.extend(others);
+        self.tell_room(key);
+        if let Some(profile) = self.peers[index].profile.clone() {
+            self.relay(key, &Message::Hello(profile));
         }
-        // The newcomers, in arrival order.
+    }
+
+    /// After every change, the host: it seats the newcomers in their order of arrival (refuses
+    /// those beyond 12), and sends the list of seats when it changed.
+    fn refresh(&mut self) {
+        if !self.hosting || self.stopped() {
+            return;
+        }
         for index in 0..self.peers.len() {
             let peer = &self.peers[index];
             if peer.seated || !peer.talks() || peer.profile.is_none() {
@@ -717,33 +857,15 @@ impl Lobby {
         }
         if self.seats_dirty {
             self.seats_dirty = false;
-            self.broadcast(Message::Seats(self.seats.clone()));
-        }
-        // A newcomer we just seated may have a smaller id: the room is its now (it learns it from
-        // the seats we just sent).
-        self.elect_host();
-    }
-
-    /// The host: the seated player with the smallest id; while a race is on, among its players
-    /// still here (issue #9), if any.
-    fn elect_host(&mut self) {
-        let me = self.profile.seated.then_some(self.me);
-        let seated = || {
-            self.peers
-                .iter()
-                .filter(|p| p.seated && p.talks())
-                .map(|p| p.key)
-                .chain(me)
-        };
-        let racers = self.announced.as_ref().map(|start| &start.players);
-        let host = racers
-            .and_then(|players| seated().filter(|key| players.contains(key)).min())
-            .or_else(|| seated().min());
-        if host != self.host {
-            self.host = host;
-            self.events.push(LobbyEvent::HostChanged(host));
-            // A new host sends its list.
-            self.seats_dirty = true;
+            let seats = Message::Seats(self.seats.clone());
+            for peer in &self.peers {
+                if peer.seated && peer.talks() {
+                    self.outbox.push(Outgoing {
+                        to: peer.key,
+                        message: seats.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -754,7 +876,6 @@ impl Lobby {
             peer.refused = true;
         }
         self.send(key, Message::RoomFull);
-        self.seats_dirty = true;
     }
 }
 
@@ -763,15 +884,18 @@ mod tests {
     use super::*;
     use crate::net::protocol::Channel;
 
-    /// Several lobbies wired to each other in memory, like the full mesh of the socket. Every
-    /// message goes through its bytes (`encode` then `decode`), with a delay: the order of the
-    /// reliable channel is kept, the unreliable one can lose packets.
-    struct Mesh {
+    /// Several lobbies of a room in memory, linked as the star links them (issue #63): the host
+    /// with each client, never two clients. Every message goes through its bytes (`encode` then
+    /// `decode`), with a delay: the order of the reliable channel is kept, the unreliable one can
+    /// lose packets. A message sent to a peer one is not linked with fails the test.
+    struct Star {
         lobbies: Vec<Lobby>,
-        /// How far ahead of the mesh's time each lobby's clock is (it counts from its own
+        /// How far ahead of the star's time each lobby's clock is (it counts from its own
         /// start): (peer, ms).
         skews: Vec<(PeerKey, u64)>,
-        /// Who is connected to whom (both ways).
+        /// The room's creator, once it opened the room.
+        host: Option<PeerKey>,
+        /// Who is linked with whom (both ways).
         links: Vec<(PeerKey, PeerKey)>,
         /// (arrival time, to, from, bytes).
         in_flight: Vec<(u64, PeerKey, PeerKey, Vec<u8>)>,
@@ -781,11 +905,12 @@ mod tests {
         drop_unreliable: bool,
     }
 
-    impl Mesh {
+    impl Star {
         fn new() -> Self {
             Self {
                 lobbies: Vec::new(),
                 skews: Vec::new(),
+                host: None,
                 links: Vec::new(),
                 in_flight: Vec::new(),
                 now: 0,
@@ -806,23 +931,29 @@ mod tests {
             }
         }
 
-        /// A peer joins the room: the socket connects it to everyone there.
+        /// « Créer une partie »: the room's creator, its host.
+        fn create(&mut self, n: u128) -> PeerKey {
+            let key = Self::key(n);
+            let profile = Self::profile(&format!("Joueur {n}"));
+            self.add(Lobby::new(key, profile, 0, true));
+            self.host = Some(key);
+            key
+        }
+
+        /// A player opens the invitation link: a client, linked to the host (if any).
         fn join(&mut self, n: u128) -> PeerKey {
             let key = Self::key(n);
             let profile = Self::profile(&format!("Joueur {n}"));
-            self.add(Lobby::new(key, profile, 0));
-            let others: Vec<PeerKey> = self.lobbies.iter().map(Lobby::me).collect();
-            for other in others {
-                if other != key {
-                    self.link(key, other);
-                }
+            self.add(Lobby::new(key, profile, 0, false));
+            if let Some(host) = self.host {
+                self.link(host, key);
             }
             key
         }
 
-        /// A lobby whose clock starts now (`Lobby::new` with 0): it runs `now` behind the mesh.
+        /// A lobby whose clock starts now (`Lobby::new` with 0): it runs `now` behind the star.
         fn add(&mut self, lobby: Lobby) {
-            // Unsigned clocks: a lobby is ahead of the mesh by a large margin minus its start.
+            // Unsigned clocks: a lobby is ahead of the star by a large margin minus its start.
             self.skews.push((lobby.me(), 1_000_000 - self.now));
             self.lobbies.push(lobby);
         }
@@ -840,15 +971,30 @@ mod tests {
             self.lobby(b).connect(a, now_b);
         }
 
-        /// A peer's tab closes: the others' sockets report it gone.
+        /// A peer's tab closes: the sockets linked with it report it gone.
         fn close(&mut self, key: PeerKey) {
             self.lobbies.retain(|lobby| lobby.me() != key);
+            let linked: Vec<PeerKey> = self
+                .links
+                .iter()
+                .filter_map(|(a, b)| {
+                    if *a == key {
+                        Some(*b)
+                    } else if *b == key {
+                        Some(*a)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             self.links.retain(|(a, b)| *a != key && *b != key);
             self.in_flight
                 .retain(|(_, to, from, _)| *to != key && *from != key);
-            for lobby in &mut self.lobbies {
-                lobby.disconnect(key);
+            for other in linked {
+                self.lobby(other).disconnect(key);
             }
+            // What they say about it leaves now (another peer closing next does not get it).
+            self.flush();
         }
 
         fn lobby(&mut self, key: PeerKey) -> &mut Lobby {
@@ -894,9 +1040,17 @@ mod tests {
                     let local = self.local(key);
                     self.lobby(key).update(local);
                 }
-                self.check_hosts();
+                self.check_host();
                 self.flush();
             }
+        }
+
+        /// Until nothing is on its way, then `ms` more.
+        fn settle(&mut self, ms: u64) {
+            while !self.in_flight.is_empty() {
+                self.run(1);
+            }
+            self.run(ms);
         }
 
         fn flush(&mut self) {
@@ -910,8 +1064,10 @@ mod tests {
             for (from, out) in sent {
                 assert!(
                     self.linked(from, out.to),
-                    "{from:?} sent to {:?}, not connected",
-                    out.to
+                    "{from:?} sent to {:?}, not linked (the host: {:?}): {:?}",
+                    out.to,
+                    self.host,
+                    out.message
                 );
                 if self.drop_unreliable && out.message.channel() == Channel::Unreliable {
                     continue;
@@ -922,15 +1078,14 @@ mod tests {
             }
         }
 
-        /// At every moment: a lobby that sees a seated player smaller than its host is wrong
-        /// (the host is the smallest seated id, whatever the others know yet).
-        fn check_hosts(&self) {
+        /// At every moment (issue #63): the host is the room's creator for every lobby that
+        /// knows one, and it never changes.
+        fn check_host(&self) {
             for lobby in &self.lobbies {
                 if let Some(host) = lobby.host() {
-                    for seat in lobby.seats() {
-                        assert!(*seat >= host, "{:?} hosts with {seat:?} seated", host);
-                    }
+                    assert_eq!(Some(host), self.host, "the host seen by {:?}", lobby.me());
                 }
+                assert_eq!(lobby.is_host(), Some(lobby.me()) == self.host);
             }
         }
 
@@ -950,27 +1105,28 @@ mod tests {
         }
     }
 
-    /// Issue #7: two players find each other, see each other with their ping, and the smallest
-    /// id hosts.
+    /// Issue #7 (issue #63: was « the smallest id hosts »): two players find each other, see
+    /// each other with their ping, and the room's creator hosts, though it has the bigger id.
     #[test]
-    fn two_peers_see_each_other_with_their_ping_and_the_smallest_hosts() {
-        let mut mesh = Mesh::new();
-        let b = mesh.join(7);
-        mesh.run(SETTLE_MS + 100);
-        assert!(mesh.view(b).seated(), "alone, it sits down");
-        assert!(mesh.view(b).is_host());
-        let a = mesh.join(3);
-        mesh.run(2_000);
-        let (host, seats) = mesh.agreed();
+    fn two_peers_see_each_other_with_their_ping_and_the_creator_hosts() {
+        let mut star = Star::new();
+        let b = star.create(7);
+        star.run(10);
+        assert!(star.view(b).seated(), "the creator is seated at once");
+        assert!(star.view(b).is_host());
+        let a = star.join(3);
+        star.run(2_000);
+        let (host, seats) = star.agreed();
         assert_eq!(seats, [b, a], "arrival order");
-        assert_eq!(host, Some(a), "the smallest id hosts once seated");
+        assert_eq!(host, Some(b), "the creator hosts, whatever the ids");
         for (me, other) in [(a, b), (b, a)] {
-            let rows = mesh.view(me).players(mesh.local(me));
+            let rows = star.view(me).players(star.local(me));
             assert_eq!(rows.len(), 2);
             let row = rows.iter().find(|r| r.key == other).unwrap();
             assert_eq!(row.name, format!("Joueur {}", other.0 >> 64));
             assert_eq!(row.loadout, [1, 2, 0, 1]);
             assert!(!row.silent);
+            assert_eq!(row.link, RowLink::Direct);
             let ping = row.ping_ms.expect("a ping");
             assert!((ping - 40.0).abs() < 2.0, "{ping}");
             assert!(rows.iter().any(|r| r.me && r.key == me));
@@ -978,41 +1134,49 @@ mod tests {
         }
     }
 
-    /// « Prêt » reaches the others; everyone ready shows.
+    /// « Prêt » reaches the others, a client's through the host (issue #63); everyone ready
+    /// shows.
     #[test]
     fn ready_goes_to_everyone() {
-        let mut mesh = Mesh::new();
-        let a = mesh.join(1);
-        mesh.run(SETTLE_MS + 100);
-        let b = mesh.join(2);
-        let c = mesh.join(3);
-        mesh.run(1_000);
-        mesh.lobby(b).set_ready(true);
-        mesh.run(100);
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        let c = star.join(3);
+        star.run(1_000);
+        star.lobby(b).set_ready(true);
+        star.run(100);
         for key in [a, c] {
-            let rows = mesh.view(key).players(mesh.local(key));
+            let rows = star.view(key).players(star.local(key));
             assert!(rows.iter().find(|r| r.key == b).unwrap().ready);
             assert!(!rows.iter().find(|r| r.key == a).unwrap().ready);
-            assert!(!mesh.view(key).all_ready());
+            assert!(!star.view(key).all_ready());
         }
-        mesh.lobby(a).set_ready(true);
-        mesh.lobby(c).set_ready(true);
-        mesh.run(100);
+        star.lobby(a).set_ready(true);
+        star.lobby(c).set_ready(true);
+        star.run(100);
         for key in [a, b, c] {
-            assert!(mesh.view(key).all_ready(), "{key:?}");
+            assert!(star.view(key).all_ready(), "{key:?}");
         }
-        mesh.lobby(b).set_ready(false);
-        mesh.run(100);
-        assert!(!mesh.view(a).all_ready());
+        star.lobby(b).set_ready(false);
+        star.run(100);
+        assert!(!star.view(a).all_ready());
+        assert!(!star.view(c).all_ready());
         // A changed name or kart reaches them too.
-        mesh.lobby(c)
+        star.lobby(c)
             .set_profile("  Max ", [4, 1, 1, 0], KartColor::Teal);
-        mesh.run(100);
-        let rows = mesh.view(a).players(mesh.local(a));
-        let row = rows.iter().find(|r| r.key == c).unwrap();
-        assert_eq!((row.name.as_str(), row.loadout), ("Max", [4, 1, 1, 0]));
-        // Issue #55: and a changed color.
-        assert_eq!(row.color, Some(KartColor::Teal));
+        star.run(100);
+        for key in [a, b] {
+            let rows = star.view(key).players(star.local(key));
+            let row = rows.iter().find(|r| r.key == c).unwrap();
+            assert_eq!((row.name.as_str(), row.loadout), ("Max", [4, 1, 1, 0]));
+            // Issue #55: and a changed color.
+            assert_eq!(row.color, Some(KartColor::Teal));
+        }
+        // Issue #63: Bob knows Cyd through the host only: no ping of his.
+        let rows = star.view(b).players(star.local(b));
+        let cyd = rows.iter().find(|r| r.key == c).unwrap();
+        assert_eq!(cyd.link, RowLink::ViaHost);
+        assert!(cyd.ping_ms.is_none() && !cyd.silent);
     }
 
     /// Issue #55: the colors the players chose reach everyone; two players of the same color:
@@ -1021,250 +1185,264 @@ mod tests {
     #[test]
     fn the_same_color_twice_is_resolved_the_same_everywhere() {
         use KartColor::*;
-        let mut mesh = Mesh::new();
-        let a = mesh.join(1);
-        mesh.run(SETTLE_MS + 100);
-        let b = mesh.join(2);
-        let c = mesh.join(3);
-        mesh.run(1_000);
-        let (_, seats) = mesh.agreed();
-        assert_eq!(seats.len(), 3);
-        let colors = |mesh: &Mesh| -> Vec<Vec<Option<KartColor>>> {
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        let c = star.join(3);
+        star.run(1_000);
+        let (_, seats) = star.agreed();
+        assert_eq!(seats, [a, b, c]);
+        let colors = |star: &Star| -> Vec<Vec<Option<KartColor>>> {
             [a, b, c]
                 .iter()
-                .map(|key| seats.iter().map(|s| mesh.view(*key).color_of(*s)).collect())
+                .map(|key| seats.iter().map(|s| star.view(*key).color_of(*s)).collect())
                 .collect()
         };
         // Nobody chose: all pink; the first seat keeps it, the others the closest free colors.
-        for seen in colors(&mesh) {
+        for seen in colors(&star) {
             assert_eq!(seen, [Some(Pink), Some(Violet), Some(Orange)]);
         }
-        // The first two seats choose blue, the third red.
-        mesh.lobby(seats[0]).set_profile("Ana", [1, 2, 0, 1], Blue);
-        mesh.lobby(seats[1]).set_profile("Bob", [1, 2, 0, 1], Blue);
-        mesh.lobby(seats[2]).set_profile("Cyd", [1, 2, 0, 1], Red);
-        mesh.run(200);
-        for seen in colors(&mesh) {
-            assert_eq!(seen, [Some(Blue), Some(Violet), Some(Red)]);
+        // Issue #63: the host red, the two clients blue (the first seat leaving now ends the
+        // room: its clients are the ones who choose the same).
+        star.lobby(a).set_profile("Ana", [1, 2, 0, 1], Red);
+        star.lobby(b).set_profile("Bob", [1, 2, 0, 1], Blue);
+        star.lobby(c).set_profile("Cyd", [1, 2, 0, 1], Blue);
+        star.run(200);
+        for seen in colors(&star) {
+            assert_eq!(seen, [Some(Red), Some(Blue), Some(Violet)]);
         }
         for key in [a, b, c] {
-            let rows = mesh.view(key).players(mesh.local(key));
-            let second = rows.iter().find(|r| r.key == seats[1]).unwrap();
-            assert_eq!((second.chosen, second.color), (Some(Blue), Some(Violet)));
-            let first = rows.iter().find(|r| r.key == seats[0]).unwrap();
-            assert_eq!((first.chosen, first.color), (Some(Blue), Some(Blue)));
+            let rows = star.view(key).players(star.local(key));
+            let third = rows.iter().find(|r| r.key == c).unwrap();
+            assert_eq!((third.chosen, third.color), (Some(Blue), Some(Violet)));
+            let second = rows.iter().find(|r| r.key == b).unwrap();
+            assert_eq!((second.chosen, second.color), (Some(Blue), Some(Blue)));
         }
-        // The first one leaves: the second wears blue now, on every screen.
-        mesh.close(seats[0]);
-        mesh.run(1_000);
-        for key in [seats[1], seats[2]] {
-            assert_eq!(mesh.view(key).color_of(seats[1]), Some(Blue));
-            assert_eq!(mesh.view(key).color_of(seats[2]), Some(Red));
+        // Bob leaves: Cyd wears blue now, on every screen.
+        star.close(b);
+        star.run(1_000);
+        for key in [a, c] {
+            assert_eq!(star.view(key).color_of(c), Some(Blue));
+            assert_eq!(star.view(key).color_of(a), Some(Red));
         }
         // An unknown peer has no color.
-        assert_eq!(mesh.view(seats[1]).color_of(Mesh::key(99)), None);
+        assert_eq!(star.view(c).color_of(Star::key(99)), None);
     }
 
-    /// A player who leaves disappears from every lobby; if it hosted, the next smallest id
-    /// takes over, and its seat order is kept.
+    /// Issue #63 (was « departures are seen and the host hands over », issue #7): a client who
+    /// leaves disappears from every lobby, by the socket or by its `Bye`, and the host stays the
+    /// host; the host leaving ends the room for every client (nobody takes over), and nothing is
+    /// sent to the departed.
     #[test]
-    fn departures_are_seen_and_the_host_hands_over() {
-        let mut mesh = Mesh::new();
-        let first = mesh.join(5);
-        mesh.run(SETTLE_MS + 100);
-        let keys: Vec<PeerKey> = [2, 9, 4].into_iter().map(|n| mesh.join(n)).collect();
-        mesh.run(1_000);
-        let (host, seats) = mesh.agreed();
-        assert_eq!(host, Some(keys[0]));
+    fn departures_are_seen_and_the_host_never_changes() {
+        let mut star = Star::new();
+        let first = star.create(5);
+        let keys: Vec<PeerKey> = [2, 9, 4].into_iter().map(|n| star.join(n)).collect();
+        star.run(1_000);
+        let (host, seats) = star.agreed();
+        assert_eq!(host, Some(first));
         assert_eq!(seats, [first, keys[0], keys[1], keys[2]]);
-        // The host's tab closes.
-        mesh.close(keys[0]);
-        mesh.run(100);
-        let (host, seats) = mesh.agreed();
-        assert_eq!(host, Some(keys[2]), "the next smallest");
+        // A client's tab closes (the smallest id: nothing changes for the host).
+        star.close(keys[0]);
+        star.run(100);
+        let (host, seats) = star.agreed();
+        assert_eq!(host, Some(first));
         assert_eq!(seats, [first, keys[1], keys[2]]);
         // Another one says goodbye.
-        mesh.lobby(keys[1]).leave();
-        mesh.run(100);
-        mesh.lobbies.retain(|l| l.me() != keys[1]);
-        let (host, seats) = mesh.agreed();
-        assert_eq!(host, Some(keys[2]));
+        star.lobby(keys[1]).leave();
+        star.run(100);
+        star.lobbies.retain(|l| l.me() != keys[1]);
+        star.links.retain(|(_, b)| *b != keys[1]);
+        let (host, seats) = star.agreed();
+        assert_eq!(host, Some(first));
         assert_eq!(seats, [first, keys[2]]);
-        let events: Vec<LobbyEvent> = mesh.lobby(first).drain_events().collect();
-        assert!(events.contains(&LobbyEvent::Left(keys[0])));
-        assert!(events.contains(&LobbyEvent::Left(keys[1])));
-        assert!(events.contains(&LobbyEvent::HostChanged(Some(keys[2]))));
-        // Nothing is sent to the departed (the mesh would panic).
-        mesh.run(3_000);
+        for key in [first, keys[2]] {
+            let events: Vec<LobbyEvent> = star.lobby(key).drain_events().collect();
+            assert!(events.contains(&LobbyEvent::Left(keys[0])), "{key:?}");
+            assert!(events.contains(&LobbyEvent::Left(keys[1])), "{key:?}");
+            assert!(!events.contains(&LobbyEvent::HostLeft));
+        }
+        // The host's tab closes: the room is over for the client, said once.
+        let late = star.join(7);
+        star.run(1_000);
+        star.close(first);
+        star.run(100);
+        for key in [keys[2], late] {
+            let lobby = star.view(key);
+            assert!(lobby.host_left(), "{key:?}");
+            assert!(!lobby.is_host());
+            assert_eq!(lobby.host(), Some(first), "nobody takes over");
+            let events: Vec<LobbyEvent> = star.lobby(key).drain_events().collect();
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| **e == LobbyEvent::HostLeft)
+                    .count(),
+                1
+            );
+        }
+        // Nothing is sent to the departed (the star would panic).
+        star.run(3_000);
     }
 
-    /// Issue #7: a 13th player is refused with a message, the 12 keep playing.
+    /// Issue #7: a 13th player is refused with a message, the 12 keep playing; issue #63: the
+    /// newcomer's smallest id changes nothing, the creator hosts.
     #[test]
     fn a_full_room_refuses_the_thirteenth() {
-        let mut mesh = Mesh::new();
-        let first = mesh.join(500);
-        mesh.run(SETTLE_MS + 100);
+        let mut star = Star::new();
+        let first = star.create(500);
         for n in 1..MAX_PLAYERS as u128 {
-            mesh.join(n * 10);
-            mesh.run(200);
+            star.join(n * 10);
+            star.run(200);
         }
-        mesh.run(1_000);
-        let (_, seats) = mesh.agreed();
+        star.run(1_000);
+        let (_, seats) = star.agreed();
         assert_eq!(seats.len(), MAX_PLAYERS);
-        // The newcomer has the smallest id: it still cannot take over.
-        let late = mesh.join(1);
-        mesh.run(1_000);
-        assert!(mesh.view(late).full(), "refused");
-        assert!(!mesh.view(late).seated());
+        let late = star.join(1);
+        star.run(1_000);
+        assert!(star.view(late).full(), "refused");
+        assert!(!star.view(late).seated());
         assert!(
-            mesh.lobby(late)
+            star.lobby(late)
                 .drain_events()
                 .any(|e| e == LobbyEvent::RoomFull),
             "with a message"
         );
         // Its socket closes.
-        mesh.close(late);
-        mesh.run(100);
-        let (host, seats) = mesh.agreed();
+        star.close(late);
+        star.run(100);
+        let (host, seats) = star.agreed();
         assert_eq!(seats.len(), MAX_PLAYERS);
         assert!(!seats.contains(&late));
-        assert_eq!(host, Some(Mesh::key(10)));
-        assert!(seats.contains(&first));
-        // A seat frees up: the next newcomer gets it.
-        mesh.close(Mesh::key(50));
-        let next = mesh.join(2);
-        mesh.run(1_000);
-        assert!(mesh.view(next).seated());
-        assert!(
-            mesh.view(next).is_host(),
-            "seated last, but the smallest id: it hosts"
-        );
+        assert_eq!(host, Some(first));
+        // A seat frees up: the next newcomer gets it, the last seat.
+        star.close(Star::key(50));
+        let next = star.join(2);
+        star.run(1_000);
+        assert!(star.view(next).seated());
+        assert!(!star.view(next).is_host());
+        let (host, seats) = star.agreed();
+        assert_eq!((host, seats.last()), (Some(first), Some(&next)));
     }
 
-    /// Two friends open the link at the same moment, in an empty room: both sit down, and agree.
+    /// Issue #63 (was « two newcomers at once both sit and agree »): two friends open the
+    /// invitation link at the same moment: the host seats both, in the order it met them, and
+    /// every lobby has its list.
     #[test]
-    fn two_newcomers_at_once_both_sit_and_agree() {
-        let mut mesh = Mesh::new();
-        let a = mesh.join(8);
-        let b = mesh.join(6);
-        mesh.run(SETTLE_MS + 500);
-        let (host, seats) = mesh.agreed();
-        assert_eq!(host, Some(b));
-        assert_eq!(seats.len(), 2);
-        assert!(mesh.view(a).seated() && mesh.view(b).seated());
-        // And when they connect only after both sat down (a slow network): the same.
-        let mut slow = Mesh::new();
-        slow.add(Lobby::new(Mesh::key(8), Mesh::profile("A"), 0));
-        slow.add(Lobby::new(Mesh::key(6), Mesh::profile("B"), 0));
-        slow.run(SETTLE_MS + 100);
-        assert!(slow.lobbies.iter().all(Lobby::seated));
-        slow.link(Mesh::key(8), Mesh::key(6));
-        slow.run(500);
-        let (host, seats) = slow.agreed();
-        assert_eq!(host, Some(Mesh::key(6)));
-        assert_eq!(seats.len(), 2);
+    fn two_clients_at_once_both_sit_in_the_hosts_order() {
+        let mut star = Star::new();
+        let host = star.create(9);
+        star.run(500);
+        let a = star.join(8);
+        let b = star.join(6);
+        star.run(500);
+        let (seen_host, seats) = star.agreed();
+        assert_eq!(seen_host, Some(host));
+        assert_eq!(seats, [host, a, b]);
+        assert!(star.view(a).seated() && star.view(b).seated());
     }
 
-    /// A newcomer waits for its seat: it never hosts before, even with the smallest id.
-    /// Issue #8: the grid slot of each player is its place in the seat order, which must be the
-    /// same everywhere. Two peers who sit down by themselves at once each put themselves first:
-    /// the newcomer waits for the host's list before its order counts.
+    /// Issue #8 (issue #63: the seat order is the host's list, as it is): the grid slot of each
+    /// player is its place in the seat order, the same everywhere. A client takes the host's list
+    /// whole: from the moment it is seated, its order is the host's.
     #[test]
-    fn the_seat_order_is_agreed_before_it_counts() {
-        let mut mesh = Mesh::new();
-        let a = mesh.join(8);
-        assert!(!mesh.view(a).seats_agreed(), "not seated yet");
-        mesh.run(SETTLE_MS + 100);
-        assert!(mesh.view(a).seats_agreed(), "alone, it hosts");
-        let b = mesh.join(9);
-        let mut agreed_at = None;
+    fn the_seat_order_is_the_hosts_list() {
+        let mut star = Star::new();
+        let a = star.create(8);
+        assert!(star.view(a).seated(), "the creator, at once");
+        let b = star.join(9);
+        let c = star.join(1);
+        let mut seated_at = None;
         for ms in 0..2_000 {
-            mesh.run(1);
-            let view = mesh.view(b);
-            if view.seats_agreed() {
-                agreed_at.get_or_insert(ms);
-                // From then on, the same order as the host's.
-                assert_eq!(view.seats(), mesh.view(a).seats());
+            star.run(1);
+            for key in [b, c] {
+                let view = star.view(key);
+                if view.seated() {
+                    seated_at.get_or_insert(ms);
+                    assert_eq!(view.seats(), star.view(a).seats(), "{key:?} at {ms} ms");
+                }
             }
         }
-        assert!(agreed_at.is_some(), "the newcomer never agreed");
-        assert_eq!(mesh.view(b).seats(), &[a, b]);
-        // Two at once, the second with the smallest id: the order the host sends wins.
-        let mut both = Mesh::new();
-        let c = both.join(8);
-        let d = both.join(6);
-        let mut checked = 0;
-        for _ in 0..(SETTLE_MS + 1_000) {
-            both.run(1);
-            if both.view(c).seats_agreed() && both.view(d).seats_agreed() {
-                checked += 1;
-                assert_eq!(both.view(c).seats(), both.view(d).seats());
-            }
-        }
-        assert!(checked > 0);
-        let seats = both.view(c).seats();
-        assert_eq!(seats.len(), 2);
-        assert!(seats.contains(&c) && seats.contains(&d));
+        assert!(seated_at.is_some(), "never seated");
+        assert_eq!(star.view(c).seats(), &[a, b, c]);
     }
 
+    /// A newcomer waits for the host to seat it, and never hosts (issue #63: even with the
+    /// smallest id).
     #[test]
     fn a_newcomer_waits_for_the_host_to_seat_it() {
-        let mut mesh = Mesh::new();
-        let host = mesh.join(9);
-        mesh.run(SETTLE_MS + 100);
-        mesh.delay = 300;
-        let late = mesh.join(1);
-        mesh.run(100);
-        assert!(!mesh.view(late).seated());
-        assert_eq!(mesh.view(late).host(), None);
-        mesh.run(400);
-        assert_eq!(mesh.view(late).host(), Some(host), "it heard the host");
-        assert!(!mesh.view(late).seated());
-        mesh.run(1_000);
-        assert!(mesh.view(late).seated());
-        assert_eq!(mesh.agreed().0, Some(late));
+        let mut star = Star::new();
+        let host = star.create(9);
+        star.run(100);
+        star.delay = 300;
+        let late = star.join(1);
+        star.run(100);
+        assert!(!star.view(late).seated());
+        assert_eq!(star.view(late).host(), Some(host), "linked to it");
+        star.run(400);
+        assert!(!star.view(late).seated(), "the host's word is on its way");
+        star.run(1_000);
+        assert!(star.view(late).seated());
+        assert_eq!(star.agreed().0, Some(host));
     }
 
-    /// The host that seats a newcomer with a smaller id hands it the room at once: no moment
-    /// where two peers both think they host (seen with two native peers, issue #7).
+    /// Issue #63 (was « seating a smaller id hands over at once », issue #7): the host that seats
+    /// a newcomer with a smaller id stays the host, and sends it the seats, the room's circuit
+    /// and the others' `Hello`.
     #[test]
-    fn seating_a_smaller_id_hands_over_at_once() {
-        let (big, small) = (PeerKey(9), PeerKey(2));
-        let mut lobby = Lobby::new(big, Mesh::profile("Grand"), 0);
+    fn seating_a_smaller_id_changes_nothing() {
+        let (big, small, other) = (PeerKey(9), PeerKey(2), PeerKey(5));
+        let mut lobby = Lobby::new(big, Star::profile("Grand"), 0, true);
+        assert!(lobby.seated() && lobby.is_host());
+        lobby.connect(other, 0);
+        lobby.receive(other, Message::Hello(Star::profile("Autre")), 5);
+        lobby.drain_outbox();
         lobby.connect(small, 0);
-        lobby.receive(small, Message::Hello(Mesh::profile("Petit")), 10);
-        assert!(!lobby.seated());
-        // Alone seated: it sits, hosts, seats the newcomer, and is no longer the host.
-        lobby.update(SETTLE_MS);
-        assert!(lobby.seated());
-        assert_eq!(lobby.seats(), [big, small]);
-        assert_eq!(lobby.host(), Some(small));
-        assert!(!lobby.is_host());
-        // The newcomer got the seats.
+        lobby.receive(small, Message::Hello(Star::profile("Petit")), 10);
+        assert_eq!(lobby.seats(), [big, other, small]);
+        assert_eq!(lobby.host(), Some(big));
+        assert!(lobby.is_host());
         let sent: Vec<Outgoing> = lobby.drain_outbox().collect();
+        let to_small: Vec<&Message> = sent
+            .iter()
+            .filter(|out| out.to == small)
+            .map(|out| &out.message)
+            .collect();
+        assert!(matches!(to_small[0], Message::Hello(profile) if profile.name == "Grand"));
+        assert!(to_small.contains(&&Message::Relayed {
+            origin: other,
+            message: Box::new(Message::Hello(Star::profile("Autre"))),
+        }));
+        assert!(to_small.contains(&&Message::Circuit(0)));
+        assert!(to_small.contains(&&Message::Seats(vec![big, other, small])));
+        // The other client learns the newcomer, through us.
         assert!(sent.contains(&Outgoing {
-            to: small,
-            message: Message::Seats(vec![big, small]),
+            to: other,
+            message: Message::Relayed {
+                origin: small,
+                message: Box::new(Message::Hello(Star::profile("Petit"))),
+            },
         }));
     }
 
     /// The common clock: every peer reads the host's time, within a few ms.
     #[test]
     fn every_peer_reads_the_host_clock() {
-        let mut mesh = Mesh::new();
-        mesh.join(4);
-        mesh.run(1_234);
-        mesh.join(1);
-        mesh.join(7);
-        mesh.run(SETTLE_MS + 3_000);
-        let (host, _) = mesh.agreed();
+        let mut star = Star::new();
+        star.run(400);
+        star.create(4);
+        star.run(1_234);
+        star.join(1);
+        star.join(7);
+        star.run(3_000);
+        let (host, _) = star.agreed();
         let host = host.unwrap();
         // Each lobby counts from its own start: their clocks differ by 1 234 ms.
-        let reference = mesh.local(host);
-        assert_eq!(mesh.view(host).host_time_ms(reference), Some(reference));
+        let reference = star.local(host);
+        assert_eq!(star.view(host).host_time_ms(reference), Some(reference));
         let mut differ = false;
-        for lobby in &mesh.lobbies {
-            let local = mesh.local(lobby.me());
+        for lobby in &star.lobbies {
+            let local = star.local(lobby.me());
             differ |= local.abs_diff(reference) > 1_000;
             let read = lobby.host_time_ms(local).unwrap();
             assert!(read.abs_diff(reference) <= 2, "{read} vs {reference}");
@@ -1275,19 +1453,18 @@ mod tests {
     /// A peer of another version is listed apart, never seated, never sent anything more.
     #[test]
     fn another_version_is_listed_apart() {
-        let mut lobby = Lobby::new(PeerKey(5), Mesh::profile("Moi"), 0);
-        lobby.update(SETTLE_MS);
+        let mut lobby = Lobby::new(PeerKey(5), Star::profile("Moi"), 0, true);
         assert!(lobby.is_host());
         let stranger = PeerKey(1);
-        lobby.connect(stranger, SETTLE_MS);
+        lobby.connect(stranger, 10);
         lobby.drain_outbox();
-        lobby.receive_error(stranger, DecodeError::OtherVersion(2), SETTLE_MS + 10);
-        lobby.receive_error(stranger, DecodeError::Truncated, SETTLE_MS + 11);
-        lobby.update(SETTLE_MS + 5_000);
+        lobby.receive_error(stranger, DecodeError::OtherVersion(2), 20);
+        lobby.receive_error(stranger, DecodeError::Truncated, 21);
+        lobby.update(5_000);
         assert!(lobby.drain_outbox().all(|out| out.to != stranger));
         assert!(lobby.is_host());
         assert_eq!(lobby.seats(), [PeerKey(5)]);
-        let rows = lobby.players(SETTLE_MS + 5_000);
+        let rows = lobby.players(5_000);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].other_version, Some(2));
         assert!(rows[1].silent);
@@ -1298,20 +1475,21 @@ mod tests {
                 seated: true,
                 ..Profile::default()
             }),
-            SETTLE_MS + 5_001,
+            5_001,
         );
         assert!(lobby.is_host());
+        assert_eq!(lobby.seats(), [PeerKey(5)]);
     }
 
     /// Messages that make no sense from where they come are ignored: a race started by someone
-    /// else than the host, a room full sent by a newcomer, anything from an unknown peer.
+    /// else than the host, a room full sent by a client, anything from an unknown peer; issue
+    /// #63: a client takes nothing from another peer than its host.
     #[test]
     fn only_the_host_starts_a_race_and_strangers_are_ignored() {
-        let mut mesh = Mesh::new();
-        let a = mesh.join(1);
-        mesh.run(SETTLE_MS + 100);
-        let b = mesh.join(2);
-        mesh.run(500);
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        star.run(500);
         let start = RaceStart {
             race: 1,
             seed: 42,
@@ -1322,49 +1500,57 @@ mod tests {
             start_tick: 9_000,
             players: vec![a, b],
         };
-        assert!(!mesh.lobby(b).announce_race(start.clone()));
-        assert!(!mesh.lobby(b).choose_circuit(1));
-        let (now_a, now_b) = (mesh.local(a), mesh.local(b));
-        mesh.lobby(b)
+        assert!(!star.lobby(b).announce_race(start.clone()));
+        assert!(!star.lobby(b).choose_circuit(1));
+        let (now_a, now_b) = (star.local(a), star.local(b));
+        star.lobby(b)
             .receive(a, Message::StartRace(start.clone()), now_b);
-        assert_eq!(mesh.view(b).announced(), Some(&start));
-        mesh.lobby(a)
+        assert_eq!(star.view(b).announced(), Some(&start));
+        star.lobby(a)
             .receive(b, Message::StartRace(start.clone()), now_a);
-        mesh.lobby(a).receive(b, Message::Circuit(1), now_a);
-        assert_eq!(mesh.view(a).announced(), None);
-        assert_eq!(mesh.view(a).circuit(), 0);
-        assert!(mesh.lobby(a).announce_race(start));
-        mesh.lobby(a).receive(PeerKey(99), Message::Bye, now_a);
-        mesh.lobby(a).receive(PeerKey(99), Message::RoomFull, now_a);
-        assert!(!mesh.view(a).full());
-        assert_eq!(mesh.view(a).seats().len(), 2);
+        star.lobby(a).receive(b, Message::Circuit(1), now_a);
+        assert_eq!(star.view(a).announced(), None);
+        assert_eq!(star.view(a).circuit(), 0);
+        assert!(star.lobby(a).announce_race(start));
+        star.lobby(a).receive(PeerKey(99), Message::Bye, now_a);
+        star.lobby(a).receive(PeerKey(99), Message::RoomFull, now_a);
+        assert!(!star.view(a).full());
+        assert_eq!(star.view(a).seats().len(), 2);
+        // A client: another peer's word, even its circuit or the seats, is not the host's.
+        star.lobby(b)
+            .receive(PeerKey(99), Message::Circuit(1), now_b);
+        star.lobby(b)
+            .receive(PeerKey(99), Message::Seats(vec![PeerKey(99)]), now_b);
+        star.lobby(b).receive(PeerKey(99), Message::RoomFull, now_b);
+        assert_eq!(star.view(b).circuit(), 0);
+        assert_eq!(star.view(b).seats(), [a, b]);
+        assert!(!star.view(b).full());
     }
 
     /// Issue #9: the host chooses the circuit, then starts a race: every lobby has it, a
-    /// newcomer seated later too; choosing a circuit again ends the race; the races are numbered,
-    /// and a new host goes on counting.
+    /// newcomer seated later too; choosing a circuit again ends the race; the races are
+    /// numbered. Issue #63: the host leaving ends the room (nobody counts on).
     #[test]
     fn the_host_chooses_the_circuit_and_starts_the_races() {
-        let mut mesh = Mesh::new();
-        let a = mesh.join(1);
-        mesh.run(SETTLE_MS + 100);
-        let b = mesh.join(2);
-        mesh.run(1_000);
-        assert!(mesh.lobby(a).is_host());
-        assert!(mesh.lobby(a).choose_circuit(1));
-        mesh.run(100);
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        star.run(1_000);
+        assert!(star.lobby(a).is_host());
+        assert!(star.lobby(a).choose_circuit(1));
+        star.run(100);
         for key in [a, b] {
-            assert_eq!(mesh.view(key).circuit(), 1, "{key:?}");
-            assert_eq!(mesh.view(key).announced(), None);
+            assert_eq!(star.view(key).circuit(), 1, "{key:?}");
+            assert_eq!(star.view(key).announced(), None);
         }
         assert!(
-            mesh.lobby(b)
+            star.lobby(b)
                 .drain_events()
                 .any(|event| event == LobbyEvent::CircuitChosen(1))
         );
-        assert_eq!(mesh.view(a).next_race(), 1);
+        assert_eq!(star.view(a).next_race(), 1);
         let start = RaceStart {
-            race: mesh.view(a).next_race(),
+            race: star.view(a).next_race(),
             seed: 7,
             track: 1,
             laps: 3,
@@ -1373,63 +1559,64 @@ mod tests {
             start_tick: 12_000,
             players: vec![a, b],
         };
-        assert!(mesh.lobby(a).announce_race(start.clone()));
-        mesh.run(100);
-        assert_eq!(mesh.view(b).announced(), Some(&start));
+        assert!(star.lobby(a).announce_race(start.clone()));
+        star.run(100);
+        assert_eq!(star.view(b).announced(), Some(&start));
         // A newcomer seated during the race learns it.
-        let c = mesh.join(3);
-        mesh.run(1_000);
-        assert!(mesh.view(c).seated());
-        assert_eq!(mesh.view(c).announced(), Some(&start));
-        assert_eq!(mesh.view(c).circuit(), 1);
-        // The host leaves: the next one counts on.
-        mesh.close(a);
-        mesh.run(100);
-        assert!(mesh.view(b).is_host());
-        assert_eq!(mesh.view(b).next_race(), 2);
-        assert!(mesh.lobby(b).choose_circuit(0));
-        mesh.run(100);
-        assert_eq!(mesh.view(c).announced(), None);
-        assert_eq!(mesh.view(c).circuit(), 0);
+        let c = star.join(3);
+        star.run(1_000);
+        assert!(star.view(c).seated());
+        assert_eq!(star.view(c).announced(), Some(&start));
+        assert_eq!(star.view(c).circuit(), 1);
+        // A circuit again: free driving, the count goes on.
+        assert!(star.lobby(a).choose_circuit(0));
+        star.run(100);
+        assert_eq!(star.view(c).announced(), None);
+        assert_eq!(star.view(c).circuit(), 0);
         assert_eq!(
-            mesh.view(b).next_race(),
+            star.view(a).next_race(),
             2,
             "the count goes on after free driving"
         );
         // A newcomer in free driving learns the circuit.
-        let d = mesh.join(4);
-        mesh.run(1_000);
-        assert_eq!(mesh.view(d).circuit(), 0);
-        assert_eq!(mesh.view(d).announced(), None);
+        let d = star.join(4);
+        star.run(1_000);
+        assert_eq!(star.view(d).circuit(), 0);
+        assert_eq!(star.view(d).announced(), None);
+        // The host leaves: nobody can start a race any more.
+        star.close(a);
+        star.run(100);
+        for key in [b, c, d] {
+            assert!(star.view(key).host_left());
+            assert!(!star.lobby(key).choose_circuit(1));
+        }
     }
 
-    /// Issue #9: the room's clock is the host's, and goes on when the host changes: a newcomer
-    /// with a smaller id that hosts at once, then its departure. Each lobby counts from its own
-    /// start (clocks thousands of ms apart): at every millisecond, they all read the same room
-    /// time within a few ms, and nobody's jumps.
+    /// Issue #63 (was « the room clock goes on when the host leaves », issue #9): the room's
+    /// clock is the creator's for everyone, a newcomer with a smaller id changes nothing. Each
+    /// lobby counts from its own start (clocks thousands of ms apart): at every millisecond, they
+    /// all read the same room time within a few ms, and nobody's jumps; the host gone, its
+    /// clients keep the clock where it was going.
     #[test]
-    fn the_room_clock_goes_on_when_the_host_leaves() {
-        let mut mesh = Mesh::new();
-        let first = mesh.join(5);
-        mesh.run(SETTLE_MS + 100);
-        mesh.run(1_777);
-        let others: Vec<PeerKey> = [2, 9].into_iter().map(|n| mesh.join(n)).collect();
-        mesh.run(4_000);
-        let (host, _) = mesh.agreed();
-        assert_eq!(host, Some(others[0]));
-        let read = |mesh: &Mesh| -> Vec<(PeerKey, i64)> {
-            mesh.lobbies
+    fn the_room_clock_is_the_creators() {
+        let mut star = Star::new();
+        let first = star.create(5);
+        star.run(1_777);
+        star.join(9);
+        star.run(1_000);
+        star.join(2);
+        star.run(4_000);
+        let read = |star: &Star| -> Vec<(PeerKey, i64)> {
+            star.lobbies
                 .iter()
                 .map(|lobby| {
-                    let time = lobby.room_time_ms(mesh.local(lobby.me())).expect("no room");
+                    let time = lobby.room_time_ms(star.local(lobby.me())).expect("no room");
                     (lobby.me(), time as i64)
                 })
                 .collect()
         };
-        let mut before = read(&mesh);
-        // The room's clock is the first host's, though peer 2 hosts now: seated by the first
-        // one, it learned the room's clock from it before counting (`clock::RoomClock`).
-        let first_clock = mesh.local(first) as i64;
+        let mut before = read(&star);
+        let first_clock = star.local(first) as i64;
         for (key, time) in &before {
             assert!(
                 (time - first_clock).abs() <= 3,
@@ -1437,12 +1624,12 @@ mod tests {
             );
         }
         let mut spread_worst = 0;
-        for ms in 0..6_000 {
+        for ms in 0..3_000 {
             if ms == 1_000 {
-                mesh.close(others[0]);
+                star.close(first);
             }
-            mesh.run(1);
-            let now = read(&mesh);
+            star.run(1);
+            let now = read(&star);
             let times: Vec<i64> = now.iter().map(|(_, t)| *t).collect();
             let spread = times.iter().max().unwrap() - times.iter().min().unwrap();
             spread_worst = spread_worst.max(spread);
@@ -1458,25 +1645,169 @@ mod tests {
             before = now;
         }
         assert!(spread_worst <= 4, "{spread_worst} ms apart");
-        assert_eq!(mesh.agreed().0, Some(first));
     }
 
     /// Lost pings (unreliable channel) only leave the ping unknown; the lobby still works, and a
     /// peer silent for 3 s shows as such.
     #[test]
     fn lost_pings_do_not_break_the_lobby() {
-        let mut mesh = Mesh::new();
-        mesh.drop_unreliable = true;
-        let a = mesh.join(1);
-        mesh.run(SETTLE_MS + 100);
-        let b = mesh.join(2);
-        mesh.run(1_000);
-        let rows = mesh.view(a).players(mesh.local(a));
+        let mut star = Star::new();
+        star.drop_unreliable = true;
+        let a = star.create(1);
+        let b = star.join(2);
+        star.run(1_000);
+        let rows = star.view(a).players(star.local(a));
         let row = rows.iter().find(|r| r.key == b).unwrap();
         assert!(row.seated);
         assert_eq!(row.ping_ms, None);
-        mesh.run(SILENT_MS);
-        let rows = mesh.view(a).players(mesh.local(a));
+        star.run(SILENT_MS);
+        let rows = star.view(a).players(star.local(a));
         assert!(rows.iter().find(|r| r.key == b).unwrap().silent);
+    }
+
+    /// A small generator for the orders of the tests (xorshift).
+    struct Draws(u64);
+
+    impl Draws {
+        fn next(&mut self, below: u64) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0 % below.max(1)
+        }
+    }
+
+    /// The peers the host refused (the room was full) leave: their socket closes.
+    fn close_refused(star: &mut Star, order: &mut Vec<PeerKey>) {
+        let refused: Vec<PeerKey> = star
+            .lobbies
+            .iter()
+            .filter(|lobby| lobby.full())
+            .map(Lobby::me)
+            .collect();
+        for key in refused {
+            star.close(key);
+            order.retain(|k| *k != key);
+        }
+    }
+
+    /// Issue #63 acceptance: a room of 12 (the host and 11 clients), with arrivals and
+    /// departures in many orders (60 draws): clients that come one at a time or several in the
+    /// same millisecond, leave by a closed tab or a `Bye`, come back as new peers, a 13th
+    /// refused; random ids (the host's sometimes the smallest, sometimes not), random delays.
+    /// At every millisecond, every lobby's host is the creator (it never changes); once the
+    /// messages arrived, every lobby has the same list, in the order the host met the players,
+    /// and so the same grid slot (kart id) for each.
+    #[test]
+    fn a_room_of_twelve_agrees_in_every_order() {
+        for draw in 0..60u64 {
+            let mut draws = Draws(0x9e37_79b9_7f4a_7c15 ^ (draw + 1).wrapping_mul(0x2545_f491));
+            let mut star = Star::new();
+            star.delay = 5 + draws.next(40);
+            let host = star.create(u128::from(draws.next(1 << 40)) + 1);
+            let mut order: Vec<PeerKey> = vec![host];
+            let mut steps = 0;
+            while steps < 40 {
+                steps += 1;
+                let clients = star.lobbies.len() - 1;
+                match draws.next(10) {
+                    // One or several come at once (beyond 12, refused: they leave).
+                    0..=4 => {
+                        for _ in 0..1 + draws.next(3) {
+                            let key = star.join(u128::from(draws.next(1 << 40)) + 1);
+                            order.push(key);
+                        }
+                    }
+                    // A client leaves: its tab closes, or it says goodbye.
+                    5..=7 if clients > 0 => {
+                        let index = 1 + draws.next(clients as u64) as usize;
+                        let key = star.lobbies[index].me();
+                        if draws.next(2) == 0 {
+                            star.close(key);
+                        } else {
+                            star.lobby(key).leave();
+                            star.run(star.delay + 1);
+                            star.close(key);
+                        }
+                        order.retain(|k| *k != key);
+                    }
+                    _ => {}
+                }
+                star.run(draws.next(300));
+                close_refused(&mut star, &mut order);
+                if draws.next(4) == 0 {
+                    star.settle(50);
+                    close_refused(&mut star, &mut order);
+                    star.settle(50);
+                    let (seen, seats) = star.agreed();
+                    assert_eq!(seen, Some(host), "draw {draw}");
+                    assert!(seats.len() <= MAX_PLAYERS);
+                    assert_eq!(seats.first(), Some(&host));
+                }
+            }
+            star.settle(100);
+            close_refused(&mut star, &mut order);
+            star.settle(100);
+            let (seen, seats) = star.agreed();
+            assert_eq!(seen, Some(host), "draw {draw}");
+            // The host's order of arrival, the departed and the refused aside.
+            assert_eq!(seats, order, "draw {draw}");
+            for lobby in &star.lobbies {
+                assert!(lobby.seated(), "draw {draw}: {:?} not seated", lobby.me());
+                let me = lobby.me();
+                let slot = |l: &Lobby| l.seats().iter().position(|k| *k == me);
+                for other in &star.lobbies {
+                    assert_eq!(slot(other), slot(lobby), "draw {draw}");
+                }
+            }
+        }
+    }
+
+    /// Issue #63: the host with 11 clients, then the room is full; each client is linked with
+    /// the host only (the star checks every message), knows every other player from the host
+    /// (name and color), and sees the same list.
+    #[test]
+    fn twelve_players_know_each_other_through_the_host() {
+        let mut star = Star::new();
+        let host = star.create(77);
+        for n in 1..MAX_PLAYERS as u128 {
+            star.join(n);
+        }
+        star.run(1_500);
+        let (seen, seats) = star.agreed();
+        assert_eq!((seen, seats.len()), (Some(host), MAX_PLAYERS));
+        for lobby in &star.lobbies {
+            let rows = lobby.players(star.local(lobby.me()));
+            assert_eq!(rows.len(), MAX_PLAYERS);
+            for row in &rows {
+                assert!(row.seated);
+                assert_eq!(row.name, format!("Joueur {}", row.key.0 >> 64));
+                assert!(row.color.is_some());
+                // Linked with the host only, or (the host) with everyone.
+                let expected = if row.me {
+                    RowLink::Me
+                } else if lobby.is_host() || row.key == host {
+                    RowLink::Direct
+                } else {
+                    RowLink::ViaHost
+                };
+                assert_eq!(
+                    row.link,
+                    expected,
+                    "{:?} in {:?}'s list",
+                    row.key,
+                    lobby.me()
+                );
+            }
+            let colors: Vec<_> = seats.iter().map(|s| lobby.color_of(*s)).collect();
+            assert_eq!(
+                colors,
+                seats
+                    .iter()
+                    .map(|s| star.view(host).color_of(*s))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(star.links.len(), MAX_PLAYERS - 1);
     }
 }

@@ -10,6 +10,8 @@
 //! Its ICE servers are chosen by the game (`ice.rs`, issue #49), and its signaling goes through
 //! [`ObservedSignallerBuilder`] (`signaling.rs`): what the signaling server says comes out of
 //! [`NetSocket::poll`] too ([`SocketEvent::Signal`]), before the peers it concerns are connected.
+//! Since issue #63, it only lets the links of the star open: a host's with each client, a
+//! client's with its host (`signaling::SignalFilter`).
 //!
 //! Two traps of `matchbox_socket` 0.14, avoided here:
 //! - its message loop **panics** when asked to send to a peer whose data channels are not open
@@ -69,9 +71,16 @@ pub struct NetSocket {
 impl NetSocket {
     /// Joins the room at `room_url` (`room::room_url`) through the signaling server's WebSocket.
     /// `attempts`: how many times to try the signaling server before giving up (3 s apart).
-    /// `ice`: the STUN and TURN servers (none at all: only the host candidates).
-    pub fn open(room_url: &str, attempts: u16, ice: &IceServers) -> Self {
-        Self::open_with(room_url, attempts, ice, Arc::new(WebSocketSignallerBuilder))
+    /// `ice`: the STUN and TURN servers (none at all: only the host candidates). `hosting`: we
+    /// host the room (issue #63: we created it), or join it as a client.
+    pub fn open(room_url: &str, attempts: u16, ice: &IceServers, hosting: bool) -> Self {
+        Self::open_with(
+            room_url,
+            attempts,
+            ice,
+            Arc::new(WebSocketSignallerBuilder),
+            hosting,
+        )
     }
 
     /// The same, with another way to reach the signaling server (the tests).
@@ -80,6 +89,7 @@ impl NetSocket {
         attempts: u16,
         ice: &IceServers,
         signaller: Arc<dyn SignallerBuilder>,
+        hosting: bool,
     ) -> Self {
         let notes = Notes::default();
         let (socket, message_loop) = WebRtcSocketBuilder::new(room_url)
@@ -96,6 +106,7 @@ impl NetSocket {
             .signaller_builder(Arc::new(ObservedSignallerBuilder::new(
                 signaller,
                 notes.clone(),
+                hosting,
             )))
             .build();
         let task = IoTaskPool::get()
@@ -198,6 +209,15 @@ impl NetSocket {
         }
     }
 
+    /// Whether `peer` is connected (reported so, and not gone since).
+    pub fn is_connected(&self, peer: PeerKey) -> bool {
+        #[cfg(test)]
+        if let Some(port) = self.memory.as_ref() {
+            return port.is_connected(peer);
+        }
+        self.connected.iter().any(|(key, _)| *key == peer)
+    }
+
     /// Sends `message` to `to` on its channel; dropped if `to` is not connected (any more).
     pub fn send(&mut self, to: PeerKey, message: &Message) {
         #[cfg(test)]
@@ -240,47 +260,76 @@ impl NetSocket {
         self.task.is_none()
     }
 
-    /// The tests' socket in an in-memory room (issue #9): every port of `hub` is connected to
-    /// every other one, the packets go through their bytes. A WebRTC socket is made too (it never
-    /// reaches anything: no signaling server), only for the fields.
+    /// The tests' socket in an in-memory room (issue #9): the ports of `hub` connect as the
+    /// signaling server and the star would connect them (issue #63: the host with each client
+    /// that comes after it), the packets go through their bytes. A WebRTC socket is made too (it
+    /// never reaches anything: no signaling server), only for the fields.
     #[cfg(test)]
-    pub fn memory(hub: &memory::Hub, me: PeerKey) -> Self {
+    pub fn memory(hub: &memory::Hub, me: PeerKey, hosting: bool) -> Self {
         let mut socket = Self::open_with(
             "ws://127.0.0.1:9/memory",
             1,
             &IceServers::choose(&super::ice::StunChoice::Off, None, "ws://127.0.0.1:9"),
             Arc::new(memory::Nowhere),
+            hosting,
         );
-        socket.memory = Some(hub.port(me));
+        socket.memory = Some(hub.port(me, hosting));
         socket
     }
 }
 
-/// The number of a peer's id: the host is the smallest.
+/// The number of a peer's id.
 pub fn key_of(id: PeerId) -> PeerKey {
     PeerKey(id.0.as_u128())
 }
 
-/// The tests' in-memory room (issue #9): a hub every port is connected to. A packet sent is
-/// encoded, and arrives at the next poll of its receiver, `delay` polls later (both channels in
-/// order; the unreliable one can lose some).
+/// The tests' in-memory room (issue #9): a hub every port joins, like the signaling server's room.
+/// Since issue #63, the links open as the star opens them: each newcomer is announced to the ports
+/// already there, each one's [`SignalFilter`] says whether it offers and whether the newcomer takes
+/// the offer (the host with each client that comes after it; two hosts: the second is refused).
+/// A packet sent is encoded, and arrives at the next poll of its receiver, `delay` polls later
+/// (both channels in order; the unreliable one can lose some). The hub counts what each port sends.
+///
+/// [`SignalFilter`]: super::super::signaling::SignalFilter
 #[cfg(test)]
 pub mod memory {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
     use matchbox_socket::async_trait::async_trait;
-    use matchbox_socket::{PeerEvent, PeerRequest, SignalingError, Signaller, SignallerBuilder};
+    use matchbox_socket::{
+        PeerEvent, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
+    };
 
     use super::super::ice::Candidates;
     use super::super::protocol::{Channel, Message, PeerKey};
-    use super::super::signaling::SignalNote;
+    use super::super::signaling::{Admit, SignalFilter, SignalNote, test_peer_id};
     use super::SocketEvent;
+
+    /// A port of the room.
+    struct Slot {
+        key: PeerKey,
+        filter: SignalFilter,
+        /// What waits for it: (polls left, from, channel, bytes).
+        inbox: VecDeque<(u32, PeerKey, Channel, Box<[u8]>)>,
+        /// Notes of the signaling for it (the star's), given at its next poll.
+        notes: Vec<SignalNote>,
+    }
+
+    /// What a port sent, per channel (reliable, unreliable).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Traffic {
+        pub bytes: [u64; 2],
+        pub packets: [u64; 2],
+    }
 
     #[derive(Default)]
     struct State {
-        /// Open ports, and what waits for each: (polls left, from, channel, bytes).
-        ports: Vec<(PeerKey, VecDeque<(u32, PeerKey, Channel, Box<[u8]>)>)>,
+        ports: Vec<Slot>,
+        /// The links that opened, (offerer, answerer).
+        links: Vec<(PeerKey, PeerKey)>,
+        /// Pairs whose link never opens (a handshake that never ends).
+        cut: Vec<(PeerKey, PeerKey)>,
         /// Polls a packet takes to arrive.
         delay: u32,
         /// Every this many unreliable packets, one is lost (0: none).
@@ -288,6 +337,17 @@ pub mod memory {
         unreliable_sent: u32,
         /// Each port gives the signaling notes of a peer before its connection.
         signal_notes: bool,
+        traffic: Vec<(PeerKey, Traffic)>,
+    }
+
+    impl State {
+        fn linked(&self, a: PeerKey, b: PeerKey) -> bool {
+            self.links.contains(&(a, b)) || self.links.contains(&(b, a))
+        }
+
+        fn blocked(&self, a: PeerKey, b: PeerKey) -> bool {
+            self.cut.contains(&(a, b)) || self.cut.contains(&(b, a))
+        }
     }
 
     /// The room (cloned: the same one).
@@ -312,8 +372,69 @@ pub mod memory {
             self.0.lock().unwrap().signal_notes = true;
         }
 
-        pub fn port(&self, me: PeerKey) -> Port {
-            self.0.lock().unwrap().ports.push((me, VecDeque::new()));
+        /// The link between `a` and `b` never opens (issue #63: a handshake that never ends);
+        /// open already, it closes.
+        pub fn cut(&self, a: PeerKey, b: PeerKey) {
+            let mut state = self.0.lock().unwrap();
+            state.cut.push((a, b));
+            state
+                .links
+                .retain(|link| *link != (a, b) && *link != (b, a));
+        }
+
+        /// The links that opened: (offerer, answerer).
+        pub fn links(&self) -> Vec<(PeerKey, PeerKey)> {
+            self.0.lock().unwrap().links.clone()
+        }
+
+        /// What `key` sent so far.
+        pub fn traffic(&self, key: PeerKey) -> Traffic {
+            let state = self.0.lock().unwrap();
+            state
+                .traffic
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, traffic)| *traffic)
+                .unwrap_or_default()
+        }
+
+        /// `me` joins the room, as its host or a client: the signaling server announces it to the
+        /// ports there, and the star decides which links open (`signaling::SignalFilter`).
+        pub fn port(&self, me: PeerKey, hosting: bool) -> Port {
+            let mut state = self.0.lock().unwrap();
+            let mut mine = SignalFilter::new(hosting);
+            let id = |key: PeerKey| test_peer_id(key.0);
+            let _ = mine.admit(&PeerEvent::IdAssigned(id(me)));
+            let mut opened = Vec::new();
+            let mut notes = Vec::new();
+            for index in 0..state.ports.len() {
+                let there = state.ports[index].key;
+                match state.ports[index].filter.admit(&PeerEvent::NewPeer(id(me))) {
+                    Admit::Pass => {
+                        let offer = PeerEvent::Signal {
+                            sender: id(there),
+                            data: PeerSignal::Offer("v=0".into()),
+                        };
+                        match mine.admit(&offer) {
+                            Admit::Pass => opened.push((there, me)),
+                            Admit::Drop(note) => notes.extend(note),
+                        }
+                    }
+                    Admit::Drop(note) => state.ports[index].notes.extend(note),
+                }
+            }
+            for (a, b) in opened {
+                if !state.blocked(a, b) {
+                    state.links.push((a, b));
+                }
+            }
+            state.ports.push(Slot {
+                key: me,
+                filter: mine,
+                inbox: VecDeque::new(),
+                notes,
+            });
+            drop(state);
             Port {
                 hub: self.clone(),
                 me,
@@ -325,7 +446,9 @@ pub mod memory {
 
         /// `key`'s tab closes without a word: the others see it gone.
         pub fn drop_port(&self, key: PeerKey) {
-            self.0.lock().unwrap().ports.retain(|(k, _)| *k != key);
+            let mut state = self.0.lock().unwrap();
+            state.ports.retain(|slot| slot.key != key);
+            state.links.retain(|(a, b)| *a != key && *b != key);
         }
     }
 
@@ -334,6 +457,7 @@ pub mod memory {
         hub: Hub,
         me: PeerKey,
         joined: bool,
+        /// The peers reported connected.
         known: Vec<PeerKey>,
         open: bool,
     }
@@ -347,31 +471,44 @@ pub mod memory {
                 self.joined = true;
                 on(SocketEvent::Joined(self.me));
             }
-            let (present, packets, signal_notes) = {
+            let (linked, packets, signal_notes, notes) = {
                 let mut state = self.hub.0.lock().unwrap();
                 let signal_notes = state.signal_notes;
-                let present: Vec<PeerKey> = state.ports.iter().map(|(k, _)| *k).collect();
+                let me = self.me;
+                // In the order they opened: the host's links in its clients' order of arrival.
+                let linked: Vec<(PeerKey, bool)> = state
+                    .links
+                    .iter()
+                    .filter_map(|(a, b)| match (*a == me, *b == me) {
+                        (true, _) => Some((*b, true)),
+                        (_, true) => Some((*a, false)),
+                        _ => None,
+                    })
+                    .collect();
                 let mut packets = Vec::new();
-                if let Some((_, inbox)) = state.ports.iter_mut().find(|(k, _)| *k == self.me) {
+                let mut notes = Vec::new();
+                if let Some(slot) = state.ports.iter_mut().find(|slot| slot.key == me) {
+                    notes = std::mem::take(&mut slot.notes);
                     let mut kept = VecDeque::new();
-                    for (wait, from, channel, bytes) in inbox.drain(..) {
+                    for (wait, from, channel, bytes) in slot.inbox.drain(..) {
                         if wait == 0 {
                             packets.push((from, channel, bytes));
                         } else {
                             kept.push_back((wait - 1, from, channel, bytes));
                         }
                     }
-                    *inbox = kept;
+                    slot.inbox = kept;
                 }
-                (present, packets, signal_notes)
+                (linked, packets, signal_notes, notes)
             };
-            for key in &present {
-                if *key != self.me && !self.known.contains(key) {
-                    self.known.push(*key);
+            for note in notes {
+                on(SocketEvent::Signal(note));
+            }
+            for &(key, offer) in &linked {
+                if !self.known.contains(&key) {
+                    self.known.push(key);
                     if signal_notes {
-                        // The one with the smaller key was there first: it makes the offer.
-                        let (peer, offer, candidates) =
-                            (*key, self.me < *key, Candidates::default());
+                        let (peer, candidates) = (key, Candidates::default());
                         let ours = SignalNote::SdpSent {
                             peer,
                             offer,
@@ -391,13 +528,13 @@ pub mod memory {
                             on(SocketEvent::Signal(ours));
                         }
                     }
-                    on(SocketEvent::Connected(*key));
+                    on(SocketEvent::Connected(key));
                 }
             }
             let gone: Vec<PeerKey> = self
                 .known
                 .iter()
-                .filter(|key| !present.contains(key))
+                .filter(|key| !linked.iter().any(|(k, _)| k == *key))
                 .copied()
                 .collect();
             for key in gone {
@@ -411,11 +548,18 @@ pub mod memory {
             }
         }
 
+        pub fn is_connected(&self, peer: PeerKey) -> bool {
+            self.open && self.known.contains(&peer)
+        }
+
         pub fn send(&mut self, to: PeerKey, message: &Message) {
             if !self.open || !self.known.contains(&to) {
                 return;
             }
             let mut state = self.hub.0.lock().unwrap();
+            if !state.linked(self.me, to) {
+                return;
+            }
             let channel = message.channel();
             if channel == Channel::Unreliable && state.lose_every > 0 {
                 state.unreliable_sent += 1;
@@ -423,9 +567,23 @@ pub mod memory {
                     return;
                 }
             }
+            let bytes: Box<[u8]> = message.to_bytes().into();
+            let me = self.me;
+            match state.traffic.iter_mut().find(|(k, _)| *k == me) {
+                Some((_, traffic)) => {
+                    traffic.bytes[channel.index()] += bytes.len() as u64;
+                    traffic.packets[channel.index()] += 1;
+                }
+                None => {
+                    let mut traffic = Traffic::default();
+                    traffic.bytes[channel.index()] = bytes.len() as u64;
+                    traffic.packets[channel.index()] = 1;
+                    state.traffic.push((me, traffic));
+                }
+            }
             let delay = state.delay;
-            if let Some((_, inbox)) = state.ports.iter_mut().find(|(k, _)| *k == to) {
-                inbox.push_back((delay, self.me, channel, message.to_bytes().into()));
+            if let Some(slot) = state.ports.iter_mut().find(|slot| slot.key == to) {
+                slot.inbox.push_back((delay, me, channel, bytes));
             }
         }
 
@@ -437,6 +595,16 @@ pub mod memory {
 
         pub fn closed(&self) -> bool {
             !self.open
+        }
+    }
+
+    /// A socket dropped (a session replaced): its peer leaves the room, as when a socket's
+    /// connection to the signaling server closes.
+    impl Drop for Port {
+        fn drop(&mut self) {
+            if self.open {
+                self.hub.drop_port(self.me);
+            }
         }
     }
 

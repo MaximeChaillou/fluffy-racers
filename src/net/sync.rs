@@ -8,8 +8,9 @@
 //!   with issue #9. Without a room nothing here runs: solo is unchanged.
 //! - **Our kart** (authority): after each tick its position goes into a history of 30 ticks
 //!   ([`KartHistory`], for the victim's check of issue #34), and every second tick its state
-//!   ([`KartSnapshot`], 47 bytes) goes to every peer, on the unreliable channel. Its tick is the
-//!   room's common tick ([`TickClock`], from the host's clock).
+//!   ([`KartSnapshot`], 47 bytes) goes out on the unreliable channel: a client's to the host, the
+//!   host's in the packet it sends each client with every kart (issue #63, `relay.rs`). Its tick
+//!   is the room's common tick ([`TickClock`], from the host's clock).
 //! - **The others' karts** ([`RemoteKart`]): their states fill a buffer each
 //!   ([`SnapshotBuffer`]), shown about 100 ms after they arrive ([`Playback`]): interpolated,
 //!   extrapolated for 250 ms at most, teleported across a jump. Each one is a **kinematic**

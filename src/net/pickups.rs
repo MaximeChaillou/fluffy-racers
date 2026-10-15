@@ -12,20 +12,19 @@
 //!   croquette: ever); otherwise it is refused. A claim that comes after a grant is refused, even
 //!   if its tick is earlier: the first to reach the host wins. Every [`Verdict`] goes to every peer.
 //! - **Every peer keeps the same record** ([`Arbiter::record`]): the grants so far, and the
-//!   claims not decided yet (every peer receives every claim). When the host leaves, the next one
-//!   decides what the old one left undecided, from the same grants: nothing is given twice, and a
-//!   claim is never lost. A verdict that comes twice (the old host's and the new one's) counts
-//!   once: the first one stands.
+//!   claims not decided yet (every peer receives every claim: a client's through the host, issue
+//!   #63). Only the host decides, from start to end (it created the room); its verdicts reach
+//!   every client in its order. A verdict that comes twice counts once: the first one stands.
 //! - **The oreiller géant** (issue #61, GD § 8): a box draw that gives one is also a claim
 //!   ([`Pickup::Pillow`]). The host grants it when its box was granted and the rules allow one
 //!   on the claim's common tick ([`PillowRules`], with `items::pillow_allowed`, the solo rules):
 //!   not before 20 s of race, none while another one is in the race, 30 s after the last one
 //!   granted. Two claims on the same tick: the better grid slot. The record knows every oreiller
 //!   in the race ([`Pillow`]): granted (in its kart's slots), thrown (`ItemOut`), until its flight
-//!   ends, its kart's peer says it is gone without a throw (`PillowGone`) or leaves. When the host
-//!   changes, every peer sends again the grants of the oreillers it knows, and the new host waits
-//!   a little ([`Arbiter::handover`]) before deciding an oreiller: a grant of the old host that
-//!   reached another peer but not it arrives first, and two oreillers are never in the race.
+//!   ends, its kart's peer says it is gone without a throw (`PillowGone`) or leaves. Issue #63:
+//!   every claim reaches the host first (the clients' through their link with it), and it alone
+//!   decides: two oreillers are never in the race (the hand-over of issue #61 is gone with the
+//!   change of host).
 
 use super::protocol::{Claim, ItemId, KartId, PeerKey, Pickup, Spot, Verdict};
 use crate::items::pillow_allowed;
@@ -103,8 +102,6 @@ pub struct Arbiter {
     gone: Vec<ClaimKey>,
     /// The common tick of the last oreiller granted (its claim's).
     last_pillow: Option<u32>,
-    /// After a change of host: no oreiller decided before this common tick.
-    hold_pillows_until: Option<u32>,
 }
 
 impl Arbiter {
@@ -145,13 +142,11 @@ impl Arbiter {
 
     /// The host decides every claim it has (see the module's documentation): `respawn` gives the
     /// respawn time of a spot in ticks (`None`: it never comes back); the oreillers géants follow
-    /// `pillows` (issue #61), from common tick `now` on (after a change of host, they wait). The
-    /// verdicts go into `out`, in their order, and into the record.
+    /// `pillows` (issue #61). The verdicts go into `out`, in their order, and into the record.
     pub fn decide(
         &mut self,
         respawn: impl Fn(Spot) -> Option<u32>,
         pillows: &PillowRules,
-        now: u32,
         out: &mut Vec<Verdict>,
     ) {
         if self.pending.is_empty() {
@@ -167,16 +162,8 @@ impl Arbiter {
                 matches!(claim.pickup, Pickup::Pillow { .. }),
             )
         });
-        let held = self.hold_pillows_until.is_some_and(|until| now < until);
-        let mut kept = 0;
-        for i in 0..pending.len() {
-            let (from, claim) = pending[i];
+        for &(from, claim) in &pending {
             let pillow = matches!(claim.pickup, Pickup::Pillow { .. });
-            if pillow && held {
-                pending[kept] = pending[i];
-                kept += 1;
-                continue;
-            }
             let key = ClaimKey::of(&claim);
             let granted = if pillow {
                 self.pillow_allowed(&claim, pillows)
@@ -188,7 +175,7 @@ impl Arbiter {
             out.push(verdict);
         }
         // Keep the allocation of the pending list (nothing came in meanwhile).
-        pending.truncate(kept);
+        pending.clear();
         self.pending = pending;
     }
 
@@ -217,8 +204,7 @@ impl Arbiter {
     }
 
     /// A verdict (the host's, or ours as the host): into the record, its claim no longer
-    /// pending. Returns false when that claim was decided already (a repeat after a change of
-    /// host: the first verdict stands).
+    /// pending. Returns false when that claim was decided already (the first verdict stands).
     pub fn record(&mut self, verdict: &Verdict) -> bool {
         let key = ClaimKey::of(&verdict.claim);
         let from = self
@@ -320,25 +306,8 @@ impl Arbiter {
         &self.pillows
     }
 
-    /// The host changed (issue #61): the oreillers wait until common tick `until` (the grants the
-    /// old host sent to the others, not to us, come first).
-    pub fn handover(&mut self, until: u32) {
-        self.hold_pillows_until = Some(until);
-    }
-
-    /// The grants of the oreillers we know in the race: sent again to a new host.
-    pub fn pillow_grants(&self) -> impl Iterator<Item = Verdict> + '_ {
-        self.pillows.iter().filter_map(|p| {
-            p.claim.map(|claim| Verdict {
-                claim,
-                granted: true,
-            })
-        })
-    }
-
-    /// `peer` left the room: its claims are dropped (its karts are gone, or another peer drives
-    /// them now), and the oreillers its karts held (issue #61: a new host's bots start with empty
-    /// slots).
+    /// `peer` left the room: its claims are dropped (its karts are gone), and the oreillers its
+    /// karts held (issue #61).
     pub fn forget(&mut self, peer: PeerKey) {
         self.pending.retain(|(from, _)| *from != peer);
         self.pillows
@@ -394,7 +363,7 @@ mod tests {
 
     fn decide(arbiter: &mut Arbiter) -> Vec<Verdict> {
         let mut out = Vec::new();
-        arbiter.decide(respawn, &PillowRules::NONE, 0, &mut out);
+        arbiter.decide(respawn, &PillowRules::NONE, &mut out);
         out
     }
 
@@ -503,14 +472,14 @@ mod tests {
         assert_eq!(arbiter.decided(&ClaimKey::of(&claim)), Some(true));
     }
 
-    /// Issue #53: the host leaves in the middle of the arbitration. Every peer saw every claim
-    /// and every verdict that reached it: the new host decides what the old one left, from the
-    /// same grants, without giving anything twice. A verdict of the old host that never reached
-    /// the new one is decided again, the same way; when it then reaches a peer that had it, it
-    /// counts once.
+    /// Issue #63 (was « a new host decides what the old one left », issue #53): in the star,
+    /// every claim reaches the host first, a client's through its link with it, and the host
+    /// relays it to the other clients before its verdict; the clients record the host's verdicts
+    /// in its order: the same grants everywhere, nothing twice. The host leaving, nobody decides
+    /// any more (the room is over): what was left stays undecided, nothing is given.
     #[test]
-    fn a_new_host_decides_what_the_old_one_left() {
-        // Ana hosts; Bob and Cyd keep the record.
+    fn the_clients_keep_the_hosts_record() {
+        // Ana hosts; Bob and Cyd are her clients.
         let mut ana = Arbiter::default();
         let mut bob = Arbiter::default();
         let mut cyd = Arbiter::default();
@@ -519,60 +488,36 @@ mod tests {
             (CYD, on_box(2, 9, 301)),
             (CYD, on_box(4, 9, 302)),
             (BOB, on_box(4, 7, 303)),
-            (BOB, on_box(6, 7, 304)),
+            (ANA, on_box(6, 4, 304)),
         ];
-        // The first three reach everyone; Ana decides them.
-        for (from, claim) in &claims[..3] {
-            for arbiter in [&mut ana, &mut bob, &mut cyd] {
-                arbiter.claim(*from, *claim);
+        // Each claim reaches Ana, then (relayed, or her own) the other clients.
+        for (from, claim) in &claims[..4] {
+            assert!(ana.claim(*from, *claim));
+            for (client, arbiter) in [(BOB, &mut bob), (CYD, &mut cyd)] {
+                if client != *from {
+                    arbiter.claim(*from, *claim);
+                }
             }
         }
         let first = decide(&mut ana);
         assert_eq!(granted(&first), vec![(7, 300), (9, 302)]);
-        // Bob gets every verdict; Cyd only the first one: Ana leaves with the others on the way.
         for verdict in &first {
             assert!(bob.record(verdict));
-        }
-        assert!(cyd.record(&first[0]));
-        // The last two claims reach Bob and Cyd, never Ana.
-        for (from, claim) in &claims[3..] {
-            bob.claim(*from, *claim);
-            cyd.claim(*from, *claim);
-        }
-        // Ana's own claims, if any, are dropped with her.
-        bob.forget(ANA);
-        // Bob hosts now: he decides what is left, the same way Ana would have.
-        assert_eq!(bob.pending().count(), 2);
-        let second = decide(&mut bob);
-        assert_eq!(granted(&second), vec![(7, 304)]);
-        assert!(!second[0].granted, "box 4 is Cyd's kart's: refused");
-        // Cyd decided nothing; he records Bob's verdicts, then Ana's late ones (repeats).
-        for verdict in &second {
             assert!(cyd.record(verdict));
         }
-        assert_eq!(cyd.pending().count(), 2, "Ana's last verdicts still owed");
-        // Had Cyd become the host, he would have decided them again, the same way.
-        let mut repeat = cyd.clone();
-        let decided = decide(&mut repeat);
-        assert_eq!(
-            decided.iter().map(|v| v.granted).collect::<Vec<_>>(),
-            first[1..].iter().map(|v| v.granted).collect::<Vec<_>>(),
-            "decided again, the same way"
-        );
-        for verdict in &first[1..] {
-            assert!(cyd.record(verdict));
-            assert!(!bob.record(verdict), "a repeat counts once");
+        assert_eq!(bob.grants(), ana.grants());
+        assert_eq!(cyd.grants(), ana.grants());
+        assert_eq!((bob.pending().count(), cyd.pending().count()), (0, 0));
+        // A verdict that came twice counts once.
+        assert!(!bob.record(&first[0]));
+        // Ana's last claim reaches her clients; she leaves before deciding it.
+        for arbiter in [&mut bob, &mut cyd] {
+            arbiter.claim(ANA, claims[4].1);
+            arbiter.forget(ANA);
         }
-        // Everyone ends with the same grants: nothing twice, nothing lost.
-        let spots = |a: &Arbiter| {
-            let mut all: Vec<(Spot, KartId)> =
-                a.grants().iter().map(|g| (g.spot, g.kart)).collect();
-            all.sort_by_key(|(spot, kart)| (format!("{spot:?}"), *kart));
-            all
-        };
-        assert_eq!(spots(&bob), spots(&cyd));
-        assert_eq!(spots(&bob).len(), 3);
-        assert_eq!(cyd.pending().count(), 0);
+        for arbiter in [&bob, &cyd] {
+            assert_eq!(arbiter.grants(), ana.grants(), "nothing more is given");
+        }
     }
 
     // --- Issue #61: the oreiller géant ------------------------------------------------------
@@ -600,9 +545,11 @@ mod tests {
         arbiter.claim(from, pillow(index, kart, tick));
     }
 
-    fn decide_at(arbiter: &mut Arbiter, now: u32) -> Vec<Verdict> {
+    /// The host decides at common tick `_now` (issue #63: the moment no longer matters, no
+    /// change of host to wait for; kept to read when each decision is made).
+    fn decide_at(arbiter: &mut Arbiter, _now: u32) -> Vec<Verdict> {
         let mut out = Vec::new();
-        arbiter.decide(respawn, &RULES, now, &mut out);
+        arbiter.decide(respawn, &RULES, &mut out);
         out
     }
 
@@ -677,7 +624,7 @@ mod tests {
         let mut free = Arbiter::default();
         draw_pillow(&mut free, ANA, 1, 4, 90_000);
         let mut out = Vec::new();
-        free.decide(respawn, &PillowRules::NONE, 90_000, &mut out);
+        free.decide(respawn, &PillowRules::NONE, &mut out);
         assert!(pillows_granted(&out).is_empty());
         assert_eq!(granted(&out), vec![(4, 90_000)], "the box is still its own");
         // Two karts on one box, both draw an oreiller: the box and its oreiller go to the better
@@ -714,7 +661,7 @@ mod tests {
             pillows_granted(&decide_at(&mut arbiter, 3_800)),
             vec![(7, 3_800)]
         );
-        // Its peer leaves: gone (a new host's bots start with empty slots).
+        // Its peer leaves: gone.
         arbiter.forget(BOB);
         assert!(arbiter.pillows().is_empty());
         // Another peer, which never had the claims: the "gone" first, then the grant.
@@ -748,62 +695,35 @@ mod tests {
         assert_eq!(flying.pillows().len(), 1);
     }
 
-    /// Issue #61 acceptance: the host (Ana) grants Cyd's kart an oreiller and leaves; its
-    /// verdicts reached Cyd, not Bob, who never got Cyd's claims either (still on their way).
-    /// Bob hosts now, with Dan's oreiller claimed: he waits (`handover`), Cyd sends him the grant
-    /// he knows again, and Bob refuses Dan's: never two oreillers. Without the wait, Bob would
-    /// have granted Dan's.
+    /// Issue #63 (was « a new host never grants a second oreiller », issue #61): the host alone
+    /// grants the oreillers. Cyd's kart and Dan's draw one, both clients: their claims reach Ana
+    /// (the host), which grants Cyd's and refuses Dan's (one in the race), and relays the claims
+    /// and her verdicts to Bob, another client: the same record, one oreiller, Cyd's kart's. Ana
+    /// leaving changes nothing in the record, and nobody grants another.
     #[test]
-    fn a_new_host_never_grants_a_second_oreiller() {
+    fn the_host_alone_grants_the_oreillers() {
         const DAN: PeerKey = PeerKey(4 << 100);
         let mut ana = Arbiter::default();
         let mut bob = Arbiter::default();
-        let mut cyd = Arbiter::default();
-        // Cyd's kart 9 draws an oreiller: Ana and Cyd have the claims.
-        for arbiter in [&mut ana, &mut cyd] {
+        // Cyd's kart 9 draws an oreiller, then Dan's kart 10.
+        for arbiter in [&mut ana, &mut bob] {
             draw_pillow(arbiter, CYD, 2, 9, 2_000);
-        }
-        let first = decide_at(&mut ana, 2_001);
-        assert_eq!(pillows_granted(&first), vec![(9, 2_000)]);
-        for verdict in &first {
-            assert!(cyd.record(verdict));
-        }
-        assert_eq!(cyd.pillows().len(), 1);
-        // Dan's kart 10 draws one too, after: Bob and Cyd have its claims. Ana leaves.
-        for arbiter in [&mut bob, &mut cyd] {
             draw_pillow(arbiter, DAN, 5, 10, 2_005);
-            arbiter.forget(ANA);
-            arbiter.handover(2_010 + 30);
         }
-        let hasty = {
-            let mut hasty = bob.clone();
-            decide_at(&mut hasty, 2_040)
-        };
-        assert_eq!(
-            pillows_granted(&hasty),
-            vec![(10, 2_005)],
-            "without Cyd's word, Bob would give a second one"
-        );
-        // Bob waits: Dan's box is decided, not its oreiller.
-        let waiting = decide_at(&mut bob, 2_012);
-        assert_eq!(granted(&waiting), vec![(10, 2_005)]);
-        assert_eq!(bob.pending().count(), 1);
-        // Cyd sends the grants he knows again: Bob records Ana's.
-        let again: Vec<Verdict> = cyd.pillow_grants().collect();
-        assert_eq!(again.len(), 1);
-        for verdict in &again {
+        let verdicts = decide_at(&mut ana, 2_010);
+        assert_eq!(pillows_granted(&verdicts), vec![(9, 2_000)]);
+        assert_eq!(granted(&verdicts).len(), 3, "both boxes, one oreiller");
+        for verdict in &verdicts {
             assert!(bob.record(verdict));
         }
-        let after = decide_at(&mut bob, 2_040);
-        assert!(pillows_granted(&after).is_empty(), "{after:?}");
-        assert_eq!(bob.pending().count(), 0);
-        // Cyd records Bob's verdicts: the same record, one oreiller, Cyd's kart's.
-        for verdict in waiting.iter().chain(&after) {
-            cyd.record(verdict);
-        }
-        for arbiter in [&bob, &cyd] {
+        for arbiter in [&ana, &bob] {
             assert_eq!(arbiter.pillows().len(), 1);
             assert_eq!(arbiter.pillows()[0].kart, 9);
+            assert_eq!(arbiter.pending().count(), 0);
         }
+        // Ana leaves: Bob's record stays as it was.
+        bob.forget(ANA);
+        assert_eq!(bob.pillows().len(), 1);
+        assert_eq!(bob.grants(), ana.grants());
     }
 }

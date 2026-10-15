@@ -11,8 +11,8 @@
 //!   (`race::OnlineFlow`): the grid, the countdown and GO on the same tick for everyone, the
 //!   rocket start judged by each peer for its own kart.
 //! - **The bots**: the host spawns them (`RaceGrid::bots`) and drives them; their states go out
-//!   like its own kart's ([`NetKart`]). The others show them as remote karts. A new host takes
-//!   them over where they were shown ([`take_over_bots`]).
+//!   like its own kart's ([`NetKart`]). The others show them as remote karts. Issue #63: the host
+//!   is the room's creator; if it leaves, the room is over (nobody takes the bots over).
 //! - **Checkpoints** ([`record_progress`], [`follow_remote_progress`]): the peer that has
 //!   authority over a kart tells everyone each checkpoint (reliable); the others give the remote
 //!   kart the same laps, times and finish, and its live distance from where it is shown. Every
@@ -31,7 +31,6 @@
 //! The items and the croquettes (issue #53) are shared by `items_online.rs`.
 
 use bevy::prelude::*;
-use bevy_rapier3d::prelude::Velocity;
 
 use super::interp::TICK_MS;
 use super::items_online::OnlineItems;
@@ -43,19 +42,18 @@ use super::sync::{
     KartSync, NetKart, OnlineLevel, OnlineSlot, RemoteKartProxy, RosterEntry, Showing, virtual_ms,
 };
 use super::tuning::NetTuning;
-use super::{Lobby, NetSession, NetStatus, NetSystems, STUCK_MS, now_ms};
+use super::{Lobby, NetSession, NetStatus, NetSystems, now_ms};
 use crate::admin::tracks::circuits;
-use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_loadout, bot_seed};
-use crate::characters::{DriverLooks, Roster};
+use crate::bots::{Bot, BotDifficulty, bot_loadout};
+use crate::characters::Roster;
 use crate::interactions::{
     InteractionClock, InteractionSystems, InteractionTuning, KartGrabbed, KartStruck, Paw,
     PawMotion, StrikeAnswer, Swing, SwingKind, TetherEnded, ticks,
 };
 use crate::interpolation::InterpolationSystems;
 use crate::kart::{
-    ColorSet, Kart, KartColor, KartPaint, KartSystems, KartTuning, KartVisualAssets,
-    OnlinePlayerColors, PALETTE_SIZE, PlayerKart, Remote, SpawnPoint, StatsTuning, bot_colors,
-    kart_body_with_stats, spawn_kart_visual_with_driver,
+    ColorSet, Kart, KartColor, KartPaint, KartSystems, OnlinePlayerColors, PALETTE_SIZE,
+    PlayerKart, Remote, SpawnPoint, bot_colors,
 };
 use crate::level::{LoadLevel, Online};
 use crate::race::{
@@ -71,8 +69,7 @@ pub struct OnlineRace {
     pub shared: SharedRace,
     /// We are on its grid (otherwise we watch it, driving freely).
     pub racing: bool,
-    /// Its bots are driven here: we hosted when it started (`bots::BotPlugin` spawned them), or
-    /// took them over since.
+    /// Its bots are driven here: we host it (`bots::BotPlugin` spawned them).
     pub bots_here: bool,
     /// The bots' parts (`bots::bot_loadout`), by grid slot: their animals on our screen.
     bot_parts: Vec<[u8; 4]>,
@@ -181,8 +178,7 @@ impl Plugin for OnlineRacePlugin {
                         session.is_some() || online.is_some()
                     },
                 ),
-                (take_over_bots, tag_local_bots)
-                    .chain()
+                tag_local_bots
                     .run_if(resource_exists::<OnlineRace>)
                     .run_if(resource_exists::<KartSync>)
                     .run_if(resource_exists::<NetSession>),
@@ -270,17 +266,8 @@ fn online_mode(
         .filter(|session| session.status == NetStatus::InRoom)
         .and_then(|session| session.lobby.as_ref())
         .filter(|lobby| lobby.seated());
-    // Our place: once everyone shares the seat order, and the peers being connected had their
-    // chance to sit with us (given up on after 10 s, like in the lobby).
+    // Our place: issue #63, in the host's list of seats, ours as soon as we are seated.
     let now = now_ms(&real);
-    let connecting = session.as_deref().is_some_and(|session| {
-        session
-            .links
-            .pending()
-            .iter()
-            .any(|link| now.saturating_sub(link.since_ms) < STUCK_MS)
-    });
-    let agreed = lobby.is_some_and(|lobby| lobby.seats_agreed()) && !connecting;
     match (online.as_deref_mut(), lobby) {
         (Some(level), lobby) if lobby.is_none_or(|lobby| lobby.me() != level.me) => {
             info!("network: online driving ends, back to the level before");
@@ -305,7 +292,7 @@ fn online_mode(
             *grid = level.solo_grid;
             levels.write(LoadLevel::on(level.solo_track.clone(), level.solo_mode));
         }
-        (None, Some(lobby)) if agreed => {
+        (None, Some(lobby)) => {
             let me = lobby.me();
             let seat = seat_of(lobby);
             info!("network: online driving, seat {seat}");
@@ -472,101 +459,6 @@ fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
             left: kart.left,
         })
     }));
-}
-
-/// We became the host during a race (the host left): the bots are ours now. Each one goes on
-/// from where its body was shown, at its speed, with its progress; its network id stays. Its
-/// brain starts afresh (its seed is the same); a tether it had is lost (docs/ARCHITECTURE.md).
-#[allow(clippy::too_many_arguments)]
-fn take_over_bots(
-    mut commands: Commands,
-    session: Res<NetSession>,
-    mut race: ResMut<OnlineRace>,
-    online: Option<Res<OnlineLevel>>,
-    layout: Option<Res<TrackLayout>>,
-    course: Option<Res<Course>>,
-    (tuning, kart_tuning, stats_tuning, roster): (
-        Res<BotTuning>,
-        Res<KartTuning>,
-        Res<StatsTuning>,
-        Res<Roster>,
-    ),
-    looks: Option<Res<DriverLooks>>,
-    visuals: Option<Res<KartVisualAssets>>,
-    local: Query<&Racer, (With<Bot>, With<Kart>)>,
-    proxies: Query<(
-        &RemoteKartProxy,
-        &Transform,
-        &Velocity,
-        Option<&RaceProgress>,
-    )>,
-) {
-    let hosting = session.lobby.as_ref().is_some_and(Lobby::is_host);
-    let showing = online.is_some_and(|o| o.showing == Showing::Race(race.shared.race()));
-    let (Some(layout), Some(course), Some(lobby)) = (layout, course, session.lobby.as_ref()) else {
-        return;
-    };
-    if !hosting || !race.racing || !showing || race.bots_here {
-        return;
-    }
-    race.bots_here = true;
-    let start = &race.shared.start;
-    let (colors, _) = race_colors(lobby, start);
-    let difficulty = BotDifficulty::ALL
-        .get(usize::from(start.difficulty))
-        .copied()
-        .unwrap_or_default();
-    for kart in race.shared.karts().iter().filter(|kart| kart.is_bot()) {
-        if local
-            .iter()
-            .any(|racer| racer.grid_slot == usize::from(kart.kart))
-        {
-            continue;
-        }
-        let slot = usize::from(kart.kart);
-        let shown = proxies.iter().find(|(proxy, ..)| proxy.kart == kart.kart);
-        let (transform, velocity) = match shown {
-            Some((_, transform, velocity, _)) => (*transform, velocity.linear),
-            None => (layout.grid[slot.min(layout.grid.len() - 1)], Vec3::ZERO),
-        };
-        let mut progress = shown
-            .and_then(|(.., progress)| progress.cloned())
-            .unwrap_or_else(|| RaceProgress::on_grid(&course, transform.translation, course.laps));
-        // What every peer knows of its checkpoints, from the old host's events.
-        while progress.passed < u32::from(kart.passed()) && !progress.finished() {
-            progress.validate(&course, kart.checkpoints[progress.passed as usize]);
-        }
-        info!(
-            "network: we host now: bot {slot} is ours, at {}",
-            transform.translation
-        );
-        let loadout = bot_loadout(&roster, start.seed, slot);
-        let body = commands
-            .spawn((
-                Name::new(format!("Bot {}", slot + 1)),
-                kart_body_with_stats(
-                    &kart_tuning,
-                    &stats_tuning,
-                    roster.stats(&loadout),
-                    transform,
-                ),
-                Racer::new(slot),
-                progress,
-                bot(difficulty, bot_seed(start.seed, slot), &tuning),
-                NetKart(kart.kart),
-                KartPaint(colors[slot % PALETTE_SIZE]),
-            ))
-            .insert(Velocity {
-                linear: velocity,
-                angular: Vec3::ZERO,
-            })
-            .id();
-        if let Some(visuals) = &visuals {
-            let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
-            let color = colors[slot % PALETTE_SIZE];
-            spawn_kart_visual_with_driver(&mut commands, visuals, body, color, driver);
-        }
-    }
 }
 
 /// Online (issue #55), every frame: our kart wears the color the lobby gives it (another player

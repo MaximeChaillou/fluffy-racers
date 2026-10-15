@@ -235,9 +235,27 @@ fn two_games_agree_on_colors_through_a_local_signaling_server() {
         app
     };
     let mut games = [game("Ana"), game("Bob")];
-    for app in &mut games {
-        app.world_mut().write_message(NetAction::Join(code.clone()));
+    // Issue #63: Ana creates the room (she is in it), then Bob opens its link.
+    games[0]
+        .world_mut()
+        .write_message(NetAction::Host(code.clone()));
+    let since = Instant::now();
+    while games[0]
+        .world()
+        .get_resource::<NetSession>()
+        .map(|session| session.status.clone())
+        != Some(NetStatus::InRoom)
+    {
+        assert!(
+            since.elapsed() < Duration::from_secs(10),
+            "Ana never got in"
+        );
+        games[0].update();
+        std::thread::sleep(Duration::from_millis(5));
     }
+    games[1]
+        .world_mut()
+        .write_message(NetAction::Join(code.clone()));
     let start = Instant::now();
     let wait = |games: &mut [App; 2], seconds: u64, what: &str, done: &dyn Fn(&mut App) -> bool| {
         let since = Instant::now();
@@ -323,7 +341,7 @@ fn two_games_agree_on_colors_through_a_local_signaling_server() {
     println!("bots: host {of_host:?}, guest {of_guest:?}");
     assert_eq!(of_host, of_guest);
     assert!(!of_host.contains(&Red) && !of_host.contains(&Orange));
-    for app in &mut games {
-        assert!(painted(app));
-    }
+    // Issue #63: the other player's kart in the race, once its first state came (the bots' came
+    // first, above).
+    wait(&mut games, 10, "the players' colors in the race", &painted);
 }

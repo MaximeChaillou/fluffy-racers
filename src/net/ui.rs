@@ -15,7 +15,8 @@ use super::NetSystems;
 use super::ice::{is_loopback_host, signal_host};
 use super::{
     Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, NetTuning,
-    OnlineRace, Stuck, default_signal, invite_link, is_local_signal, native_command, now_ms,
+    OnlineRace, RowLink, Stuck, default_signal, invite_link, is_local_signal, native_command,
+    now_ms,
 };
 use crate::admin::tracks::{TrackEntry, circuits};
 use crate::characters::{PartKind, Roster};
@@ -95,24 +96,33 @@ fn join_launch_room(
         settings.pseudo = options.pseudo;
     }
     if let Some(room) = options.room {
-        actions.write(NetAction::Join(room));
+        // Issue #63: `host=1` (`--host`) only in the creator's own address.
+        actions.write(if options.host {
+            NetAction::Host(room)
+        } else {
+            NetAction::Join(room)
+        });
     }
 }
 
-/// The room's code in the address bar (`?room=CODE`), so that a reload stays in it and the
-/// address is the invitation; removed when the player leaves.
+/// The room's code in the address bar (`?room=CODE`), so that a reload stays in it; removed when
+/// the player leaves. Issue #63: the host's says `&host=1` (a reload hosts the room again), never
+/// the invitation link.
 #[cfg(target_arch = "wasm32")]
-fn page_address(session: Option<Res<NetSession>>, mut shown: Local<Option<super::RoomCode>>) {
-    let room = session.map(|session| session.room.clone());
+fn page_address(
+    session: Option<Res<NetSession>>,
+    mut shown: Local<Option<(super::RoomCode, bool)>>,
+) {
+    let room = session.map(|session| (session.room.clone(), session.hosting));
     if *shown != room {
-        platform::show_room(room.as_ref());
+        platform::show_room(room.as_ref().map(|(room, host)| (room, *host)));
         *shown = room;
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 mod platform {
-    use super::super::{LaunchOptions, RoomCode, query_with_room};
+    use super::super::{LaunchOptions, RoomCode, host_query, query_with_room};
 
     pub fn launch_options() -> LaunchOptions {
         web_sys::window()
@@ -136,7 +146,7 @@ mod platform {
         ))
     }
 
-    pub fn show_room(room: Option<&RoomCode>) {
+    pub fn show_room(room: Option<(&RoomCode, bool)>) {
         let Some(window) = web_sys::window() else {
             return;
         };
@@ -146,7 +156,12 @@ mod platform {
         else {
             return;
         };
-        let address = format!("{path}{}{hash}", query_with_room(&query, room));
+        let query = match room {
+            Some((room, true)) => host_query(&query, room),
+            Some((room, false)) => query_with_room(&query, Some(room)),
+            None => query_with_room(&query, None),
+        };
+        let address = format!("{path}{query}{hash}");
         if let Ok(history) = window.history() {
             let null = web_sys::wasm_bindgen::JsValue::NULL;
             let _ = history.replace_state_with_url(&null, "", Some(&address));
@@ -223,7 +238,7 @@ fn lobby_window(
 
 /// No room yet.
 fn offline(ui: &mut egui::Ui, settings: &NetSettings, actions: &mut MessageWriter<NetAction>) {
-    ui.label("Joue avec tes amis : crée une partie, puis envoie-leur le lien.");
+    ui.label("Joue avec tes amis : crée une partie (tu en es l'hôte), puis envoie-leur le lien.");
     if ui
         .button(RichText::new("Créer une partie").strong().size(16.0))
         .clicked()
@@ -314,6 +329,46 @@ fn in_room(
                 actions.write(NetAction::CreateRoom);
             }
         }
+        // Issue #63: the host gone, the room is over (nobody takes over).
+        NetStatus::HostLeft => {
+            ui.label(RichText::new("L'hôte a quitté la partie.").color(BAD));
+            ui.small("La course s'arrête : tu reviens au circuit d'avant.");
+            ui.horizontal(|ui| {
+                if ui.button("Rejoindre de nouveau").clicked() {
+                    actions.write(NetAction::Join(room.clone()));
+                }
+                if ui.button("Créer une partie").clicked() {
+                    actions.write(NetAction::CreateRoom);
+                }
+            });
+            ui.small("« Rejoindre de nouveau » : si l'hôte a rechargé sa page, la partie reprend.");
+        }
+        NetStatus::HostTaken => {
+            ui.label(RichText::new(format!("La partie {room} a déjà un hôte.")).color(BAD));
+            ui.small(
+                "Cette adresse est celle de l'hôte (« host=1 ») : pour la rejoindre, ouvre le lien \
+                 d'invitation, sans « host=1 ».",
+            );
+            ui.horizontal(|ui| {
+                if ui.button("La rejoindre").clicked() {
+                    actions.write(NetAction::Join(room.clone()));
+                }
+                if ui.button("Créer une autre partie").clicked() {
+                    actions.write(NetAction::CreateRoom);
+                }
+            });
+        }
+        NetStatus::InRoom if session.host_missing(now_ms) => {
+            ui.label(RichText::new("Cette partie n'existe plus.").color(BAD));
+            ui.small(format!(
+                "Personne n'héberge la partie {room} : son hôte (celui qui l'a créée) est parti, \
+                 ou ne l'a pas encore ouverte."
+            ));
+            if ui.button("Créer une partie").clicked() {
+                actions.write(NetAction::CreateRoom);
+            }
+            connections(ui, session, now_ms);
+        }
         NetStatus::InRoom => {
             if let Some(lobby) = &session.lobby {
                 lobby_list(ui, session, lobby, roster, now_ms, actions);
@@ -360,10 +415,12 @@ fn lobby_list(
     now_ms: u64,
     actions: &mut MessageWriter<NetAction>,
 ) {
-    if !lobby.seated() {
+    if lobby.is_host() {
+        ui.label("Tu es l'hôte de la partie : chacun est relié à toi.");
+    } else if lobby.host().is_none() {
+        ui.label("Recherche de l'hôte de la partie…");
+    } else if !lobby.seated() {
         ui.label("En attente d'une place dans la partie…");
-    } else if lobby.is_host() {
-        ui.label("Tu es l'hôte de la partie.");
     }
     let rows = session.players(now_ms);
     let seated = rows.iter().filter(|row| row.seated).count();
@@ -376,12 +433,13 @@ fn lobby_list(
             ui.label(RichText::new("Joueur").strong());
             ui.label(RichText::new("Animal").strong());
             ui.label(RichText::new("Couleur").strong());
-            ui.label(RichText::new("Ping").strong());
+            // Issue #63: each player's link with the host.
+            ui.label(RichText::new("Lien").strong());
             ui.label(RichText::new("Prêt").strong());
             ui.end_row();
             for row in &rows {
                 let mut name = if row.name.is_empty() {
-                    "…".to_string()
+                    if row.host { "L'hôte" } else { "…" }.to_string()
                 } else {
                     row.name.clone()
                 };
@@ -408,6 +466,8 @@ fn lobby_list(
                     .unwrap_or("");
                 ui.label(if row.seated || row.me {
                     animal
+                } else if matches!(row.link, RowLink::Connecting | RowLink::Stuck(_)) {
+                    ""
                 } else {
                     "arrive…"
                 });
@@ -419,17 +479,24 @@ fn lobby_list(
                             ui.small(format!("({} pris)", chosen.label()));
                         }
                     }
+                    None if matches!(row.link, RowLink::Connecting | RowLink::Stuck(_)) => {
+                        ui.label("");
+                    }
                     None => {
                         ui.label("…");
                     }
                 });
-                let ping = match (row.me, row.silent, row.ping_ms) {
-                    (true, _, _) => RichText::new("—"),
+                let link = match (row.link, row.silent, row.ping_ms) {
+                    (RowLink::Me, _, _) => RichText::new("—"),
+                    (RowLink::Connecting, _, _) => RichText::new("en cours…"),
+                    (RowLink::Stuck(_), _, _) => RichText::new("échec").color(BAD),
+                    // Through the host: connected to it (its link is the host's to show).
+                    (RowLink::ViaHost, _, _) => RichText::new("connecté"),
                     (_, true, _) => RichText::new("muet").color(BAD),
-                    (_, _, Some(ms)) => RichText::new(format!("{ms:.0} ms")),
-                    (_, _, None) => RichText::new("…"),
+                    (_, _, Some(ms)) => RichText::new(format!("connecté, {ms:.0} ms")),
+                    (_, _, None) => RichText::new("connecté"),
                 };
-                ui.label(ping);
+                ui.label(link);
                 ui.label(if row.ready {
                     RichText::new("prêt").color(GOOD)
                 } else {
@@ -549,6 +616,9 @@ const CHROME_MDNS_FLAG: &str = "chrome://flags/#enable-webrtc-hide-local-ips-wit
 fn connections(ui: &mut egui::Ui, session: &NetSession, now_ms: u64) {
     match session.links.diagnosis(now_ms) {
         None => {}
+        Some(Diagnosis::Connecting { .. }) if !session.hosting => {
+            ui.label("Connexion directe à l'hôte en cours…");
+        }
         Some(Diagnosis::Connecting { peers }) => {
             ui.label(format!(
                 "Connexion directe en cours avec {peers} joueur{}…",
@@ -556,13 +626,15 @@ fn connections(ui: &mut egui::Ui, session: &NetSession, now_ms: u64) {
             ));
         }
         Some(Diagnosis::Stuck { peers, cause }) => {
-            ui.label(
-                RichText::new(format!(
+            let text = if session.hosting {
+                format!(
                     "La connexion directe avec {peers} joueur{} n'aboutit pas.",
                     plural(peers)
-                ))
-                .color(BAD),
-            );
+                )
+            } else {
+                "La connexion directe avec l'hôte n'aboutit pas.".to_string()
+            };
+            ui.label(RichText::new(text).color(BAD));
             let why = match cause {
                 Stuck::NoCandidateHere => {
                     Some("Ton navigateur n'a donné aucune adresse réseau (aucun candidat ICE).")
