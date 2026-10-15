@@ -7,6 +7,8 @@
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::biome::{self, BiomeData, Side};
+
 /// A whole circuit, as written in its RON file. The walls are the same on every circuit
 /// (`mesh::WALL_HEIGHT`, `mesh::WALL_THICKNESS`): a file has no say in their height (issue #47).
 #[derive(Asset, TypePath, Deserialize, Clone, Debug, PartialEq)]
@@ -40,6 +42,45 @@ pub struct TrackData {
     /// Where the tow pelican puts karts back (spline parameters). Empty = every checkpoint.
     #[serde(default)]
     pub respawns: Vec<f32>,
+    /// How the circuit is dressed (issue #11): the name of a biome of `assets/data/biomes.ron`
+    /// (its colors and its pieces). None: the colors of a circuit without biome, no decor.
+    #[serde(default)]
+    pub biome: Option<String>,
+    /// Seed of the decor's placement: the same pieces at the same places on every load.
+    #[serde(default)]
+    pub decor_seed: u64,
+    /// Pieces placed by hand beyond the walls (a grandstand at the start...), on top of the
+    /// biome's.
+    #[serde(default)]
+    pub props: Vec<PropData>,
+}
+
+/// A piece placed by hand beyond the walls (issue #11), facing the track.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PropData {
+    /// "pack/name" (`assets/models/pack/name.glb`).
+    pub model: String,
+    /// Where along the track (spline parameter).
+    pub at: f32,
+    /// Which side (`Both`: one on each side).
+    pub side: Side,
+    /// Height (m).
+    pub height: f32,
+    /// Footprint (m): it keeps that far from the walls.
+    pub radius: f32,
+    /// Gap between the walls' outer face and the footprint (m).
+    #[serde(default)]
+    pub gap: f32,
+    /// Turns it further than facing the track (degrees).
+    #[serde(default)]
+    pub yaw: f32,
+    #[serde(default = "yes")]
+    pub shadows: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// A control point of the centerline.
@@ -165,9 +206,12 @@ impl std::fmt::Display for InvalidTrack {
 impl std::error::Error for InvalidTrack {}
 
 impl TrackData {
-    /// Parses a track file. Misspelled fields are errors, not silently ignored.
+    /// Parses a track file. Misspelled fields are errors, not silently ignored. An optional
+    /// field is written as its value (`biome: "Prairie"`, not `Some("Prairie")`).
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(text)
+        ron::Options::default()
+            .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+            .from_str(text)
     }
 
     /// Checks the values that would make the generation fail or explode.
@@ -200,7 +244,35 @@ impl TrackData {
                 return fail(format!("points {i} and {} are on top of each other", i + 1));
             }
         }
+        if let Some(name) = &self.biome
+            && biome::biome(name).is_none()
+        {
+            let known: Vec<&str> = biome::biomes().iter().map(|b| b.name.as_str()).collect();
+            return fail(format!(
+                "unknown biome {name:?} (known: {})",
+                known.join(", ")
+            ));
+        }
+        for prop in &self.props {
+            if !biome::is_model_id(&prop.model)
+                || !(0.1..=30.0).contains(&prop.height)
+                || !(0.1..=12.0).contains(&prop.radius)
+                || !(0.0..=biome::MAX_REACH).contains(&(prop.gap + prop.radius))
+            {
+                return fail(format!(
+                    "prop {:?}: not a model (\"pack/name\"), or height {} / radius {} / gap {} \
+                     out of range",
+                    prop.model, prop.height, prop.radius, prop.gap
+                ));
+            }
+        }
         Ok(())
+    }
+
+    /// The circuit's biome (None: no biome, or one the game does not have, which `validate`
+    /// refuses).
+    pub fn biome(&self) -> Option<&'static BiomeData> {
+        self.biome.as_deref().and_then(biome::biome)
     }
 }
 
@@ -240,5 +312,38 @@ mod tests {
         let mut data = TrackData::from_ron(MINIMAL).unwrap();
         data.points[1] = data.points[0];
         assert!(data.validate().is_err());
+    }
+
+    /// Issue #11: a circuit names its biome; without one, it has none. A biome the game does not
+    /// have is refused with the names of those it has; a prop must name a model.
+    #[test]
+    fn a_circuit_names_a_biome_the_game_has() {
+        let data = TrackData::from_ron(MINIMAL).unwrap();
+        assert_eq!(data.biome, None);
+        assert!(data.biome().is_none());
+        let with = |biome: &str| {
+            TrackData::from_ron(&MINIMAL.replace("(name:", &format!("(biome: {biome:?}, name:")))
+                .unwrap()
+        };
+        let prairie = with("Prairie");
+        assert_eq!(prairie.validate(), Ok(()));
+        assert_eq!(prairie.biome().unwrap().name, "Prairie");
+        let error = with("Prairy").validate().unwrap_err();
+        assert!(
+            error.0.contains("unknown biome \"Prairy\"") && error.0.contains("Guimauve"),
+            "{error}"
+        );
+        let prop = |model: &str| {
+            TrackData::from_ron(&MINIMAL.replace(
+                "(name:",
+                &format!(
+                    "(props: [(model: {model:?}, at: 1.0, side: Left, height: 4.0, radius: 3.0)], \
+                     name:"
+                ),
+            ))
+            .unwrap()
+        };
+        assert_eq!(prop("racing-kit/grandStandCovered").validate(), Ok(()));
+        assert!(prop("grandStandCovered").validate().is_err());
     }
 }

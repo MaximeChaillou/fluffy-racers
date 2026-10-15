@@ -28,6 +28,7 @@ mod bump;
 mod drift;
 mod effects;
 mod input;
+pub mod model;
 mod palette;
 mod physics;
 mod push;
@@ -64,8 +65,9 @@ pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
     BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverVisual,
-    KartBodyPivot, KartVisualAssets, KartVisualPlugin, StallSmoke, WindLine, flame_size, hit_pose,
-    shown_while_invincible, shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
+    KartBodyPivot, KartDressed, KartModel, KartVisualAssets, KartVisualPlugin, StallSmoke,
+    WheelVisual, WindLine, flame_size, hit_pose, shown_while_invincible, shown_with_effects,
+    spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;

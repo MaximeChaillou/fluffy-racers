@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 
+use super::biome::{Palette, Rgb};
 use super::data::{OffroadZone, TrackData};
 use super::layout::{CenterLine, TrackSample};
 
@@ -30,15 +31,14 @@ const PATCH_HEIGHT: f32 = 0.03;
 /// Length of a curb stripe, in samples.
 const CURB_STRIPE: usize = 2;
 
-/// Colors, sRGB.
-pub const ASPHALT: [f32; 4] = [0.42, 0.43, 0.48, 1.0];
-pub const CURB_RED: [f32; 4] = [0.85, 0.20, 0.20, 1.0];
-pub const CURB_WHITE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
-pub const SHOULDER_GRASS: [f32; 4] = [0.40, 0.70, 0.32, 1.0];
-pub const SAND: [f32; 4] = [0.90, 0.80, 0.55, 1.0];
-pub const WALL: [f32; 4] = [0.60, 0.55, 0.80, 1.0];
-pub const WALL_TOP: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
-pub const SKIRT: [f32; 4] = [0.55, 0.45, 0.35, 1.0];
+/// Length of a wall panel, in samples: the walls' faces alternate the two colors of the
+/// biome's palette (issue #11).
+const WALL_PANEL: usize = 3;
+
+/// A palette color as the mesh takes it (sRGB, opaque).
+fn rgba((r, g, b): Rgb) -> [f32; 4] {
+    [r, g, b, 1.0]
+}
 
 /// Triangles with flat normals and vertex colors.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -142,16 +142,18 @@ pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
 }
 
-pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
+/// The circuit's meshes, in the colors of `palette` (its biome's, issue #11).
+pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> TrackMeshes {
     let samples = center.samples();
     let mut meshes = TrackMeshes::default();
-    let stripe = |i: usize| {
-        if (i / CURB_STRIPE).is_multiple_of(2) {
-            CURB_RED
-        } else {
-            CURB_WHITE
-        }
-    };
+    let (asphalt, grass, sand, skirt) = (
+        rgba(palette.asphalt),
+        rgba(palette.shoulder),
+        rgba(palette.sand),
+        rgba(palette.skirt),
+    );
+    let curbs = [rgba(palette.curbs.0), rgba(palette.curbs.1)];
+    let stripe = |i: usize| curbs[(i / CURB_STRIPE) % 2];
 
     // Road and curbs.
     let road = &mut meshes.road;
@@ -160,7 +162,7 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
         true,
         |s| s.point(-s.half_width, 0.0),
         |s| s.point(s.half_width, 0.0),
-        |_| ASPHALT,
+        |_| asphalt,
     );
     road.strip(
         samples,
@@ -184,21 +186,21 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
         true,
         |s| s.point(-wall_offset(s), 0.0),
         |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
-        |_| SHOULDER_GRASS,
+        |_| grass,
     );
     offroad.strip(
         samples,
         true,
         |s| s.point(s.half_width + CURB_WIDTH, 0.0),
         |s| s.point(wall_offset(s), 0.0),
-        |_| SHOULDER_GRASS,
+        |_| grass,
     );
     for zone in &data.offroad {
-        offroad_patch(offroad, center, zone);
+        offroad_patch(offroad, center, zone, sand);
     }
 
     // Low walls: inner face, top, outer face on each side.
-    wall_strips(&mut meshes.walls, samples);
+    wall_strips(&mut meshes.walls, samples, palette);
 
     // Skirts from the wall bottoms down to the ground, so raised parts do not float.
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
@@ -209,69 +211,73 @@ pub fn generate(center: &CenterLine, data: &TrackData) -> TrackMeshes {
         true,
         |s| s.point(outer(s), 0.0),
         |s| ground(s.point(outer(s), 0.0)),
-        |_| SKIRT,
+        |_| skirt,
     );
     decor.strip(
         samples,
         true,
         |s| ground(s.point(-outer(s), 0.0)),
         |s| s.point(-outer(s), 0.0),
-        |_| SKIRT,
+        |_| skirt,
     );
 
     meshes
 }
 
-/// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face.
-fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample]) {
+/// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face. The faces
+/// alternate the palette's two wall colors in panels (the barriers' look, issue #11).
+fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], palette: &Palette) {
     let height = WALL_HEIGHT;
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
+    let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
+    let panel = |i: usize| panels[(i / WALL_PANEL) % 2];
+    let top = rgba(palette.wall_top);
     mesh.strip(
         samples,
         true,
         |s| s.point(wall_offset(s), 0.0),
         |s| s.point(wall_offset(s), height),
-        |_| WALL,
+        panel,
     );
     mesh.strip(
         samples,
         true,
         |s| s.point(wall_offset(s), height),
         |s| s.point(outer(s), height),
-        |_| WALL_TOP,
+        |_| top,
     );
     mesh.strip(
         samples,
         true,
         |s| s.point(outer(s), height),
         |s| s.point(outer(s), 0.0),
-        |_| WALL,
+        panel,
     );
     mesh.strip(
         samples,
         true,
         |s| s.point(-wall_offset(s), height),
         |s| s.point(-wall_offset(s), 0.0),
-        |_| WALL,
+        panel,
     );
     mesh.strip(
         samples,
         true,
         |s| s.point(-outer(s), height),
         |s| s.point(-wall_offset(s), height),
-        |_| WALL_TOP,
+        |_| top,
     );
     mesh.strip(
         samples,
         true,
         |s| s.point(-outer(s), 0.0),
         |s| s.point(-outer(s), height),
-        |_| WALL,
+        panel,
     );
 }
 
 /// A sand patch on the road between two spline parameters.
-fn offroad_patch(mesh: &mut MeshData, center: &CenterLine, zone: &OffroadZone) {
+fn offroad_patch(mesh: &mut MeshData, center: &CenterLine, zone: &OffroadZone, sand: [f32; 4]) {
     let from = center.param_to_distance(zone.from);
     let mut to = center.param_to_distance(zone.to);
     if to <= from {
@@ -287,7 +293,7 @@ fn offroad_patch(mesh: &mut MeshData, center: &CenterLine, zone: &OffroadZone) {
         false,
         |s| s.point(zone.left * s.half_width, PATCH_HEIGHT),
         |s| s.point(zone.right * s.half_width, PATCH_HEIGHT),
-        |_| SAND,
+        |_| sand,
     );
 }
 
@@ -357,7 +363,7 @@ mod tests {
     fn road_ribbon_is_a_closed_loop() {
         let data = test_track();
         let center = CenterLine::new(&data.points, data.sample_step);
-        let meshes = generate(&center, &data);
+        let meshes = generate(&center, &data, &Palette::default());
         // Road + curbs welded: a closed ribbon has exactly two boundary loops (outer edges of
         // the two curbs) and no other open edge: no gap, no hole, including at the start line.
         let edges = boundary_edges(&meshes.road);
@@ -386,7 +392,7 @@ mod tests {
             TrackData::from_ron(include_str!("../../assets/tracks/anneau.track.ron")).unwrap(),
         ] {
             let center = CenterLine::new(&data.points, data.sample_step);
-            let meshes = generate(&center, &data);
+            let meshes = generate(&center, &data, &Palette::default());
             let samples = center.samples();
             let walls = &meshes.walls;
             // 6 strips (inner face, top, outer face, on both sides), one quad per sample.
@@ -422,7 +428,7 @@ mod tests {
     fn floors_face_up_and_walls_face_the_road() {
         let data = test_track();
         let center = CenterLine::new(&data.points, data.sample_step);
-        let meshes = generate(&center, &data);
+        let meshes = generate(&center, &data, &Palette::default());
         assert!(meshes.road.normals.iter().all(|n| n[1] > 0.7));
         assert!(meshes.offroad.normals.iter().all(|n| n[1] > 0.7));
         // The first wall face of each side faces the centerline.

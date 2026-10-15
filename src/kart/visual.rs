@@ -1,4 +1,5 @@
-//! Kart visuals in primitive shapes, until real models arrive (issue #11).
+//! Kart visuals: Kenney's kart once its model is baked (issue #11, `model.rs`), primitive shapes
+//! until then, and for good headless or when the file is missing.
 //!
 //! The visual is a separate entity that follows the simulated body with interpolation
 //! (`crate::interpolation`). Under it, a pivot ([`KartBodyPivot`]) carries the body, driver and
@@ -22,6 +23,12 @@
 //!
 //! The body wears a color of the palette (issue #55, `palette.rs`): one shared material per
 //! color, for every kart that wears it. It follows the kart's [`KartPaint`], even when it changes.
+//!
+//! The model (issue #11): every visual is spawned in primitives; once the kart model is baked,
+//! [`dress_kart_visuals`] swaps them for its meshes (the body's shell keeps its [`BodyPaint`]
+//! and its paint material, the rest of the body and the wheels the models' shared material), and
+//! moves the wheels, the driver and the sparks where the model has them. The same meshes for
+//! every kart: 12 karts draw the same few meshes.
 
 use std::f32::consts::TAU;
 
@@ -31,6 +38,7 @@ use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
 use super::effects::ItemEffects;
+use super::model::{KART_MODEL, KartModelData, kart_model_data};
 use super::palette::{KartColor, KartPaint, PALETTE_SIZE};
 use super::physics::HitReaction;
 use super::rocket::Stall;
@@ -38,6 +46,8 @@ use super::slipstream::Slipstream;
 use super::stats::Invincibility;
 use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, StatEffects, WHEEL_ANCHORS};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
+use crate::models::{Keep, ModelMaterials, ModelSystems, Models};
+use crate::track::circuit::to_mesh;
 
 const WHEEL_RADIUS: f32 = 0.28;
 const WHEEL_WIDTH: f32 = 0.25;
@@ -91,6 +101,11 @@ const INVINCIBLE_BLINK_HZ: f32 = 10.0;
 /// seat, whatever its size).
 const DRIVER_RADIUS: f32 = 0.45;
 const DRIVER_SEAT: Vec3 = Vec3::new(0.0, 0.15, 0.15);
+/// The driver's eyes: their size, and how far apart and how high on the ball (at size 1; the
+/// front of the ball is -Z).
+const EYE_RADIUS: f32 = 0.075;
+const EYE_SPREAD: f32 = 0.16;
+const EYE_HEIGHT: f32 = 0.58;
 
 /// The ears of a driver (issue #15), primitives until the real models (#11).
 #[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -177,9 +192,17 @@ pub fn flame_size(tuning: &KartTuning, boost: &Boost) -> f32 {
     strength * (0.3 + 0.7 * left)
 }
 
-/// A wheel of a kart visual: index into `WHEEL_ANCHORS` / `KartWheels`.
+/// A wheel of a kart visual: `index` into `WHEEL_ANCHORS` / `KartWheels`; its `radius` puts
+/// it on the ground (the primitive's, or the model's, issue #11).
 #[derive(Component, Clone, Copy, Debug)]
-pub struct WheelVisual(pub usize);
+pub struct WheelVisual {
+    pub index: usize,
+    pub radius: f32,
+}
+
+/// On the pivot of a kart visual dressed with the kart model (issue #11).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct KartDressed;
 
 /// A drift spark, shown while the drift has reached exactly this tier.
 #[derive(Component, Clone, Copy, Debug)]
@@ -193,10 +216,19 @@ pub struct KartVisualPlugin;
 
 impl Plugin for KartVisualPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, create_kart_visual_assets)
+        app.add_systems(Startup, (create_kart_visual_assets, request_kart_model))
+            .add_systems(
+                Update,
+                prepare_kart_model.after(ModelSystems).run_if(
+                    |assets: Option<Res<KartVisualAssets>>| {
+                        assets.is_some_and(|a| a.model.is_none())
+                    },
+                ),
+            )
             .add_systems(
                 PostUpdate,
                 (
+                    dress_kart_visuals.before(place_wheels),
                     place_wheels,
                     pose_bodies,
                     show_drift_sparks,
@@ -223,12 +255,15 @@ pub struct DeflatedScale(pub f32);
 pub struct KartVisualAssets {
     body: Handle<Mesh>,
     driver: Handle<Mesh>,
+    /// The driver's eyes (issue #11: still primitives, with a face).
+    eye: Handle<Mesh>,
     ear: Handle<Mesh>,
     long_ear: Handle<Mesh>,
     pointy_ear: Handle<Mesh>,
     wheel: Handle<Mesh>,
     spark: Handle<Mesh>,
     driver_material: Handle<StandardMaterial>,
+    eye_material: Handle<StandardMaterial>,
     wheel_material: Handle<StandardMaterial>,
     spark_materials: [Handle<StandardMaterial>; 3],
     flame_material: Handle<StandardMaterial>,
@@ -236,6 +271,22 @@ pub struct KartVisualAssets {
     wind_material: Handle<StandardMaterial>,
     /// The body's materials, by color ([`KartColor::index`]).
     paints: [Handle<StandardMaterial>; PALETTE_SIZE],
+    /// The kart model's meshes, once baked (issue #11).
+    model: Option<KartModel>,
+}
+
+/// The kart model's meshes (issue #11, `model.rs`), shared by every kart, and where its wheels,
+/// driver and sparks go.
+#[derive(Clone, Debug)]
+pub struct KartModel {
+    paint: Handle<Mesh>,
+    trim: Handle<Mesh>,
+    wheel: Handle<Mesh>,
+    hubs: [Vec3; 4],
+    wheel_turns: [Quat; 4],
+    wheel_radius: f32,
+    seat: Vec3,
+    material: Handle<StandardMaterial>,
 }
 
 impl KartVisualAssets {
@@ -249,12 +300,18 @@ impl KartVisualAssets {
             body: meshes.add(Cuboid::new(1.2, 0.45, 2.0)),
             driver: meshes.add(Sphere::new(DRIVER_RADIUS)),
             ear: meshes.add(Sphere::new(0.16)),
+            eye: meshes.add(Sphere::new(EYE_RADIUS)),
             long_ear: meshes.add(Capsule3d::new(0.08, 0.32)),
             pointy_ear: meshes.add(Cone::new(0.14, 0.3)),
             wheel: meshes.add(Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH)),
             // A unit cube scaled per frame; unlit so the sparks glow in the shade too.
             spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
             driver_material: materials.add(Color::srgb(0.98, 0.92, 0.80)),
+            eye_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.08, 0.06, 0.10),
+                perceptual_roughness: 0.25,
+                ..default()
+            }),
             wheel_material: materials.add(Color::srgb(0.15, 0.15, 0.18)),
             spark_materials: SPARK_COLORS.map(|color| {
                 materials.add(StandardMaterial {
@@ -279,7 +336,125 @@ impl KartVisualAssets {
                 ..default()
             }),
             paints: KartColor::ALL.map(|color| materials.add(color.color())),
+            model: None,
         }
+    }
+
+    /// Whether the kart model is there (issue #11): the visuals are dressed with it.
+    pub fn has_model(&self) -> bool {
+        self.model.is_some()
+    }
+}
+
+/// Asks for the kart model at startup, kept for the whole game (issue #11).
+fn request_kart_model(
+    models: Option<ResMut<Models>>,
+    server: Res<AssetServer>,
+    gltfs: Option<Res<Assets<bevy::gltf::Gltf>>>,
+) {
+    if let Some(mut models) = models {
+        models.request(KART_MODEL, Keep::Always, gltfs.map(|_| &*server));
+    }
+}
+
+/// Once the kart model is baked, its meshes (once for every kart). A file that is not the kart
+/// expected leaves the primitives (said once).
+fn prepare_kart_model(
+    models: Option<Res<Models>>,
+    shared: Option<Res<ModelMaterials>>,
+    mut assets: ResMut<KartVisualAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut gave_up: Local<bool>,
+) {
+    let (Some(models), Some(shared)) = (models, shared) else {
+        return;
+    };
+    if *gave_up {
+        return;
+    }
+    let Some(baked) = models.get(KART_MODEL) else {
+        return;
+    };
+    let Some(KartModelData {
+        paint,
+        trim,
+        wheel,
+        hubs,
+        wheel_turns,
+        wheel_radius,
+        seat,
+    }) = kart_model_data(baked)
+    else {
+        warn!("model {KART_MODEL}: not the kart expected (body, four wheels); primitives stay");
+        *gave_up = true;
+        return;
+    };
+    assets.model = Some(KartModel {
+        paint: meshes.add(to_mesh(&paint)),
+        trim: meshes.add(to_mesh(&trim)),
+        wheel: meshes.add(to_mesh(&wheel)),
+        hubs,
+        wheel_turns,
+        wheel_radius,
+        seat,
+        material: shared.vertex_colors.clone(),
+    });
+}
+
+/// Dresses the kart visuals still in primitives with the kart model (issue #11): the body's
+/// shell (its paint material stays), the rest of the body (a child), the wheels at the model's
+/// hubs, the driver in its seat, the sparks behind its rear wheels. Once per visual.
+fn dress_kart_visuals(
+    mut commands: Commands,
+    assets: Option<Res<KartVisualAssets>>,
+    pivots: Query<(Entity, &Children), (With<KartBodyPivot>, Without<KartDressed>)>,
+    mut bodies: Query<&mut Mesh3d, (With<BodyPaint>, Without<WheelVisual>)>,
+    mut wheels: Query<(
+        &mut WheelVisual,
+        &mut Mesh3d,
+        &mut MeshMaterial3d<StandardMaterial>,
+        &mut Transform,
+    )>,
+    mut drivers: Query<&mut Transform, (With<DriverVisual>, Without<WheelVisual>)>,
+    mut sparks: Query<
+        &mut Transform,
+        (
+            With<DriftSpark>,
+            Without<DriverVisual>,
+            Without<WheelVisual>,
+        ),
+    >,
+) {
+    let Some(model) = assets.as_ref().and_then(|a| a.model.as_ref()) else {
+        return;
+    };
+    for (pivot, children) in &pivots {
+        for child in children.iter() {
+            if let Ok(mut mesh) = bodies.get_mut(child) {
+                mesh.0 = model.paint.clone();
+                commands.entity(child).with_child((
+                    Mesh3d(model.trim.clone()),
+                    MeshMaterial3d(model.material.clone()),
+                    Transform::default(),
+                ));
+            } else if let Ok((mut wheel, mut mesh, mut material, mut transform)) =
+                wheels.get_mut(child)
+            {
+                mesh.0 = model.wheel.clone();
+                material.0 = model.material.clone();
+                wheel.radius = model.wheel_radius;
+                *transform = Transform::from_translation(model.hubs[wheel.index])
+                    .with_rotation(model.wheel_turns[wheel.index]);
+            } else if let Ok(mut transform) = drivers.get_mut(child) {
+                transform.translation = model.seat;
+            } else if let Ok(mut transform) = sparks.get_mut(child) {
+                // Behind the rear wheel of its side, near the ground.
+                let rear = model.hubs[if transform.translation.x < 0.0 { 2 } else { 3 }];
+                transform.translation =
+                    Vec3::new(rear.x, SPARK_OFFSET.y, rear.z + model.wheel_radius + 0.1);
+            }
+        }
+        commands.entity(pivot).insert(KartDressed);
     }
 }
 
@@ -375,6 +550,18 @@ pub fn spawn_kart_visual_with_driver(
                             DriverEars::Pointy => Some((assets.pointy_ear.clone(), 0.9, 0.25)),
                             DriverEars::None => None,
                         };
+                        // Two eyes on the front of the ball, just out of its surface.
+                        let depth = (DRIVER_RADIUS * DRIVER_RADIUS
+                            - EYE_SPREAD * EYE_SPREAD
+                            - (EYE_HEIGHT - DRIVER_RADIUS).powi(2))
+                        .sqrt();
+                        for x in [-EYE_SPREAD, EYE_SPREAD] {
+                            driver.spawn((
+                                Mesh3d(assets.eye.clone()),
+                                MeshMaterial3d(assets.eye_material.clone()),
+                                Transform::from_xyz(x, EYE_HEIGHT, -depth + EYE_RADIUS * 0.4),
+                            ));
+                        }
                         if let Some((mesh, height, tilt)) = ear {
                             for x in [-0.25f32, 0.25] {
                                 driver.spawn((
@@ -388,7 +575,10 @@ pub fn spawn_kart_visual_with_driver(
                     });
                 for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
                     pivot.spawn((
-                        WheelVisual(i),
+                        WheelVisual {
+                            index: i,
+                            radius: WHEEL_RADIUS,
+                        },
                         Mesh3d(assets.wheel.clone()),
                         MeshMaterial3d(assets.wheel_material.clone()),
                         Transform::from_xyz(anchor.x.signum() * WHEEL_X, anchor.y, anchor.z)
@@ -465,14 +655,16 @@ fn place_wheels(
         let Ok(state) = karts.get(pivot.body) else {
             continue;
         };
-        let extension = tuning.suspension_rest_length - state.compression[wheel.0];
-        let anchor = WHEEL_ANCHORS[wheel.0];
-        let y = if state.on_ground[wheel.0] {
-            anchor.y - extension + WHEEL_RADIUS
+        let extension = tuning.suspension_rest_length - state.compression[wheel.index];
+        let anchor = WHEEL_ANCHORS[wheel.index];
+        let y = if state.on_ground[wheel.index] {
+            anchor.y - extension + wheel.radius
         } else {
-            anchor.y - tuning.suspension_rest_length + WHEEL_RADIUS
+            anchor.y - tuning.suspension_rest_length + wheel.radius
         };
-        transform.translation.y = y;
+        if transform.translation.y != y {
+            transform.translation.y = y;
+        }
     }
 }
 
