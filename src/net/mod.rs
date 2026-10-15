@@ -45,6 +45,7 @@
 
 mod browser;
 mod clock;
+mod guide;
 mod ice;
 pub mod interactions;
 mod interp;
@@ -66,6 +67,8 @@ mod tuning;
 mod ui;
 
 #[cfg(test)]
+mod guide_tests;
+#[cfg(test)]
 mod item_tests;
 #[cfg(test)]
 mod paint_tests;
@@ -79,6 +82,7 @@ mod star_tests;
 mod sync_tests;
 
 pub use clock::{PeerClock, RoomClock};
+pub use guide::{Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, race_now};
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
@@ -189,10 +193,13 @@ impl NetSettings {
     }
 }
 
-/// Whether the lobby window is open.
+/// Whether the lobby window is open, and the room's banner shown.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LobbyWindow {
     pub open: bool,
+    /// Issue #64: the banner at the top of the screen (`guide::banner_shown`): in a room, out of
+    /// a race we run. Like the window, it needs the egui context: none without a room.
+    pub banner: bool,
 }
 
 /// What the player does with the network, from the keys, the window or the page address.
@@ -364,11 +371,47 @@ impl Plugin for NetPlugin {
                 )
                     .chain()
                     .in_set(NetSystems),
+            )
+            .add_systems(
+                Update,
+                follow_the_room
+                    .after(NetSystems)
+                    .after(OnlineSystems)
+                    .run_if(
+                        |session: Option<Res<NetSession>>, window: Res<LobbyWindow>| {
+                            session.is_some() || window.banner
+                        },
+                    ),
             );
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
             app.add_plugins(NetUiPlugin);
         }
     }
+}
+
+/// Issue #64: the banner shows in a room, out of a race we run; the lobby closes when our race
+/// starts and opens when it ends (the host starts the next one there).
+fn follow_the_room(
+    session: Option<Res<NetSession>>,
+    race: Option<Res<OnlineRace>>,
+    mut window: ResMut<LobbyWindow>,
+    mut last: Local<Option<(u16, RaceStage)>>,
+) {
+    let (session, race) = (session.as_deref(), race.as_deref());
+    let banner = banner_shown(session, race);
+    if window.banner != banner {
+        window.banner = banner;
+    }
+    let now = race_now(session, race);
+    if *last == now {
+        return;
+    }
+    match now {
+        Some((_, RaceStage::Racing)) if window.open => window.open = false,
+        Some((_, RaceStage::Over)) if !window.open => window.open = true,
+        _ => {}
+    }
+    *last = now;
 }
 
 /// The lobby's clock: milliseconds of real time (it runs while the game is paused).
@@ -837,6 +880,8 @@ fn poll_session(
         for event in lobby.drain_events() {
             info!("network: {event:?}");
             match &event {
+                // Issue #64: arrived in the room, the lobby shows it.
+                LobbyEvent::Seated(peer) if *peer == me => window.open = true,
                 LobbyEvent::Left(peer) => {
                     // A player who leaves gives up the race (issue #9); its items out disappear
                     // (issue #53).

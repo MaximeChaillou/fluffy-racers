@@ -5,6 +5,11 @@
 //! Like the other windows, it costs nothing once closed: the egui context only exists while one
 //! of them is open (`admin::ui::attach_egui_context`). It does not pause the game: the race goes
 //! on (solo, until issue #9) while the players gather.
+//!
+//! Issue #64: in a room, out of a race we run, a **banner** at the top of the screen says the
+//! room, its players and what to do (`guide.rs`, [`LobbyWindow::banner`]): egui too, for its
+//! accents (the HUD's font has none); no room, no banner, no context. The window puts the main
+//! action first: the host's « Lancer la course », with why it waits, a client's « Prêt ! ».
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Color32, RichText};
@@ -15,8 +20,8 @@ use super::NetSystems;
 use super::ice::{is_loopback_host, signal_host};
 use super::{
     Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, NetTuning,
-    OnlineRace, RowLink, Stuck, default_signal, invite_link, is_local_signal, native_command,
-    now_ms,
+    OnlineRace, RaceStage, RoomFacts, RowLink, Seated, Stage, Stuck, default_signal, invite_link,
+    is_local_signal, native_command, now_ms,
 };
 use crate::admin::tracks::{TrackEntry, circuits};
 use crate::characters::{PartKind, Roster};
@@ -25,6 +30,11 @@ use crate::kart::KartColor;
 const GOOD: Color32 = Color32::from_rgb(110, 210, 120);
 const BAD: Color32 = Color32::from_rgb(240, 110, 90);
 const HOST: Color32 = Color32::from_rgb(255, 190, 70);
+/// The banner's background: the results screen's.
+const BANNER_FILL: Color32 = Color32::from_rgba_premultiplied(18, 14, 37, 222);
+/// The main buttons (« Lancer la course », « Prêt ! »).
+const ACTION_FILL: Color32 = Color32::from_rgb(52, 140, 72);
+const ACTION_SIZE: egui::Vec2 = egui::vec2(240.0, 44.0);
 
 /// « Copié ! » stays this long (s).
 const COPIED_SECONDS: f64 = 2.0;
@@ -48,7 +58,10 @@ impl Plugin for NetUiPlugin {
         .add_systems(Startup, join_launch_room)
         .add_systems(
             EguiPrimaryContextPass,
-            lobby_window.run_if(|window: Res<LobbyWindow>| window.open),
+            (
+                room_banner.run_if(|window: Res<LobbyWindow>| window.banner),
+                lobby_window.run_if(|window: Res<LobbyWindow>| window.open),
+            ),
         );
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Update, page_address.after(NetSystems));
@@ -187,6 +200,48 @@ mod platform {
     }
 }
 
+/// Issue #64: the room's banner, at the top of the screen (the HUD keeps its corners). It takes
+/// neither the mouse nor the keys.
+fn room_banner(
+    mut contexts: EguiContexts,
+    session: Option<Res<NetSession>>,
+    race: Option<Res<OnlineRace>>,
+    time: Res<Time<Real>>,
+) {
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    let Some(banner) = RoomFacts::of(session.as_deref(), race.as_deref(), now_ms(&time))
+        .and_then(|facts| facts.banner())
+    else {
+        return;
+    };
+    egui::Area::new(egui::Id::new("fluffy-room-banner"))
+        .anchor(egui::Align2::CENTER_TOP, [0.0, 12.0])
+        .interactable(false)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(BANNER_FILL)
+                .corner_radius(12)
+                .inner_margin(egui::Margin::symmetric(16, 8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        if !banner.lead.is_empty() {
+                            ui.label(RichText::new(&banner.lead).strong().size(18.0).color(HOST));
+                            ui.label(RichText::new(" · ").size(18.0).color(Color32::WHITE));
+                        }
+                        ui.label(
+                            RichText::new(&banner.action)
+                                .size(18.0)
+                                .color(Color32::WHITE),
+                        );
+                    });
+                });
+        });
+}
+
 fn lobby_window(
     mut contexts: EguiContexts,
     session: Option<Res<NetSession>>,
@@ -275,7 +330,7 @@ fn in_room(
     actions: &mut MessageWriter<NetAction>,
 ) {
     let room = &session.room;
-    ui.label(RichText::new(format!("Partie {room}")).strong().size(18.0));
+    ui.label(RichText::new(format!("Salon {room}")).strong().size(20.0));
     let link = platform::page()
         .map(|page| invite_link(&page, room, &session.signal))
         .unwrap_or_else(|| native_command(room, &session.signal));
@@ -299,7 +354,7 @@ fn in_room(
     ui.separator();
     match &session.status {
         NetStatus::Connecting => {
-            ui.label("Connexion au serveur de mise en relation…");
+            ui.label("Connexion à la partie…");
             signal_hint(ui, &session.signal);
         }
         NetStatus::Failed(reason) => {
@@ -370,9 +425,26 @@ fn in_room(
             connections(ui, session, now_ms);
         }
         NetStatus::InRoom => {
-            if let Some(lobby) = &session.lobby {
-                lobby_list(ui, session, lobby, roster, now_ms, actions);
-                room_controls(ui, lobby, race, &state.circuits, actions);
+            let facts = RoomFacts::of(Some(session), race, now_ms);
+            match (facts.map(|facts| facts.stage), &session.lobby) {
+                (Some(Stage::Seated(seated)), Some(lobby)) => seated_room(
+                    ui,
+                    session,
+                    lobby,
+                    &seated,
+                    roster,
+                    &state.circuits,
+                    now_ms,
+                    actions,
+                ),
+                (_, lobby) => {
+                    ui.label("Connexion à l'hôte de la partie…");
+                    if lobby.is_some() {
+                        player_list(ui, session, roster, now_ms);
+                    } else {
+                        connections(ui, session, now_ms);
+                    }
+                }
             }
         }
     }
@@ -407,24 +479,123 @@ pub fn color_notice(rows: &[super::PlayerRow]) -> Option<String> {
     ))
 }
 
-fn lobby_list(
+/// Seated in the room (issue #64): who does what, the free driving meanwhile, the main action,
+/// then the players.
+#[allow(clippy::too_many_arguments)]
+fn seated_room(
     ui: &mut egui::Ui,
     session: &NetSession,
     lobby: &super::Lobby,
+    seated: &Seated,
     roster: Option<&Roster>,
+    circuits: &[TrackEntry],
     now_ms: u64,
     actions: &mut MessageWriter<NetAction>,
 ) {
-    if lobby.is_host() {
-        ui.label("Tu es l'hôte de la partie : chacun est relié à toi.");
-    } else if lobby.host().is_none() {
-        ui.label("Recherche de l'hôte de la partie…");
-    } else if !lobby.seated() {
-        ui.label("En attente d'une place dans la partie…");
+    ui.label(RichText::new(seated.role()).strong());
+    if let Some(meanwhile) = seated.meanwhile() {
+        ui.label(meanwhile);
     }
+    ui.add_space(6.0);
+    main_action(ui, lobby, seated, circuits, actions);
+    ui.separator();
+    player_list(ui, session, roster, now_ms);
+}
+
+/// What is on in the room (issue #9), then the main action (issue #64): the host chooses the
+/// circuit and starts the race, a big button with why it waits; a client says « Prêt ! ».
+fn main_action(
+    ui: &mut egui::Ui,
+    lobby: &super::Lobby,
+    seated: &Seated,
+    circuits: &[TrackEntry],
+    actions: &mut MessageWriter<NetAction>,
+) {
+    let name = |track: u8| {
+        circuits
+            .get(usize::from(track))
+            .map_or("?", |entry| entry.name.as_str())
+    };
+    let racing = matches!(seated.race, RaceStage::Racing | RaceStage::Watching);
+    match (lobby.announced(), seated.race) {
+        (Some(start), RaceStage::Racing | RaceStage::Watching) => {
+            ui.label(format!(
+                "Course n° {} en cours sur {} : {} tours, {} bots.",
+                start.race,
+                name(start.track),
+                start.laps,
+                start.bots
+            ));
+        }
+        (Some(start), _) => {
+            ui.label(format!("Course n° {} terminée.", start.race));
+        }
+        (None, _) => {
+            ui.label(format!("Roulage libre sur {}.", name(lobby.circuit())));
+        }
+    }
+    if seated.hosting {
+        ui.horizontal(|ui| {
+            ui.label("Circuit");
+            let mut chosen = lobby.circuit();
+            ui.add_enabled_ui(!racing, |ui| {
+                egui::ComboBox::from_id_salt("lobby-circuit")
+                    .selected_text(name(chosen))
+                    .show_ui(ui, |ui| {
+                        for (index, entry) in circuits.iter().enumerate() {
+                            ui.selectable_value(&mut chosen, index as u8, &entry.name);
+                        }
+                    });
+            });
+            if chosen != lobby.circuit() {
+                actions.write(NetAction::ChooseCircuit(chosen));
+            }
+        });
+        if ui
+            .add_enabled(seated.can_start(), action_button("Lancer la course"))
+            .clicked()
+        {
+            actions.write(NetAction::StartRace);
+        }
+        match seated.start_blocker() {
+            Some(reason) => ui.label(RichText::new(reason).color(HOST)),
+            None => ui.label(RichText::new("Tout le monde est prêt !").color(GOOD)),
+        };
+        ui.small("Les bots complètent la grille de 12 ; tu les fais rouler pour tous.");
+    } else {
+        let clicked = if seated.ready {
+            ui.button("Pas prêt").clicked()
+        } else {
+            ui.add(action_button("Prêt !")).clicked()
+        };
+        if clicked {
+            actions.write(NetAction::Ready(!seated.ready));
+        }
+        let hint = RichText::new(seated.client_hint());
+        ui.label(if seated.ready { hint.color(GOOD) } else { hint });
+    }
+}
+
+/// The lobby's big button (issue #64).
+fn action_button(text: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        RichText::new(text)
+            .strong()
+            .size(22.0)
+            .color(Color32::WHITE),
+    )
+    .fill(ACTION_FILL)
+    .min_size(ACTION_SIZE)
+}
+
+/// The players of the room, and the links with the host being made.
+fn player_list(ui: &mut egui::Ui, session: &NetSession, roster: Option<&Roster>, now_ms: u64) {
     let rows = session.players(now_ms);
     let seated = rows.iter().filter(|row| row.seated).count();
-    ui.small(format!("{seated} joueur(s) sur {MAX_PLAYERS}"));
+    ui.small(format!(
+        "{seated} joueur{} sur {MAX_PLAYERS}",
+        plural(seated)
+    ));
     egui::Grid::new("lobby-players")
         .num_columns(5)
         .spacing([10.0, 4.0])
@@ -497,7 +668,10 @@ fn lobby_list(
                     (_, _, None) => RichText::new("connecté"),
                 };
                 ui.label(link);
-                ui.label(if row.ready {
+                // Issue #64: the host is ready by starting the race.
+                ui.label(if row.host {
+                    RichText::new("")
+                } else if row.ready {
                     RichText::new("prêt").color(GOOD)
                 } else {
                     RichText::new("—")
@@ -513,163 +687,81 @@ fn lobby_list(
         ui.small("Change de couleur avec G (Pilote et kart).");
     }
     connections(ui, session, now_ms);
-    ui.add_space(4.0);
-    let ready = lobby.profile().ready;
-    let label = if ready { "Pas prêt" } else { "Prêt !" };
-    if ui
-        .add_enabled(
-            lobby.seated(),
-            egui::Button::new(RichText::new(label).strong().size(16.0)),
-        )
-        .clicked()
-    {
-        actions.write(NetAction::Ready(!ready));
-    }
-    if lobby.all_ready() {
-        ui.label(RichText::new("Tout le monde est prêt !").color(GOOD));
-    }
-}
-
-/// The room's circuit and race (issue #9): the host chooses the circuit and starts the race once
-/// everyone is ready; the others see what is on.
-fn room_controls(
-    ui: &mut egui::Ui,
-    lobby: &super::Lobby,
-    race: Option<&OnlineRace>,
-    circuits: &[TrackEntry],
-    actions: &mut MessageWriter<NetAction>,
-) {
-    if !lobby.seated() {
-        return;
-    }
-    ui.separator();
-    let name = |track: u8| {
-        circuits
-            .get(usize::from(track))
-            .map_or("?", |entry| entry.name.as_str())
-    };
-    let racing = lobby.announced().filter(|start| {
-        race.is_none_or(|race| race.shared.race() != start.race || race.shared.over().is_none())
-    });
-    match (lobby.announced(), racing) {
-        (Some(start), Some(_)) => {
-            ui.label(format!(
-                "Course n° {} en cours sur {} : {} tours, {} bots.",
-                start.race,
-                name(start.track),
-                start.laps,
-                start.bots
-            ));
-            if race.is_some_and(|race| !race.racing) {
-                ui.small("Tu es arrivé pendant la course : tu roules librement, tu en seras à la prochaine.");
-            }
-        }
-        (Some(start), None) => {
-            ui.label(format!("Course n° {} terminée.", start.race));
-        }
-        (None, _) => {
-            ui.label(format!("Roulage libre sur {}.", name(lobby.circuit())));
-        }
-    }
-    if !lobby.is_host() {
-        ui.small("L'hôte choisit le circuit et lance la course quand tout le monde est prêt.");
-        return;
-    }
-    let free = racing.is_none();
-    ui.horizontal(|ui| {
-        ui.label("Circuit");
-        let mut chosen = lobby.circuit();
-        ui.add_enabled_ui(free, |ui| {
-            egui::ComboBox::from_id_salt("lobby-circuit")
-                .selected_text(name(chosen))
-                .show_ui(ui, |ui| {
-                    for (index, entry) in circuits.iter().enumerate() {
-                        ui.selectable_value(&mut chosen, index as u8, &entry.name);
-                    }
-                });
-        });
-        if chosen != lobby.circuit() {
-            actions.write(NetAction::ChooseCircuit(chosen));
-        }
-    });
-    let ready = lobby.all_ready();
-    if ui
-        .add_enabled(
-            free && ready,
-            egui::Button::new(RichText::new("Lancer la course").strong().size(16.0)),
-        )
-        .clicked()
-    {
-        actions.write(NetAction::StartRace);
-    }
-    if free && !ready {
-        ui.small("Il faut au moins deux joueurs, tous prêts.");
-    }
-    ui.small("Les bots complètent la grille de 12 ; tu les fais rouler pour tous.");
 }
 
 /// The Chrome setting that hides the local addresses behind `….local` names.
 const CHROME_MDNS_FLAG: &str = "chrome://flags/#enable-webrtc-hide-local-ips-with-mdns";
 
 /// The direct connections being made (issue #49): « en cours » after a moment, and the leads when
-/// one does not come.
+/// one does not come, folded in « Dépannage » (issue #64: the network's words only there).
 fn connections(ui: &mut egui::Ui, session: &NetSession, now_ms: u64) {
     match session.links.diagnosis(now_ms) {
         None => {}
         Some(Diagnosis::Connecting { .. }) if !session.hosting => {
-            ui.label("Connexion directe à l'hôte en cours…");
+            ui.label("Connexion à l'hôte en cours…");
         }
         Some(Diagnosis::Connecting { peers }) => {
             ui.label(format!(
-                "Connexion directe en cours avec {peers} joueur{}…",
+                "Connexion en cours avec {peers} joueur{}…",
                 plural(peers)
             ));
         }
         Some(Diagnosis::Stuck { peers, cause }) => {
             let text = if session.hosting {
                 format!(
-                    "La connexion directe avec {peers} joueur{} n'aboutit pas.",
+                    "La connexion avec {peers} joueur{} n'aboutit pas.",
                     plural(peers)
                 )
             } else {
-                "La connexion directe avec l'hôte n'aboutit pas.".to_string()
+                "La connexion avec l'hôte n'aboutit pas.".to_string()
             };
             ui.label(RichText::new(text).color(BAD));
-            let why = match cause {
-                Stuck::NoCandidateHere => {
-                    Some("Ton navigateur n'a donné aucune adresse réseau (aucun candidat ICE).")
-                }
-                Stuck::NoCandidateThere => Some(
-                    "Le navigateur de l'autre joueur n'a donné aucune adresse réseau : \
-                     les pistes sont pour lui.",
-                ),
-                Stuck::Failed => Some("Aucun chemin trouvé entre vous deux."),
-                Stuck::Slow => None,
-            };
-            if let Some(why) = why {
-                ui.small(why);
-            }
-            ui.small("Pistes, dans l'ordre :");
-            ui.small(
-                "1. macOS : Réglages Système > Confidentialité et sécurité > Réseau local : \
-                 active ton navigateur, puis relance-le.",
-            );
-            ui.horizontal_wrapped(|ui| {
-                ui.small(format!(
-                    "2. Chrome : {CHROME_MDNS_FLAG} > Disabled, puis relance."
-                ));
-                if ui.small_button("Copier").clicked() {
-                    ui.ctx().copy_text(CHROME_MDNS_FLAG.to_string());
-                }
-            });
-            ui.small("3. Réseau qui bloque l'UDP : il faudra un relais TURN (prévu avec #10).");
-            ui.small(
-                "Détails : console (F12) et chrome://webrtc-internals (README, « Dépannage »).",
-            );
+            egui::CollapsingHeader::new("Dépannage")
+                .id_salt("lobby-troubleshooting")
+                .default_open(false)
+                .show(ui, |ui| troubleshooting(ui, cause));
         }
     }
-    ui.small(format!("Mise en relation : {}", session.signal));
-    ui.small(format!("Connexion directe : {}", session.ice.describe()));
+    egui::CollapsingHeader::new("Détails de connexion")
+        .id_salt("lobby-connection-details")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.small(format!("Mise en relation : {}", session.signal));
+            ui.small(format!("Connexion directe : {}", session.ice.describe()));
+        });
+}
+
+/// The leads when a direct connection does not come (issue #49).
+fn troubleshooting(ui: &mut egui::Ui, cause: Stuck) {
+    let why = match cause {
+        Stuck::NoCandidateHere => {
+            Some("Ton navigateur n'a donné aucune adresse réseau (aucun candidat ICE).")
+        }
+        Stuck::NoCandidateThere => Some(
+            "Le navigateur de l'autre joueur n'a donné aucune adresse réseau : \
+             les pistes sont pour lui.",
+        ),
+        Stuck::Failed => Some("Aucun chemin trouvé entre vous deux."),
+        Stuck::Slow => None,
+    };
+    if let Some(why) = why {
+        ui.small(why);
+    }
+    ui.small("Pistes, dans l'ordre :");
+    ui.small(
+        "1. macOS : Réglages Système > Confidentialité et sécurité > Réseau local : \
+         active ton navigateur, puis relance-le.",
+    );
+    ui.horizontal_wrapped(|ui| {
+        ui.small(format!(
+            "2. Chrome : {CHROME_MDNS_FLAG} > Disabled, puis relance."
+        ));
+        if ui.small_button("Copier").clicked() {
+            ui.ctx().copy_text(CHROME_MDNS_FLAG.to_string());
+        }
+    });
+    ui.small("3. Réseau qui bloque l'UDP : il faudra un relais TURN (prévu avec #10).");
+    ui.small("Détails : console (F12) et chrome://webrtc-internals (README, « Dépannage »).");
 }
 
 fn plural(n: usize) -> &'static str {

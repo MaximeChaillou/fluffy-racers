@@ -77,6 +77,8 @@ fn solo_has_no_session_and_l_opens_the_lobby() {
     }
     assert!(app.world().get_resource::<NetSession>().is_none());
     assert!(!window_open(&app));
+    // Issue #64: no room, no banner.
+    assert!(!app.world().resource::<LobbyWindow>().banner);
     tap(&mut app, LOBBY_KEY);
     assert!(window_open(&app));
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
@@ -126,6 +128,9 @@ fn an_unreachable_signaling_server_fails_cleanly() {
     for _ in 0..10 {
         app.update();
     }
+    // Issue #64: the room is over: the window says it, no banner.
+    assert!(!app.world().resource::<LobbyWindow>().banner);
+    assert!(window_open(&app));
     act(&mut app, NetAction::Leave);
     assert!(app.world().get_resource::<NetSession>().is_none());
 }
