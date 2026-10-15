@@ -8,12 +8,11 @@
 //!   [`SAMPLES`] is the least disturbed by the network: its offset is kept. Every peer can then
 //!   speak in the host's time (`Lobby::host_time_ms`), from which issue #9 counts race ticks.
 //! - **Room clock** (issue #9, [`RoomClock`]): the time every peer of a room speaks in, the race
-//!   ticks included. It is the host's clock, but it survives a new host: a pong carries the
-//!   room's time of the peer that answers when it knows it (its own time otherwise, flagged), so
-//!   a new host goes on with the room's time it already knew, and a newcomer that becomes host at
-//!   once (a smaller id) first learns it from the others. Nobody's clock jumps when the host
-//!   changes: only the small error of each estimate (a few ms, under the 2 ticks the common tick
-//!   ignores, `interp::TickClock`).
+//!   ticks included. It is the host's clock: since issue #63 the host is the peer that created the
+//!   room, from its start to its end, and only the host and each client ping each other. A pong
+//!   carries the room's time of the peer that answers when it knows it (its own time otherwise,
+//!   flagged): the host's always does. Only the small error of each estimate remains (a few ms,
+//!   under the 2 ticks the common tick ignores, `interp::TickClock`).
 
 /// Samples kept to choose the clock offset from.
 pub const SAMPLES: usize = 8;
@@ -23,10 +22,6 @@ pub const MAX_ROUND_TRIP_MS: u32 = 10_000;
 
 /// Weight of a new round trip in the smoothed ping.
 const SMOOTHING: f32 = 0.25;
-
-/// A new host that does not know the room's clock waits this long at most for the others to
-/// tell it (their pongs), then starts the room's clock from its own (ms).
-pub const ROOM_WAIT_MS: u64 = 2_000;
 
 /// What the pongs of one peer told us.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -105,14 +100,12 @@ impl PeerClock {
 }
 
 /// The room's clock, seen from one peer (issue #9, see the module's documentation): its offset
-/// from our own clock. Pure logic: the lobby feeds it ([`RoomClock::update`]) with the clocks of
-/// the host and of the others, as their pongs told them.
+/// from our own clock. Pure logic: the lobby feeds it ([`RoomClock::update`]) with the host's
+/// clock, as its pongs told it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RoomClock {
     /// The room's time minus our own (ms), once known.
     offset: Option<i64>,
-    /// We host and do not know the room's clock: since when we wait for the others (ms).
-    waiting_since: Option<u64>,
 }
 
 impl RoomClock {
@@ -136,49 +129,21 @@ impl RoomClock {
         }
     }
 
-    /// Once a frame, at `now_ms`: `we_host`; `host` is the host's clock when another peer
-    /// hosts (`None` when we do, or nobody is seated yet); `others`: every other peer's clock (the
-    /// host's included).
-    ///
-    /// - Another peer hosts and tells the room's clock: we follow it.
-    /// - Otherwise (we host, or the host does not know it yet: a newcomer that just became host),
-    ///   we keep what we knew. Not knowing it, we take it from the peer that tells it with the
-    ///   fastest round trip; nobody tells it and we host: once every peer answered (or after
-    ///   [`ROOM_WAIT_MS`]), the room's clock starts from ours.
-    pub fn update<'a>(
-        &mut self,
-        now_ms: u64,
-        we_host: bool,
-        host: Option<&PeerClock>,
-        others: impl Iterator<Item = &'a PeerClock> + Clone,
-    ) {
-        if let Some(host) = host.filter(|host| host.knows_room()) {
-            self.offset = host.offset_ms();
-            self.waiting_since = None;
+    /// Once a frame: `we_host` (issue #63: the room's clock is ours from the start, nobody to
+    /// wait for); a client follows `host`, the host's clock as its pongs told it, once they tell
+    /// the room's (it keeps what it knew otherwise: its host gone, its estimate stays).
+    pub fn update(&mut self, we_host: bool, host: Option<&PeerClock>) {
+        if we_host {
+            if self.offset.is_none() {
+                self.offset = Some(0);
+            }
             return;
         }
-        if self.offset.is_some() {
-            self.waiting_since = None;
-            return;
-        }
-        let told = others
-            .clone()
-            .filter(|clock| clock.knows_room())
-            .min_by_key(|clock| clock.best_rtt_ms());
-        if let Some(clock) = told {
-            self.offset = clock.offset_ms();
-            self.waiting_since = None;
-            return;
-        }
-        if !we_host {
-            self.waiting_since = None;
-            return;
-        }
-        let since = *self.waiting_since.get_or_insert(now_ms);
-        let mut others = others;
-        if others.all(PeerClock::answered) || now_ms >= since + ROOM_WAIT_MS {
-            self.offset = Some(0);
-            self.waiting_since = None;
+        if let Some(offset) = host
+            .filter(|host| host.knows_room())
+            .and_then(PeerClock::offset_ms)
+        {
+            self.offset = Some(offset);
         }
     }
 }
@@ -389,14 +354,14 @@ mod tests {
         assert_eq!(moves, 1, "the common tick moved {moves} times");
     }
 
-    /// Three peers of a room, every one pinging every other once a second.
+    /// A room in a star (issue #63): the host (peer 0) and its clients ping each other once a
+    /// second; the clients never ping one another.
     struct Room {
         machines: Vec<Machine>,
         /// `clocks[a][b]`: what `a` knows of `b`'s clock.
         clocks: Vec<Vec<PeerClock>>,
         rooms: Vec<RoomClock>,
         here: Vec<bool>,
-        host: usize,
         jitter: Jitter,
     }
 
@@ -408,17 +373,16 @@ mod tests {
                 clocks: vec![vec![PeerClock::default(); n]; n],
                 rooms: vec![RoomClock::default(); n],
                 here: vec![true; n],
-                host: 0,
                 jitter: Jitter(7),
             }
         }
 
-        /// One second: the pings, then every peer's room clock.
+        /// One second: the pings between the host and each client, then every peer's room
+        /// clock.
         fn second(&mut self, t: f64) {
-            let n = self.machines.len();
-            for a in 0..n {
-                for b in 0..n {
-                    if a == b || !self.here[a] || !self.here[b] {
+            for client in 1..self.machines.len() {
+                for (a, b) in [(0, client), (client, 0)] {
+                    if !self.here[a] || !self.here[b] {
                         continue;
                     }
                     let ways = (15.0 + self.jitter.next(10.0), 15.0 + self.jitter.next(10.0));
@@ -427,23 +391,16 @@ mod tests {
                     exchange(&mut self.clocks[a][b], us, them, Some(&room), t, ways);
                 }
             }
-            self.update(t + 100.0);
+            self.update();
         }
 
-        fn update(&mut self, t: f64) {
+        fn update(&mut self) {
             for a in 0..self.machines.len() {
                 if !self.here[a] {
                     continue;
                 }
-                let we_host = a == self.host;
-                let host = (!we_host).then(|| &self.clocks[a][self.host]);
-                let others = self.clocks[a]
-                    .iter()
-                    .enumerate()
-                    .filter(|(b, _)| *b != a && self.here[*b])
-                    .map(|(_, clock)| clock);
-                let now = self.machines[a].at(t);
-                self.rooms[a].update(now, we_host, host, others);
+                let host = (a != 0 && self.here[0]).then(|| &self.clocks[a][0]);
+                self.rooms[a].update(a == 0, host);
             }
         }
 
@@ -460,29 +417,32 @@ mod tests {
         }
     }
 
-    /// Issue #9: the host leaves; the next one goes on with the room's clock it knew, the
-    /// others follow it. At every moment the peers agree within a few ms, and nobody's room
-    /// time jumps (15 to 25 ms each way).
+    /// Issue #63 (was « the room clock survives a new host », issue #9): the room's clock is the
+    /// host's for every client of the star, 15 to 25 ms each way: at every moment they agree
+    /// within a few ms, and nobody's room time jumps. The host's tab closes: the room is over for
+    /// its clients (the game says so), and their room clock stays where it was going, without a
+    /// jump (the clocks start 7 to 47 s apart).
     #[test]
-    fn the_room_clock_survives_a_new_host() {
-        let mut room = Room::new(&[10_000.0, 3_000.0, 50_000.0]);
+    fn the_room_clock_is_the_hosts_for_every_client() {
+        let mut room = Room::new(&[10_000.0, 3_000.0, 50_000.0, 27_000.0]);
         let mut previous: Option<Vec<Option<i64>>> = None;
         for second in 0..40 {
             let t = 1_000.0 * f64::from(second);
-            if second == 20 {
-                // The host's tab closes; peer 1 hosts now.
+            if second == 30 {
                 room.here[0] = false;
-                room.host = 1;
                 previous = previous.map(|times| times[1..].to_vec());
             }
             room.second(t);
             let times = room.times(t + 500.0);
-            // Once each peer has its 8 samples of the room's clock.
+            if second == 0 {
+                // The host knows it at once; a client once a pong of the host came.
+                assert!(times[0].is_some());
+            }
+            // Once each client has its 8 samples of the host's clock.
             if second > SAMPLES as u32 {
                 let known: Vec<i64> = times.iter().map(|t| t.expect("unknown")).collect();
                 let spread = known.iter().max().unwrap() - known.iter().min().unwrap();
                 assert!(spread <= 6, "second {second}: {known:?}");
-                // The room's clock is the first host's.
                 let truth = room.machines[0].at(t + 500.0) as i64;
                 for time in &known {
                     assert!(
@@ -492,9 +452,6 @@ mod tests {
                 }
                 if let Some(before) = &previous {
                     for (now, then) in known.iter().zip(before) {
-                        // An estimate moves by a few ms (the jitter is 10 ms); a host change
-                        // that lost the room's clock would jump by seconds (the clocks start 7
-                        // to 47 s apart).
                         let step = now - then.unwrap();
                         assert!(
                             (step - 1_000).abs() <= 10,
@@ -507,62 +464,47 @@ mod tests {
         }
     }
 
-    /// Issue #9: a newcomer with a smaller id becomes host before any pong reached it: it waits
-    /// for the others to tell it the room's clock rather than start a new one (the race's ticks
-    /// would jump), then goes on with it. Alone, a host starts the room's clock at once; nobody
-    /// answering, after `ROOM_WAIT_MS`.
+    /// Issue #63 (was « a new host learns the room clock before it counts », issue #9): the host
+    /// starts the room's clock from its own at once, whoever is there (no wait: nobody else can
+    /// host); a client does not know it before a pong of its host, then follows it, and a pong
+    /// that does not tell the room's clock changes nothing.
     #[test]
-    fn a_new_host_learns_the_room_clock_before_it_counts() {
-        let (old, newcomer) = (Machine::new(8_000.0), Machine::new(100.0));
-        let mut old_room = RoomClock::default();
-        old_room.update(old.at(0.0), true, None, std::iter::empty());
-        assert_eq!(
-            old_room.offset_ms(),
-            Some(0),
-            "alone: the room's clock is its own"
-        );
-        let mut of_old = PeerClock::default();
-        let mut room = RoomClock::default();
-        room.update(newcomer.at(10.0), true, None, [&of_old].into_iter());
-        assert_eq!(room.time_ms(newcomer.at(10.0)), None, "it waits");
-        assert_eq!(room.pong(newcomer.at(10.0)), (110, false));
-        exchange(
-            &mut of_old,
-            newcomer,
-            old,
-            Some(&old_room),
-            10.0,
-            (20.0, 20.0),
-        );
-        room.update(newcomer.at(60.0), true, None, [&of_old].into_iter());
-        let read = room.time_ms(newcomer.at(60.0)).unwrap() as i64;
-        assert!((read - old.at(60.0) as i64).abs() <= 1, "{read}");
-        assert!(room.pong(newcomer.at(60.0)).1);
-        // Nobody answers: after a while, its own clock.
-        let mut lonely = RoomClock::default();
+    fn the_host_starts_the_room_clock_at_once_and_a_client_follows_it() {
+        let (host, client) = (Machine::new(8_000.0), Machine::new(100.0));
+        let mut host_room = RoomClock::default();
         let silent = PeerClock::default();
-        lonely.update(5_000, true, None, [&silent].into_iter());
-        lonely.update(5_000 + ROOM_WAIT_MS - 1, true, None, [&silent].into_iter());
-        assert_eq!(lonely.offset_ms(), None);
-        lonely.update(5_000 + ROOM_WAIT_MS, true, None, [&silent].into_iter());
-        assert_eq!(lonely.offset_ms(), Some(0));
-        // A host that does not tell the room's clock yet: the others keep theirs.
-        let mut follower = RoomClock::default();
+        host_room.update(true, Some(&silent));
+        assert_eq!(
+            host_room.offset_ms(),
+            Some(0),
+            "the room's clock is the host's"
+        );
+        assert_eq!(host_room.pong(5_000), (5_000, true));
+        let mut room = RoomClock::default();
+        room.update(false, Some(&silent));
+        assert_eq!(room.time_ms(client.at(10.0)), None, "no pong yet");
+        assert_eq!(room.pong(client.at(10.0)), (110, false));
         let mut of_host = PeerClock::default();
         exchange(
             &mut of_host,
-            newcomer,
-            old,
-            Some(&old_room),
-            0.0,
-            (10.0, 10.0),
+            client,
+            host,
+            Some(&host_room),
+            10.0,
+            (20.0, 20.0),
         );
-        follower.update(200, false, Some(&of_host), [&of_host].into_iter());
-        let known = follower.offset_ms();
-        assert!(known.is_some());
-        let mut of_new_host = PeerClock::default();
-        exchange(&mut of_new_host, old, newcomer, None, 0.0, (10.0, 10.0));
-        follower.update(300, false, Some(&of_new_host), [&of_new_host].into_iter());
-        assert_eq!(follower.offset_ms(), known);
+        room.update(false, Some(&of_host));
+        let read = room.time_ms(client.at(60.0)).unwrap() as i64;
+        assert!((read - host.at(60.0) as i64).abs() <= 1, "{read}");
+        assert!(room.pong(client.at(60.0)).1);
+        // A pong without the room's clock (a peer that does not know it): kept as it was.
+        let known = room.offset_ms();
+        let mut of_stranger = PeerClock::default();
+        exchange(&mut of_stranger, client, host, None, 0.0, (10.0, 10.0));
+        room.update(false, Some(&of_stranger));
+        assert_eq!(room.offset_ms(), known);
+        // The host gone: the estimate stays.
+        room.update(false, None);
+        assert_eq!(room.offset_ms(), known);
     }
 }

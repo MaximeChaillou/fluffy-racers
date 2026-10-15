@@ -9,6 +9,9 @@
 //!   through it). [`DEFAULT_SIGNAL_URL`] in development (`matchbox_server` on the player's
 //!   machine); `?signal=wss://…` or `--signal wss://…` names another one, until the production
 //!   signaling of issue #10. The room's address on it is [`room_url`].
+//! - **Host** (issue #63): the peer that created the room hosts it. « Créer une partie » puts
+//!   `&host=1` in its own address bar (a reload hosts the same room again), never in the
+//!   invitation link; natively `--host`. Without it, a client.
 //! - **ICE servers** (issue #49, `ice.rs`): `?stun=none` or `?stun=stun:host:port,…`, and a TURN
 //!   relay with `?turn=turn:host:port&turnuser=…&turnpass=…` (the same with `--stun`, `--turn`,
 //!   `--turnuser` and `--turnpass` natively). They are not part of the invitation link: each
@@ -116,6 +119,9 @@ pub fn room_url(signal: &str, code: &RoomCode) -> String {
 pub struct LaunchOptions {
     /// `?room=CODE`, `--room CODE`: join this room.
     pub room: Option<RoomCode>,
+    /// Issue #63: `?host=1` (`?host`), `--host`: we host the room (we created it). Only in the
+    /// creator's address, never in the invitation link.
+    pub host: bool,
     /// `?signal=wss://…`, `--signal wss://…`: another signaling server.
     pub signal: Option<String>,
     /// `?pseudo=Max`, `--pseudo Max`: the name shown to the others.
@@ -151,7 +157,7 @@ impl LaunchOptions {
 
     /// From the command line's arguments (without the program's name): `--room CODE` or
     /// `--room=CODE`, and the same for `--signal`, `--pseudo`, `--stun`, `--turn`, `--turnuser`,
-    /// `--turnpass` and `--netsim`. Other arguments are ignored.
+    /// `--turnpass` and `--netsim`; `--host` alone (issue #63). Other arguments are ignored.
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
         let mut options = Self::default();
         let mut args = args.into_iter();
@@ -163,6 +169,10 @@ impl LaunchOptions {
                 Some((key, value)) => (key.to_string(), Some(value.to_string())),
                 None => (flag.to_string(), None),
             };
+            if key == "host" {
+                options.set("host", value.as_deref().unwrap_or("1"));
+                continue;
+            }
             if !LAUNCH_KEYS.contains(&key.as_str()) {
                 continue;
             }
@@ -176,6 +186,12 @@ impl LaunchOptions {
     fn set(&mut self, key: &str, value: &str) {
         match key {
             "room" => self.room = RoomCode::parse(value),
+            "host" => {
+                self.host = !matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no"
+                )
+            }
             "signal" => self.signal = parse_signal(value),
             "pseudo" => {
                 let name = crate::net::Profile::clean_name(value);
@@ -255,17 +271,32 @@ pub fn invite_link(page: &str, code: &RoomCode, signal: &str) -> String {
 
 /// The page's query with `room=CODE` set (`None`: removed), the other parameters kept
 /// (`?admin`, `signal`...). Written back in the address bar, so that a reload stays in the room.
+/// A client's: issue #63, without `host` (a host's: [`host_query`]).
 pub fn query_with_room(query: &str, code: Option<&RoomCode>) -> String {
+    room_query(query, code, false)
+}
+
+/// Issue #63: the host's address bar, `room=CODE&host=1`: a reload hosts the room again.
+pub fn host_query(query: &str, code: &RoomCode) -> String {
+    room_query(query, Some(code), true)
+}
+
+fn room_query(query: &str, code: Option<&RoomCode>, host: bool) -> String {
     let mut pairs: Vec<String> = query
         .trim_start_matches('?')
         .split('&')
         .filter(|pair| {
             let key = pair.split_once('=').map_or(*pair, |(key, _)| key);
-            !pair.is_empty() && !key.eq_ignore_ascii_case("room")
+            !pair.is_empty()
+                && !key.eq_ignore_ascii_case("room")
+                && !key.eq_ignore_ascii_case("host")
         })
         .map(str::to_string)
         .collect();
     if let Some(code) = code {
+        if host {
+            pairs.insert(0, "host=1".to_string());
+        }
         pairs.insert(0, format!("room={code}"));
     }
     if pairs.is_empty() {
@@ -275,7 +306,8 @@ pub fn query_with_room(query: &str, code: Option<&RoomCode>) -> String {
     }
 }
 
-/// The command line that joins the room natively (`cargo run -- --room CODE`).
+/// The command line that joins the room natively (`cargo run -- --room CODE`): a client's, the
+/// invitation (issue #63: without `--host`).
 pub fn native_command(code: &RoomCode, signal: &str) -> String {
     let mut command = format!("cargo run -- --room {code}");
     if signal != DEFAULT_SIGNAL_URL {
@@ -570,6 +602,49 @@ mod tests {
         assert_eq!(
             query_with_room("?netsim=120,20,5", Some(&code)),
             "?room=AB3CD&netsim=120,20,5"
+        );
+    }
+
+    /// Issue #63: the host's address says so (`host=1`), a reload hosts the room again; the
+    /// invitation link never does (a client's), nor a client's address; natively `--host`.
+    #[test]
+    fn only_the_hosts_address_says_it_hosts() {
+        let code = RoomCode::parse("AB3CD").unwrap();
+        assert_eq!(
+            host_query("?admin&signal=x", &code),
+            "?room=AB3CD&host=1&admin&signal=x"
+        );
+        let address = host_query("?room=OLD&host=1&pseudo=Max", &code);
+        assert_eq!(address, "?room=AB3CD&host=1&pseudo=Max");
+        let options = LaunchOptions::from_query(&address);
+        assert_eq!((options.room, options.host), (Some(code.clone()), true));
+        // A client's address, and leaving: no `host`.
+        assert_eq!(
+            query_with_room(&address, Some(&code)),
+            "?room=AB3CD&pseudo=Max"
+        );
+        assert_eq!(query_with_room(&address, None), "?pseudo=Max");
+        let link = invite_link("http://192.168.1.20:8080/", &code, "ws://192.168.1.20:3536");
+        let invited = LaunchOptions::from_query(link.split_once('?').unwrap().1);
+        assert!(!invited.host && invited.room == Some(code.clone()));
+        for (query, host) in [
+            ("?room=TEST&host", true),
+            ("?room=TEST&HOST=true", true),
+            ("?room=TEST&host=0", false),
+            ("?room=TEST&host=false", false),
+            ("?room=TEST", false),
+        ] {
+            assert_eq!(LaunchOptions::from_query(query).host, host, "{query}");
+        }
+        let args = |text: &str| LaunchOptions::from_args(text.split(' ').map(String::from));
+        let options = args("--host --room ab3cd");
+        assert_eq!((options.room, options.host), (Some(code.clone()), true));
+        assert!(args("--room ab3cd --host").host);
+        assert!(!args("--room ab3cd").host);
+        assert!(!args("--host=0 --room ab3cd").host);
+        assert_eq!(
+            native_command(&code, DEFAULT_SIGNAL_URL),
+            "cargo run -- --room AB3CD"
         );
     }
 

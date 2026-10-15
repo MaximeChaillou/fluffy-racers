@@ -3,19 +3,25 @@
 //! with issue #8, the race with issue #9.
 //!
 //! - **Room**: `?room=CODE` in the page address, `--room CODE` natively; « Créer une partie »
-//!   draws a code and gives the invitation link (`room.rs`). The signaling server
+//!   draws a code, hosts it (issue #63: `&host=1` in its own address, `--host` natively) and
+//!   gives the invitation link (`room.rs`). The signaling server
 //!   (`ws://localhost:3536` by default, `?signal=` / `--signal` for another one) only introduces
 //!   the peers to each other.
-//! - **Socket** (`socket.rs`): `matchbox_socket`, full mesh, a reliable and an unreliable
-//!   channel, polled each frame from a system, natively and in the browser.
+//! - **Socket** (`socket.rs`): `matchbox_socket`, a reliable and an unreliable channel, polled
+//!   each frame from a system, natively and in the browser. Since issue #63, a **star**: the peer
+//!   that created the room hosts it, each client has a single link, with the host
+//!   (`signaling::SignalFilter`), and the host relays what a client tells the others, with its
+//!   origin (`Message::Relayed`), and sends each client one packet with every kart's state
+//!   (`relay.rs`). The host leaving ends the room: « L'hôte a quitté la partie ».
 //! - **Direct connections** (issue #49): the STUN and TURN servers (`ice.rs`: none on a local
 //!   network, `?stun=`, `?turn=`), what goes through the signaling server (`signaling.rs`) and
 //!   the connections being made (`links.rs`): each step in the console, and in the lobby a peer
 //!   that does not connect, with the leads (README, « Dépannage »). In the browser, a small shim
 //!   of the page (`index.html`, read by `browser.rs`) completes `matchbox_socket`.
-//! - **Protocol** (`protocol.rs`): compact, versioned messages; **lobby** (`lobby.rs`): seats,
-//!   host (the smallest `PeerId`), « Prêt », ping and common clock (`clock.rs`), arrivals and
-//!   departures, the room full at 12. All of it is pure logic, unit-tested without Bevy.
+//! - **Protocol** (`protocol.rs`): compact, versioned messages; **lobby** (`lobby.rs`): seats
+//!   (the host's list), the host (the room's creator, issue #63), « Prêt », ping and common clock
+//!   (`clock.rs`), arrivals and departures, the room full at 12. All of it is pure logic,
+//!   unit-tested without Bevy.
 //! - **Window** (`ui.rs`, only with a renderer): **L** (« en ligne ») opens and closes it (same
 //!   letter at the same place in AZERTY and QWERTY, no Fn on a Mac); it opens by itself with a
 //!   room in the address. It does not pause the game, and costs nothing once closed (no egui
@@ -30,8 +36,8 @@
 //! - **The race online** (issue #9, `online.rs`, `race.rs`): the host chooses the room's circuit
 //!   and starts the races; everyone races on the same grid, on the room's clock (`clock.rs`), with
 //!   the host's bots; checkpoints and the end go to everyone (reliable), the same results on
-//!   every screen; the strikes and grabs between karts go to the peer that decides. A new host
-//!   takes the bots and the arbitration over. Online, the game never pauses.
+//!   every screen; the strikes and grabs between karts go to the peer that decides. Online, the
+//!   game never pauses.
 //!
 //! **Solo is unchanged**: without a room there is no socket; only the L key and the reading of
 //! the actions run each frame, the rest needs a [`NetSession`] (measured: no cost in the
@@ -50,6 +56,7 @@ mod online;
 mod pickups;
 mod protocol;
 mod race;
+mod relay;
 mod room;
 mod signaling;
 mod snapshot;
@@ -67,9 +74,11 @@ mod race_tests;
 #[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod star_tests;
+#[cfg(test)]
 mod sync_tests;
 
-pub use clock::{PeerClock, ROOM_WAIT_MS, RoomClock};
+pub use clock::{PeerClock, RoomClock};
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
@@ -80,24 +89,30 @@ pub use links::{
     CONNECTING_SHOWN_MS, Diagnosis, Link, Links, NO_CANDIDATE_MS, Role, STUCK_MS, Stuck,
 };
 pub use lobby::{
-    Lobby, LobbyEvent, LobbyPeer, Outgoing, PING_INTERVAL_MS, PlayerRow, SETTLE_MS, SILENT_MS,
+    Lobby, LobbyEvent, LobbyPeer, NO_HOST_MS, Outgoing, PING_INTERVAL_MS, PlayerRow, RowLink,
+    SILENT_MS,
 };
 pub use netsim::{NetSim, NetSimTuning};
 pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
 pub use pickups::{Arbiter, ClaimKey, Pillow, PillowRules};
 pub use protocol::{
     BlastOut, Channel, Claim, DecodeError, EFFECT_ITEMS, EffectOut, Grab, HELD_ITEMS, Honk,
-    ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_KART_STATE_BYTES,
-    MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow,
-    PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS, RaceOver,
-    RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply, TetherBreak, Verdict,
+    ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES,
+    MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
+    OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS,
+    RaceOver, RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply, TetherBreak,
+    Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
+pub use relay::StateRelay;
 pub use room::{
     CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SIGNAL_PORT,
-    default_signal, invite_link, native_command, parse_signal, query_with_room, room_url,
+    default_signal, host_query, invite_link, native_command, parse_signal, query_with_room,
+    room_url,
 };
-pub use signaling::{ObservedSignallerBuilder, SignalNote, WebSocketSignallerBuilder};
+pub use signaling::{
+    Admit, ObservedSignallerBuilder, SignalFilter, SignalNote, WebSocketSignallerBuilder,
+};
 pub use snapshot::{
     HeldLook, KartLook, KartPose, LookParts, Phase, pack_rotation, unpack_rotation,
 };
@@ -186,10 +201,12 @@ pub enum NetAction {
     /// Opens the window, or closes it (L).
     Toggle,
     Close,
-    /// « Créer une partie »: a new code, and join it.
+    /// « Créer une partie »: a new code, and host it (issue #63).
     CreateRoom,
-    /// Joins this room (leaving the current one, if another).
+    /// Joins this room as a client (leaving the current one, if another): the invitation link.
     Join(RoomCode),
+    /// Issue #63: hosts this room (`?room=CODE&host=1`, `--host`: the creator's page, reloaded).
+    Host(RoomCode),
     /// « Quitter la partie ».
     Leave,
     /// « Prêt » / « Pas prêt ».
@@ -211,6 +228,18 @@ pub enum NetStatus {
     Failed(String),
     /// The host refused us: 12 players already.
     Full,
+    /// Issue #63: our host left the room: it is over (« L'hôte a quitté la partie »).
+    HostLeft,
+    /// Issue #63: we wanted to host a room that has its host already (an address with `host=1`
+    /// opened twice): we left it.
+    HostTaken,
+}
+
+impl NetStatus {
+    /// The room can still be used (the socket is there).
+    pub fn usable(&self) -> bool {
+        matches!(self, NetStatus::Connecting | NetStatus::InRoom)
+    }
 }
 
 /// The room we are in (or trying to join): only while there is one.
@@ -221,6 +250,8 @@ pub struct NetSession {
     pub signal: String,
     /// The STUN and TURN servers of its connections.
     pub ice: IceServers,
+    /// Issue #63: we host the room (we created it), or are a client.
+    pub hosting: bool,
     pub status: NetStatus,
     /// From our id on.
     pub lobby: Option<Lobby>,
@@ -229,15 +260,80 @@ pub struct NetSession {
     socket: Option<NetSocket>,
     /// The browser's count of failed connections when we last looked (`browser::ice_failures`).
     failures_seen: u32,
+    /// Issue #63, the host: the clients' kart states, until its next bundles.
+    relay: StateRelay,
+    /// Our karts' states of this frame (reused).
+    own_states: Vec<KartSnapshot>,
 }
 
 impl NetSession {
-    /// The players of the lobby, for the screen (empty before we have an id).
+    /// A session joining `room` through `socket`: as its host, or a client.
+    pub fn new(
+        room: RoomCode,
+        signal: String,
+        ice: IceServers,
+        socket: NetSocket,
+        hosting: bool,
+    ) -> Self {
+        Self {
+            room,
+            signal,
+            ice,
+            hosting,
+            status: NetStatus::Connecting,
+            lobby: None,
+            links: Links::default(),
+            socket: Some(socket),
+            failures_seen: browser::ice_failures(),
+            relay: StateRelay::default(),
+            own_states: Vec::new(),
+        }
+    }
+
+    /// The players of the lobby, for the screen (empty before we have an id), and, issue #63,
+    /// the links with the host being made: a client's own, the host's with each newcomer.
     pub fn players(&self, now_ms: u64) -> Vec<PlayerRow> {
-        self.lobby
-            .as_ref()
-            .map(|lobby| lobby.players(now_ms))
-            .unwrap_or_default()
+        let Some(lobby) = self.lobby.as_ref() else {
+            return Vec::new();
+        };
+        let mut rows = lobby.players(now_ms);
+        for link in self.links.pending() {
+            if rows.iter().any(|row| row.key == link.peer) {
+                continue;
+            }
+            rows.push(PlayerRow {
+                key: link.peer,
+                name: String::new(),
+                loadout: [0; 4],
+                chosen: None,
+                color: None,
+                ready: false,
+                me: false,
+                // A client's link being made is with the host: the only one that offers.
+                host: !self.hosting,
+                seated: false,
+                link: match link.stuck(now_ms) {
+                    Some(stuck) => RowLink::Stuck(stuck),
+                    None => RowLink::Connecting,
+                },
+                ping_ms: None,
+                silent: false,
+                other_version: None,
+            });
+        }
+        rows
+    }
+
+    /// Issue #63: a client that met no host since it joined, [`NO_HOST_MS`] ago (no offer, no
+    /// connection): the room has none (« Cette partie n'existe plus »). A late offer still
+    /// connects it.
+    pub fn host_missing(&self, now_ms: u64) -> bool {
+        !self.hosting
+            && self.status == NetStatus::InRoom
+            && self.links.pending().is_empty()
+            && self.lobby.as_ref().is_some_and(|lobby| {
+                lobby.host().is_none() && now_ms >= lobby.joined_ms() + NO_HOST_MS
+            })
     }
 }
 
@@ -310,14 +406,21 @@ fn apply_net_actions(
         match action {
             NetAction::Toggle => window.open = !window.open,
             NetAction::Close => window.open = false,
-            NetAction::CreateRoom | NetAction::Join(_) => {
-                let room = match action {
-                    NetAction::Join(room) => room.clone(),
-                    _ => RoomCode::generate(random_seed(time.elapsed().as_nanos() as u64)),
+            NetAction::CreateRoom | NetAction::Join(_) | NetAction::Host(_) => {
+                let (room, hosting) = match action {
+                    NetAction::Join(room) => (room.clone(), false),
+                    NetAction::Host(room) => (room.clone(), true),
+                    _ => (
+                        RoomCode::generate(random_seed(time.elapsed().as_nanos() as u64)),
+                        true,
+                    ),
                 };
                 if let Some(current) = session.as_deref_mut() {
-                    let usable = !matches!(current.status, NetStatus::Failed(_) | NetStatus::Full);
-                    if current.room == room && current.signal == settings.signal && usable {
+                    if current.room == room
+                        && current.signal == settings.signal
+                        && current.hosting == hosting
+                        && current.status.usable()
+                    {
                         continue;
                     }
                     depart(current, &mut departures, &time);
@@ -325,21 +428,14 @@ fn apply_net_actions(
                 let ice = settings.ice_servers();
                 browser::set_gathering_max_ms(settings.ice_gathering_max_ms);
                 info!(
-                    "network: joining room {room} on {}, {}",
+                    "network: joining room {room} on {} as its {}, {}",
                     settings.signal,
+                    if hosting { "host" } else { "client" },
                     ice.describe()
                 );
                 let url = room_url(&settings.signal, &room);
-                let new = NetSession {
-                    room,
-                    signal: settings.signal.clone(),
-                    socket: Some(NetSocket::open(&url, settings.attempts, &ice)),
-                    ice,
-                    status: NetStatus::Connecting,
-                    lobby: None,
-                    links: Links::default(),
-                    failures_seen: browser::ice_failures(),
-                };
+                let socket = NetSocket::open(&url, settings.attempts, &ice, hosting);
+                let new = NetSession::new(room, settings.signal.clone(), ice, socket, hosting);
                 // Commands apply after this system: the next action of this frame (rare) sees
                 // the old session.
                 commands.insert_resource(new);
@@ -460,8 +556,96 @@ fn profile_of(
     (name, parts.map(|part| part.min(255) as u8))
 }
 
+/// The parts of the game a message is for (issue #53: the items; #8: the kart states; #9: the
+/// interactions and the race), with `from` its origin: the peer that sent it, or (issue #63) the
+/// client whose message our host relayed. The lobby gets every message itself, after.
+#[allow(clippy::too_many_arguments)]
+fn to_the_game(
+    from: PeerKey,
+    message: &Message,
+    (host, hosting): (Option<PeerKey>, bool),
+    game_ms: f64,
+    sync: Option<&mut KartSync>,
+    race: Option<&mut OnlineRace>,
+    items: Option<&mut OnlineItems>,
+    tuning: Option<&NetTuning>,
+) {
+    match message {
+        // Issue #63: a client's message, from our host: as if it came from that client.
+        Message::Relayed { origin, message } if !hosting && Some(from) == host => {
+            to_the_game(
+                *origin,
+                message,
+                (host, hosting),
+                game_ms,
+                sync,
+                race,
+                items,
+                tuning,
+            );
+        }
+        // Issue #63: our host's bundle: every kart's state, from the peer that drives it.
+        Message::KartStates(states) if !hosting && Some(from) == host => {
+            if let (Some(sync), Some(tuning)) = (sync, tuning) {
+                for (origin, state) in states {
+                    sync.receive(*origin, *state, game_ms, tuning);
+                }
+            }
+        }
+        Message::KartState(state) => {
+            if let (Some(sync), Some(tuning)) = (sync, tuning) {
+                sync.receive(from, *state, game_ms, tuning);
+            }
+        }
+        // Issue #53: the items and the croquettes (#18: explosions, klaxons; #61: effects,
+        // rams, oreillers).
+        Message::Claim(_)
+        | Message::Verdict(_)
+        | Message::ItemOut(_)
+        | Message::ItemBreak(_)
+        | Message::Scatter(_)
+        | Message::Blast(_)
+        | Message::Honk(_)
+        | Message::Effect(_)
+        | Message::Rammed(_)
+        | Message::PillowGone(_)
+        | Message::Retarget(_) => {
+            if let Some(items) = items {
+                items.receive(from, message.clone());
+            }
+        }
+        Message::Strike(_)
+        | Message::StrikeReply(_)
+        | Message::Grab(_)
+        | Message::TetherBreak(_) => {
+            if let Some(sync) = sync {
+                sync.receive_event(from, message.clone());
+            }
+        }
+        Message::Progress(progress) => {
+            if let Some(race) = race {
+                race.shared.receive(from, host, progress);
+            }
+        }
+        Message::RaceOver(over) => {
+            if let Some(race) = race
+                && race.shared.receive_over(from, host, over.clone())
+            {
+                info!(
+                    "network: the host ended race {}: {:?}",
+                    over.race, over.order
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Each frame in a room: the socket's news into the lobby (the kart states into the
-/// synchronization, issue #8), the lobby's messages and our kart's states out.
+/// synchronization, issue #8), the lobby's messages and our karts' states out. Issue #63, the
+/// star: a client sends everything to its host; the host relays a client's messages for everyone
+/// to the other clients (`Lobby::relay`), and sends each client one bundle of every kart's state
+/// (`relay.rs`).
 #[allow(clippy::too_many_arguments)]
 fn poll_session(
     mut session: ResMut<NetSession>,
@@ -474,6 +658,7 @@ fn poll_session(
     mut race: Option<ResMut<OnlineRace>>,
     mut items: Option<ResMut<OnlineItems>>,
     tuning: Option<Res<NetTuning>>,
+    mut window: ResMut<LobbyWindow>,
 ) {
     let now = now_ms(&time);
     let game_ms = game_time.elapsed_secs_f64() * 1_000.0;
@@ -482,9 +667,11 @@ fn poll_session(
         return;
     };
     let idle = session.links.pending().is_empty();
+    let hosting = session.hosting;
     let lobby = &mut session.lobby;
     let status = &mut session.status;
     let links = &mut session.links;
+    let relay = &mut session.relay;
     socket.poll(|event| match event {
         SocketEvent::Joined(me) => {
             let (name, loadout) = profile_of(&settings, loadout.as_deref(), roster.as_deref());
@@ -494,7 +681,7 @@ fn poll_session(
                 color: color_of(color.as_deref()),
                 ..Default::default()
             };
-            *lobby = Some(Lobby::new(me, profile, now));
+            *lobby = Some(Lobby::new(me, profile, now, hosting));
             *status = NetStatus::InRoom;
         }
         SocketEvent::Connected(peer) => {
@@ -508,6 +695,7 @@ fn poll_session(
         }
         SocketEvent::Disconnected(peer) => {
             links.disconnected(peer);
+            relay.forget(peer);
             if let Some(lobby) = lobby.as_mut() {
                 lobby.disconnect(peer);
             }
@@ -516,58 +704,34 @@ fn poll_session(
             if let Some(line) = links.note(&note, now) {
                 info!("network: {line}");
             }
+            if let SignalNote::OtherHost(_) = note
+                && hosting
+            {
+                warn!("network: this room has its host already: we leave it");
+                *status = NetStatus::HostTaken;
+            }
         }
         SocketEvent::Packet(peer, _, bytes) => {
             if let Some(lobby) = lobby.as_mut() {
                 match Message::decode(&bytes) {
                     Ok(message) => {
-                        let host = lobby.host();
-                        // Issue #53: the items and the croquettes (#18: explosions, klaxons;
-                        // #61: effects, rams, oreillers).
-                        if let (
-                            Message::Claim(_)
-                            | Message::Verdict(_)
-                            | Message::ItemOut(_)
-                            | Message::ItemBreak(_)
-                            | Message::Scatter(_)
-                            | Message::Blast(_)
-                            | Message::Honk(_)
-                            | Message::Effect(_)
-                            | Message::Rammed(_)
-                            | Message::PillowGone(_)
-                            | Message::Retarget(_),
-                            Some(items),
-                        ) = (&message, items.as_deref_mut())
+                        // Issue #63: a seated client's kart goes in our next bundles.
+                        if let Message::KartState(state) = &message
+                            && hosting
+                            && lobby.seats().contains(&peer)
                         {
-                            items.receive(peer, message.clone());
+                            relay.push(peer, *state);
                         }
-                        match (&message, sync.as_deref_mut(), race.as_deref_mut()) {
-                            (Message::KartState(state), Some(sync), _) => {
-                                if let Some(tuning) = tuning.as_deref() {
-                                    sync.receive(peer, *state, game_ms, tuning);
-                                }
-                            }
-                            (
-                                Message::Strike(_)
-                                | Message::StrikeReply(_)
-                                | Message::Grab(_)
-                                | Message::TetherBreak(_),
-                                Some(sync),
-                                _,
-                            ) => sync.receive_event(peer, message.clone()),
-                            (Message::Progress(progress), _, Some(race)) => {
-                                race.shared.receive(peer, host, progress);
-                            }
-                            (Message::RaceOver(over), _, Some(race)) => {
-                                if race.shared.receive_over(peer, host, over.clone()) {
-                                    info!(
-                                        "network: the host ended race {}: {:?}",
-                                        over.race, over.order
-                                    );
-                                }
-                            }
-                            _ => {}
-                        }
+                        to_the_game(
+                            peer,
+                            &message,
+                            (lobby.host(), hosting),
+                            game_ms,
+                            sync.as_deref_mut(),
+                            race.as_deref_mut(),
+                            items.as_deref_mut(),
+                            tuning.as_deref(),
+                        );
                         lobby.receive(peer, message, now);
                     }
                     Err(error) => {
@@ -606,53 +770,105 @@ fn poll_session(
         for out in lobby.drain_outbox() {
             socket.send(out.to, &out.message);
         }
-        // Our karts' states (issue #8), the interactions and the race's events (issue #9), to
-        // every other seated player.
+        // Our karts' states (issue #8), the interactions and the race's events (issue #9), the
+        // items (issue #53): issue #63, to our host, or (the host) to every seated client.
         let me = lobby.me();
-        let mut to_everyone = |message: &Message| {
-            for peer in lobby.seats() {
-                if *peer != me {
-                    socket.send(*peer, message);
-                }
+        let host = lobby.host().filter(|_| !lobby.host_left());
+        // Who our messages for everyone go to (12 at most: nothing allocated).
+        let mut targets = [me; MAX_PLAYERS];
+        let mut count = 0;
+        for peer in lobby.peers() {
+            let target = if hosting {
+                peer.direct && peer.seated
+            } else {
+                Some(peer.key) == host
+            };
+            if target && count < MAX_PLAYERS {
+                targets[count] = peer.key;
+                count += 1;
+            }
+        }
+        let targets = &targets[..count];
+        let to_everyone = |socket: &mut NetSocket, message: &Message| {
+            for peer in targets {
+                socket.send(*peer, message);
             }
         };
         if let Some(sync) = sync.as_deref_mut() {
-            for state in sync.drain_outgoing() {
-                to_everyone(&Message::KartState(state));
+            if hosting {
+                session.own_states.clear();
+                session.own_states.extend(sync.drain_outgoing());
+                let interval = tuning
+                    .as_deref()
+                    .map_or(2, |t| t.send_interval_ticks.max(1));
+                let interval_ms = (f64::from(interval) * TICK_MS).round() as u64;
+                if session
+                    .relay
+                    .due(now, !session.own_states.is_empty(), interval_ms)
+                {
+                    for client in targets {
+                        session
+                            .relay
+                            .bundles_for(*client, me, &session.own_states, |message| {
+                                socket.send(*client, message)
+                            });
+                    }
+                    session.relay.sent(now);
+                }
+            } else {
+                for state in sync.drain_outgoing() {
+                    to_everyone(socket, &Message::KartState(state));
+                }
             }
             for message in sync.drain_events_out() {
-                to_everyone(&message);
+                to_everyone(socket, &message);
             }
         }
         if let Some(race) = race.as_deref_mut() {
             for message in race.drain_outbox() {
-                to_everyone(&message);
+                to_everyone(socket, &message);
             }
         }
         if let Some(items) = items.as_deref_mut() {
             for message in items.drain_outbox() {
-                to_everyone(&message);
+                to_everyone(socket, &message);
             }
         }
         for event in lobby.drain_events() {
             info!("network: {event:?}");
-            if let LobbyEvent::Left(peer) = &event {
-                // A player who leaves gives up the race (issue #9); its items out disappear
-                // (issue #53).
-                if let Some(race) = race.as_deref_mut() {
-                    race.shared.leave(*peer);
+            match &event {
+                LobbyEvent::Left(peer) => {
+                    // A player who leaves gives up the race (issue #9); its items out disappear
+                    // (issue #53).
+                    if let Some(race) = race.as_deref_mut() {
+                        race.shared.leave(*peer);
+                    }
+                    if let Some(items) = items.as_deref_mut() {
+                        items.left(*peer);
+                    }
                 }
-                if let Some(items) = items.as_deref_mut() {
-                    items.left(*peer);
+                LobbyEvent::HostLeft => {
+                    // Issue #63: the room is over; the game goes back to the level before.
+                    warn!("network: the host left the room");
+                    session.status = NetStatus::HostLeft;
+                    window.open = true;
                 }
+                _ => {}
             }
         }
         if lobby.full() {
             session.status = NetStatus::Full;
         }
     }
-    if matches!(session.status, NetStatus::Full | NetStatus::Failed(_)) {
-        // Refused, or already stopped: nothing to say, the signaling server tells the others.
+    if matches!(
+        session.status,
+        NetStatus::Full | NetStatus::Failed(_) | NetStatus::HostLeft | NetStatus::HostTaken
+    ) {
+        // Refused, over, or already stopped: nothing to say, the signaling server tells the
+        // others.
+        if session.status == NetStatus::HostTaken {
+            window.open = true;
+        }
         session.socket = None;
     }
 }

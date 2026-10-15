@@ -34,7 +34,10 @@
 //! a super câlin or a fusée ([`Rammed`]: the victim's decision), the oreiller géant thrown
 //! ([`OutMotion::Pillow`]), its claim to the host ([`Pickup::Pillow`]), its new target
 //! ([`Retarget`]) and its end without a throw ([`PillowGone`]); in the kart states, the super
-//! câlin, the fusée and the dégonflage (`KartSnapshot::flags`).
+//! câlin, the fusée and the dégonflage (`KartSnapshot::flags`). Version 8 (issue #63): the star
+//! around the host: a client's message for the others goes to the host, which relays it with its
+//! origin ([`Message::Relayed`]), and the host sends each client one packet with every kart's
+//! newest state ([`Message::KartStates`], grouped by the peer that drives them).
 
 use std::fmt;
 
@@ -43,7 +46,7 @@ use crate::items::ItemKind;
 use crate::kart::KartColor;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 7;
+pub const PROTOCOL_VERSION: u8 = 8;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -53,8 +56,8 @@ pub const MAX_PLAYERS: usize = 12;
 pub const MAX_NAME_CHARS: usize = 16;
 pub const MAX_NAME_BYTES: usize = 64;
 
-/// A peer of the room: the `PeerId` (a UUID) the signaling server gave it, as a number. The host
-/// is the smallest one (`docs/ARCHITECTURE.md`).
+/// A peer of the room: the `PeerId` (a UUID) the signaling server gave it, as a number. Since
+/// issue #63, the host is the peer that created the room, whatever its id (`docs/ARCHITECTURE.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PeerKey(pub u128);
 
@@ -630,9 +633,24 @@ pub enum Message {
         clock_ms: u32,
         room: bool,
     },
-    /// The state of a kart of the sender (issue #8), 30 times a second.
+    /// The state of a kart of the sender (issue #8), 30 times a second: from a client to the host
+    /// (issue #63: the host sends [`Message::KartStates`]).
     KartState(KartSnapshot),
+    /// Issue #63: a message of `origin` (a client), relayed by the host to the other clients. The
+    /// receiver handles it as if it came from `origin`: every check of authority relies on it.
+    /// Only the messages a client tells everyone are relayed ([`Message::relayable`]).
+    Relayed {
+        origin: PeerKey,
+        message: Box<Message>,
+    },
+    /// Issue #63: from the host to a client, 30 times a second, the newest state of every kart it
+    /// does not drive (the host's, its bots', the other clients'), each with the peer that drives
+    /// it. Grouped on the wire by that peer: the states of one peer follow each other here.
+    KartStates(Vec<(PeerKey, KartSnapshot)>),
 }
+
+/// Kart states in one [`Message::KartStates`] at most: the karts of a grid.
+pub const MAX_BUNDLED_STATES: usize = MAX_PLAYERS;
 
 const HELLO: u8 = 1;
 const READY: u8 = 2;
@@ -661,6 +679,8 @@ const RAMMED: u8 = 34;
 const PILLOW_GONE: u8 = 35;
 const RETARGET: u8 = 36;
 const KART_STATE: u8 = 40;
+const KART_STATES: u8 = 41;
+const RELAYED: u8 = 10;
 
 /// The reasons a tether ends, in their wire order.
 const TETHER_ENDS: [TetherEnd; 10] = [
@@ -707,15 +727,40 @@ impl Message {
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
+            Message::KartStates(_) => KART_STATES,
+            Message::Relayed { .. } => RELAYED,
         }
+    }
+
+    /// Issue #63: a message a client tells every peer, which the host relays to the other clients
+    /// with its origin ([`Message::Relayed`]). Not the host's own (the seats, the race's start and
+    /// end, the verdicts), nor the pings (each link has its own), nor the kart states (the host
+    /// bundles them, [`Message::KartStates`]).
+    pub fn relayable(&self) -> bool {
+        !matches!(
+            self,
+            Message::Seats(_)
+                | Message::RoomFull
+                | Message::StartRace(_)
+                | Message::Circuit(_)
+                | Message::RaceOver(_)
+                | Message::Verdict(_)
+                | Message::Ping { .. }
+                | Message::Pong { .. }
+                | Message::KartState(_)
+                | Message::KartStates(_)
+                | Message::Relayed { .. }
+        )
     }
 
     /// The channel it goes on.
     pub fn channel(&self) -> Channel {
         match self {
-            Message::Ping { .. } | Message::Pong { .. } | Message::KartState(_) => {
-                Channel::Unreliable
-            }
+            Message::Ping { .. }
+            | Message::Pong { .. }
+            | Message::KartState(_)
+            | Message::KartStates(_) => Channel::Unreliable,
+            Message::Relayed { message, .. } => message.channel(),
             _ => Channel::Reliable,
         }
     }
@@ -724,6 +769,12 @@ impl Message {
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.clear();
         out.push(PROTOCOL_VERSION);
+        self.encode_body(out);
+    }
+
+    /// Its kind and its fields, after the version byte (a relayed message's own, after its
+    /// origin).
+    fn encode_body(&self, out: &mut Vec<u8>) {
         out.push(self.kind());
         match self {
             Message::Hello(profile) => {
@@ -901,23 +952,22 @@ impl Message {
                 put_u32(out, *clock_ms);
                 out.push(u8::from(*room));
             }
-            Message::KartState(kart) => {
-                put_u32(out, kart.tick);
-                out.extend_from_slice(&[kart.kart, kart.session]);
-                for value in kart.position {
-                    out.extend_from_slice(&value.to_le_bytes());
+            Message::KartState(kart) => put_snapshot(out, kart),
+            Message::KartStates(states) => {
+                // Groups of the states of one peer, in their order: its id, how many, the states.
+                let states = &states[..states.len().min(MAX_BUNDLED_STATES)];
+                out.push(states.chunk_by(|a, b| a.0 == b.0).count() as u8);
+                for group in states.chunk_by(|a, b| a.0 == b.0) {
+                    out.extend_from_slice(&group[0].0.0.to_le_bytes());
+                    out.push(group.len() as u8);
+                    for (_, kart) in group {
+                        put_snapshot(out, kart);
+                    }
                 }
-                out.extend_from_slice(&kart.rotation);
-                for value in kart.velocity.iter().chain(&kart.spin) {
-                    out.extend_from_slice(&value.to_le_bytes());
-                }
-                out.extend_from_slice(&[kart.state, kart.flags]);
-                out.extend_from_slice(&kart.hit);
-                out.extend_from_slice(&kart.boost);
-                out.extend_from_slice(&kart.slip.to_le_bytes());
-                out.push(kart.slipstream);
-                out.extend_from_slice(&kart.wheels.to_le_bytes());
-                out.push(kart.items);
+            }
+            Message::Relayed { origin, message } => {
+                out.extend_from_slice(&origin.0.to_le_bytes());
+                message.encode_body(out);
             }
         }
     }
@@ -935,6 +985,12 @@ impl Message {
         if version != PROTOCOL_VERSION {
             return Err(DecodeError::OtherVersion(version));
         }
+        Self::decode_body(rest)
+    }
+
+    /// A message from its kind on (after the version byte, or a relayed message's origin), to
+    /// the end of the packet.
+    fn decode_body(rest: &[u8]) -> Result<Self, DecodeError> {
         let (&kind, rest) = rest.split_first().ok_or(DecodeError::Truncated)?;
         let mut reader = Reader(rest);
         let message = match kind {
@@ -1274,38 +1330,48 @@ impl Message {
                 clock_ms: reader.u32()?,
                 room: reader.bool()?,
             },
-            KART_STATE => {
-                let kart = KartSnapshot {
-                    tick: reader.u32()?,
-                    kart: reader.u8()?,
-                    session: reader.u8()?,
-                    position: [reader.i32()?, reader.i32()?, reader.i32()?],
-                    rotation: reader.array()?,
-                    velocity: [reader.i16()?, reader.i16()?, reader.i16()?],
-                    spin: [reader.i16()?, reader.i16()?, reader.i16()?],
-                    state: reader.u8()?,
-                    flags: reader.u8()?,
-                    hit: reader.array()?,
-                    boost: reader.array()?,
-                    slip: i8::from_le_bytes(reader.array()?),
-                    slipstream: reader.u8()?,
-                    wheels: u16::from_le_bytes(reader.array()?),
-                    items: reader.u8()?,
-                };
-                if kart.rotation[5] & 0x80 != 0 {
-                    return Err(DecodeError::Invalid("kart rotation"));
+            KART_STATE => Message::KartState(reader.snapshot()?),
+            KART_STATES => {
+                let groups = usize::from(reader.u8()?);
+                if groups == 0 {
+                    return Err(DecodeError::Invalid("no kart state"));
                 }
-                // Phase 7 does not exist; bit 7 is free.
-                if kart.state & 0x07 == 0x07 || kart.state & 0x80 != 0 {
-                    return Err(DecodeError::Invalid("kart state"));
+                if groups > MAX_BUNDLED_STATES {
+                    return Err(DecodeError::Invalid("more kart states than karts"));
                 }
-                if kart.flags > KART_FLAGS {
-                    return Err(DecodeError::Invalid("kart flags"));
+                let mut states: Vec<(PeerKey, KartSnapshot)> = Vec::new();
+                let mut origins: Vec<PeerKey> = Vec::with_capacity(groups);
+                for _ in 0..groups {
+                    let origin = PeerKey(u128::from_le_bytes(reader.array()?));
+                    let count = usize::from(reader.u8()?);
+                    if count == 0 {
+                        return Err(DecodeError::Invalid("no kart state"));
+                    }
+                    if states.len() + count > MAX_BUNDLED_STATES {
+                        return Err(DecodeError::Invalid("more kart states than karts"));
+                    }
+                    // A peer's states are one group: written back the same.
+                    if origins.contains(&origin) {
+                        return Err(DecodeError::Invalid("a peer twice in the kart states"));
+                    }
+                    origins.push(origin);
+                    for _ in 0..count {
+                        states.push((origin, reader.snapshot()?));
+                    }
                 }
-                if !valid_held_items(kart.items) {
-                    return Err(DecodeError::Invalid("kart items"));
+                Message::KartStates(states)
+            }
+            RELAYED => {
+                let origin = PeerKey(u128::from_le_bytes(reader.array()?));
+                let message = Self::decode_body(reader.0)?;
+                reader.0 = &[];
+                if !message.relayable() {
+                    return Err(DecodeError::Invalid("relayed message"));
                 }
-                Message::KartState(kart)
+                Message::Relayed {
+                    origin,
+                    message: Box::new(message),
+                }
             }
             other => return Err(DecodeError::UnknownKind(other)),
         };
@@ -1350,6 +1416,26 @@ impl std::error::Error for DecodeError {}
 
 fn put_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// A kart's state (issue #8): 47 bytes.
+fn put_snapshot(out: &mut Vec<u8>, kart: &KartSnapshot) {
+    put_u32(out, kart.tick);
+    out.extend_from_slice(&[kart.kart, kart.session]);
+    for value in kart.position {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&kart.rotation);
+    for value in kart.velocity.iter().chain(&kart.spin) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&[kart.state, kart.flags]);
+    out.extend_from_slice(&kart.hit);
+    out.extend_from_slice(&kart.boost);
+    out.extend_from_slice(&kart.slip.to_le_bytes());
+    out.push(kart.slipstream);
+    out.extend_from_slice(&kart.wheels.to_le_bytes());
+    out.push(kart.items);
 }
 
 /// A list of peers: a count byte, then 16 bytes each ([`MAX_PLAYERS`] at most).
@@ -1541,6 +1627,41 @@ impl Reader<'_> {
         })
     }
 
+    /// A kart's state ([`put_snapshot`]), with its impossible values refused.
+    fn snapshot(&mut self) -> Result<KartSnapshot, DecodeError> {
+        let kart = KartSnapshot {
+            tick: self.u32()?,
+            kart: self.u8()?,
+            session: self.u8()?,
+            position: [self.i32()?, self.i32()?, self.i32()?],
+            rotation: self.array()?,
+            velocity: [self.i16()?, self.i16()?, self.i16()?],
+            spin: [self.i16()?, self.i16()?, self.i16()?],
+            state: self.u8()?,
+            flags: self.u8()?,
+            hit: self.array()?,
+            boost: self.array()?,
+            slip: i8::from_le_bytes(self.array()?),
+            slipstream: self.u8()?,
+            wheels: u16::from_le_bytes(self.array()?),
+            items: self.u8()?,
+        };
+        if kart.rotation[5] & 0x80 != 0 {
+            return Err(DecodeError::Invalid("kart rotation"));
+        }
+        // Phase 7 does not exist; bit 7 is free.
+        if kart.state & 0x07 == 0x07 || kart.state & 0x80 != 0 {
+            return Err(DecodeError::Invalid("kart state"));
+        }
+        if kart.flags > KART_FLAGS {
+            return Err(DecodeError::Invalid("kart flags"));
+        }
+        if !valid_held_items(kart.items) {
+            return Err(DecodeError::Invalid("kart items"));
+        }
+        Ok(kart)
+    }
+
     fn i32(&mut self) -> Result<i32, DecodeError> {
         Ok(i32::from_le_bytes(self.array()?))
     }
@@ -1584,6 +1705,27 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A kart state in a bundle (issue #63), its values on every byte.
+    fn bundled_state(kart: KartId, tick: u32) -> KartSnapshot {
+        KartSnapshot {
+            tick,
+            kart,
+            session: 7,
+            position: [-1_234_567, 89, i32::MAX],
+            rotation: [1, 2, 3, 4, 5, 0x46],
+            velocity: [-3_000, 12, i16::MAX],
+            spin: [i16::MIN, 0, 77],
+            state: 0x5a,
+            flags: 0b1_0011,
+            hit: [3, 90],
+            boost: [60, 45],
+            slip: -40,
+            slipstream: 200,
+            wheels: 0xfedc,
+            items: 0b1_0110,
+        }
+    }
 
     /// One of every message, with values that use every byte of their fields.
     fn every_message() -> Vec<Message> {
@@ -2006,6 +2148,44 @@ mod tests {
                 item: ItemKind::Fusee,
                 tick: 7,
             }),
+            // Issue #63: what the host relays, and its bundles of kart states.
+            Message::Relayed {
+                origin: PeerKey(u128::MAX - 7),
+                message: Box::new(Message::Hello(Profile {
+                    name: "Cyd".into(),
+                    loadout: [2, 1, 0, 2],
+                    ready: true,
+                    seated: true,
+                    color: KartColor::Red,
+                })),
+            },
+            Message::Relayed {
+                origin: PeerKey(0x0123_4567_89ab_cdef << 64),
+                message: Box::new(Message::Bye),
+            },
+            Message::Relayed {
+                origin: PeerKey(1),
+                message: Box::new(Message::Strike(Strike {
+                    striker: 10,
+                    target: 11,
+                    tick: 1_234,
+                    seen: 1_228,
+                    striker_position: [1.0, 0.5, -3.25],
+                    direction: [0.0, 1.0],
+                    push: 7.5,
+                    throw: false,
+                })),
+            },
+            Message::KartStates(vec![(PeerKey(u128::MAX), bundled_state(3, 9))]),
+            Message::KartStates(
+                (0..MAX_BUNDLED_STATES)
+                    .map(|i| {
+                        // The host's kart and its bots (one group), then one client per kart.
+                        let origin = PeerKey(if i < 8 { 5 << 100 } else { (i as u128) << 64 });
+                        (origin, bundled_state(i as u8, 4_000_000_000 + i as u32))
+                    })
+                    .collect(),
+            ),
         ]
         .into_iter()
         .chain(TETHER_ENDS.iter().map(|reason| {
@@ -2037,8 +2217,9 @@ mod tests {
         // 13 until issue #8; issue #9 adds the circuit, the checkpoints and the end of the race;
         // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
         // croquettes; issue #18 the explosions and the klaxons; issue #61 the effects, the karts
-        // knocked over, the oreillers gone and retargeted.
-        assert_eq!(kinds.len(), 27);
+        // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
+        // bundles of kart states.
+        assert_eq!(kinds.len(), 29);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -2046,14 +2227,17 @@ mod tests {
         );
     }
 
-    /// The pings and the kart states (issue #8) go on the unreliable channel, everything else on
-    /// the reliable one.
+    /// The pings and the kart states (issue #8; issue #63: bundled by the host too) go on the
+    /// unreliable channel, everything else on the reliable one (a relayed message on its own's).
     #[test]
     fn only_the_pings_and_the_kart_states_are_unreliable() {
         for message in every_message() {
             let unreliable = matches!(
                 message,
-                Message::Ping { .. } | Message::Pong { .. } | Message::KartState(_)
+                Message::Ping { .. }
+                    | Message::Pong { .. }
+                    | Message::KartState(_)
+                    | Message::KartStates(_)
             );
             assert_eq!(
                 message.channel() == Channel::Unreliable,
@@ -2148,12 +2332,35 @@ mod tests {
                 _ => {}
             }
         }
+        // Issue #63: a relayed message is its own (without its version byte) after 2 bytes and
+        // its origin's 16; a bundle of kart states, 3 bytes, then 17 per peer and 47 per state:
+        // at most 771 bytes for 12 karts of 12 peers (one packet, well under 1 200 bytes).
+        for message in every_message() {
+            let length = message.to_bytes().len();
+            match &message {
+                Message::Relayed { message: inner, .. } => {
+                    assert_eq!(length, 2 + 16 + inner.to_bytes().len() - 1, "{message:?}");
+                }
+                Message::KartStates(states) => {
+                    let peers = states.chunk_by(|a, b| a.0 == b.0).count();
+                    assert_eq!(length, 3 + 17 * peers + 47 * states.len());
+                }
+                _ => {}
+            }
+        }
+        let twelve = Message::KartStates(
+            (0..MAX_BUNDLED_STATES as u128)
+                .map(|i| (PeerKey(i), KartSnapshot::default()))
+                .collect(),
+        );
+        assert_eq!(twelve.to_bytes().len(), 771);
         for message in every_message() {
             match &message {
                 // Issue #9: a race's start lists its players (16 bytes each): 213 bytes with 12.
                 Message::StartRace(start) => {
                     assert_eq!(message.to_bytes().len(), 21 + 16 * start.players.len());
                 }
+                Message::KartStates(_) => {}
                 _ => assert!(message.to_bytes().len() <= 200, "{message:?}"),
             }
         }
@@ -2584,6 +2791,54 @@ mod tests {
             grab[rest..].copy_from_slice(&bad.to_le_bytes());
             assert!(invalid(&grab));
         }
+        // Issue #63: the host relays only what a client tells everyone: not a ping, a kart state,
+        // the host's own messages, nor a relayed message again.
+        let relay = |message: Message| {
+            let mut bytes = vec![v, RELAYED];
+            bytes.extend_from_slice(&7u128.to_le_bytes());
+            bytes.extend_from_slice(&message.to_bytes()[1..]);
+            bytes
+        };
+        assert!(Message::decode(&relay(Message::Ready(true))).is_ok());
+        for refused in [
+            Message::Ping { sent_ms: 1 },
+            Message::KartState(KartSnapshot::default()),
+            Message::Seats(vec![PeerKey(1)]),
+            Message::Circuit(1),
+            Message::RoomFull,
+            Message::Relayed {
+                origin: PeerKey(2),
+                message: Box::new(Message::Bye),
+            },
+        ] {
+            assert!(invalid(&relay(refused.clone())), "{refused:?} relayed");
+        }
+        // A bundle of no state, a peer without a state, more states than karts, a peer twice,
+        // an impossible state inside.
+        let one = Message::KartStates(vec![(PeerKey(3), KartSnapshot::default())]).to_bytes();
+        assert!(Message::decode(&one).is_ok());
+        assert!(invalid(&[v, KART_STATES, 0]));
+        let mut empty_group = vec![v, KART_STATES, 1];
+        empty_group.extend_from_slice(&3u128.to_le_bytes());
+        empty_group.push(0);
+        assert!(invalid(&empty_group));
+        // Version, kind, one peer (16 bytes), its count, then its state from byte 20.
+        let mut too_many = one.clone();
+        too_many[19] = MAX_BUNDLED_STATES as u8 + 1;
+        for _ in 0..MAX_BUNDLED_STATES {
+            too_many.extend_from_slice(&one[20..]);
+        }
+        assert!(invalid(&too_many), "13 states");
+        let mut twice = one.clone();
+        twice[2] = 2;
+        twice.extend_from_slice(&one[3..]);
+        assert!(invalid(&twice), "a peer twice");
+        let mut other = twice.clone();
+        other[3 + 17 + 47] = 4;
+        assert!(Message::decode(&other).is_ok(), "two peers");
+        let mut bad = one.clone();
+        bad[20 + 4 + 2 + 12 + 6 + 12] = 0x07;
+        assert!(invalid(&bad), "phase 7 in a bundle");
     }
 
     /// Random bytes, and every message with each of its bytes changed: refused or read, never a

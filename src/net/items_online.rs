@@ -41,9 +41,9 @@
 //!   after the leader of its thrower's ranking, by id, and its thrower's peer tells when that
 //!   leader changes ([`Retarget`]); each peer judges its karts in its crush. Gone without a throw
 //!   (a dégonflage), its kart's peer says so ([`PillowGone`]).
-//! - **A new host** decides what the old one left undecided (every peer keeps every claim), and
-//!   every peer sends its claims still undecided again: the new host answers again those it had
-//!   decided already. The items thrown by a peer that leaves disappear.
+//! - **The host** (issue #63: the room's creator, from start to end) decides every claim, and
+//!   only its verdicts count. The items thrown by a peer that leaves disappear; the host leaving
+//!   ends the room.
 //!
 //! Every message carries the session of the kart states (`KartSync::session`): a race's messages
 //! never mix with the free driving's. Nothing here runs without a room.
@@ -79,9 +79,6 @@ const MAX_CATCH_UP: u32 = 120;
 const BROKEN_KEPT: usize = 256;
 /// Items exploded lately (issue #18), kept for the victims' decisions of their blast, at most.
 const EXPLODED_KEPT: usize = 32;
-/// After a change of host, the oreillers géants wait this many ticks before the new host decides
-/// them (issue #61, `Arbiter::handover`): the grants the old host sent to the others come first.
-pub const PILLOW_HANDOVER_TICKS: u32 = 30;
 /// The other karts' oreillers géants waiting for the host's word, kept at most (issue #61).
 const PILLOW_DRAWS_KEPT: usize = 16;
 
@@ -161,8 +158,6 @@ pub struct OnlineItems {
     loss_seq: [u16; GRID_SLOTS],
     /// Peers gone since the last tick.
     left: Vec<PeerKey>,
-    /// The host on the last tick: when it changes, our undecided claims go again.
-    last_host: Option<PeerKey>,
     /// Our oreillers géants out, and the target we last told (issue #61).
     targets: Vec<(ItemId, Option<KartId>)>,
     /// The other karts' oreillers géants drawn, until the host's word: their kart, the tick of
@@ -448,23 +443,6 @@ fn receive_items(
         local: &local,
         sync: &sync,
     };
-    // A new host: our undecided claims go again (the new one may not have them all, and answers
-    // again those it decided already); issue #61: so do the grants of the oreillers géants we
-    // know in the race, and the new host waits a little before deciding one (a grant of the old
-    // host that reached us but not it comes first: never two oreillers).
-    let host = lobby.host();
-    if items.last_host != host {
-        if items.last_host.is_some() {
-            for mine in &items.mine {
-                items.outbox.push(Message::Claim(mine.claim));
-            }
-            for verdict in items.arbiter.pillow_grants() {
-                items.outbox.push(Message::Verdict(verdict));
-            }
-            items.arbiter.handover(now + PILLOW_HANDOVER_TICKS);
-        }
-        items.last_host = host;
-    }
     // Who left: its claims are dropped (and the oreillers its karts held), its items out
     // disappear.
     for peer in std::mem::take(&mut items.left) {
@@ -498,21 +476,14 @@ fn receive_items(
                 if karts.authority(claim.kart) != Some(from) {
                     continue;
                 }
-                let key = ClaimKey::of(&claim);
-                match items.arbiter.decided(&key) {
-                    // Decided already (a claim sent again to a new host): its verdict again.
-                    Some(granted) if lobby.is_host() => {
-                        items
-                            .outbox
-                            .push(Message::Verdict(Verdict { claim, granted }));
-                    }
-                    Some(_) => {}
-                    None => {
-                        items.arbiter.claim(from, claim);
-                    }
-                }
+                // Decided already: kept as it was (a claim reaches the host once).
+                items.arbiter.claim(from, claim);
             }
             Message::Verdict(verdict) if verdict.claim.session == current => {
+                // Issue #63: the host's word only.
+                if Some(from) != lobby.host() || lobby.is_host() {
+                    continue;
+                }
                 if items.arbiter.record(&verdict) {
                     apply_verdict(
                         items,
@@ -744,7 +715,7 @@ fn receive_items(
     if lobby.is_host() {
         let rules = pillow_rules(online_race.as_deref().zip(race.as_deref()), &item_tuning);
         verdicts.clear();
-        items.arbiter.decide(respawn, &rules, now, &mut verdicts);
+        items.arbiter.decide(respawn, &rules, &mut verdicts);
         for verdict in verdicts.drain(..) {
             items.outbox.push(Message::Verdict(verdict));
             apply_verdict(
@@ -982,8 +953,10 @@ fn apply_break(
 ) {
     let owner = karts.ours(end.id.owner);
     if end.id.is_held() {
-        // One of what our kart holds out broke on another peer's kart.
+        // One of what our kart holds out broke on another peer's kart (issue #63: another peer's
+        // kart's, seen by a third one: its states say it, only the story counts it, below).
         let Some(owner) = owner else {
+            items.log.breaks.push((end.id, end.kart, end.landed, now));
             return;
         };
         if let Ok((mut slots, ..)) = ours.get_mut(owner) {

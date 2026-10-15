@@ -32,8 +32,8 @@ pub const NO_CANDIDATE_MS: u64 = 2_000;
 /// Still not connected after this long (ms): the lobby gives the leads.
 pub const STUCK_MS: u64 = 10_000;
 
-/// Who makes the offer: the peer that was in the room first (the server announces the newcomer to
-/// it).
+/// Who makes the offer: since issue #63, always the host (the server announces each newcomer to the
+/// peers already there, and only the host takes it); a client answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Offerer,
@@ -223,6 +223,19 @@ impl Links {
                 }
                 None
             }
+            // Issue #63: what the star keeps from the crate's loop opens no connection.
+            SignalNote::Arrived(peer) => Some(format!(
+                "#{} entered the room: the host connects it",
+                peer.tag()
+            )),
+            SignalNote::OtherHost(peer) => Some(format!(
+                "#{} hosts this room already (it made us an offer): we leave it",
+                peer.tag()
+            )),
+            SignalNote::NotOurHost(peer) => Some(format!(
+                "an offer from #{}, which is not our host: ignored",
+                peer.tag()
+            )),
             SignalNote::Left(peer) => {
                 self.connected.retain(|key| *key != peer);
                 let index = self.links.iter().position(|link| link.peer == peer)?;
