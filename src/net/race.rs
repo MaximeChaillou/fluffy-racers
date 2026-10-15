@@ -16,8 +16,12 @@
 //!   results ([`RaceOver`]).
 //! - **Departures**: a player who leaves keeps its finish if it had one; otherwise it is ranked
 //!   last (it gave up), and no longer awaited.
+//! - **Results** (issue #70): the host closes them ([`SharedRace::close`]), with every racer's
+//!   time (estimated for those still on track, none for those who gave up): everyone shows its
+//!   table ([`RaceResults`]).
 
-use super::protocol::{KartId, PeerKey, Progress, RaceOver, RaceStart};
+use super::protocol::{KartId, PeerKey, Progress, RaceOver, RaceResults, RaceStart};
+use crate::race::ResultLine;
 
 /// Who drives a kart of the race.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +68,7 @@ pub struct SharedRace {
     /// The race tick the first player finished on.
     first_player_finish: Option<u32>,
     over: Option<RaceOver>,
+    results: Option<RaceResults>,
 }
 
 impl SharedRace {
@@ -89,6 +94,7 @@ impl SharedRace {
             to_finish: None,
             first_player_finish: None,
             over: None,
+            results: None,
         }
     }
 
@@ -266,6 +272,36 @@ impl SharedRace {
 
     pub fn over(&self) -> Option<&RaceOver> {
         self.over.as_ref()
+    }
+
+    /// We, the host, close the results with these lines (issue #70): once, after the end.
+    pub fn close(&mut self, lines: Vec<ResultLine<KartId>>) -> RaceResults {
+        let results = RaceResults {
+            race: self.start.race,
+            lines,
+        };
+        self.results = Some(results.clone());
+        results
+    }
+
+    /// The host (`from`, and `host` the host now) closed the results: kept when they are this
+    /// race's, the first ones.
+    pub fn receive_results(
+        &mut self,
+        from: PeerKey,
+        host: Option<PeerKey>,
+        results: RaceResults,
+    ) -> bool {
+        if results.race != self.start.race || host != Some(from) || self.results.is_some() {
+            return false;
+        }
+        self.results = Some(results);
+        true
+    }
+
+    /// The host's closed results, once they came (or once we closed them, hosting).
+    pub fn results(&self) -> Option<&RaceResults> {
+        self.results.as_ref()
     }
 }
 
@@ -484,6 +520,50 @@ mod tests {
         let sent = mine.end(3_000, vec![9, 10]);
         assert_eq!(sent.race, 4);
         assert_eq!(mine.over(), Some(&sent));
+    }
+
+    /// Issue #70: the closed results, like the end: from the host only, of this race, once.
+    #[test]
+    fn only_the_host_closes_the_results() {
+        use crate::race::ResultTime;
+        let mut race = race();
+        let results = RaceResults {
+            race: 4,
+            lines: vec![
+                ResultLine {
+                    id: 9,
+                    time: ResultTime::Finished(3_000),
+                },
+                ResultLine {
+                    id: 2,
+                    time: ResultTime::Estimated(3_800),
+                },
+                ResultLine {
+                    id: 11,
+                    time: ResultTime::GaveUp,
+                },
+            ],
+        };
+        assert!(!race.receive_results(BOB, Some(ANA), results.clone()));
+        let other_race = RaceResults {
+            race: 5,
+            ..results.clone()
+        };
+        assert!(!race.receive_results(ANA, Some(ANA), other_race));
+        assert_eq!(race.results(), None);
+        assert!(race.receive_results(ANA, Some(ANA), results.clone()));
+        assert_eq!(race.results(), Some(&results));
+        let again = RaceResults {
+            lines: vec![],
+            ..results.clone()
+        };
+        assert!(!race.receive_results(ANA, Some(ANA), again), "once");
+        assert_eq!(race.results(), Some(&results));
+        // The host's own.
+        let mut mine = super::tests::race();
+        let sent = mine.close(results.lines.clone());
+        assert_eq!(sent, results);
+        assert_eq!(mine.results(), Some(&sent));
     }
 
     /// Issue #63 (was « a new host takes the bots over », issue #9): the bots are the host's

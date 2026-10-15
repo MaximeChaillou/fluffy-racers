@@ -30,6 +30,13 @@ pub struct RaceTuning {
     /// The results screen ignores the restart buttons this long (a button still held from the
     /// race must not restart it at once).
     pub restart_delay_seconds: f32,
+    /// Issue #70: the results screen follows the racers still on track this long after it
+    /// appeared (their times come in as they finish), then closes: those still on track get an
+    /// estimated time, and the table is final. Read live.
+    pub results_close_seconds: f32,
+    /// An estimated time drives the rest of the race at the racer's average race speed, at least
+    /// this one (m/s): a racer that barely moved still gets a time. Read live.
+    pub results_min_speed: f32,
 
     // --- Checkpoints (anti-shortcut) ----------------------------------------------------------
     /// A kart's progress is tracked from this far behind its last checkpoint to its next one:
@@ -75,6 +82,8 @@ impl Default for RaceTuning {
             final_lap_banner_seconds: 2.0,
             finish_seconds: 4.0,
             restart_delay_seconds: 1.0,
+            results_close_seconds: 10.0,
+            results_min_speed: 5.0,
 
             backward_window: 30.0,
             gate_margin: 1.0,

@@ -2,7 +2,7 @@
 //! slots (issue #16: hand and reserve, each item a shape and a color of its own, the roulette
 //! flashing through them, "x3" for a triple), the croquettes held (issue #14: the counter pops at
 //! each pick-up, shakes when some are lost, turns gold at 10), the chantilly's cream over the
-//! screen (issue #18), and the results screen.
+//! screen (issue #18), and the results screen (issue #70: live, until the race closes them).
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
@@ -11,6 +11,8 @@
 pub mod debug;
 pub mod format;
 pub mod pop;
+#[cfg(test)]
+pub(crate) mod results_tests;
 
 pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationCost};
 
@@ -20,8 +22,9 @@ use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{ItemEffects, PlayerKart};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
+use crate::track::GRID_SLOTS;
 use format::{
-    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_ONLINE, RESULTS_TITLE, hundredths, write_best_lap,
+    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_ONLINE, RESULTS_TITLE, ResultsTime, write_best_lap,
     write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
 };
 
@@ -248,6 +251,64 @@ pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ResultsScreen;
 
+/// A cell of the results screen (issue #70): its line (0 = the first) and its column. Spawned
+/// once with the screen; only its text changes, when what it shows changes.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResultsCell {
+    pub row: usize,
+    pub column: ResultsColumn,
+}
+
+/// The columns of the results screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultsColumn {
+    /// "1er": written once.
+    Rank,
+    /// "Toi", "Kart 3" or another player's name.
+    Name,
+    /// "1:02.35", "en course", "~1:45.20" (estimated), "abandon".
+    Time,
+    /// "Meilleur tour 0:20.12", "Tour 2/3", "Temps estime".
+    Detail,
+}
+
+/// The columns and their width (px).
+const RESULTS_COLUMNS: [(ResultsColumn, f32); 4] = [
+    (ResultsColumn::Rank, 60.0),
+    (ResultsColumn::Name, 110.0),
+    (ResultsColumn::Time, 140.0),
+    (ResultsColumn::Detail, 320.0),
+];
+
+/// What a line of the results screen shows: its racer and that racer's race.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResultsRowView {
+    pub racer: Entity,
+    pub player: bool,
+    pub time: ResultsTime,
+}
+
+impl ResultsColumn {
+    /// Whether this column's text changes from `old` to `new`.
+    fn changed(self, old: Option<ResultsRowView>, new: Option<ResultsRowView>) -> bool {
+        match (old, new) {
+            _ if self == Self::Rank => false,
+            (Some(old), Some(new)) if self == Self::Name => {
+                (old.racer, old.player) != (new.racer, new.player)
+            }
+            (Some(old), Some(new)) => old.time != new.time,
+            (old, new) => old.is_some() || new.is_some(),
+        }
+    }
+}
+
+/// What the results screen shows now (issue #70): its line count, and each line's view.
+#[derive(Resource, Default)]
+struct ResultsShown {
+    rows: usize,
+    views: [Option<ResultsRowView>; GRID_SLOTS],
+}
+
 /// What the HUD shows now, to rewrite only what changed.
 #[derive(Resource, Default)]
 struct HudShown(Option<HudValues>);
@@ -264,6 +325,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudShown>()
             .init_resource::<CroquetteCounterAnimation>()
+            .init_resource::<ResultsShown>()
             .add_systems(
                 Update,
                 (
@@ -273,6 +335,7 @@ impl Plugin for HudPlugin {
                     show_cream,
                     animate_croquette_counter,
                     show_results,
+                    update_results,
                 )
                     .chain()
                     .run_if(resource_exists::<Race>),
@@ -704,13 +767,13 @@ fn animate_croquette_counter(
 
 /// Spawns the results screen when the results phase starts, removes it on restart. Online
 /// (issue #9): the host's order (`race::OnlineFlow`), the other players' names, and the host
-/// starts the next race.
+/// starts the next race. Its lines are filled by [`update_results`] (issue #70).
 fn show_results(
     mut commands: Commands,
     race: Res<Race>,
     online: Option<Res<crate::level::Online>>,
+    mut shown: ResMut<ResultsShown>,
     screens: Query<Entity, With<ResultsScreen>>,
-    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
 ) {
     let showing = race.phase() == RacePhase::Results;
     if !showing {
@@ -722,7 +785,14 @@ fn show_results(
     if !screens.is_empty() {
         return;
     }
-    let mut line = String::new();
+    let rows = if race.results_closed() {
+        race.results.len()
+    } else {
+        race.standings.len()
+    }
+    .min(GRID_SLOTS);
+    *shown = ResultsShown { rows, ..default() };
+    let mut rank = String::new();
     commands
         .spawn((
             Name::new("Results"),
@@ -757,40 +827,28 @@ fn show_results(
                             ..default()
                         },
                     ));
-                    for (i, entity) in race.standings.iter().enumerate() {
-                        let Ok((racer, progress, player, name)) = racers.get(*entity) else {
-                            continue;
-                        };
-                        let color = if player { RANK_COLOR } else { TEXT_COLOR };
+                    for row in 0..rows {
+                        write_ordinal(&mut rank, row as u32 + 1);
                         panel
                             .spawn(Node {
                                 column_gap: px(18),
                                 ..default()
                             })
-                            .with_children(|row| {
-                                let mut cell = |content: &str, width: f32| {
-                                    row.spawn((
-                                        text(content, 24.0, color),
+                            .with_children(|line| {
+                                for (column, width) in RESULTS_COLUMNS {
+                                    let content = match column {
+                                        ResultsColumn::Rank => rank.as_str(),
+                                        _ => "",
+                                    };
+                                    line.spawn((
+                                        ResultsCell { row, column },
+                                        text(content, 24.0, TEXT_COLOR),
                                         Node {
                                             width: px(width),
                                             ..default()
                                         },
                                     ));
-                                };
-                                write_ordinal(&mut line, i as u32 + 1);
-                                cell(&line, 60.0);
-                                write_racer_name(
-                                    &mut line,
-                                    player,
-                                    racer.grid_slot,
-                                    name.map(|n| n.0.as_str()),
-                                );
-                                cell(&line, 110.0);
-                                line.clear();
-                                write_time(&mut line, progress.finish.map(hundredths));
-                                cell(&line, 110.0);
-                                write_best_lap(&mut line, progress.best_lap().map(hundredths));
-                                cell(&line, 260.0);
+                                }
                             });
                     }
                     panel.spawn((
@@ -810,6 +868,87 @@ fn show_results(
                     ));
                 });
         });
+}
+
+/// The line `row` of the results screen: the racer at that place and its race, live (the
+/// standings: online, the host's order), or from the closed results (issue #70).
+fn results_row(
+    race: &Race,
+    course: &Course,
+    row: usize,
+    racers: &Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
+) -> Option<ResultsRowView> {
+    let (racer, closed) = if race.results_closed() {
+        let line = race.results.get(row)?;
+        (line.id, Some(line.time))
+    } else {
+        (*race.standings.get(row)?, None)
+    };
+    let (_, progress, player, _) = racers.get(racer).ok()?;
+    Some(ResultsRowView {
+        racer,
+        player,
+        time: ResultsTime::of(progress, course, closed),
+    })
+}
+
+/// Issue #70: the lines of the results screen follow the race: a racer that finishes gets its
+/// time and best lap, the order follows the standings, a racer still on track says so (with its
+/// lap), and once the results closed, the final table (estimated times). Every frame it only
+/// compares what each line shows; a text is rewritten when its value changes (no allocation, no
+/// new entity).
+fn update_results(
+    race: Res<Race>,
+    course: Res<Course>,
+    mut shown: ResMut<ResultsShown>,
+    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
+    mut cells: Query<(&ResultsCell, &mut Text, &mut TextColor)>,
+) {
+    if race.phase() != RacePhase::Results {
+        return;
+    }
+    let mut views = [None; GRID_SLOTS];
+    for (row, view) in views.iter_mut().enumerate().take(shown.rows) {
+        *view = results_row(&race, &course, row, &racers);
+    }
+    if views == shown.views {
+        return;
+    }
+    for (cell, mut text, mut color) in &mut cells {
+        let Some(old) = shown.views.get(cell.row).copied() else {
+            continue;
+        };
+        let new = views[cell.row];
+        if old == new {
+            continue;
+        }
+        // The local player's line in gold, wherever it goes.
+        let player = new.is_some_and(|view| view.player);
+        color.set_if_neq(TextColor(if player { RANK_COLOR } else { TEXT_COLOR }));
+        if !cell.column.changed(old, new) {
+            continue;
+        }
+        let out = &mut text.0;
+        let Some(view) = new else {
+            out.clear();
+            continue;
+        };
+        match cell.column {
+            ResultsColumn::Rank => {}
+            ResultsColumn::Name => {
+                let name = racers.get(view.racer).ok();
+                write_racer_name(
+                    out,
+                    view.player,
+                    name.map_or(0, |(racer, ..)| racer.grid_slot),
+                    name.and_then(|(.., name)| name).map(|n| n.0.as_str()),
+                );
+            }
+            ResultsColumn::Time => view.time.write_time(out),
+            ResultsColumn::Detail => view.time.write_detail(out),
+        }
+    }
+    shown.views = views;
 }
 
 #[cfg(test)]
