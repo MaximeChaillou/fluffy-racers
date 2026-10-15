@@ -165,6 +165,21 @@ pub struct BotTuning {
     /// by at most this much sideways (m), on the straights only...
     pub item_box_pull: f32,
     pub item_box_range: f32,
+    // Issue #18.
+    /// A bombe thrown ahead lands about 13 m ahead and blows 6 m around: it goes at a kart this
+    /// far ahead (m), within `BotSkill::item_aim` × `item_bomb_cone`.
+    pub item_bomb_range: [f32; 2],
+    pub item_bomb_cone: f32,
+    /// A piment doré's boosts: the next one when the last one is over, with at least this share
+    /// of `item_piment_straight` ahead.
+    pub item_golden_straight: f32,
+    /// A super câlin goes when a kart is this close (m), to knock it over (or on a straight).
+    pub item_ram_range: f32,
+    /// The klaxon-canard sounds when another kart's item comes this close (m: about its reach).
+    pub item_danger_range: f32,
+    /// Creamed (the chantilly), the bot drives this much less precisely: its wobble's amplitude
+    /// grows by this much (m).
+    pub creamed_wobble: f32,
 
     // --- Interactions between karts (GD § 15, issue #34) ----------------------------------------
     /// It never goes for the same kart twice within this long (s, GD: 5 s).
@@ -307,6 +322,12 @@ impl Default for BotTuning {
             item_piment_straight: 45.0,
             item_box_pull: 2.5,
             item_box_range: 35.0,
+            item_bomb_range: [7.0, 24.0],
+            item_bomb_cone: 3.0,
+            item_golden_straight: 0.5,
+            item_ram_range: 12.0,
+            item_danger_range: 9.0,
+            creamed_wobble: 2.5,
 
             interaction_retarget: 5.0,
             grab_min_speed_gain: 2.0,

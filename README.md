@@ -65,6 +65,11 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
    - **les boucliers** : tiens E avec une pelure ou une pelote : elle reste derrière ton kart, **visible dans l'autre fenêtre** ; un objet lancé par l'autre sur ton bouclier casse avec lui, et ton kart n'est pas touché. Un « x3 » sorti tourne autour de ton kart, des deux côtés ;
    - **les croquettes** : ramasse celles de la piste : elles disparaissent aussi dans l'autre fenêtre (et reviennent 10 s plus tard, au même moment) ; celles qu'un kart perd (choc, coup de patte, objet) s'éparpillent au même endroit dans les deux fenêtres, et une croquette ramassée par l'un disparaît chez l'autre ;
    - **le piment et la croquette dorée** : l'autre fenêtre voit les flammes de ton boost ;
+   - **les objets de phase 2 en ligne** (#18) : dans une fenêtre, **I** met un objet dans ta main (le suivant à chaque appui ; en ligne, seulement avec `trunk serve` ou `cargo run`, et seulement le piment doré, la bombe à confettis et le klaxon-canard, avec les objets de #16) :
+     - **la bombe** (boule bleu marine, mèche jaune) : lancée devant l'autre joueur, elle part en cloche et explose là où elle retombe, au même moment dans les deux fenêtres ; s'il est à moins de 6 m, il fait une culbute (c'est **sa** fenêtre qui décide). Posée derrière toi (avec Bas/S), elle explose sur l'autre s'il roule dessus, au même endroit dans les deux fenêtres, ou au bout de 3 s ;
+     - **le klaxon-canard** : les objets à moins de 9 m de ton kart disparaissent dans les deux fenêtres (une pelure posée par l'autre, ce qu'il traîne derrière lui), et l'autre fenêtre voit l'onde orange ;
+     - **le piment doré** : 7 s de boosts, un par appui ; l'autre fenêtre voit tes flammes ;
+     - la console écrit combien de bombes et de klaxons sont passés (`… items out (2 bombes), 1 klaxons …`), les mêmes nombres des deux côtés ;
    - **les bots de l'hôte** prennent des boîtes et lancent leurs objets comme en solo, dans les deux fenêtres ;
    - **l'hôte s'en va** : l'autre décide des boîtes et des croquettes à sa place ; les objets lancés par l'hôte parti disparaissent.
 10. **Les couleurs** (#55) : dans chaque fenêtre, **G** (« Pilote et kart »), monte sur la dernière ligne, **Couleur** (Haut depuis la première ligne), choisis avec Gauche / Droite (ou clique sur une pastille), puis **Entrée** :

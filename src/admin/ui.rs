@@ -27,10 +27,10 @@ use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_n
 use crate::camera::ChaseCamera;
 use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
-use crate::items::{ItemSlots, ItemStats, Slot};
+use crate::items::{DEBUG_ITEM_KEY, GiveItem, ItemSlots, ItemStats, Prize, Slot};
 use crate::kart::{
-    Boost, DriftSide, HitReaction, Invincibility, KartState, KartStats, KartTuning, KartWheels,
-    MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
+    Boost, DriftSide, HitReaction, Invincibility, ItemEffects, KartState, KartStats, KartTuning,
+    KartWheels, MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
 };
 use crate::level::LoadLevel;
 use crate::net::LobbyWindow;
@@ -153,19 +153,22 @@ pub(super) struct PanelState {
     message: String,
     /// When « Copier mes réglages » was last clicked (egui time, s).
     copied_at: Option<f64>,
+    /// The item « Donner » gives (issue #18).
+    gift: Prize,
 }
 
 impl Default for PanelState {
     fn default() -> Self {
         Self {
             circuits: tracks::circuits(),
-            open: HashSet::from(["Test", "Réglages", "KartTuning"]),
+            open: HashSet::from(["Test", "Objets", "Réglages", "KartTuning"]),
             filter: String::new(),
             export: String::new(),
             unsaved: false,
             paste: String::new(),
             message: String::new(),
             copied_at: None,
+            gift: Prize::Pelure,
         }
     }
 }
@@ -384,6 +387,9 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
             section(ui, state, "Test", "Test", |ui, state| {
                 test_section(ui, world, state, tunings, &mut changed);
             });
+            section(ui, state, "Objets", "Donner un objet", |ui, state| {
+                items_section(ui, world, state);
+            });
             section(
                 ui,
                 state,
@@ -577,6 +583,45 @@ fn test_section(
     }
 }
 
+/// Issue #18: any item, ready in the player's hand (`items::GiveItem`), to try it at once; the
+/// I key goes through them all. Online, only in a debug build, and only what plays online.
+fn items_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
+    let online = world.contains_resource::<crate::level::Online>();
+    if online && !cfg!(debug_assertions) {
+        ui.label("En ligne : pas d'objet donné (seulement dans une version de développement).");
+        return;
+    }
+    let playable = |prize: &Prize| !online || prize.online();
+    if !playable(&state.gift) {
+        state.gift = Prize::Pelure;
+    }
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("admin-gift")
+            .width(220.0)
+            .selected_text(state.gift.name())
+            .show_ui(ui, |ui| {
+                for prize in Prize::ALL.iter().filter(|p| playable(p)) {
+                    ui.selectable_value(&mut state.gift, *prize, prize.name());
+                }
+            });
+        if ui.button("Donner").clicked() {
+            world.write_message(GiveItem(state.gift));
+        }
+    });
+    ui.small(format!(
+        "Dans ta main, prêt à servir (Objet : Shift ou E). La touche {} donne le suivant de la liste.{}",
+        match DEBUG_ITEM_KEY {
+            KeyCode::KeyI => "I",
+            _ => "de debug",
+        },
+        if online {
+            " En ligne : seulement les objets qui marchent en ligne."
+        } else {
+            ""
+        }
+    ));
+}
+
 fn difficulty_label(name: &str) -> &str {
     match name {
         "Easy" => "Facile",
@@ -599,7 +644,12 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         &KartStats,
         &StatEffects,
         Option<&Croquettes>,
-        (&Invincibility, Option<&ItemSlots>, Option<&ItemStats>),
+        (
+            &Invincibility,
+            Option<&ItemSlots>,
+            Option<&ItemStats>,
+            Option<&ItemEffects>,
+        ),
     ), With<PlayerKart>>();
     let base = world.resource::<KartTuning>();
     let Some((
@@ -614,7 +664,7 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         stats,
         effects,
         croquettes,
-        (invincibility, items, item_stats),
+        (invincibility, items, item_stats, item_effects),
     )) = karts.iter(world).next()
     else {
         ui.label("Pas de kart joueur.");
@@ -750,7 +800,31 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
                 if let Some((item, count)) = items.held_out() {
                     text.push_str(&format!(" ; dehors : {} x{count}", item.label()));
                 }
+                if items.golden > 0 {
+                    text.push_str(&format!(
+                        " ; piment doré encore {:.1} s",
+                        items.golden as f32 / 60.0
+                    ));
+                }
                 row("Objets (main | réserve)", text);
+            }
+            // Issue #18: what the items of phase 2 do to the kart.
+            if let Some(e) = item_effects.filter(|e| e.is_active()) {
+                let mut text = String::new();
+                for (name, left) in [
+                    ("super câlin", e.calin),
+                    ("fusée", e.rocket),
+                    ("dégonflé", e.deflated),
+                    ("chantilly", e.creamed),
+                ] {
+                    if left > 0.0 {
+                        if !text.is_empty() {
+                            text.push_str(", ");
+                        }
+                        text.push_str(&format!("{name} {left:.1} s"));
+                    }
+                }
+                row("Effets d'objets", text);
             }
             if let Some(counts) = item_stats {
                 row(

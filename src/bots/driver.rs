@@ -138,6 +138,9 @@ pub struct Senses<'a> {
     pub dt: f32,
     /// Every kart, the bot's own included.
     pub neighbors: &'a [Neighbor],
+    /// Cream on its screen (issue #18, the chantilly): it drives less precisely
+    /// (`BotTuning::creamed_wobble`).
+    pub creamed: bool,
     /// An item box worth going for (issue #16: a slot free, the box there): how far ahead and
     /// how far to the right of the kart (m). `None` without items.
     pub item_box: Option<(f32, f32)>,
@@ -541,11 +544,21 @@ pub fn drive(
     }
     brain.lane = approach(brain.lane, brain.lane_target, tuning.lane_change_rate * dt);
     brain.wobble_timer -= dt;
+    // Creamed (issue #18): a wider wobble, as soon as the cream lands (the same draws).
+    let wobble = skill.wobble
+        + if senses.creamed {
+            tuning.creamed_wobble
+        } else {
+            0.0
+        };
+    if senses.creamed && brain.wobble_target.abs() <= skill.wobble {
+        brain.wobble_timer = 0.0;
+    }
     if brain.wobble_timer <= 0.0 {
-        brain.wobble_target = brain.rng.range(-skill.wobble, skill.wobble);
+        brain.wobble_target = brain.rng.range(-wobble, wobble);
         brain.wobble_timer = skill.wobble_period * brain.rng.range(0.6, 1.4);
     }
-    let wobble_rate = 2.0 * skill.wobble / skill.wobble_period.max(0.1);
+    let wobble_rate = 2.0 * wobble / skill.wobble_period.max(0.1);
     brain.wobble = approach(brain.wobble, brain.wobble_target, wobble_rate * dt);
 
     // --- Where to aim: its lane, a bit ahead.
@@ -1249,6 +1262,7 @@ mod tests {
             trick_window: false,
             dt: DT,
             neighbors,
+            creamed: false,
             item_box: None,
         }
     }
@@ -1611,6 +1625,38 @@ mod tests {
         never.trick_chance = 0.0;
         let mut brain = BotBrain::new(3, &t);
         assert!(!drive(&mut brain, &never, &t, &k, &line, &senses).jump_drift);
+    }
+
+    /// Issue #18 (GD § 8): cream on its screen (the chantilly), a bot drives less precisely: its
+    /// wobble around its line grows by `creamed_wobble` at once; without cream, the same draws
+    /// as ever (a Hard bot: within its small wobble).
+    #[test]
+    fn a_creamed_bot_drives_less_precisely() {
+        let (_, line) = prairie_line();
+        let k = kart();
+        let t = BotTuning::default();
+        let skill = *t.skill(BotDifficulty::Hard);
+        let widest = |creamed: bool, seed: u64| {
+            let mut brain = BotBrain::new(seed, &t);
+            let mut senses = senses_at(&line, 30.0, 0.0, 25.0, KartState::Grounded, &[]);
+            senses.creamed = creamed;
+            (0..600)
+                .map(|_| {
+                    drive(&mut brain, &skill, &t, &k, &line, &senses);
+                    brain.wobble.abs()
+                })
+                .fold(0.0f32, f32::max)
+        };
+        let mut sum = 0.0;
+        for seed in 0..8 {
+            let (clean, creamed) = (widest(false, seed), widest(true, seed));
+            assert!(clean <= skill.wobble + 1e-4, "{clean}");
+            assert!(creamed > skill.wobble + 0.2, "seed {seed}: {creamed}");
+            assert!(creamed <= skill.wobble + t.creamed_wobble + 1e-4);
+            sum += creamed;
+        }
+        let mean = sum / 8.0;
+        assert!(mean > skill.wobble + 0.5 * t.creamed_wobble, "{mean}");
     }
 
     #[test]

@@ -874,7 +874,8 @@ fn online_the_menus_do_not_pause() {
 /// tick, the same bots at the same places, GO on the same tick, every racer's laps and finish,
 /// and the same results. Since issue #53, with the items and the croquettes: the same boxes and
 /// croquettes taken, the same items thrown, the same hits, the same croquettes lost
-/// (`item_tests::assert_same_story`). Run it by hand, the server started:
+/// (`item_tests::assert_same_story`); since issue #18, the players start with a bombe each, a
+/// klaxon-canard and a piment doré. Run it by hand, the server started:
 /// `cargo test --lib net::race_tests::two_games_race -- --ignored --nocapture`
 /// (`FLUFFY_NETSIM=120,20,5` puts the network simulator on Bob's side).
 #[test]
@@ -1026,6 +1027,21 @@ fn two_games_race_through_a_local_signaling_server() {
         go, starts[0].start_tick
     );
     assert!(go[0].unwrap().abs_diff(go[1].unwrap()) <= 2);
+    // Issue #18: the players start with the items of phase 2 that play online (their bot
+    // brains use them): a bombe, and a klaxon-canard or a piment doré.
+    for (index, (_, app)) in games.iter_mut().enumerate() {
+        let mut slots = app
+            .world_mut()
+            .get_mut::<crate::items::ItemSlots>(drivers[index])
+            .unwrap();
+        slots.give(crate::items::ItemKind::Bombe, 1, 0);
+        let second = if index == 0 {
+            crate::items::ItemKind::KlaxonCanard
+        } else {
+            crate::items::ItemKind::PimentDore
+        };
+        slots.give(second, 1, 0);
+    }
     let mut next_print = Instant::now();
     loop {
         update(&mut games);
@@ -1100,5 +1116,16 @@ fn two_games_race_through_a_local_signaling_server() {
         println!("{name}: {}", items.summary());
     }
     super::item_tests::assert_same_story(&games[0].1, &games[1].1);
+    // Issue #18: the bombes went out (and exploded) on both screens.
+    for (name, app) in &games {
+        let items = app.world().resource::<OnlineItems>();
+        let bombes = items
+            .log
+            .thrown
+            .iter()
+            .filter(|(_, item, _)| *item == crate::items::ItemKind::Bombe)
+            .count();
+        assert!(bombes >= 2, "{name}: {}", items.summary());
+    }
     println!("the whole race took {:.0} s", start.elapsed().as_secs_f32());
 }

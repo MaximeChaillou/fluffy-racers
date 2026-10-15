@@ -1,7 +1,8 @@
 //! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, the two item
 //! slots (issue #16: hand and reserve, each item a shape and a color of its own, the roulette
 //! flashing through them, "x3" for a triple), the croquettes held (issue #14: the counter pops at
-//! each pick-up, shakes when some are lost, turns gold at 10), and the results screen.
+//! each pick-up, shakes when some are lost, turns gold at 10), the chantilly's cream over the
+//! screen (issue #18), and the results screen.
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
@@ -17,7 +18,7 @@ use bevy::prelude::*;
 
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::items::{ItemKind, ItemSlots, Slot};
-use crate::kart::PlayerKart;
+use crate::kart::{ItemEffects, PlayerKart};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use format::{
     HudValues, RESULTS_FOOTER, RESULTS_FOOTER_ONLINE, RESULTS_TITLE, hundredths, write_best_lap,
@@ -79,6 +80,28 @@ pub struct ItemIcon {
 pub struct ItemCount {
     pub index: usize,
 }
+
+/// The chantilly's cream over the screen (issue #18): shown while the followed racer is creamed.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CreamOverlay;
+
+/// A blob of cream: its full opacity.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CreamBlob {
+    pub alpha: f32,
+}
+
+/// The cream's blobs: left and top (% of the screen), size (% of the height), opacity.
+const CREAM_BLOBS: [(f32, f32, f32, f32); 7] = [
+    (8.0, 30.0, 34.0, 0.95),
+    (30.0, 10.0, 26.0, 0.9),
+    (55.0, 38.0, 38.0, 0.95),
+    (72.0, 8.0, 24.0, 0.85),
+    (20.0, 58.0, 28.0, 0.9),
+    (78.0, 55.0, 30.0, 0.92),
+    (42.0, 64.0, 20.0, 0.8),
+];
+const CREAM_COLOR: Color = Color::srgb(1.0, 0.97, 0.88);
 
 /// What a HUD slot shows: the item (`None`: empty), how many, and whether the roulette spins.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -154,6 +177,70 @@ pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
             10.0,
             0.0,
         ),
+        // Issue #18. A golden chili, a red edge.
+        ItemKind::PimentDore => (
+            Vec2::new(20.0, 50.0),
+            Color::srgb(1.0, 0.8, 0.15),
+            Color::srgb(0.85, 0.2, 0.05),
+            4.0,
+            30.0,
+        ),
+        // A navy ball, a yellow ring of confetti.
+        ItemKind::Bombe => (
+            Vec2::splat(40.0),
+            Color::srgb(0.16, 0.2, 0.5),
+            Color::srgb(1.0, 0.85, 0.3),
+            5.0,
+            0.0,
+        ),
+        // A dollop of cream, edged in pink.
+        ItemKind::Chantilly => (
+            Vec2::new(46.0, 32.0),
+            Color::srgb(1.0, 0.97, 0.88),
+            Color::srgb(1.0, 0.55, 0.7),
+            4.0,
+            -10.0,
+        ),
+        // A hot pink ball ringed in white.
+        ItemKind::SuperCalin => (
+            Vec2::splat(42.0),
+            Color::srgb(1.0, 0.4, 0.7),
+            Color::srgb(1.0, 1.0, 1.0),
+            6.0,
+            0.0,
+        ),
+        // An orange rocket, slanted, a red edge.
+        ItemKind::Fusee => (
+            Vec2::new(22.0, 52.0),
+            Color::srgb(1.0, 0.5, 0.1),
+            Color::srgb(0.8, 0.1, 0.1),
+            4.0,
+            -45.0,
+        ),
+        // A pale blue balloon going flat.
+        ItemKind::Degonflage => (
+            Vec2::new(44.0, 24.0),
+            Color::srgb(0.6, 0.85, 1.0),
+            Color::srgb(0.15, 0.3, 0.6),
+            4.0,
+            15.0,
+        ),
+        // A big white cushion edged in blue.
+        ItemKind::OreillerGeant => (
+            Vec2::new(56.0, 32.0),
+            Color::srgb(0.98, 0.98, 1.0),
+            Color::srgb(0.35, 0.55, 1.0),
+            7.0,
+            0.0,
+        ),
+        // A yellow duck's horn ringed in orange.
+        ItemKind::KlaxonCanard => (
+            Vec2::splat(40.0),
+            Color::srgb(1.0, 0.92, 0.25),
+            Color::srgb(1.0, 0.5, 0.0),
+            9.0,
+            0.0,
+        ),
     }
 }
 
@@ -183,6 +270,7 @@ impl Plugin for HudPlugin {
                     spawn_hud.run_if(not(any_with_component::<HudRoot>)),
                     update_hud,
                     update_item_slots,
+                    show_cream,
                     animate_croquette_counter,
                     show_results,
                 )
@@ -218,6 +306,34 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
             },
         ))
         .with_children(|hud| {
+            // Under everything else: the chantilly's cream (issue #18).
+            hud.spawn((
+                CreamOverlay,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: percent(100),
+                    height: percent(100),
+                    ..default()
+                },
+                Visibility::Hidden,
+            ))
+            .with_children(|cream| {
+                for (left, top, size, alpha) in CREAM_BLOBS {
+                    cream.spawn((
+                        CreamBlob { alpha },
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(left),
+                            top: percent(top),
+                            width: vh(size * 1.4),
+                            height: vh(size),
+                            border_radius: BorderRadius::MAX,
+                            ..default()
+                        },
+                        BackgroundColor(CREAM_COLOR.with_alpha(alpha)),
+                    ));
+                }
+            });
             // Top left: the two item slots (issue #16): hand, then reserve.
             hud.spawn(Node {
                 position_type: PositionType::Absolute,
@@ -534,6 +650,34 @@ fn update_item_slots(
     *shown = views;
 }
 
+/// The chantilly's cream over the screen (issue #18): while the followed racer is creamed, it
+/// fades out in its last second. Rewritten only when its thickness changes.
+fn show_cream(
+    mut shown: Local<f32>,
+    racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
+    effects: Query<&ItemEffects>,
+    mut overlays: Query<&mut Visibility, With<CreamOverlay>>,
+    mut blobs: Query<(&CreamBlob, &mut BackgroundColor)>,
+) {
+    let cream = followed(racers.iter())
+        .and_then(|(entity, _)| effects.get(entity).ok())
+        .map_or(0.0, |e| e.cream());
+    if cream == *shown {
+        return;
+    }
+    *shown = cream;
+    for mut visibility in &mut overlays {
+        visibility.set_if_neq(if cream > 0.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+    for (blob, mut color) in &mut blobs {
+        color.set_if_neq(BackgroundColor(CREAM_COLOR.with_alpha(blob.alpha * cream)));
+    }
+}
+
 /// The croquette counter's pop (scale) and shake (offset), every frame.
 fn animate_croquette_counter(
     time: Res<Time>,
@@ -666,4 +810,27 @@ fn show_results(
                     ));
                 });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GD § 14 (issues #16 and #18): every item has an icon of its own in the HUD: no two items
+    /// share their colors (fill and edge).
+    #[test]
+    fn every_item_has_its_own_icon() {
+        let icons: Vec<_> = ItemKind::ALL.iter().map(|item| icon_shape(*item)).collect();
+        for (i, a) in icons.iter().enumerate() {
+            for (j, b) in icons.iter().enumerate().skip(i + 1) {
+                let same_colors = a.1 == b.1 && a.2 == b.2;
+                assert!(
+                    !same_colors,
+                    "{:?} and {:?} share their colors",
+                    ItemKind::ALL[i],
+                    ItemKind::ALL[j]
+                );
+            }
+        }
+    }
 }

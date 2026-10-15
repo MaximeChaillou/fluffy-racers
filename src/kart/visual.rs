@@ -30,6 +30,7 @@ use bevy::transform::TransformSystems;
 use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
+use super::effects::ItemEffects;
 use super::palette::{KartColor, KartPaint, PALETTE_SIZE};
 use super::physics::HitReaction;
 use super::rocket::Stall;
@@ -209,6 +210,11 @@ impl Plugin for KartVisualPlugin {
             );
     }
 }
+
+/// How small a deflated kart looks (issue #18, `ItemTuning::degonflage_scale`): the item rules
+/// keep it up to date, the kart visuals read it.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct DeflatedScale(pub f32);
 
 /// Meshes and materials shared by every kart visual: 12 karts on the grid reuse the same assets
 /// (fewer GPU resources, better batching), the body's material too: one per color of the
@@ -490,6 +496,17 @@ pub fn shown_while_invincible(invincibility: &Invincibility, now: f32) -> bool {
     !invincibility.is_active() || (now * INVINCIBLE_BLINK_HZ).fract() < 0.6
 }
 
+/// Same, with its item effects (issue #18): a super câlin or a fusée makes it invincible too,
+/// but it does not blink then (it glows, `crate::items`): only the protection after a hit
+/// blinks.
+pub fn shown_with_effects(
+    invincibility: &Invincibility,
+    effects: Option<&ItemEffects>,
+    now: f32,
+) -> bool {
+    effects.is_some_and(|e| e.rams()) || shown_while_invincible(invincibility, now)
+}
+
 /// Turns the body by the drift's slip angle around the front axle (the simulation's
 /// `DriftMotion`, interpolated between the last two ticks like the pose); rolls the body once
 /// when a trick starts; shakes it while the engine stalls; spins or flips it after an item hit
@@ -497,21 +514,34 @@ pub fn shown_while_invincible(invincibility: &Invincibility, now: f32) -> bool {
 fn pose_bodies(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
-    karts: Query<(&KartState, &DriftMotion, &Stall, &Invincibility)>,
+    deflated_scale: Option<Res<DeflatedScale>>,
+    karts: Query<(
+        &KartState,
+        &DriftMotion,
+        &Stall,
+        &Invincibility,
+        Option<&ItemEffects>,
+    )>,
     mut pivots: Query<(&mut KartBodyPivot, &mut Transform, &mut Visibility)>,
 ) {
     let dt = time.delta_secs();
     let alpha = fixed_time.overstep_fraction();
     let now = time.elapsed_secs();
+    let small = deflated_scale.map_or(1.0, |s| s.0);
     for (mut pivot, mut transform, mut visibility) in &mut pivots {
-        let Ok((state, motion, stall, invincibility)) = karts.get(pivot.body) else {
+        let Ok((state, motion, stall, invincibility, effects)) = karts.get(pivot.body) else {
             continue;
         };
-        visibility.set_if_neq(if shown_while_invincible(invincibility, now) {
+        visibility.set_if_neq(if shown_with_effects(invincibility, effects, now) {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
+        // Deflated (issue #18): the whole kart looks smaller.
+        let scale = Vec3::splat(effects.map_or(1.0, |e| e.deflated_scale(small)));
+        if transform.scale != scale {
+            transform.scale = scale;
+        }
         let hit = match *state {
             KartState::Hit {
                 reaction,

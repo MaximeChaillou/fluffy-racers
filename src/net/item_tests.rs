@@ -623,6 +623,249 @@ fn a_race_with_items_ends_the_same_for_everyone() {
     assert_same_story(ana, bob);
 }
 
+// --- Issue #18: the items of phase 2 that play online ------------------------------------------
+
+/// `key`'s kart input for the next frames.
+fn drive(room: &mut Room, key: PeerKey, input: KartInput) {
+    let app = room.app(key);
+    let kart = player_of(app);
+    *app.world_mut().get_mut::<KartInput>(kart).unwrap() = input;
+}
+
+const FLAT_OUT: KartInput = KartInput {
+    throttle: 1.0,
+    brake: 0.0,
+    steer: 0.0,
+    jump_drift: false,
+    item: false,
+    look_back: false,
+    interact: false,
+};
+
+/// Issue #18: Ana lobs a bombe at Bob, 20 m ahead. It flies at the same places on both screens
+/// and explodes where it lands, on the same common tick on both (no message needed); Bob's game
+/// decides for his kart, in the blast (a tumble), and tells everyone; Ana's kart, out of it, is
+/// not hit.
+#[test]
+fn a_bombe_explodes_where_it_lands_on_every_screen() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 20.0);
+    give(&mut room, ANA, ItemKind::Bombe, 1);
+    use_item(&mut room, ANA);
+    let mut seen: Vec<(PeerKey, ItemId, u32, Vec3)> = Vec::new();
+    let mut gone: Vec<(PeerKey, u32)> = Vec::new();
+    for _ in 0..120 {
+        room.frame();
+        for key in [ANA, BOB] {
+            let positions = item_positions(room.view(key));
+            if positions.is_empty()
+                && !items(room.view(key)).log.thrown.is_empty()
+                && !gone.iter().any(|(k, _)| *k == key)
+            {
+                gone.push((key, common_tick(room.view(key))));
+            }
+            for (id, tick, at) in positions {
+                seen.push((key, id, tick, at));
+            }
+        }
+        if gone.len() == 2 && items(room.view(ANA)).log.breaks.len() == 1 {
+            break;
+        }
+    }
+    assert!(
+        matches!(
+            state(&room, BOB),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                ..
+            }
+        ),
+        "Bob tumbles: {:?}",
+        state(&room, BOB)
+    );
+    assert!(!matches!(state(&room, ANA), KartState::Hit { .. }));
+    assert_eq!(stats(&room, ANA).hits_landed, 1, "Ana's hit, told by Bob");
+    // The same bombe at the same place, tick by tick; gone on the same common tick.
+    let mut compared = 0;
+    for (_, id, tick, at) in seen.iter().filter(|(key, ..)| *key == BOB) {
+        if let Some((.., ana_at)) = seen
+            .iter()
+            .find(|(key, i, t, _)| *key == ANA && i == id && t == tick)
+        {
+            compared += 1;
+            assert!(at.distance(*ana_at) < 0.01, "{at} vs {ana_at}");
+        }
+    }
+    assert!(compared >= 1);
+    assert_eq!(gone.len(), 2);
+    assert!(
+        gone[0].1.abs_diff(gone[1].1) <= 1,
+        "the same tick: {gone:?}"
+    );
+    let bob_id = id_of(room.view(BOB));
+    for key in [ANA, BOB] {
+        let log = &items(room.view(key)).log;
+        assert_eq!(log.thrown[0].1, ItemKind::Bombe);
+        assert!(log.blasts.is_empty(), "it landed: no message");
+        assert_eq!(log.breaks.len(), 1, "{key:?}");
+        assert_eq!((log.breaks[0].1, log.breaks[0].2), (Some(bob_id), true));
+    }
+}
+
+/// Issue #18: Bob drops a bombe behind his kart and drives away; Ana, behind him, drives into
+/// it. Her game judges the contact: the bombe explodes on her kart (a tumble), and her game
+/// tells where: on Bob's screen it explodes there too, out of his reach.
+#[test]
+fn a_bombe_explodes_on_the_kart_that_touches_it_where_its_game_says() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 25.0);
+    give(&mut room, BOB, ItemKind::Bombe, 1);
+    let back = KartInput {
+        brake: 1.0,
+        ..default()
+    };
+    drive(&mut room, BOB, KartInput { item: true, ..back });
+    room.frame();
+    drive(&mut room, BOB, back);
+    room.frame();
+    room.until(1.0, "the bombe on Ana's screen", |app| {
+        items(app).objects().count() == 1
+    });
+    drive(&mut room, BOB, FLAT_OUT);
+    drive(&mut room, ANA, FLAT_OUT);
+    room.until(3.0, "the blast told", |app| {
+        items(app).log.blasts.len() == 1
+            && items(app).objects().count() == 0
+            && items(app).log.breaks.len() == 1
+    });
+    assert!(
+        matches!(
+            state(&room, ANA),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                ..
+            }
+        ),
+        "Ana tumbles: {:?}",
+        state(&room, ANA)
+    );
+    assert!(!matches!(state(&room, BOB), KartState::Hit { .. }));
+    let (ana, bob) = (items(room.view(ANA)), items(room.view(BOB)));
+    assert_eq!(
+        ana.log.blasts, bob.log.blasts,
+        "the same explosion, the same tick"
+    );
+    assert_eq!(ana.log.blasts[0].0, ana.log.thrown[0].0);
+    let ana_id = id_of(room.view(ANA));
+    for key in [ANA, BOB] {
+        let breaks = &items(room.view(key)).log.breaks;
+        assert_eq!((breaks[0].1, breaks[0].2), (Some(ana_id), true), "{key:?}");
+    }
+    assert_eq!(stats(&room, BOB).hits_landed, 1);
+}
+
+/// Issue #18: Bob drops a pelure close to Ana, then drags a pelote behind him (a shield), close
+/// to her too; Ana sounds her klaxon-canard. Her game destroys them and tells everyone: the
+/// pelure is gone on both screens, Bob loses his shield; Bob's screen hears the klaxon. No kart
+/// is hit.
+#[test]
+fn a_klaxon_destroys_the_items_around_on_every_screen() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 7.0);
+    give(&mut room, BOB, ItemKind::Pelure, 1);
+    use_item(&mut room, BOB);
+    room.until(1.0, "the pelure on both screens", |app| {
+        items(app).objects().count() == 1
+    });
+    give(&mut room, BOB, ItemKind::Pelote, 1);
+    hold_item(&mut room, BOB, true);
+    room.until(1.0, "Bob's shield on Ana's screen", |app| {
+        !lobby(app).is_host() || items(app).shown_held().count() == 1
+    });
+    give(&mut room, ANA, ItemKind::KlaxonCanard, 1);
+    use_item(&mut room, ANA);
+    room.until(1.0, "the items gone everywhere", |app| {
+        items(app).objects().count() == 0 && items(app).log.honks.len() == 1
+    });
+    for _ in 0..10 {
+        room.frame();
+    }
+    assert_eq!(slots(&room, BOB).dragging, None, "Bob's shield is gone");
+    assert_eq!(items(room.view(ANA)).shown_held().count(), 0);
+    for key in [ANA, BOB] {
+        assert!(
+            !matches!(state(&room, key), KartState::Hit { .. }),
+            "{key:?}"
+        );
+        let honks = &items(room.view(key)).log.honks;
+        assert_eq!(honks[0].0, id_of(room.view(ANA)), "{key:?}");
+    }
+    assert_eq!(
+        items(room.view(ANA)).log.honks,
+        items(room.view(BOB)).log.honks,
+        "on the same tick"
+    );
+}
+
+/// Issue #18: online, the items that do not play online yet are left out: the online table has
+/// none of them, and the debug gifts (a debug build only) give only those that play online.
+#[test]
+fn online_only_the_items_that_play_online() {
+    let mut room = racing();
+    let table = room
+        .view(ANA)
+        .world()
+        .resource::<crate::items::OnlineItemTable>()
+        .0
+        .clone();
+    for row in &table.rows {
+        assert!(row.prizes.iter().all(|(p, _)| p.online()), "{row:?}");
+    }
+    give(&mut room, ANA, ItemKind::Pelure, 1);
+    // The gifts go to the player's kart (the test drives it otherwise).
+    let ana_kart = player_of(room.app(ANA));
+    room.app(ANA)
+        .world_mut()
+        .entity_mut(ana_kart)
+        .insert(PlayerKart);
+    room.app(ANA)
+        .world_mut()
+        .write_message(crate::items::GiveItem(crate::items::Prize::Fusee));
+    room.frame();
+    assert_eq!(
+        slots(&room, ANA).hand,
+        Slot::Ready {
+            item: ItemKind::Pelure,
+            count: 1
+        },
+        "no fusée online"
+    );
+    room.app(ANA)
+        .world_mut()
+        .write_message(crate::items::GiveItem(crate::items::Prize::PimentDore));
+    room.frame();
+    assert_eq!(
+        slots(&room, ANA).hand,
+        Slot::Ready {
+            item: ItemKind::PimentDore,
+            count: 1
+        }
+    );
+    // The piment doré is Ana's own boost: Bob sees its flames.
+    room.app(ANA)
+        .world_mut()
+        .entity_mut(ana_kart)
+        .remove::<PlayerKart>();
+    use_item(&mut room, ANA);
+    room.until(1.0, "the flames on Bob's screen", |app| {
+        let world = app.world();
+        lobby(app).is_host()
+            || world
+                .try_query_filtered::<&crate::kart::Boost, With<RemoteKartProxy>>()
+                .is_some_and(|mut boosts| boosts.iter(world).any(|b| b.strength > 0.2))
+    });
+}
+
 /// Two games tell the same story of the items (issue #53): the same boxes and croquettes taken
 /// by the same karts on the same ticks, in the same order; the same items thrown; the same hits
 /// (every item broken on a kart, landed or not); the same croquettes lost, at the same places.

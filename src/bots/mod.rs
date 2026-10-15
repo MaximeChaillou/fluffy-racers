@@ -55,11 +55,11 @@ use crate::TICK_HZ;
 use crate::characters::{DriverLooks, Loadout, PartKind, PlayerColor, Roster, WeightClass};
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::interactions::{InteractionTuning, Paw, PawMotion};
-use crate::items::{ItemBox, ItemSlots, ItemTuning, Slot};
+use crate::items::{ItemBox, ItemObject, ItemSlots, ItemTuning, Motion, Slot};
 use crate::kart::{
-    Boost, ColorSet, Kart, KartAssists, KartInput, KartPaint, KartState, KartSystems, KartTuning,
-    KartVisualAssets, MaxSpeedFactors, MaxSpeedScale, OnlinePlayerColors, PlayerKart, Remote,
-    StatEffects, StatsTuning, TrickTracker, bot_colors, kart_body_with_stats,
+    Boost, ColorSet, ItemEffects, Kart, KartAssists, KartInput, KartPaint, KartState, KartSystems,
+    KartTuning, KartVisualAssets, MaxSpeedFactors, MaxSpeedScale, OnlinePlayerColors, PlayerKart,
+    Remote, StatEffects, StatsTuning, TrickTracker, bot_colors, kart_body_with_stats,
     spawn_kart_visual_with_driver,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
@@ -134,10 +134,15 @@ impl Plugin for BotPlugin {
         app.init_resource::<BotTuning>()
             .add_systems(
                 Update,
-                // No bot in free driving (admin panel, issue #36).
-                (build_racing_line, spawn_bots)
-                    .run_if(resource_added::<TrackLayout>)
-                    .run_if(not(resource_equals(RaceMode::FreeRoam))),
+                // The racing line on every circuit (the fusée's autopilot drives along it too,
+                // issue #18); no bot in free driving (admin panel, issue #36).
+                (
+                    build_racing_line.run_if(resource_added::<TrackLayout>),
+                    spawn_bots
+                        .run_if(resource_added::<TrackLayout>)
+                        .run_if(not(resource_equals(RaceMode::FreeRoam))),
+                )
+                    .chain(),
             )
             .add_systems(
                 FixedUpdate,
@@ -304,9 +309,11 @@ fn drive_bots(
     race: Option<Res<Race>>,
     mut neighbors: Local<Vec<Neighbor>>,
     mut boxes: Local<Vec<Vec3>>,
+    mut dangers: Local<Vec<(Entity, Vec3)>>,
     mut in_reach: Local<Vec<ReachKart>>,
     karts: Query<(Entity, &Transform, &Velocity), Or<(With<Kart>, With<Remote>)>>,
     item_boxes: Query<(&Transform, &ItemBox)>,
+    objects: Query<&ItemObject>,
     mut bots: Query<(
         Entity,
         &Bot,
@@ -324,6 +331,7 @@ fn drive_bots(
             Option<&RaceProgress>,
             Option<&Croquettes>,
             Option<&Paw>,
+            Option<&ItemEffects>,
         ),
         &mut KartInput,
     )>,
@@ -345,12 +353,20 @@ fn drive_bots(
     // Online too (issue #53): the host's bots take boxes and use their items as solo.
     let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled);
     boxes.clear();
+    dangers.clear();
     if items_on {
         boxes.extend(
             item_boxes
                 .iter()
                 .filter(|(_, item_box)| item_box.available())
                 .map(|(transform, _)| transform.translation),
+        );
+        // What a klaxon-canard would destroy (issue #18): the items out that are not held.
+        dangers.extend(
+            objects
+                .iter()
+                .filter(|o| !matches!(o.motion, Motion::Held(_)))
+                .map(|o| (o.owner, o.position)),
         );
     }
     let max_croquettes = croquette_tuning.map_or(10, |t| t.max_held);
@@ -367,10 +383,12 @@ fn drive_bots(
         effects,
         tricks,
         boost,
-        (slots, progress, croquettes, paw),
+        (slots, progress, croquettes, paw, item_effects),
         mut input,
     ) in &mut bots
     {
+        let creamed = item_effects.is_some_and(|e| e.creamed > 0.0);
+        let rocket = item_effects.is_some_and(|e| e.rocket > 0.0);
         let has_room = slots.is_some_and(|s| s.has_room());
         let senses = Senses {
             entity,
@@ -388,6 +406,7 @@ fn drive_bots(
             trick_window: tricks.window_open(trick_window),
             dt: time.delta_secs(),
             neighbors: &neighbors,
+            creamed,
             item_box: if has_room {
                 item_box_ahead(
                     &boxes,
@@ -444,8 +463,14 @@ fn drive_bots(
                 boosting: boost.is_active(),
                 can_act: racing
                     && !state.is_hit()
+                    && !rocket
                     && *state != KartState::Respawning
                     && !progress.is_some_and(|p| p.finished()),
+                golden: slots.golden > 0,
+                danger: dangers.iter().any(|(owner, at)| {
+                    *owner != entity
+                        && at.distance(transform.translation) <= tuning.item_danger_range
+                }),
                 dt: time.delta_secs(),
             };
             let buttons = item_buttons(&mut item_brain, skill, &tuning, &senses);

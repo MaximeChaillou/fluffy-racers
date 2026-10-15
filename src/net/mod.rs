@@ -86,10 +86,10 @@ pub use netsim::{NetSim, NetSimTuning};
 pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
 pub use pickups::{Arbiter, ClaimKey};
 pub use protocol::{
-    Channel, Claim, DecodeError, Grab, ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId,
-    MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
-    PROTOCOL_VERSION, PeerKey, Pickup, Profile, Progress, RaceOver, RaceStart, Scatter, Spot,
-    Strike, StrikeReply, TetherBreak, Verdict,
+    BlastOut, Channel, Claim, DecodeError, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId, ItemOut,
+    KartId, KartSnapshot, LooseId, MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER,
+    Message, OUT_ITEMS, OutMotion, PROTOCOL_VERSION, PeerKey, Pickup, Profile, Progress, RaceOver,
+    RaceStart, Scatter, Spot, Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use room::{
@@ -521,13 +521,15 @@ fn poll_session(
                 match Message::decode(&bytes) {
                     Ok(message) => {
                         let host = lobby.host();
-                        // Issue #53: the items and the croquettes.
+                        // Issue #53: the items and the croquettes (#18: explosions, klaxons).
                         if let (
                             Message::Claim(_)
                             | Message::Verdict(_)
                             | Message::ItemOut(_)
                             | Message::ItemBreak(_)
-                            | Message::Scatter(_),
+                            | Message::Scatter(_)
+                            | Message::Blast(_)
+                            | Message::Honk(_),
                             Some(items),
                         ) = (&message, items.as_deref_mut())
                         {

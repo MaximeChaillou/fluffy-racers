@@ -373,6 +373,8 @@ impl Lobby {
             | Message::ItemOut(_)
             | Message::ItemBreak(_)
             | Message::Scatter(_)
+            | Message::Blast(_)
+            | Message::Honk(_)
             | Message::KartState(_) => {}
             Message::Ping { sent_ms } => {
                 let (clock_ms, room) = self.room.pong(now_ms);

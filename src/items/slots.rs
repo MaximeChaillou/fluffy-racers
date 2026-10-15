@@ -14,7 +14,9 @@
 //!     row behind, the pelotes and abeilles turning around the kart) and stays in the hand: each
 //!     next press drops or throws one;
 //!   - the others are used at the press: abeille, piment (one at a time for an "x3"), croquette
-//!     dorée.
+//!     dorée, and those of phase 2 (issue #18);
+//!   - a **piment doré** stays in the hand for its window (about 7 s from the first press,
+//!     [`ItemSlots::start_golden`]): each press is a boost; then it is used up.
 //!   - Thrown **backwards** when the "back" direction is held at the throw (the brake, Bas/S, or
 //!     the look-back button, C), forwards otherwise. A pelure is always dropped behind.
 //! - Hit by an item or carried by the pelican, a kart loses what it held out
@@ -83,6 +85,9 @@ pub struct ItemSlots {
     pub button: bool,
     /// Items drawn in this race: the seed of the next draw (`table::draw_unit`).
     pub draws: u32,
+    /// The piment doré's window (issue #18): ticks left, 0 before its first press. It stays in
+    /// the hand meanwhile; at the end it is used up.
+    pub golden: u32,
 }
 
 impl ItemSlots {
@@ -117,8 +122,56 @@ impl ItemSlots {
         true
     }
 
-    /// One tick of the roulettes: a spinning slot stops on its item when its time is up.
+    /// Debug (issue #18): `count` of `item` in the hand, ready; what was there is gone (an "x3"
+    /// out, a piment doré's window). The reserve stays.
+    pub fn force(&mut self, item: ItemKind, count: u8) {
+        self.hand = Slot::Ready {
+            item,
+            count: count.max(1),
+        };
+        self.deployed = false;
+        self.golden = 0;
+    }
+
+    /// Whether something counts down: a roulette, the piment doré's window.
+    pub fn ticking(&self) -> bool {
+        let spinning = |slot: &Slot| matches!(slot, Slot::Spinning { .. });
+        spinning(&self.hand) || spinning(&self.reserve) || self.golden > 0
+    }
+
+    /// The piment doré in the hand was pressed (issue #18): its window of `ticks` opens, unless
+    /// it is open already.
+    pub fn start_golden(&mut self, ticks: u32) {
+        if self.golden == 0
+            && matches!(
+                self.hand,
+                Slot::Ready {
+                    item: ItemKind::PimentDore,
+                    ..
+                }
+            )
+        {
+            self.golden = ticks.max(1);
+        }
+    }
+
+    /// One tick of the roulettes: a spinning slot stops on its item when its time is up. The
+    /// piment doré's window counts down; closed, the piment doré is used up.
     pub fn tick(&mut self) {
+        if self.golden > 0 {
+            self.golden -= 1;
+            if self.golden == 0
+                && matches!(
+                    self.hand,
+                    Slot::Ready {
+                        item: ItemKind::PimentDore,
+                        ..
+                    }
+                )
+            {
+                self.shift();
+            }
+        }
         for slot in [&mut self.hand, &mut self.reserve] {
             if let Slot::Spinning { item, count, ticks } = *slot {
                 *slot = if ticks <= 1 {
@@ -184,7 +237,10 @@ impl ItemSlots {
             self.deployed = true;
             return Use::Deploy { item, count };
         }
-        self.use_one();
+        // The piment doré stays in the hand for its window: a boost per press.
+        if item != ItemKind::PimentDore {
+            self.use_one();
+        }
         Use::Instant { item, back }
     }
 
@@ -231,6 +287,19 @@ impl ItemSlots {
         if self.hand.is_empty() && !self.reserve.is_empty() {
             self.shift();
         }
+    }
+
+    /// Dégonflé (issue #18): its items fall: both slots (roulettes and the piment doré's window
+    /// too) and what it held out. The draws go on counting. Returns whether it lost anything.
+    pub fn drop_all(&mut self) -> bool {
+        let emptied = Self {
+            button: self.button,
+            draws: self.draws,
+            ..Self::default()
+        };
+        let lost = *self != emptied;
+        *self = emptied;
+        lost
     }
 
     /// Everything is gone (a race restarts, the items are switched off): empty slots, nothing
@@ -465,6 +534,109 @@ mod tests {
         assert_eq!(nothing.hand, ready(Pelote, 3));
         nothing.clear();
         assert_eq!(nothing, ItemSlots::default());
+    }
+
+    /// Issue #18 (GD § 8): a piment doré stays in the hand for its window, from the first press:
+    /// every press meanwhile is a boost (`Use::Instant`), the reserve waits; the window closed,
+    /// it is used up and the reserve moves in. Before the first press, nothing counts down.
+    #[test]
+    fn a_piment_dore_boosts_at_every_press_for_its_window() {
+        let mut slots = ItemSlots::default();
+        slots.give(PimentDore, 1, 0);
+        slots.give(Pelote, 1, 0);
+        assert!(!slots.ticking());
+        for _ in 0..100 {
+            slots.tick();
+        }
+        assert_eq!(
+            slots.hand,
+            ready(PimentDore, 1),
+            "waits for its first press"
+        );
+        let golden = Use::Instant {
+            item: PimentDore,
+            back: false,
+        };
+        assert_eq!(press(&mut slots, false).0, golden);
+        slots.start_golden(420);
+        assert_eq!(slots.golden, 420);
+        assert!(slots.ticking());
+        let mut presses = 1;
+        for tick in 1..420 {
+            slots.tick();
+            if tick % 20 == 0 {
+                assert_eq!(press(&mut slots, false).0, golden, "tick {tick}");
+                // Pressed again: the window does not start over.
+                slots.start_golden(420);
+                presses += 1;
+            }
+            assert_eq!(slots.hand, ready(PimentDore, 1));
+            assert_eq!(slots.golden, 420 - tick);
+        }
+        assert_eq!(presses, 21);
+        slots.tick();
+        assert_eq!(slots.golden, 0);
+        assert_eq!(
+            slots.hand,
+            ready(Pelote, 1),
+            "used up, the reserve moves in"
+        );
+        assert!(slots.reserve.is_empty());
+        // Only a piment doré in the hand opens a window.
+        let mut other = ItemSlots::default();
+        other.give(Piment, 1, 0);
+        other.start_golden(420);
+        assert_eq!(other.golden, 0);
+    }
+
+    /// Issue #18 (debug key): an item forced into the hand replaces what was there, ready, an
+    /// "x3" out included; the reserve stays.
+    #[test]
+    fn a_forced_item_replaces_the_hand() {
+        let mut slots = ItemSlots::default();
+        slots.give(Pelote, 3, 0);
+        slots.give(Piment, 1, 0);
+        press(&mut slots, false);
+        assert!(slots.deployed);
+        slots.force(Bombe, 1);
+        assert_eq!(
+            (slots.hand, slots.reserve),
+            (ready(Bombe, 1), ready(Piment, 1))
+        );
+        assert_eq!(slots.held_out(), None);
+        assert_eq!(
+            press(&mut slots, false).0,
+            Use::Instant {
+                item: Bombe,
+                back: false
+            }
+        );
+        assert_eq!(slots.hand, ready(Piment, 1));
+    }
+
+    /// Issue #18: dégonflé, a kart drops all its items (slots, roulettes, what it held out, a
+    /// piment doré's window); it keeps counting its draws (the next ones stay deterministic).
+    #[test]
+    fn a_deflated_kart_drops_all_its_items() {
+        let mut slots = ItemSlots::default();
+        slots.give(Pelote, 3, 0);
+        slots.give(Abeille, 1, 90);
+        slots.draws = 7;
+        press(&mut slots, false);
+        assert!(slots.drop_all());
+        assert_eq!(
+            slots,
+            ItemSlots {
+                draws: 7,
+                ..ItemSlots::default()
+            }
+        );
+        assert!(!slots.drop_all(), "nothing left");
+        let mut golden = ItemSlots::default();
+        golden.give(PimentDore, 1, 0);
+        golden.start_golden(100);
+        golden.drop_all();
+        assert_eq!((golden.hand, golden.golden), (Slot::Empty, 0));
     }
 
     /// Issue #53: a box the host gave to another kart: the roulettes it started stop, empty; an

@@ -4,9 +4,10 @@
 // course, tours compris) à partir de laquelle la ligne s'applique, jusqu'à la suivante. La
 // première commence à 0 : le leader l'utilise. Les poids sont ceux du game design (en %).
 //
-// La table reste complète : le jeu retire lui-même les objets pas encore implémentés et redistribue
-// leur poids proportionnellement sur les autres objets de la même ligne (`src/items/table.rs`).
-// Quand un objet de phase 2 arrive, il suffit de le marquer implémenté dans le code.
+// Tous les objets sont en jeu depuis #18. En ligne, le jeu retire lui-même ceux qui ne passent pas
+// encore par le réseau (#61) et redistribue leur poids proportionnellement sur les autres objets de
+// la même ligne (`src/items/table.rs`) ; il fait de même avec l'oreiller géant quand ses règles
+// l'interdisent (un seul à la fois, 30 s entre deux, aucun avant 20 s de course).
 //
 // Noms : Pelure, PelureX3, Pelote (pelote de laine), PeloteX3, Abeille, AbeilleX3, Piment,
 // PimentX3, CroquetteDoree ; phase 2 : PimentDore, Bombe (bombe à confettis), Chantilly,
