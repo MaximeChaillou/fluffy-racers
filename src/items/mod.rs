@@ -50,7 +50,11 @@
 //!   ([`CatchUp`] for the ticks of its trip); each peer judges only the contacts that are its own
 //!   (`collide_items`: its karts, its shields) and tells the others ([`ItemHitJudged`],
 //!   [`ItemBlocked`]). The other peers' karts (`kart::Remote`) are targets for the abeilles, and
-//!   what they hold out follows them.
+//!   what they hold out follows them. Issue #61: an oreiller géant drawn is also a claim to the
+//!   host ([`PillowDraw`]: its rules are the host's); the chantilly and the dégonflage carry the
+//!   ranking of their user's peer ([`SharedStandings`]); a kart of another peer in a super câlin
+//!   or a fusée knocks ours over (`ram_karts`); an oreiller géant of another peer follows the
+//!   target its thrower's peer gives it.
 //!
 //! Everything runs in `FixedUpdate` at 60 Hz ([`ItemSystems`]): after the karts' input and the
 //! race gate, before the croquettes and the driving. `ItemTuning::enabled` switches the items
@@ -77,7 +81,7 @@ pub use table::{
     pillow_allowed,
 };
 pub use tuning::ItemTuning;
-pub use visual::{ItemVisualAssets, ItemVisualPlugin};
+pub use visual::{EffectKind, EffectLook, ItemVisualAssets, ItemVisualPlugin};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{QueryFilter, ReadRapierContext, Velocity};
@@ -94,7 +98,7 @@ use crate::kart::{
 };
 use crate::level::{LevelScoped, Online};
 use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceSystems, Racer, seconds_to_ticks};
-use crate::track::ItemBoxSpot;
+use crate::track::{GRID_SLOTS, ItemBoxSpot};
 
 /// An item box of the track (GD § 8), on each `ItemBoxSpot`: there to take when `respawn_in` is 0.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -314,7 +318,8 @@ pub struct ItemBlocked {
 /// `kart` broke `item_box`, and drew `draws` items from it (0: both slots were taken), the
 /// first one with draw number `draw` (`ItemSlots::draws` before it), at `gap` meters from the
 /// leader; `filled` says which slots they went to (hand, reserve). Online (issue #53), its peer
-/// asks the host for the box; refused, the roulettes stop (`ItemSlots::revoke`).
+/// asks the host for the box; refused, the roulettes stop (`ItemSlots::revoke`). Online too
+/// (issue #61), an oreiller géant it drew (`pillow`) is a claim to the host.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct BoxBroken {
     pub item_box: Entity,
@@ -323,6 +328,16 @@ pub struct BoxBroken {
     pub draws: u8,
     pub gap: f32,
     pub filled: [bool; 2],
+    pub pillow: Option<PillowDraw>,
+}
+
+/// An oreiller géant drawn from a box online (issue #61): its draw number, and what the kart gets
+/// instead if the host's rules forbid one now (the same draw without it, as solo:
+/// [`DrawRow::pick_without`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PillowDraw {
+    pub draw: u32,
+    pub instead: Prize,
 }
 
 /// An explosion (issue #18): a bombe à confettis (on what it touched, or at the end of its fuse)
@@ -342,14 +357,65 @@ pub struct Blast {
 
 /// A kart used an item that acts on the others (issue #18): the chantilly (on the racers ahead
 /// of its `rank`), the dégonflage (on every opponent), the klaxon-canard (on the items around
-/// `at`).
+/// `at`). Online (issue #61), the chantilly and the dégonflage of another peer's kart come from
+/// its peer, with its ranking.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct ItemEffect {
     pub by: Entity,
     pub item: ItemKind,
     pub at: Vec3,
+    /// Its heading: off a race, the chantilly reaches the karts ahead of it.
+    pub forward: Vec3,
     /// Its place in the race (1 = the leader; 0 off a race).
     pub rank: u32,
+    /// Online (issue #61): the ranking its user's peer saw, first to last, the same on every
+    /// peer: each one takes its karts' ranks from it. Solo: `None`, the karts' own ranks.
+    pub standings: Option<SharedStandings>,
+}
+
+/// The race's ranking when an item acted on the others (issue #61, [`ItemEffect`]), first to
+/// last: online, every peer takes its karts' ranks from the one its user's peer saw. At most
+/// [`GRID_SLOTS`] karts, nothing allocated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedStandings {
+    karts: [Entity; GRID_SLOTS],
+    len: u8,
+}
+
+impl SharedStandings {
+    /// The first [`GRID_SLOTS`] of `karts`, in their order.
+    pub fn new(karts: impl IntoIterator<Item = Entity>) -> Self {
+        let mut standings = Self {
+            karts: [Entity::PLACEHOLDER; GRID_SLOTS],
+            len: 0,
+        };
+        for kart in karts.into_iter().take(GRID_SLOTS) {
+            standings.karts[usize::from(standings.len)] = kart;
+            standings.len += 1;
+        }
+        standings
+    }
+
+    /// The karts, first to last.
+    pub fn karts(&self) -> &[Entity] {
+        &self.karts[..usize::from(self.len)]
+    }
+
+    /// The place of `kart` (1 = the leader), 0 when it is not in it.
+    pub fn rank(&self, kart: Entity) -> u32 {
+        self.karts()
+            .iter()
+            .position(|k| *k == kart)
+            .map_or(0, |i| i as u32 + 1)
+    }
+
+    pub fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 /// A klaxon-canard sounded around `at` (issue #18): the visual's shock wave; online, the others
@@ -579,7 +645,10 @@ fn holds_pillow(slots: &ItemSlots) -> bool {
 /// Karts running into a box break it and draw their items (one per free slot, two for a double
 /// box), from the table of their distance to the leader (online, the online table: issue #18).
 /// A kart with both slots taken breaks it for nothing (MK8DX). The oreiller géant's rules (GD
-/// § 8, [`pillow_allowed`]): left out of the draws when they forbid one.
+/// § 8, [`pillow_allowed`]): left out of the draws when they forbid one. Online (issue #61), the
+/// host applies them: in a race, an oreiller drawn (the first one of a box) goes into the slot at
+/// once and is a claim to the host ([`PillowDraw`]); refused, the kart gets the same draw without
+/// it. Off a race, never.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn take_boxes(
     tuning: Res<ItemTuning>,
@@ -616,6 +685,7 @@ fn take_boxes(
         .filter(|r| r.started())
         .map(|r| r.race_ticks());
     let mut pillow: Option<bool> = None;
+    let online = online.is_some();
     for (item_box_entity, box_transform, spot, mut item_box) in &mut boxes {
         if !item_box.available() {
             continue;
@@ -635,17 +705,22 @@ fn take_boxes(
         if touching.is_none() {
             continue;
         }
-        let allowed = *pillow.get_or_insert_with(|| {
-            let exists = karts.iter().any(|(.., slots, _, _, _)| holds_pillow(slots))
-                || objects.iter().any(|o| o.item == ItemKind::OreillerGeant);
-            pillow_allowed(
-                race_ticks,
-                exists,
-                pillows.last_draw,
-                seconds_to_ticks(tuning.oreiller_min_race_time),
-                seconds_to_ticks(tuning.oreiller_cooldown),
-            )
-        });
+        let allowed = if online {
+            // Issue #61: the host decides (a claim); off a race, never.
+            race_ticks.is_some()
+        } else {
+            *pillow.get_or_insert_with(|| {
+                let exists = karts.iter().any(|(.., slots, _, _, _)| holds_pillow(slots))
+                    || objects.iter().any(|o| o.item == ItemKind::OreillerGeant);
+                pillow_allowed(
+                    race_ticks,
+                    exists,
+                    pillows.last_draw,
+                    seconds_to_ticks(tuning.oreiller_min_race_time),
+                    seconds_to_ticks(tuning.oreiller_cooldown),
+                )
+            })
+        };
         for (kart, transform, state, mut slots, mut stats, racer, progress) in &mut karts {
             if *state == KartState::Respawning
                 || progress.is_some_and(|p| p.finished())
@@ -662,18 +737,32 @@ fn take_boxes(
             stats.boxes += 1;
             let (slot, gap) = draw_context(racer, progress);
             let (draw, mut draws, mut filled) = (slots.draws, 0, [false; 2]);
+            let mut claimed = None;
             for _ in 0..if spot.double { 2 } else { 1 } {
                 if !slots.has_room() {
                     break;
                 }
-                let unit = draw_unit(seed, slot, slots.draws);
+                let number = slots.draws;
+                let unit = draw_unit(seed, slot, number);
                 slots.draws += 1;
                 draws += 1;
-                let prize = table.draw_with_pillow(gap, unit, allowed && pillow != Some(false));
+                let prize = if online {
+                    // One oreiller per box at most: the next draw goes without it.
+                    table.draw_with_pillow(gap, unit, allowed && claimed.is_none())
+                } else {
+                    table.draw_with_pillow(gap, unit, allowed && pillow != Some(false))
+                };
                 if prize == Prize::OreillerGeant {
-                    // One at a time: none more until this one is gone, and the cooldown.
-                    pillows.last_draw = race_ticks;
-                    pillow = Some(false);
+                    if online {
+                        claimed = Some(PillowDraw {
+                            draw: number,
+                            instead: table.row(gap).pick_without(unit, Prize::OreillerGeant),
+                        });
+                    } else {
+                        // One at a time: none more until this one is gone, and the cooldown.
+                        pillows.last_draw = race_ticks;
+                        pillow = Some(false);
+                    }
                 }
                 if let Some((item, count)) = prize.item() {
                     let into = usize::from(!slots.hand.is_empty());
@@ -689,6 +778,7 @@ fn take_boxes(
                 draws,
                 gap,
                 filled,
+                pillow: claimed,
             });
             break;
         }
@@ -920,6 +1010,7 @@ fn spawn_object(commands: &mut Commands, object: ItemObject) {
 fn use_items(
     tuning: Res<ItemTuning>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
+    online: Option<Res<Online>>,
     race: Option<Res<Race>>,
     course: Option<Res<Course>>,
     mut commands: Commands,
@@ -1078,11 +1169,19 @@ fn use_items(
                 invincibility.start(tuning.fusee_time);
             }
             ItemKind::Chantilly | ItemKind::Degonflage | ItemKind::KlaxonCanard => {
+                // Online (issue #61): with the ranking this peer sees, for every peer.
+                let standings = online.as_ref().map(|_| {
+                    SharedStandings::new(
+                        race.iter().flat_map(|race| race.standings.iter().copied()),
+                    )
+                });
                 effects_out.write(ItemEffect {
                     by: kart,
                     item,
                     at: transform.translation,
+                    forward: *transform.forward(),
                     rank,
+                    standings,
                 });
             }
             _ => {
@@ -1095,7 +1194,8 @@ fn use_items(
 }
 
 /// The items that act on the others (issue #18, [`ItemEffect`]), on our karts (the victims
-/// decide: online, each peer for its own):
+/// decide: online, each peer for its own; issue #61: their ranks from the ranking the user's peer
+/// saw, [`SharedStandings`]):
 /// - **chantilly**: the racers ahead of its user in the race (off a race: the karts ahead of
 ///   it) get cream on their screen, unless immune ([`immune_to_effects`]);
 /// - **dégonflage**: every other kart shrinks and slows down for a time that depends on its rank
@@ -1125,11 +1225,10 @@ fn apply_item_effects(
     mut blocked: MessageWriter<ItemBlocked>,
     mut honked: MessageWriter<Honked>,
 ) {
-    let racers = race.as_ref().map_or(0, |r| r.standings.len());
+    let racers_here = race.as_ref().map_or(0, |r| r.standings.len());
     for effect in used.read() {
-        let forward = karts
-            .get(effect.by)
-            .map_or(Vec3::NEG_Z, |(_, transform, ..)| *transform.forward());
+        let forward = effect.forward;
+        let racers = effect.standings.map_or(racers_here, |s| s.len());
         match effect.item {
             ItemKind::Chantilly | ItemKind::Degonflage => {
                 for (kart, transform, state, invincibility, mut effects, mut slots, progress) in
@@ -1139,7 +1238,10 @@ fn apply_item_effects(
                     if kart == effect.by || immune_to_effects(state, invincibility, finished) {
                         continue;
                     }
-                    let rank = progress.map_or(0, |p| p.rank);
+                    let rank = match &effect.standings {
+                        Some(standings) => standings.rank(kart),
+                        None => progress.map_or(0, |p| p.rank),
+                    };
                     if effect.item == ItemKind::Chantilly {
                         let ahead = if effect.rank > 0 && rank > 0 {
                             rank < effect.rank
@@ -1272,7 +1374,8 @@ fn ground_under(
 /// lands, explodes ([`Blast`]). Online (issue #53), the other peers' karts are here too
 /// (`kart::Remote`): what they hold out follows them (their slots as their states say), an
 /// abeille goes after them; an item thrown by another peer catches up the ticks since its throw
-/// ([`CatchUp`]) on its first tick here.
+/// ([`CatchUp`]) on its first tick here. An oreiller géant of another peer (issue #61) goes after
+/// the target its thrower's peer gives it (the leader it sees), not after ours.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn move_items(
     time: Res<Time>,
@@ -1288,6 +1391,7 @@ fn move_items(
             &KartState,
             Option<&ItemSlots>,
             Option<&RaceProgress>,
+            Has<Remote>,
         ),
         Or<(With<Kart>, With<Remote>)>,
     >,
@@ -1312,10 +1416,10 @@ fn move_items(
         karts
             .get(entity)
             .ok()
-            .filter(|(_, _, state, _, progress)| {
+            .filter(|(_, _, state, _, progress, _)| {
                 **state != KartState::Respawning && !progress.is_some_and(|p| p.finished())
             })
-            .map(|(_, transform, _, _, progress)| {
+            .map(|(_, transform, _, _, progress, _)| {
                 (transform.translation, progress.map(|p| p.distance))
             })
     };
@@ -1331,7 +1435,7 @@ fn move_items(
         let radius = item.radius(&tuning);
         match item.motion {
             Motion::Held(hold) => match karts.get(item.owner) {
-                Ok((_, transform, _, Some(slots), _))
+                Ok((_, transform, _, Some(slots), ..))
                     if slots.held_out().is_some_and(|(held, _)| held == item.item)
                         && (hold == Hold::Dragged) == slots.dragging.is_some() =>
                 {
@@ -1441,7 +1545,10 @@ fn move_items(
                 true
             }
             Motion::Pillow { target, flight } => {
-                // After the leader now (the one it had, without a race).
+                // After the leader now (the one it had, without a race). Online (issue #61), one
+                // of another peer goes after the leader its thrower's peer sees (`Retarget`).
+                let ours = karts.get(item.owner).is_ok_and(|(.., remote)| !remote);
+                let leader = if ours { leader } else { None };
                 let target = leader.or(target).filter(|t| chaseable(*t).is_some());
                 let chased = target.and_then(chaseable);
                 let flight = match (flight, course.as_deref(), chased) {
@@ -1939,9 +2046,11 @@ fn update_item_speeds(
 
 /// After the physics step (issue #18): a kart in a super câlin or a fusée knocks over every kart
 /// of ours it is in contact with (a tumble on the next tick; the victim decides, immune or not).
+/// Online (issue #61), the other peers' karts too (`kart::Remote`: their states say they ram):
+/// their contacts with ours are judged here, ours with theirs on their peers.
 fn ram_karts(
     rapier: ReadRapierContext,
-    rammers: Query<(Entity, &ItemEffects), With<Kart>>,
+    rammers: Query<(Entity, &ItemEffects), Or<(With<Kart>, With<Remote>)>>,
     victims: Query<(), With<Kart>>,
     mut hits: MessageWriter<ItemHit>,
 ) {

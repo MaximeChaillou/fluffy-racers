@@ -6,7 +6,8 @@
 //!   rotation, linear and angular velocities, and what the other screens need to draw the kart
 //!   ([`KartLook`]: the phase, drift side and sparks, a hit's spin or tumble, the boost flames, a
 //!   stalled engine, the blinking of invincibility, the slipstream's wind lines, the drift's slip
-//!   angle and the wheels).
+//!   angle and the wheels; what it holds out, issue #53; a super câlin, a fusée, a dégonflage,
+//!   issue #61).
 //! - [`KartSnapshot`] (`protocol.rs`): the same, quantized, 48 bytes. Position to the millimeter
 //!   (±2 100 km), rotation as « smallest three » on 48 bits (about 0.005°), velocities to the
 //!   cm/s (±327 m/s) and the mrad/s (±32 rad/s).
@@ -19,8 +20,8 @@ use bevy::math::{Quat, Vec3};
 use super::protocol::{HELD_ITEMS, KartId, KartSnapshot};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{
-    Boost, DriftMotion, DriftSide, HitReaction, Invincibility, KartState, KartTuning, KartWheels,
-    MiniTurbo, Slipstream, Stall,
+    Boost, DriftMotion, DriftSide, HitReaction, Invincibility, ItemEffects, KartState, KartTuning,
+    KartWheels, MiniTurbo, Slipstream, Stall,
 };
 
 /// Position step on the wire (m).
@@ -98,6 +99,11 @@ pub struct KartLook {
     pub wheels: [Option<f32>; 4],
     /// What the kart holds out (issue #53): its shields, drawn on every screen.
     pub held: Option<HeldLook>,
+    /// Issue #61: in a super câlin (its pink glow; the karts it runs into tumble), in a fusée
+    /// (its shell; the same), deflated (smaller).
+    pub calin: bool,
+    pub rocket: bool,
+    pub deflated: bool,
 }
 
 /// What a kart holds out around it (issue #53, `ItemSlots::held_out`): a single pelure or pelote
@@ -180,6 +186,8 @@ pub struct LookParts<'a> {
     /// `Slipstream::fill` with its tuning.
     pub slipstream_fill: f32,
     pub wheels: &'a KartWheels,
+    /// What the items of phase 2 do to it (issue #61).
+    pub effects: &'a ItemEffects,
 }
 
 impl KartLook {
@@ -200,6 +208,9 @@ impl KartLook {
             wheels: std::array::from_fn(|i| {
                 parts.wheels.on_ground[i].then_some(parts.wheels.compression[i])
             }),
+            calin: parts.effects.calin > 0.0,
+            rocket: parts.effects.rocket > 0.0,
+            deflated: parts.effects.deflated > 0.0,
             ..Default::default()
         };
         look.phase = match *parts.state {
@@ -321,7 +332,11 @@ impl KartSnapshot {
             velocity: pose.velocity.to_array().map(|v| step_i16(v, VELOCITY_STEP)),
             spin: pose.spin.to_array().map(|v| step_i16(v, SPIN_STEP)),
             state,
-            flags: u8::from(look.stalled) | u8::from(look.invincible) << 1,
+            flags: u8::from(look.stalled)
+                | u8::from(look.invincible) << 1
+                | u8::from(look.calin) << 2
+                | u8::from(look.rocket) << 3
+                | u8::from(look.deflated) << 4,
             hit: [
                 look.hit_elapsed.min(255) as u8,
                 look.hit_duration.min(255) as u8,
@@ -367,6 +382,9 @@ impl KartSnapshot {
                 (value > 0).then(|| f32::from(value - 1) * WHEEL_STEP)
             }),
             held: HeldLook::from_byte(self.items),
+            calin: self.flags & 0b100 != 0,
+            rocket: self.flags & 0b1000 != 0,
+            deflated: self.flags & 0b1_0000 != 0,
         };
         KartPose {
             tick: self.tick,
@@ -499,6 +517,9 @@ pub(crate) mod tests {
                 count: 3,
                 dragged: false,
             }),
+            calin: true,
+            rocket: false,
+            deflated: true,
         }
     }
 
@@ -582,6 +603,35 @@ pub(crate) mod tests {
         assert!((back.boost_strength - 0.3).abs() <= BOOST_STEP / 2.0);
         assert!((back.boost_remaining - 1.2).abs() <= TICK / 2.0 + 1e-6);
         assert!(!back.stalled && back.invincible);
+        // Issue #61: the super câlin, the fusée and the dégonflage, each on its own.
+        assert!(back.calin && !back.rocket && back.deflated);
+        for (calin, rocket, deflated) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+            (true, true, true),
+        ] {
+            let pose = KartPose {
+                look: KartLook {
+                    calin,
+                    rocket,
+                    deflated,
+                    stalled: true,
+                    invincible: false,
+                    ..look()
+                },
+                ..Default::default()
+            };
+            let wire = KartSnapshot::quantize(0, &pose);
+            let back = wire.pose().look;
+            assert_eq!(
+                (back.calin, back.rocket, back.deflated),
+                (calin, rocket, deflated)
+            );
+            assert!(back.stalled && !back.invincible);
+            assert!(wire.flags <= crate::net::protocol::KART_FLAGS);
+        }
         assert!((back.slipstream.unwrap() - 0.4).abs() < 0.003);
         assert!((back.slip + 0.21).abs() <= SLIP_STEP / 2.0 + 1e-6);
         assert_eq!(back.wheels[2], None);
@@ -689,8 +739,14 @@ pub(crate) mod tests {
             },
             slipstream_fill: 0.5,
             wheels: &wheels,
+            effects: &ItemEffects {
+                rocket: 2.0,
+                deflated: 1.0,
+                ..Default::default()
+            },
         });
         assert_eq!(look.phase, Phase::Drifting);
+        assert!(!look.calin && look.rocket && look.deflated);
         assert_eq!(look.sparks, Some(MiniTurbo::Orange));
         assert!(!look.drift_right && look.invincible && !look.stalled);
         assert_eq!(look.slipstream, Some(0.5));
@@ -724,8 +780,10 @@ pub(crate) mod tests {
             slipstream: &Slipstream::default(),
             slipstream_fill: 0.0,
             wheels: &wheels,
+            effects: &ItemEffects::default(),
         });
         assert_eq!(look.kart_state(&tuning), hit);
+        assert!(!look.calin && !look.rocket && !look.deflated);
         assert!(look.stalled && look.slipstream.is_none());
         assert_eq!(look.boost(), Boost::default());
         let towed = LookParts {
@@ -738,6 +796,7 @@ pub(crate) mod tests {
             slipstream: &Slipstream::default(),
             slipstream_fill: 0.0,
             wheels: &wheels,
+            effects: &ItemEffects::default(),
         };
         assert_eq!(
             KartLook::of(&towed).kart_state(&tuning),

@@ -63,6 +63,11 @@ impl ItemEffects {
         factor
     }
 
+    /// A deflated kart shrinks in this time (s)...
+    pub const SHRINK_SECONDS: f32 = 0.25;
+    /// ...and grows back in its last moments (s).
+    pub const GROW_BACK_SECONDS: f32 = 0.4;
+
     /// How big the kart looks while deflated (1: its size): it shrinks to `scale` in 0.25 s and
     /// grows back in the last 0.4 s.
     pub fn deflated_scale(&self, scale: f32) -> f32 {
@@ -70,7 +75,9 @@ impl ItemEffects {
             return 1.0;
         }
         let since = (self.deflated_for - self.deflated).max(0.0);
-        let shrink = (since / 0.25).min(1.0).min(self.deflated / 0.4);
+        let shrink = (since / Self::SHRINK_SECONDS)
+            .min(1.0)
+            .min(self.deflated / Self::GROW_BACK_SECONDS);
         1.0 + (scale - 1.0) * shrink.clamp(0.0, 1.0)
     }
 

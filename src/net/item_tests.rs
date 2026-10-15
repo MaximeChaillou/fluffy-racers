@@ -12,11 +12,17 @@ use super::race_tests::{
     progress_by_slot, seated, standings, start_race,
 };
 use super::*;
+use crate::bots::RacingLine;
 use crate::croquettes::{Croquettes, LooseCroquette, TrackCroquette};
 use crate::interpolation::PhysicsPose;
-use crate::items::{ItemBox, ItemKind, ItemObject, ItemSlots, ItemStats, Motion, Slot};
-use crate::kart::{HitReaction, Invincibility, KartInput, KartState, PlayerKart};
-use crate::race::{Race, RacePhase};
+use crate::items::{
+    ItemBox, ItemKind, ItemObject, ItemSlots, ItemStats, ItemTable, ItemTuning, Motion,
+    OnlineItemTable, PillowFlight, Slot, deflate_time,
+};
+use crate::kart::{
+    HitReaction, Invincibility, ItemEffects, Kart, KartInput, KartState, PlayerKart,
+};
+use crate::race::{Race, RacePhase, Racer};
 use crate::track::{GRID_HEIGHT, ITEM_BOX_HEIGHT, SpotIndex};
 
 /// Two players in a race of one lap without bots, after GO; the test drives both karts.
@@ -807,8 +813,10 @@ fn a_klaxon_destroys_the_items_around_on_every_screen() {
     );
 }
 
-/// Issue #18: online, the items that do not play online yet are left out: the online table has
-/// none of them, and the debug gifts (a debug build only) give only those that play online.
+/// Issue #18: online, only the items that play online: since issue #61, every one. The online
+/// table is the solo table (every prize, its share), and the debug gifts (a debug build only)
+/// give any item online, the fusée too (before #61, the gift of a fusée left the hand as it
+/// was).
 #[test]
 fn online_only_the_items_that_play_online() {
     let mut room = racing();
@@ -821,6 +829,7 @@ fn online_only_the_items_that_play_online() {
     for row in &table.rows {
         assert!(row.prizes.iter().all(|(p, _)| p.online()), "{row:?}");
     }
+    assert_eq!(table, ItemTable::embedded(), "the solo table");
     give(&mut room, ANA, ItemKind::Pelure, 1);
     // The gifts go to the player's kart (the test drives it otherwise).
     let ana_kart = player_of(room.app(ANA));
@@ -835,10 +844,10 @@ fn online_only_the_items_that_play_online() {
     assert_eq!(
         slots(&room, ANA).hand,
         Slot::Ready {
-            item: ItemKind::Pelure,
+            item: ItemKind::Fusee,
             count: 1
         },
-        "no fusée online"
+        "a fusée online (a debug build)"
     );
     room.app(ANA)
         .world_mut()
@@ -899,6 +908,25 @@ pub(super) fn assert_same_story(a: &App, b: &App) {
     assert_eq!(x.1, y.1, "the same items out");
     assert_eq!(x.2, y.2, "the same croquettes lost");
     let counts = (x.0.len(), x.1.len(), x.2.len());
+    // Issue #61: the same chantilly and dégonflages, the same karts knocked over by a super câlin
+    // or a fusée, the same oreillers after the same karts.
+    let more = |app: &App| {
+        let log = &items(app).log;
+        let mut effects = log.effects.clone();
+        effects.retain(|(.., tick)| *tick <= cutoff);
+        effects.sort_by_key(|(kart, _, tick)| (*tick, *kart));
+        let mut rams = log.rams.clone();
+        rams.retain(|(.., tick)| *tick <= cutoff);
+        rams.sort_by_key(|(kart, by, _, tick)| (*tick, *kart, *by));
+        let mut retargets = log.retargets.clone();
+        retargets.retain(|(.., tick)| *tick <= cutoff);
+        retargets.sort_by_key(|(id, _, tick)| (*tick, id.owner, id.seq));
+        (effects, rams, retargets)
+    };
+    let (m, n) = (more(a), more(b));
+    assert_eq!(m.0, n.0, "the same chantilly and dégonflages");
+    assert_eq!(m.1, n.1, "the same karts knocked over");
+    assert_eq!(m.2, n.2, "the same oreillers after the same karts");
     // Every hit one side knew a second ago, the other knows too.
     let hits = |app: &App| -> Vec<(ItemId, Option<KartId>, bool, u32)> {
         items(app)
@@ -922,10 +950,681 @@ pub(super) fn assert_same_story(a: &App, b: &App) {
         }
     }
     println!(
-        "the same story on both screens (until tick {cutoff}): {} boxes and croquettes taken, {} items out, {} items broken on karts ({landed} hits), {} croquette losses",
+        "the same story on both screens (until tick {cutoff}): {} boxes and croquettes taken, {} items out, {} items broken on karts ({landed} hits), {} croquette losses, {} effects, {} karts knocked over, {} oreillers retargeted",
         counts.0,
         counts.1,
         x.len(),
-        counts.2
+        counts.2,
+        m.0.len(),
+        m.1.len(),
+        m.2.len()
     );
+}
+
+// --- Issue #61: the chantilly, the super câlin, the fusée, the dégonflage, the oreiller géant ---
+
+/// `key`'s player kart: its item effects, on its own screen.
+fn item_effects(room: &Room, key: PeerKey) -> ItemEffects {
+    let app = room.view(key);
+    *app.world().get::<ItemEffects>(player_of(app)).unwrap()
+}
+
+/// What `key`'s screen shows of the kart of `of`: its item effects (its states say them).
+fn shown_effects(app: &App, of: PeerKey) -> ItemEffects {
+    let proxy = app
+        .world()
+        .resource::<KartSync>()
+        .remote(of)
+        .and_then(|remote| remote.proxy)
+        .expect("the other kart");
+    *app.world().get::<ItemEffects>(proxy).unwrap()
+}
+
+fn tuning(room: &Room) -> ItemTuning {
+    room.view(ANA).world().resource::<ItemTuning>().clone()
+}
+
+/// Issue #61 acceptance: Bob, behind, uses a chantilly: Ana's kart, ahead in his ranking, gets
+/// the cream on her screen, as her game decides; his own kart does not. Ana's chantilly reaches
+/// no one (she leads). Invincible, Ana's kart is spared. Both screens tell the same story.
+#[test]
+fn a_chantilly_creams_the_karts_ahead_on_their_own_screens() {
+    let mut room = racing();
+    for _ in 0..10 {
+        room.frame();
+    }
+    let (ana_id, bob_id) = (id_of(room.view(ANA)), id_of(room.view(BOB)));
+    // Ana has the pole: ahead in both rankings.
+    for key in [ANA, BOB] {
+        assert_eq!(
+            standings(room.app(key)),
+            vec![usize::from(ana_id), usize::from(bob_id)],
+            "{key:?}"
+        );
+    }
+    let tuning = tuning(&room);
+    give(&mut room, BOB, ItemKind::Chantilly, 1);
+    use_item(&mut room, BOB);
+    room.until(1.0, "the cream on Ana's screen", |app| {
+        !lobby(app).is_host()
+            || app
+                .world()
+                .get::<ItemEffects>(player_of(app))
+                .unwrap()
+                .creamed
+                > 0.0
+    });
+    let ana = item_effects(&room, ANA);
+    assert!(ana.creamed > tuning.chantilly_time - 0.5, "{ana:?}");
+    assert_eq!(ana.creamed_for, tuning.chantilly_time);
+    assert_eq!(item_effects(&room, BOB).creamed, 0.0, "not its user");
+    // Ana's own chantilly: no one ahead of her.
+    give(&mut room, ANA, ItemKind::Chantilly, 1);
+    use_item(&mut room, ANA);
+    room.until(1.0, "told", |app| items(app).log.effects.len() == 2);
+    for _ in 0..10 {
+        room.frame();
+    }
+    assert_eq!(item_effects(&room, BOB).creamed, 0.0, "behind her");
+    // The cream gone; Ana invincible: Bob's next chantilly spares her.
+    room.until(5.0, "the cream gone", |app| {
+        app.world()
+            .get::<ItemEffects>(player_of(app))
+            .unwrap()
+            .creamed
+            == 0.0
+    });
+    {
+        let app = room.app(ANA);
+        let kart = player_of(app);
+        app.world_mut()
+            .get_mut::<Invincibility>(kart)
+            .unwrap()
+            .remaining = 3.0;
+    }
+    give(&mut room, BOB, ItemKind::Chantilly, 1);
+    use_item(&mut room, BOB);
+    room.until(1.0, "told", |app| items(app).log.effects.len() == 3);
+    for _ in 0..10 {
+        room.frame();
+    }
+    assert_eq!(item_effects(&room, ANA).creamed, 0.0, "invincible");
+    let (a, b) = (&items(room.view(ANA)).log, &items(room.view(BOB)).log);
+    assert_eq!(a.effects, b.effects, "the same story");
+    let users: Vec<(KartId, ItemKind)> = a.effects.iter().map(|(k, i, _)| (*k, *i)).collect();
+    assert_eq!(
+        users,
+        vec![
+            (bob_id, ItemKind::Chantilly),
+            (ana_id, ItemKind::Chantilly),
+            (bob_id, ItemKind::Chantilly)
+        ]
+    );
+}
+
+/// Issue #61 acceptance: Bob, last of a race with two bots (Ana's), uses a dégonflage. On Ana's
+/// screen, her kart and her bots shrink and slow down for a time that follows their rank in
+/// Bob's ranking (the leader the longest, GD § 8), and their items fall; Bob's kart is not
+/// deflated; Bob sees Ana's kart deflated (its states say it). A dégonflage told with a ranking
+/// that is not Ana's (forged here): her karts follow the ranking told, not hers.
+#[test]
+fn a_degonflage_follows_the_ranking_of_its_user() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 2, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    for key in [ANA, BOB] {
+        let app = room.app(key);
+        let kart = player_of(app);
+        app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+    }
+    for _ in 0..5 {
+        room.frame();
+    }
+    let order = standings(room.app(BOB));
+    assert_eq!(order, vec![0, 1, 2, 3], "the grid's order on Bob's screen");
+    let tuning = tuning(&room);
+    let expected = |order: &[usize], slot: usize| {
+        let rank = order.iter().position(|s| *s == slot).unwrap() as u32 + 1;
+        deflate_time(
+            rank,
+            order.len(),
+            tuning.degonflage_time_first,
+            tuning.degonflage_time_last,
+        )
+    };
+    give(&mut room, ANA, ItemKind::Pelote, 1);
+    give(&mut room, BOB, ItemKind::Degonflage, 1);
+    use_item(&mut room, BOB);
+    let deflated = |app: &mut App| -> Vec<(usize, f32, ItemSlots)> {
+        let world = app.world_mut();
+        let mut all: Vec<(usize, f32, ItemSlots)> = world
+            .query_filtered::<(&Racer, &ItemEffects, &ItemSlots), With<Kart>>()
+            .iter(world)
+            .map(|(racer, effects, slots)| (racer.grid_slot, effects.deflated_for, *slots))
+            .collect();
+        all.sort_by_key(|(slot, ..)| *slot);
+        all
+    };
+    room.until(1.0, "Ana's karts deflated", |app| {
+        !lobby(app).is_host() || app.world().resource::<OnlineItems>().log.effects.len() == 1
+    });
+    let ana_karts = deflated(room.app(ANA));
+    assert_eq!(ana_karts.len(), 3, "Ana's kart and her two bots");
+    for (slot, time, slots) in &ana_karts {
+        assert!(
+            (time - expected(&order, *slot)).abs() < 1e-4,
+            "slot {slot}: {time} s"
+        );
+        assert!(
+            slots.hand.is_empty() && slots.dragging.is_none(),
+            "slot {slot}: {slots:?}"
+        );
+    }
+    assert!(
+        ana_karts[0].1 > ana_karts[2].1,
+        "the first ones the longest"
+    );
+    assert_eq!(item_effects(&room, BOB).deflated, 0.0, "its user");
+    room.until(1.0, "Ana deflated on Bob's screen", |app| {
+        lobby(app).is_host() || shown_effects(app, ANA).deflated > 0.0
+    });
+    // A ranking that is not Ana's (Bob's kart first, the bots last): her karts follow it.
+    let forged = vec![3, 2, 1, 0];
+    {
+        let app = room.app(ANA);
+        let now = common_tick(app);
+        let session = items(app).session().unwrap();
+        app.world_mut().resource_mut::<OnlineItems>().receive(
+            BOB,
+            super::Message::Effect(EffectOut {
+                session,
+                kart: 3,
+                item: ItemKind::Degonflage,
+                tick: now,
+                position: [0.0; 3],
+                forward: [0.0, -1.0],
+                order: forged.iter().map(|slot| *slot as KartId).collect(),
+            }),
+        );
+    }
+    room.frame();
+    assert_ne!(standings(room.app(ANA)), forged, "not Ana's ranking");
+    for (slot, time, _) in deflated(room.app(ANA)) {
+        assert!(
+            (time - expected(&forged, slot)).abs() < 1e-4,
+            "slot {slot}: {time} s"
+        );
+    }
+}
+
+/// Bob's kart `ahead` meters before Ana's along the bots' racing line, both on it and still;
+/// then the time for each screen to show the other's kart there.
+fn on_the_line(room: &mut Room, ahead: f32) {
+    let line = room.view(ANA).world().resource::<RacingLine>().clone();
+    let ana = pose(room, ANA);
+    let here = line.locate(ana.translation, None).distance;
+    let at = |distance: f32| {
+        line.center()
+            .at(distance)
+            .transform(line.offset_at(distance), GRID_HEIGHT)
+    };
+    place(room, ANA, at(here));
+    place(room, BOB, at(here + ahead));
+    for _ in 0..30 {
+        room.frame();
+    }
+}
+
+/// Issue #61 acceptance: Ana, in a super câlin, drives into Bob's kart (still, ahead): Bob sees
+/// her pink glow (her states say it), and his game decides that her kart knocks his over (a
+/// tumble); it tells everyone: Ana counts her hit, the same on both screens. Her kart is not hit.
+#[test]
+fn a_super_calin_knocks_over_the_kart_it_runs_into() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 7.0);
+    give(&mut room, ANA, ItemKind::SuperCalin, 1);
+    use_item(&mut room, ANA);
+    assert!(item_effects(&room, ANA).calin > 6.0);
+    room.until(1.0, "the glow on Bob's screen", |app| {
+        lobby(app).is_host() || shown_effects(app, ANA).calin > 0.0
+    });
+    drive(&mut room, ANA, FLAT_OUT);
+    room.until(3.0, "Bob knocked over, told", |app| {
+        items(app).log.rams.len() == 1
+    });
+    assert!(
+        matches!(
+            state(&room, BOB),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                ..
+            }
+        ),
+        "{:?}",
+        state(&room, BOB)
+    );
+    assert!(!state(&room, ANA).is_hit(), "invincible");
+    assert_eq!(stats(&room, ANA).hits_landed, 1, "Ana's hit, told by Bob");
+    assert_eq!(stats(&room, BOB).hits_taken, 1);
+    let (ana_id, bob_id) = (id_of(room.view(ANA)), id_of(room.view(BOB)));
+    for key in [ANA, BOB] {
+        let rams = &items(room.view(key)).log.rams;
+        assert_eq!(
+            (rams[0].0, rams[0].1, rams[0].2),
+            (bob_id, ana_id, ItemKind::SuperCalin),
+            "{key:?}"
+        );
+    }
+    assert_eq!(
+        items(room.view(ANA)).log.rams,
+        items(room.view(BOB)).log.rams
+    );
+}
+
+/// Issue #61 acceptance: Ana's fusée drives her kart along the racing line (her game's
+/// autopilot), Bob sees its shell (her states say it) and her kart coming fast; it knocks his
+/// kart over on his screen, as his game decides: a tumble, Ana's hit.
+#[test]
+fn a_fusee_seen_by_the_other_knocks_it_over() {
+    let mut room = racing();
+    on_the_line(&mut room, 40.0);
+    give(&mut room, ANA, ItemKind::Fusee, 1);
+    use_item(&mut room, ANA);
+    assert!(item_effects(&room, ANA).rocket > 5.0);
+    room.until(1.0, "the shell on Bob's screen", |app| {
+        lobby(app).is_host() || shown_effects(app, ANA).rocket > 0.0
+    });
+    room.until(3.0, "Bob knocked over, told", |app| {
+        items(app).log.rams.len() == 1
+    });
+    assert!(
+        matches!(
+            state(&room, BOB),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                ..
+            }
+        ),
+        "{:?}",
+        state(&room, BOB)
+    );
+    assert!(!state(&room, ANA).is_hit());
+    assert_eq!(stats(&room, ANA).hits_landed, 1);
+    for key in [ANA, BOB] {
+        assert_eq!(
+            items(room.view(key)).log.rams[0].2,
+            ItemKind::Fusee,
+            "{key:?}"
+        );
+    }
+    // Over: the shell is gone on Bob's screen too.
+    room.until(7.0, "the fusée over", |app| {
+        lobby(app).is_host() || shown_effects(app, ANA).rocket == 0.0
+    });
+}
+
+/// The oreiller géant in a game (its network id and the object), if one is out.
+fn pillow_of(app: &App) -> Option<(ItemId, ItemObject)> {
+    items(app).objects().find_map(|(entity, id)| {
+        app.world()
+            .get::<ItemObject>(entity)
+            .filter(|o| o.item == ItemKind::OreillerGeant)
+            .map(|o| (id, *o))
+    })
+}
+
+/// Issue #61 acceptance: Ana throws an oreiller géant; the leader of her ranking is Bob's kart,
+/// ahead: the oreiller goes after it, by its id, on both screens. On Bob's screen it crushes his
+/// kart (a tumble), as his game decides; Ana's kart is not hit. The same story on both screens,
+/// and no oreiller left in either record.
+#[test]
+fn an_oreiller_crushes_the_leader_where_its_game_decides() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 20.0);
+    let bob_id = id_of(room.view(BOB));
+    for key in [ANA, BOB] {
+        assert_eq!(standings(room.app(key))[0], usize::from(bob_id), "{key:?}");
+    }
+    give(&mut room, ANA, ItemKind::OreillerGeant, 1);
+    use_item(&mut room, ANA);
+    room.until(1.0, "the oreiller on both screens", |app| {
+        pillow_of(app).is_some()
+    });
+    let bob_kart = player_of(room.view(BOB));
+    let (_, on_bob) = pillow_of(room.view(BOB)).unwrap();
+    assert!(
+        matches!(on_bob.motion, Motion::Pillow { target: Some(target), .. } if target == bob_kart),
+        "after Bob's kart: {:?}",
+        on_bob.motion
+    );
+    for key in [ANA, BOB] {
+        assert_eq!(
+            items(room.view(key)).arbiter.pillows().len(),
+            1,
+            "{key:?}: it flies"
+        );
+    }
+    room.until(4.0, "Bob crushed", |app| {
+        items(app).log.breaks.len() == 1 && pillow_of(app).is_none()
+    });
+    assert!(
+        matches!(
+            state(&room, BOB),
+            KartState::Hit {
+                reaction: HitReaction::Tumble,
+                ..
+            }
+        ),
+        "{:?}",
+        state(&room, BOB)
+    );
+    assert!(!state(&room, ANA).is_hit());
+    assert_eq!(stats(&room, ANA).hits_landed, 1, "Ana's hit, told by Bob");
+    for _ in 0..5 {
+        room.frame();
+    }
+    for key in [ANA, BOB] {
+        let items = items(room.view(key));
+        assert_eq!(items.log.thrown[0].1, ItemKind::OreillerGeant);
+        let breaks = &items.log.breaks;
+        assert_eq!((breaks[0].1, breaks[0].2), (Some(bob_id), true), "{key:?}");
+        assert!(items.arbiter.pillows().is_empty(), "{key:?}: gone");
+    }
+}
+
+/// Issue #61 acceptance: Ana's oreiller géant hovers over Bob's kart, the leader; Bob sounds his
+/// klaxon-canard: his game destroys it and tells everyone: it is gone on both screens, Bob is not
+/// hit.
+#[test]
+fn a_klaxon_destroys_the_oreiller_of_another_player() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 20.0);
+    give(&mut room, ANA, ItemKind::OreillerGeant, 1);
+    use_item(&mut room, ANA);
+    room.until(2.0, "the oreiller over Bob, on his screen", |app| {
+        lobby(app).is_host()
+            || pillow_of(app).is_some_and(|(_, o)| {
+                matches!(
+                    o.motion,
+                    Motion::Pillow {
+                        flight: PillowFlight::Hover { .. },
+                        ..
+                    }
+                )
+            })
+    });
+    for _ in 0..10 {
+        room.frame();
+    }
+    give(&mut room, BOB, ItemKind::KlaxonCanard, 1);
+    use_item(&mut room, BOB);
+    room.until(1.0, "the oreiller gone everywhere", |app| {
+        pillow_of(app).is_none() && items(app).log.honks.len() == 1
+    });
+    for _ in 0..60 {
+        room.frame();
+        assert!(!state(&room, BOB).is_hit(), "never crushed");
+    }
+    for key in [ANA, BOB] {
+        let items = items(room.view(key));
+        assert_eq!(items.log.breaks.len(), 1, "{key:?}");
+        assert_eq!(
+            (items.log.breaks[0].1, items.log.breaks[0].2),
+            (None, false)
+        );
+        assert!(items.arbiter.pillows().is_empty(), "{key:?}");
+    }
+    assert_eq!(stats(&room, ANA).hits_landed, 0);
+}
+
+/// Issue #61 acceptance: the oreiller géant's rules online are the host's, on the common clock
+/// (shortened for the test: 3 s of race before the first one, 4 s between two, instead of 20 s
+/// and 30 s), with a table that almost always gives one. Ana and Bob draw one on the same tick
+/// (two boxes) before 3 s: the host refuses both, each gets the same draw without it (a pelure),
+/// as solo. After 3 s, on the same tick again: only one is granted (Ana's: the better grid slot),
+/// Bob gets a pelure; the same record on both screens. Ana's falls (her peer tells): within 4 s
+/// of it, Bob's next one is refused; after, granted.
+#[test]
+fn two_oreillers_drawn_at_once_online_only_one_is_granted() {
+    let mut room = racing();
+    let table =
+        ItemTable::from_ron("(rows: [(from: 0.0, items: [(OreillerGeant, 99), (Pelure, 1)])])")
+            .unwrap();
+    for key in [ANA, BOB] {
+        let world = room.app(key).world_mut();
+        world.insert_resource(OnlineItemTable(table.clone()));
+        let mut tuning = world.resource_mut::<ItemTuning>();
+        tuning.oreiller_min_race_time = 3.0;
+        tuning.oreiller_cooldown = 4.0;
+    }
+    let (ana_id, bob_id) = (id_of(room.view(ANA)), id_of(room.view(BOB)));
+    // Each kart on its own box (0 and 3, across the road), on the same tick; what it drew.
+    let draw = |room: &mut Room, keys: &[PeerKey]| {
+        for key in keys {
+            let index = if *key == ANA { 0 } else { 3 };
+            let target = spot(room.app(*key), index, false);
+            let road = target.translation - Vec3::Y * (ITEM_BOX_HEIGHT - GRID_HEIGHT);
+            let app = room.app(*key);
+            let kart = player_of(app);
+            app.world_mut().get_mut::<ItemSlots>(kart).unwrap().clear();
+            place(
+                room,
+                *key,
+                Transform {
+                    translation: road,
+                    ..target
+                },
+            );
+        }
+        room.frame();
+        room.until(1.0, "the host's verdicts", |app| {
+            items(app).arbiter.pending().count() == 0
+        });
+        for _ in 0..3 {
+            room.frame();
+        }
+        // Away from the boxes (they come back without the karts on them).
+        for key in keys {
+            let at = pose(room, *key);
+            place(
+                room,
+                *key,
+                Transform {
+                    translation: at.translation - *at.forward() * 8.0,
+                    ..at
+                },
+            );
+        }
+    };
+    let in_hand = |room: &Room, key: PeerKey| slots(room, key).hand.item().map(|(item, _)| item);
+    let granted = |app: &App| -> Vec<KartId> {
+        items(app)
+            .arbiter
+            .grants()
+            .iter()
+            .filter(|g| matches!(g.spot, Spot::Pillow(_)))
+            .map(|g| g.kart)
+            .collect()
+    };
+    // Before 3 s of race: refused, the other draw instead.
+    assert!(room.view(ANA).world().resource::<Race>().race_ticks() < 120);
+    draw(&mut room, &[ANA, BOB]);
+    for key in [ANA, BOB] {
+        assert_eq!(in_hand(&room, key), Some(ItemKind::Pelure), "{key:?}");
+        assert!(granted(room.view(key)).is_empty());
+        assert_eq!(items(room.view(key)).log.refused.len(), 1, "{key:?}");
+    }
+    // Bob's draw as Ana's screen draws it again: the pelure too.
+    let drawn = &items(room.view(ANA)).log.draws;
+    assert_eq!(drawn.last().unwrap().2, vec![(ItemKind::Pelure, 1)]);
+    // After 3 s (the boxes back): the same tick, one oreiller only, Ana's.
+    room.until(6.0, "3 s of race", |app| {
+        app.world().resource::<Race>().race_ticks() > 190
+    });
+    draw(&mut room, &[ANA, BOB]);
+    assert_eq!(in_hand(&room, ANA), Some(ItemKind::OreillerGeant));
+    assert_eq!(in_hand(&room, BOB), Some(ItemKind::Pelure));
+    for key in [ANA, BOB] {
+        let app = room.view(key);
+        assert_eq!(granted(app), vec![ana_id], "{key:?}");
+        let pillows = items(app).arbiter.pillows();
+        assert_eq!(pillows.len(), 1, "{key:?}");
+        assert_eq!(pillows[0].kart, ana_id);
+    }
+    let (kart, _, drawn) = items(room.view(ANA)).log.draws.last().unwrap();
+    assert_eq!(
+        (*kart, drawn.as_slice()),
+        (bob_id, &[(ItemKind::Pelure, 1)][..])
+    );
+    let (kart, _, drawn) = items(room.view(BOB)).log.draws.last().unwrap();
+    assert_eq!(
+        (*kart, drawn.as_slice()),
+        (ana_id, &[(ItemKind::OreillerGeant, 1)][..])
+    );
+    // Ana's oreiller falls: her game tells, both records forget it.
+    {
+        let app = room.app(ANA);
+        let kart = player_of(app);
+        app.world_mut().get_mut::<ItemSlots>(kart).unwrap().clear();
+    }
+    room.until(1.0, "Ana's oreiller gone", |app| {
+        items(app).arbiter.pillows().is_empty()
+    });
+    // Within 4 s of it (the boxes back after 2 s): refused.
+    for _ in 0..125 {
+        room.frame();
+    }
+    draw(&mut room, &[BOB]);
+    assert_eq!(in_hand(&room, BOB), Some(ItemKind::Pelure), "the cooldown");
+    // 4 s after it: granted.
+    room.until(3.0, "box 3 back", |app| back_on_now(app, 3));
+    draw(&mut room, &[BOB]);
+    assert_eq!(in_hand(&room, BOB), Some(ItemKind::OreillerGeant));
+    for key in [ANA, BOB] {
+        assert_eq!(granted(room.view(key)), vec![ana_id, bob_id], "{key:?}");
+    }
+}
+
+/// Whether box `index` is there (not taken), in a game.
+fn back_on_now(app: &App, index: u16) -> bool {
+    let world = app.world();
+    world
+        .try_query::<(&SpotIndex, &ItemBox)>()
+        .is_some_and(|mut boxes| {
+            boxes
+                .iter(world)
+                .any(|(spot, b)| spot.0 == index && b.available())
+        })
+}
+
+/// Gives `kart` (a game's) the next item of `queue` when its slots are empty (nothing held out):
+/// the players start with every item of phase 2, one after the other.
+pub(super) fn feed(app: &mut App, kart: Entity, queue: &mut Vec<ItemKind>) {
+    let Some(mut slots) = app.world_mut().get_mut::<ItemSlots>(kart) else {
+        return;
+    };
+    if slots.hand.is_empty()
+        && slots.reserve.is_empty()
+        && slots.dragging.is_none()
+        && !queue.is_empty()
+    {
+        let item = queue.remove(0);
+        slots.give(item, 1, 0);
+    }
+}
+
+/// Issue #61 acceptance (in memory): a race with every item to the end, two players driven by
+/// bots and 4 bots (Ana's): the players get, one after the other, the items of phase 2 (Ana: a
+/// chantilly, a fusée, a bombe, an oreiller géant; Bob: a dégonflage, a super câlin, an oreiller
+/// géant, a klaxon-canard), a bot of Ana's a super câlin, on top of what the boxes give (every
+/// item now). The same results on both screens, and the same story of the items (the effects,
+/// the karts knocked over, the oreillers' targets too).
+#[test]
+fn a_race_with_every_item_ends_the_same_for_everyone() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 4, 1);
+    let drivers = [player_of(room.view(ANA)), player_of(room.view(BOB))];
+    bots_drive_the_players(&mut room);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let mut queues = [
+        vec![
+            ItemKind::Chantilly,
+            ItemKind::Fusee,
+            ItemKind::Bombe,
+            ItemKind::OreillerGeant,
+        ],
+        vec![
+            ItemKind::Degonflage,
+            ItemKind::SuperCalin,
+            ItemKind::OreillerGeant,
+            ItemKind::KlaxonCanard,
+        ],
+    ];
+    {
+        let world = room.app(ANA).world_mut();
+        let mut bots = world.query_filtered::<(&Racer, &mut ItemSlots), With<crate::bots::Bot>>();
+        for (racer, mut slots) in bots.iter_mut(world) {
+            if racer.grid_slot == 1 {
+                slots.give(ItemKind::SuperCalin, 1, 0);
+            }
+        }
+    }
+    let mut frames = 0;
+    while room.view(ANA).world().resource::<Race>().phase() != RacePhase::Results
+        || room.view(BOB).world().resource::<Race>().phase() != RacePhase::Results
+    {
+        for (index, key) in [ANA, BOB].into_iter().enumerate() {
+            feed(room.app(key), drivers[index], &mut queues[index]);
+        }
+        room.frame();
+        frames += 1;
+        assert!(frames < 150 * 60, "the race never ended");
+    }
+    for _ in 0..10 {
+        room.frame();
+    }
+    let (ana, bob) = (
+        progress_by_slot(room.app(ANA)),
+        progress_by_slot(room.app(BOB)),
+    );
+    assert_same_progress(&ana, &bob);
+    assert_eq!(standings(room.app(ANA)), standings(room.app(BOB)));
+    let (ana_id, bob_id) = (
+        room.view(ANA).world().get::<NetKart>(drivers[0]).unwrap().0,
+        room.view(BOB).world().get::<NetKart>(drivers[1]).unwrap().0,
+    );
+    for key in [ANA, BOB] {
+        let items = items(room.view(key));
+        println!("{key:?}: {}", items.summary());
+        let effects: Vec<(KartId, ItemKind)> =
+            items.log.effects.iter().map(|(k, i, _)| (*k, *i)).collect();
+        assert!(
+            effects.contains(&(ana_id, ItemKind::Chantilly)),
+            "{effects:?}"
+        );
+        assert!(
+            effects.contains(&(bob_id, ItemKind::Degonflage)),
+            "{effects:?}"
+        );
+        assert!(
+            items.log.thrown.iter().any(|(id, item, _)| {
+                *item == ItemKind::OreillerGeant && (id.owner == ana_id || id.owner == bob_id)
+            }),
+            "{}",
+            items.summary()
+        );
+    }
+    // Each player used at least its first two (the chantilly and the fusée, the dégonflage and
+    // the super câlin).
+    for (index, key) in [ANA, BOB].into_iter().enumerate() {
+        let app = room.view(key);
+        let used = app.world().get::<ItemStats>(drivers[index]).unwrap().used;
+        assert!(
+            used >= 2,
+            "{key:?} used {used} items, left: {:?}",
+            queues[index]
+        );
+    }
+    let (ana, bob) = (room.view(ANA), room.view(BOB));
+    assert_same_story(ana, bob);
 }

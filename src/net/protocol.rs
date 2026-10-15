@@ -29,7 +29,12 @@
 //! (`KartSnapshot::items`, 49 bytes). Version 5 (issue #55): the kart's color in the `Hello`
 //! ([`Profile::color`], a byte of the palette). Version 6 (issue #18): the bombe à confettis
 //! thrown or dropped ([`OutMotion::Bomb`]), its explosion ([`BlastOut`]: where, when), the
-//! klaxon-canard ([`Honk`]).
+//! klaxon-canard ([`Honk`]). Version 7 (issue #61): the other items of phase 2: the chantilly
+//! and the dégonflage told by their user ([`EffectOut`], with its ranking), a kart knocked over by
+//! a super câlin or a fusée ([`Rammed`]: the victim's decision), the oreiller géant thrown
+//! ([`OutMotion::Pillow`]), its claim to the host ([`Pickup::Pillow`]), its new target
+//! ([`Retarget`]) and its end without a throw ([`PillowGone`]); in the kart states, the super
+//! câlin, the fusée and the dégonflage (`KartSnapshot::flags`).
 
 use std::fmt;
 
@@ -38,7 +43,7 @@ use crate::items::ItemKind;
 use crate::kart::KartColor;
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 6;
+pub const PROTOCOL_VERSION: u8 = 7;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -246,7 +251,8 @@ pub struct KartSnapshot {
     /// Bits 0-2: the phase (grounded, hop, drift, airborne, trick, hit, towed); 3: drifting to
     /// the right; 4-5: the sparks' tier (0: none); 6: tumbling (hit); 7: 0.
     pub state: u8,
-    /// Bit 0: stalled engine; 1: invincible; the others are 0.
+    /// Bit 0: stalled engine; 1: invincible; issue #61: 2 in a super câlin, 3 in a fusée, 4
+    /// deflated; the others are 0.
     pub flags: u8,
     /// Hit by an item: ticks since the hit, and its duration (ticks).
     pub hit: [u8; 2],
@@ -270,13 +276,25 @@ pub struct KartSnapshot {
 pub const MAX_KART_STATE_BYTES: usize = 64;
 
 /// The items that go out on the track, in their wire order (`ItemOut::item`). Issue #18: the
-/// bombe à confettis.
-pub const OUT_ITEMS: [ItemKind; 4] = [
+/// bombe à confettis; issue #61: the oreiller géant.
+pub const OUT_ITEMS: [ItemKind; 5] = [
     ItemKind::Pelure,
     ItemKind::Pelote,
     ItemKind::Abeille,
     ItemKind::Bombe,
+    ItemKind::OreillerGeant,
 ];
+
+/// The highest flags of a kart state (`KartSnapshot::flags`): bits 5 to 7 are 0.
+pub const KART_FLAGS: u8 = 0b1_1111;
+
+/// The items whose user tells the others what they do to them (issue #61, [`EffectOut`]), in
+/// their wire order.
+pub const EFFECT_ITEMS: [ItemKind; 2] = [ItemKind::Chantilly, ItemKind::Degonflage];
+
+/// The items that make a kart knock over those it runs into (issue #61, [`Rammed`]), in their
+/// wire order.
+pub const RAM_ITEMS: [ItemKind; 2] = [ItemKind::SuperCalin, ItemKind::Fusee];
 
 /// The items a kart can hold out, in their wire order (`KartSnapshot::items`, from 1).
 pub const HELD_ITEMS: [ItemKind; 3] = [ItemKind::Pelure, ItemKind::Pelote, ItemKind::Abeille];
@@ -342,6 +360,29 @@ pub enum OutMotion {
         grounded: bool,
         impact: bool,
     },
+    /// An oreiller géant (issue #61) after `target` (the leader in its thrower's ranking; `None`:
+    /// no one), and where it is in its flight.
+    Pillow {
+        target: Option<KartId>,
+        flight: OutPillow,
+    },
+}
+
+/// An oreiller géant's flight on the wire (`items::PillowFlight`, issue #61).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OutPillow {
+    /// Along the track's centerline, at race distance `distance`, `lateral` meters right of it.
+    Track { distance: f32, lateral: f32 },
+    /// Over its target for `left` seconds more ([`OutPillow::WAITING`]: until it is over it).
+    Hover { left: f32 },
+    /// Dropping on its target.
+    Drop,
+}
+
+impl OutPillow {
+    /// A hover that has not started counting (off a race, `items::PillowFlight::Hover` with an
+    /// infinite time): the wire's floats are finite.
+    pub const WAITING: f32 = f32::MAX;
 }
 
 /// An item thrown or dropped by a kart (issue #53): the thrower has authority over its path. It
@@ -393,6 +434,56 @@ pub struct Honk {
     pub position: [f32; 3],
 }
 
+/// A kart used a chantilly or a dégonflage (issue #61, [`EFFECT_ITEMS`]) at `position`, heading
+/// `forward`, on common tick `tick`. Its peer tells everyone with its ranking at that moment
+/// (`order`: the karts first to last; empty off a race): each peer applies it to its own karts
+/// (the victim decides: immune or not), their rank taken from that order, the same everywhere.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EffectOut {
+    pub session: u8,
+    pub kart: KartId,
+    pub item: ItemKind,
+    pub tick: u32,
+    pub position: [f32; 3],
+    /// Its horizontal heading (x, z of the world): off a race, the chantilly reaches the karts
+    /// ahead of it.
+    pub forward: [f32; 2],
+    pub order: Vec<KartId>,
+}
+
+/// A kart in a super câlin or a fusée (`by`, issue #61, [`RAM_ITEMS`]) ran into `kart` on common
+/// tick `tick`: the victim's peer decided that it was knocked over, and tells everyone (its
+/// rammer counts its hit). A kart that was immune says nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rammed {
+    pub session: u8,
+    pub kart: KartId,
+    pub by: KartId,
+    pub item: ItemKind,
+    pub tick: u32,
+}
+
+/// The oreiller géant the host gave `kart` (its claim on box `index` at common tick `tick`) is
+/// gone without being thrown (issue #61): a dégonflage made it fall, for instance. Every peer's
+/// record forgets it: another one may come.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PillowGone {
+    pub session: u8,
+    pub kart: KartId,
+    pub index: u16,
+    pub tick: u32,
+}
+
+/// An oreiller géant goes after another kart from common tick `tick` (issue #61): its thrower's
+/// leader changed (`None`: no one to go after). Every peer sends its copy after that kart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retarget {
+    pub session: u8,
+    pub id: ItemId,
+    pub target: Option<KartId>,
+    pub tick: u32,
+}
+
 /// A scattered croquette (issue #53): the kart that lost it, the number of that loss among the
 /// kart's losses, and its place in the loss.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -433,14 +524,20 @@ pub enum Pickup {
     Croquette { index: u16 },
     /// A scattered croquette.
     Loose(LooseId),
+    /// An oreiller géant drawn from box `index` (issue #61), by the kart's draw number `draw`:
+    /// the host decides whether its rules allow one now (`pickups::Arbiter`). Refused, the kart
+    /// gets that draw without the oreiller instead, as solo (`items::DrawRow::pick_without`).
+    Pillow { index: u16, draw: u16 },
 }
 
-/// What is picked up, whatever the draws: a box, a croquette of the track, a scattered one.
+/// What is picked up, whatever the draws: a box, a croquette of the track, a scattered one; an
+/// oreiller géant drawn from a box (issue #61).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Spot {
     Box(u16),
     Croquette(u16),
     Loose(LooseId),
+    Pillow(u16),
 }
 
 impl Pickup {
@@ -449,6 +546,7 @@ impl Pickup {
             Pickup::Box { index, .. } => Spot::Box(index),
             Pickup::Croquette { index } => Spot::Croquette(index),
             Pickup::Loose(id) => Spot::Loose(id),
+            Pickup::Pillow { index, .. } => Spot::Pillow(index),
         }
     }
 }
@@ -513,6 +611,14 @@ pub enum Message {
     Blast(BlastOut),
     /// A klaxon-canard sounded (issue #18).
     Honk(Honk),
+    /// A chantilly or a dégonflage used (issue #61).
+    Effect(EffectOut),
+    /// A kart knocked over by a super câlin or a fusée (issue #61).
+    Rammed(Rammed),
+    /// An oreiller géant gone without a throw (issue #61).
+    PillowGone(PillowGone),
+    /// An oreiller géant after another kart (issue #61).
+    Retarget(Retarget),
     /// Latency and clock: `sent_ms` is the sender's clock, echoed back.
     Ping {
         sent_ms: u32,
@@ -548,8 +654,12 @@ const ITEM_BREAK: u8 = 27;
 const SCATTER: u8 = 28;
 const BLAST: u8 = 29;
 const HONK: u8 = 30;
+const EFFECT: u8 = 31;
 const PING: u8 = 32;
 const PONG: u8 = 33;
+const RAMMED: u8 = 34;
+const PILLOW_GONE: u8 = 35;
+const RETARGET: u8 = 36;
 const KART_STATE: u8 = 40;
 
 /// The reasons a tether ends, in their wire order.
@@ -590,6 +700,10 @@ impl Message {
             Message::Scatter(_) => SCATTER,
             Message::Blast(_) => BLAST,
             Message::Honk(_) => HONK,
+            Message::Effect(_) => EFFECT,
+            Message::Rammed(_) => RAMMED,
+            Message::PillowGone(_) => PILLOW_GONE,
+            Message::Retarget(_) => RETARGET,
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
@@ -703,6 +817,20 @@ impl Message {
                         out.extend_from_slice(&[4, u8::from(grounded) | u8::from(impact) << 1]);
                         put_floats(out, &[vertical]);
                     }
+                    OutMotion::Pillow { target, flight } => {
+                        out.extend_from_slice(&[5, target.unwrap_or(NO_KART)]);
+                        match flight {
+                            OutPillow::Track { distance, lateral } => {
+                                out.push(0);
+                                put_floats(out, &[distance, lateral]);
+                            }
+                            OutPillow::Hover { left } => {
+                                out.push(1);
+                                put_floats(out, &[left]);
+                            }
+                            OutPillow::Drop => out.push(2),
+                        }
+                    }
                 }
             }
             Message::ItemBreak(end) => {
@@ -731,6 +859,37 @@ impl Message {
                 out.extend_from_slice(&[honk.session, honk.kart]);
                 put_u32(out, honk.tick);
                 put_floats(out, &honk.position);
+            }
+            Message::Effect(effect) => {
+                let item = EFFECT_ITEMS.iter().position(|i| *i == effect.item);
+                out.extend_from_slice(&[effect.session, effect.kart, item.unwrap_or(0) as u8]);
+                put_u32(out, effect.tick);
+                put_floats(out, &effect.position);
+                put_floats(out, &effect.forward);
+                let count = effect.order.len().min(MAX_PLAYERS);
+                out.push(count as u8);
+                out.extend_from_slice(&effect.order[..count]);
+            }
+            Message::Rammed(rammed) => {
+                let item = RAM_ITEMS.iter().position(|i| *i == rammed.item);
+                out.extend_from_slice(&[
+                    rammed.session,
+                    rammed.kart,
+                    rammed.by,
+                    item.unwrap_or(0) as u8,
+                ]);
+                put_u32(out, rammed.tick);
+            }
+            Message::PillowGone(gone) => {
+                out.extend_from_slice(&[gone.session, gone.kart]);
+                out.extend_from_slice(&gone.index.to_le_bytes());
+                put_u32(out, gone.tick);
+            }
+            Message::Retarget(retarget) => {
+                out.push(retarget.session);
+                put_item_id(out, retarget.id);
+                out.push(retarget.target.unwrap_or(NO_KART));
+                put_u32(out, retarget.tick);
             }
             Message::Ping { sent_ms } => put_u32(out, *sent_ms),
             Message::Pong {
@@ -941,15 +1100,34 @@ impl Message {
                             vertical: reader.floats::<1>()?[0],
                         }
                     }
+                    5 => {
+                        let target = reader.kart_or_none()?;
+                        let flight = match reader.u8()? {
+                            0 => {
+                                let [distance, lateral] = reader.floats()?;
+                                OutPillow::Track { distance, lateral }
+                            }
+                            1 => OutPillow::Hover {
+                                left: reader.floats::<1>()?[0],
+                            },
+                            2 => OutPillow::Drop,
+                            _ => return Err(DecodeError::Invalid("oreiller flight")),
+                        };
+                        OutMotion::Pillow { target, flight }
+                    }
                     _ => return Err(DecodeError::Invalid("item motion")),
                 };
                 // A pelure lies on the ground, a pelote rolls, an abeille flies (or rolls,
-                // thrown backwards), a bombe is a bombe.
+                // thrown backwards), a bombe is a bombe, an oreiller géant an oreiller.
                 let fits = match item {
                     ItemKind::Pelure => motion == OutMotion::Ground,
                     ItemKind::Pelote => matches!(motion, OutMotion::Rolling { .. }),
                     ItemKind::Bombe => matches!(motion, OutMotion::Bomb { .. }),
-                    _ => !matches!(motion, OutMotion::Ground | OutMotion::Bomb { .. }),
+                    ItemKind::OreillerGeant => matches!(motion, OutMotion::Pillow { .. }),
+                    _ => !matches!(
+                        motion,
+                        OutMotion::Ground | OutMotion::Bomb { .. } | OutMotion::Pillow { .. }
+                    ),
                 };
                 if !fits || id.is_held() {
                     return Err(DecodeError::Invalid("item motion"));
@@ -1021,6 +1199,73 @@ impl Message {
                 tick: reader.u32()?,
                 position: reader.floats()?,
             }),
+            EFFECT => {
+                let session = reader.u8()?;
+                let kart = reader.kart()?;
+                let item = *EFFECT_ITEMS
+                    .get(usize::from(reader.u8()?))
+                    .ok_or(DecodeError::Invalid("effect item"))?;
+                let tick = reader.u32()?;
+                let position = reader.floats()?;
+                let forward = reader.floats()?;
+                let count = usize::from(reader.u8()?);
+                if count > MAX_PLAYERS {
+                    return Err(DecodeError::Invalid("more racers than grid slots"));
+                }
+                let mut order = Vec::with_capacity(count);
+                for _ in 0..count {
+                    order.push(reader.kart()?);
+                }
+                if has_duplicates(order.iter().map(|kart| u128::from(*kart))) {
+                    return Err(DecodeError::Invalid("a racer twice in the order"));
+                }
+                Message::Effect(EffectOut {
+                    session,
+                    kart,
+                    item,
+                    tick,
+                    position,
+                    forward,
+                    order,
+                })
+            }
+            RAMMED => {
+                let session = reader.u8()?;
+                let kart = reader.kart()?;
+                let by = reader.kart()?;
+                let item = *RAM_ITEMS
+                    .get(usize::from(reader.u8()?))
+                    .ok_or(DecodeError::Invalid("ram item"))?;
+                if kart == by {
+                    return Err(DecodeError::Invalid("a kart rammed by itself"));
+                }
+                Message::Rammed(Rammed {
+                    session,
+                    kart,
+                    by,
+                    item,
+                    tick: reader.u32()?,
+                })
+            }
+            PILLOW_GONE => Message::PillowGone(PillowGone {
+                session: reader.u8()?,
+                kart: reader.kart()?,
+                index: reader.u16()?,
+                tick: reader.u32()?,
+            }),
+            RETARGET => {
+                let session = reader.u8()?;
+                let id = reader.item_id()?;
+                if id.is_held() {
+                    return Err(DecodeError::Invalid("a held item retargeted"));
+                }
+                Message::Retarget(Retarget {
+                    session,
+                    id,
+                    target: reader.kart_or_none()?,
+                    tick: reader.u32()?,
+                })
+            }
             PING => Message::Ping {
                 sent_ms: reader.u32()?,
             },
@@ -1054,7 +1299,7 @@ impl Message {
                 if kart.state & 0x07 == 0x07 || kart.state & 0x80 != 0 {
                     return Err(DecodeError::Invalid("kart state"));
                 }
-                if kart.flags > 0b11 {
+                if kart.flags > KART_FLAGS {
                     return Err(DecodeError::Invalid("kart flags"));
                 }
                 if !valid_held_items(kart.items) {
@@ -1174,6 +1419,11 @@ fn put_claim(out: &mut Vec<u8>, claim: &Claim) {
             out.extend_from_slice(&id.loss.to_le_bytes());
             out.push(id.index);
         }
+        Pickup::Pillow { index, draw } => {
+            out.push(3);
+            out.extend_from_slice(&index.to_le_bytes());
+            out.extend_from_slice(&draw.to_le_bytes());
+        }
     }
     out.push(claim.kart);
     put_u32(out, claim.tick);
@@ -1277,6 +1527,10 @@ impl Reader<'_> {
                 loss: self.u16()?,
                 index: self.u8()?,
             }),
+            3 => Pickup::Pillow {
+                index: self.u16()?,
+                draw: self.u16()?,
+            },
             _ => return Err(DecodeError::Invalid("pickup")),
         };
         Ok(Claim {
@@ -1636,6 +1890,122 @@ mod tests {
                 tick: 4_000_000_000,
                 position: [-5.0, 0.55, 30.0],
             }),
+            // Issue #61: a kart in a super câlin, a fusée and deflated; an oreiller géant claimed,
+            // thrown (in each part of its flight), after another kart, gone; a chantilly and a
+            // dégonflage told with their ranking; karts knocked over by a super câlin, a fusée.
+            Message::KartState(KartSnapshot {
+                flags: KART_FLAGS,
+                ..KartSnapshot::default()
+            }),
+            Message::Claim(Claim {
+                session: 7,
+                pickup: Pickup::Pillow {
+                    index: 0xfedc,
+                    draw: 0xba98,
+                },
+                kart: 11,
+                tick: 4_000_000_004,
+            }),
+            Message::Verdict(Verdict {
+                claim: Claim {
+                    session: 7,
+                    pickup: Pickup::Pillow { index: 3, draw: 1 },
+                    kart: 0,
+                    tick: 1_300,
+                },
+                granted: false,
+            }),
+            Message::ItemOut(ItemOut {
+                session: 7,
+                id: ItemId { owner: 5, seq: 4 },
+                item: ItemKind::OreillerGeant,
+                tick: 1_400,
+                position: [12.0, 4.5, -30.0],
+                velocity: [0.0, 0.0, -60.0],
+                motion: OutMotion::Pillow {
+                    target: Some(2),
+                    flight: OutPillow::Track {
+                        distance: 501.5,
+                        lateral: 2.25,
+                    },
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 7,
+                id: ItemId { owner: 5, seq: 5 },
+                item: ItemKind::OreillerGeant,
+                tick: 1_401,
+                position: [12.0, 4.5, -30.0],
+                velocity: [1.0, 0.0, -2.0],
+                motion: OutMotion::Pillow {
+                    target: None,
+                    flight: OutPillow::Hover {
+                        left: OutPillow::WAITING,
+                    },
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 7,
+                id: ItemId { owner: 5, seq: 6 },
+                item: ItemKind::OreillerGeant,
+                tick: 1_402,
+                position: [12.0, 2.5, -30.0],
+                velocity: [0.0, -20.0, 0.0],
+                motion: OutMotion::Pillow {
+                    target: Some(11),
+                    flight: OutPillow::Drop,
+                },
+            }),
+            Message::Retarget(Retarget {
+                session: 7,
+                id: ItemId { owner: 5, seq: 4 },
+                target: Some(9),
+                tick: 1_450,
+            }),
+            Message::Retarget(Retarget {
+                session: 7,
+                id: ItemId { owner: 0, seq: 0 },
+                target: None,
+                tick: 0,
+            }),
+            Message::PillowGone(PillowGone {
+                session: 7,
+                kart: 11,
+                index: 0xfedc,
+                tick: 4_000_000_004,
+            }),
+            Message::Effect(EffectOut {
+                session: 7,
+                kart: 6,
+                item: ItemKind::Chantilly,
+                tick: 4_000_000_005,
+                position: [-3.5, 0.55, 120.25],
+                forward: [0.6, -0.8],
+                order: vec![11, 0, 5, 1, 2, 3, 4, 6, 7, 8, 9, 10],
+            }),
+            Message::Effect(EffectOut {
+                session: 0,
+                kart: 0,
+                item: ItemKind::Degonflage,
+                tick: 0,
+                position: [0.0; 3],
+                forward: [0.0, -1.0],
+                order: vec![],
+            }),
+            Message::Rammed(Rammed {
+                session: 7,
+                kart: 11,
+                by: 0,
+                item: ItemKind::SuperCalin,
+                tick: 4_000_000_006,
+            }),
+            Message::Rammed(Rammed {
+                session: 1,
+                kart: 0,
+                by: 11,
+                item: ItemKind::Fusee,
+                tick: 7,
+            }),
         ]
         .into_iter()
         .chain(TETHER_ENDS.iter().map(|reason| {
@@ -1666,8 +2036,9 @@ mod tests {
         kinds.dedup();
         // 13 until issue #8; issue #9 adds the circuit, the checkpoints and the end of the race;
         // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
-        // croquettes; issue #18 the explosions and the klaxons.
-        assert_eq!(kinds.len(), 23);
+        // croquettes; issue #18 the explosions and the klaxons; issue #61 the effects, the karts
+        // knocked over, the oreillers gone and retargeted.
+        assert_eq!(kinds.len(), 27);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -1753,15 +2124,27 @@ mod tests {
         };
         assert_eq!(Message::Claim(verdict.claim).to_bytes().len(), 11);
         assert_eq!(Message::Verdict(verdict).to_bytes().len(), 12);
+        // Issue #61: a claim on an oreiller géant in 13 bytes.
+        let pillow = Claim {
+            pickup: Pickup::Pillow { index: 3, draw: 4 },
+            ..claim
+        };
+        assert_eq!(Message::Claim(pillow).to_bytes().len(), 13);
         for message in every_message() {
             let length = message.to_bytes().len();
             match &message {
-                Message::ItemOut(_) => assert!((36..=45).contains(&length), "{message:?}"),
+                // Issue #61: 46 for an oreiller géant on its way.
+                Message::ItemOut(_) => assert!((36..=46).contains(&length), "{message:?}"),
                 Message::ItemBreak(_) => assert_eq!(length, 8),
                 Message::Scatter(scatter) => assert_eq!(length, 23 + 12 * scatter.to.len()),
                 // Issue #18: an explosion in 22 bytes, a klaxon in 20.
                 Message::Blast(_) => assert_eq!(length, 22),
                 Message::Honk(_) => assert_eq!(length, 20),
+                // Issue #61: an effect in 30 bytes and one per racer of its ranking (42 at most);
+                // a kart knocked over in 10, an oreiller gone in 10, retargeted in 11.
+                Message::Effect(effect) => assert_eq!(length, 30 + effect.order.len()),
+                Message::Rammed(_) | Message::PillowGone(_) => assert_eq!(length, 10),
+                Message::Retarget(_) => assert_eq!(length, 11),
                 _ => {}
             }
         }
@@ -1864,10 +2247,13 @@ mod tests {
             2 + 4 + 2 + 12 + 6 + 12,
             2 + 4 + 2 + 12 + 6 + 12 + 1,
         );
+        // Issue #61: bits 2 to 4 of the flags are the super câlin, the fusée and the dégonflage;
+        // 5 to 7 stay free.
         for (at, value) in [
             (state, 0x07),
             (state, 0x80),
-            (flags, 0b100),
+            (flags, 0b10_0000),
+            (flags, 0b10_0100),
             (flags, 0x80),
             (rotation, 0x80),
         ] {
@@ -1876,6 +2262,11 @@ mod tests {
             assert!(invalid(&bad), "byte {at} = {value:#x}");
         }
         assert!(Message::decode(&kart).is_ok());
+        for value in [0b100, 0b1000, 0b1_0000, KART_FLAGS] {
+            let mut good = kart.clone();
+            good[flags] = value;
+            assert!(Message::decode(&good).is_ok(), "flags {value:#b}");
+        }
         // Issue #9: a race without laps, with a bot difficulty beyond Hard, with more racers than
         // the grid has slots, with a player twice; a checkpoint of a kart beyond the grid; a
         // final order with a kart beyond the grid, or twice; a pong's flag of 2.
@@ -1949,7 +2340,8 @@ mod tests {
         let bytes = Message::Claim(claim).to_bytes();
         assert!(Message::decode(&bytes).is_ok());
         let mut bad = bytes.clone();
-        bad[3] = 3;
+        // Issue #61: 3 is an oreiller géant now.
+        bad[3] = 4;
         assert!(invalid(&bad), "unknown pickup");
         let mut bad = bytes.clone();
         bad[8] = 3;
@@ -1978,16 +2370,18 @@ mod tests {
         };
         let bytes = Message::ItemOut(out).to_bytes();
         assert!(Message::decode(&bytes).is_ok());
-        // Not an object (beyond the bombe, issue #18), a kart beyond the grid, the number of what
-        // a kart holds out, an unknown motion, a pelote on the ground, a bombe that rolls.
+        // Not an object (beyond the oreiller géant, issue #61), a kart beyond the grid, the
+        // number of what a kart holds out, an unknown motion, a pelote on the ground, a bombe
+        // that rolls, an oreiller géant that rolls.
         for changes in [
-            &[(6, 4)][..],
+            &[(6, 5)][..],
             &[(6, 255)],
             &[(3, MAX_PLAYERS as u8)],
             &[(4, 0xff), (5, 0xff)],
-            &[(35, 5)],
+            &[(35, 6)],
             &[(35, 0)],
             &[(6, 3)],
+            &[(6, 4)],
         ] {
             let mut bad = bytes.clone();
             for (at, value) in changes {
@@ -2000,6 +2394,10 @@ mod tests {
             grounded: true,
             impact: false,
         };
+        let pillow = OutMotion::Pillow {
+            target: Some(1),
+            flight: OutPillow::Hover { left: 0.5 },
+        };
         for (item, motion) in [
             (ItemKind::Pelure, OutMotion::Dive { target: None }),
             (ItemKind::Abeille, OutMotion::Ground),
@@ -2008,6 +2406,12 @@ mod tests {
             (ItemKind::Pelote, bomb),
             (ItemKind::Abeille, bomb),
             (ItemKind::Bombe, OutMotion::Ground),
+            // Issue #61: an oreiller géant flies as an oreiller, and only it.
+            (ItemKind::OreillerGeant, bomb),
+            (ItemKind::OreillerGeant, OutMotion::Dive { target: None }),
+            (ItemKind::Abeille, pillow),
+            (ItemKind::Bombe, pillow),
+            (ItemKind::Pelure, pillow),
         ] {
             let bad = Message::ItemOut(ItemOut {
                 item,
@@ -2046,6 +2450,96 @@ mod tests {
         assert!(Message::decode(&honk).is_ok());
         honk[3] = MAX_PLAYERS as u8;
         assert!(invalid(&honk), "a klaxon beyond the grid");
+        // Issue #61: an oreiller géant in an unknown part of its flight, after a kart beyond the
+        // grid; retargeted while held, or at a kart beyond the grid; gone from a kart beyond the
+        // grid.
+        let thrown = Message::ItemOut(ItemOut {
+            item: ItemKind::OreillerGeant,
+            motion: pillow,
+            ..out
+        })
+        .to_bytes();
+        assert!(Message::decode(&thrown).is_ok());
+        for (at, value) in [(37, 3), (37, 0xff), (36, MAX_PLAYERS as u8)] {
+            let mut bad = thrown.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "oreiller: byte {at} = {value}");
+        }
+        let retarget = Retarget {
+            session: 1,
+            id: ItemId { owner: 2, seq: 3 },
+            target: Some(4),
+            tick: 5,
+        };
+        let bytes = Message::Retarget(retarget).to_bytes();
+        assert!(Message::decode(&bytes).is_ok());
+        let held = Message::Retarget(Retarget {
+            id: ItemId::held(2),
+            ..retarget
+        })
+        .to_bytes();
+        assert!(invalid(&held), "a held item retargeted");
+        let mut bad = bytes.clone();
+        bad[6] = MAX_PLAYERS as u8;
+        assert!(invalid(&bad), "a target beyond the grid");
+        let mut gone = Message::PillowGone(PillowGone {
+            session: 1,
+            kart: 2,
+            index: 3,
+            tick: 4,
+        })
+        .to_bytes();
+        assert!(Message::decode(&gone).is_ok());
+        gone[3] = MAX_PLAYERS as u8;
+        assert!(
+            invalid(&gone),
+            "an oreiller gone from a kart beyond the grid"
+        );
+        // Issue #61: an effect of an item that is not the chantilly nor the dégonflage, of a kart
+        // beyond the grid, with a racer beyond the grid, twice, or more racers than the grid.
+        let effect = EffectOut {
+            session: 1,
+            kart: 2,
+            item: ItemKind::Degonflage,
+            tick: 3,
+            position: [0.0; 3],
+            forward: [0.0, -1.0],
+            order: vec![4, 2, 0],
+        };
+        let bytes = Message::Effect(effect.clone()).to_bytes();
+        assert!(Message::decode(&bytes).is_ok());
+        let count_at = bytes.len() - 4;
+        for (at, value) in [
+            (4, 2),
+            (4, 0xff),
+            (3, MAX_PLAYERS as u8),
+            (count_at + 1, MAX_PLAYERS as u8),
+            (count_at + 2, 4),
+        ] {
+            let mut bad = bytes.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "effect: byte {at} = {value}");
+        }
+        let mut too_many = bytes.clone();
+        too_many[count_at] = MAX_PLAYERS as u8 + 1;
+        too_many.truncate(count_at + 1);
+        too_many.extend(0..=MAX_PLAYERS as u8);
+        assert!(invalid(&too_many), "more racers than the grid");
+        // A kart knocked over by an item that does not ram, by itself, beyond the grid.
+        let rammed = Message::Rammed(Rammed {
+            session: 1,
+            kart: 2,
+            by: 3,
+            item: ItemKind::Fusee,
+            tick: 4,
+        })
+        .to_bytes();
+        assert!(Message::decode(&rammed).is_ok());
+        for (at, value) in [(5, 2), (5, 0xff), (4, 2), (3, MAX_PLAYERS as u8), (4, 0xff)] {
+            let mut bad = rammed.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "rammed: byte {at} = {value}");
+        }
         let hit = Message::ItemBreak(ItemBreak {
             session: 1,
             id: ItemId { owner: 2, seq: 3 },

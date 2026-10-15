@@ -28,9 +28,19 @@
 //!   every screen on the same tick, and on what touches it where the peer that judged the
 //!   contact says ([`BlastOut`]); every peer judges its own karts in the blast. The
 //!   **klaxon-canard**: its peer judges the items it destroys (as a shield's holder does) and
-//!   tells each ([`ItemBreak`]); the others see its shock wave ([`Honk`]). The other items of
-//!   phase 2 do not play online yet (`items::ItemKind::online`): the online table leaves them
-//!   out.
+//!   tells each ([`ItemBreak`]); the others see its shock wave ([`Honk`]).
+//! - **Phase 2, the rest** (issue #61): the **chantilly** and the **dégonflage** are told by their
+//!   user's peer ([`EffectOut`]) with its ranking at that moment: every peer applies them to its
+//!   own karts (the victim decides: immune or not), their rank taken from that ranking. A kart in
+//!   a **super câlin** or a **fusée** says so in its states: it glows or wears its shell on every
+//!   screen, and a contact of one of **our** karts with it knocks ours over (the victim decides),
+//!   which we tell ([`Rammed`]): its rammer counts its hit. The fusée is driven by its own peer.
+//!   Deflated, a kart says so in its states (smaller on every screen). The **oreiller géant**: a
+//!   draw that gives one is a claim to the host (`Pickup::Pillow`, its rules in `pickups.rs`);
+//!   refused, the kart gets the same draw without it (as solo). Thrown, it is an [`ItemOut`]
+//!   after the leader of its thrower's ranking, by id, and its thrower's peer tells when that
+//!   leader changes ([`Retarget`]); each peer judges its karts in its crush. Gone without a throw
+//!   (a dégonflage), its kart's peer says so ([`PillowGone`]).
 //! - **A new host** decides what the old one left undecided (every peer keeps every claim), and
 //!   every peer sends its claims still undecided again: the new host answers again those it had
 //!   decided already. The items thrown by a peer that leaves disappear.
@@ -40,10 +50,12 @@
 
 use bevy::prelude::*;
 
-use super::pickups::{Arbiter, ClaimKey};
+use super::online::OnlineRace;
+use super::pickups::{Arbiter, ClaimKey, PillowRules};
 use super::protocol::{
-    BlastOut, Claim, Honk, ItemBreak, ItemId, ItemOut, KartId, LooseId, MAX_SCATTER, Message,
-    OUT_ITEMS, OutMotion, PeerKey, Pickup, Scatter, Spot, Verdict,
+    BlastOut, Claim, EFFECT_ITEMS, EffectOut, Honk, ItemBreak, ItemId, ItemOut, KartId, LooseId,
+    MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow, PeerKey, Pickup, PillowGone, RAM_ITEMS,
+    Rammed, Retarget, Scatter, Spot, Verdict,
 };
 use super::sync::{KartSync, NetKart, RemoteKartProxy};
 use super::{NetSession, online::local_tick};
@@ -52,12 +64,13 @@ use crate::croquettes::{
     TrackCroquette,
 };
 use crate::items::{
-    Blast, BoxBroken, CatchUp, Flight, Hold, Honked, ItemBlocked, ItemBox, ItemHitJudged, ItemKind,
-    ItemObject, ItemSlots, ItemStats, ItemSystems, ItemTable, ItemTuning, Motion, OnlineItemTable,
-    blast_radius, draw_unit, held_offset, item_radius,
+    Blast, BoxBroken, CatchUp, Flight, Hold, Honked, ItemBlocked, ItemBox, ItemEffect,
+    ItemHitJudged, ItemKind, ItemObject, ItemSlots, ItemStats, ItemSystems, ItemTable, ItemTuning,
+    Motion, OnlineItemTable, PillowFlight, Prize, SharedStandings, blast_radius, draw_unit,
+    held_offset, item_radius,
 };
 use crate::kart::{Kart, KartSystems};
-use crate::race::{RaceGrid, seconds_to_ticks};
+use crate::race::{Race, RaceGrid, seconds_to_ticks};
 use crate::track::{GRID_SLOTS, SpotIndex};
 
 /// An item from another peer catches up this many ticks at most (2 s): older, it is late anyway.
@@ -66,6 +79,11 @@ const MAX_CATCH_UP: u32 = 120;
 const BROKEN_KEPT: usize = 256;
 /// Items exploded lately (issue #18), kept for the victims' decisions of their blast, at most.
 const EXPLODED_KEPT: usize = 32;
+/// After a change of host, the oreillers géants wait this many ticks before the new host decides
+/// them (issue #61, `Arbiter::handover`): the grants the old host sent to the others come first.
+pub const PILLOW_HANDOVER_TICKS: u32 = 30;
+/// The other karts' oreillers géants waiting for the host's word, kept at most (issue #61).
+const PILLOW_DRAWS_KEPT: usize = 16;
 
 /// What we take back if the host gives a box or a croquette to another kart.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -74,6 +92,8 @@ enum Undo {
     Box([bool; 2]),
     /// The croquettes it counted.
     Croquettes(u8),
+    /// An oreiller géant (issue #61): the prize it gets instead.
+    Pillow(Prize),
 }
 
 /// One of our claims, until its verdict.
@@ -104,6 +124,14 @@ pub struct ItemLog {
     pub blasts: Vec<(ItemId, u32)>,
     /// Klaxons sounded (issue #18): by which kart, the common tick.
     pub honks: Vec<(KartId, u32)>,
+    /// Chantilly and dégonflages used (issue #61): by which kart, which, the common tick (its
+    /// user's).
+    pub effects: Vec<(KartId, ItemKind, u32)>,
+    /// Karts knocked over by a super câlin or a fusée (issue #61, the victim's decision): the
+    /// victim, its rammer, which, the common tick (the victim's).
+    pub rams: Vec<(KartId, KartId, ItemKind, u32)>,
+    /// Oreillers géants after another kart (issue #61): which, after whom, the common tick.
+    pub retargets: Vec<(ItemId, Option<KartId>, u32)>,
 }
 
 /// The items and croquettes online (see the module's documentation): inserted with
@@ -135,6 +163,11 @@ pub struct OnlineItems {
     left: Vec<PeerKey>,
     /// The host on the last tick: when it changes, our undecided claims go again.
     last_host: Option<PeerKey>,
+    /// Our oreillers géants out, and the target we last told (issue #61).
+    targets: Vec<(ItemId, Option<KartId>)>,
+    /// The other karts' oreillers géants drawn, until the host's word: their kart, the tick of
+    /// their claim, what they get instead if refused (issue #61, for `ItemLog::draws`).
+    pillow_draws: Vec<(KartId, u32, (ItemKind, u8))>,
     pub log: ItemLog,
 }
 
@@ -193,11 +226,17 @@ impl OnlineItems {
             .iter()
             .filter(|(_, item, _)| *item == ItemKind::Bombe)
             .count();
+        let pillows = grants
+            .iter()
+            .filter(|g| matches!(g.spot, Spot::Pillow(_)))
+            .count();
+        let croquettes = grants.len() - boxes - pillows;
         format!(
-            "{boxes} boxes and {} croquettes taken, {} items out ({bombes} bombes), {} klaxons, {hits} hits, {} croquette losses",
-            grants.len() - boxes,
+            "{boxes} boxes and {croquettes} croquettes taken, {pillows} oreillers granted, {} items out ({bombes} bombes), {} klaxons, {} effects, {} rams, {hits} hits, {} croquette losses",
             self.log.thrown.len(),
             self.log.honks.len(),
+            self.log.effects.len(),
+            self.log.rams.len(),
             self.log.scatters.len()
         )
     }
@@ -278,13 +317,56 @@ impl Plugin for OnlineItemsPlugin {
     }
 }
 
-/// The respawn time of a spot, in ticks (`None`: a scattered croquette, once).
+/// The respawn time of a spot, in ticks (`None`: a scattered croquette, once; an oreiller géant
+/// has its own rules, `pickups::PillowRules`).
 fn respawn(spot: Spot, items: &ItemTuning, croquettes: &CroquetteTuning) -> Option<u32> {
     match spot {
         Spot::Box(_) => Some(seconds_to_ticks(items.box_respawn_time)),
         Spot::Croquette(_) => Some(seconds_to_ticks(croquettes.respawn_time)),
-        Spot::Loose(_) => None,
+        Spot::Loose(_) | Spot::Pillow(_) => None,
     }
+}
+
+/// The oreiller géant's rules on the common clock (issue #61): those of `tuning`, from the race's
+/// start on the room's clock (`None`: no race, never one).
+fn pillow_rules(race: Option<(&OnlineRace, &Race)>, tuning: &ItemTuning) -> PillowRules {
+    let Some((online, race)) = race.filter(|(online, _)| online.racing) else {
+        return PillowRules::NONE;
+    };
+    // The flow's tick is `common - start_tick + 1` (`online::follow_room_clock`), the race's
+    // ticks `flow - before_go` (`Race::race_ticks`).
+    let base = (online.shared.start.start_tick + race.timings.before_go()).saturating_sub(1);
+    PillowRules {
+        race_base: Some(base),
+        min_race_ticks: seconds_to_ticks(tuning.oreiller_min_race_time),
+        cooldown_ticks: seconds_to_ticks(tuning.oreiller_cooldown),
+    }
+}
+
+/// The prizes of a box a kart drew, as its peer draws them (issue #61, `items::take_boxes`): in a
+/// race, the first oreiller géant only (the next draws of the box go without it); off a race
+/// (session 0), never one. With an oreiller, what it gets instead if the host refuses it.
+fn box_prizes(
+    table: &ItemTable,
+    (seed, slot): (u64, u64),
+    (session, draw, draws, gap): (u8, u32, u8, f32),
+) -> (Vec<(ItemKind, u8)>, Option<(ItemKind, u8)>) {
+    let mut instead = None;
+    let drawn = (0..u32::from(draws))
+        .filter_map(|k| {
+            let unit = draw_unit(seed, slot, draw + k);
+            let allowed = session != 0 && instead.is_none();
+            let prize = table.draw_with_pillow(gap, unit, allowed);
+            if prize == Prize::OreillerGeant {
+                instead = table
+                    .row(gap)
+                    .pick_without(unit, Prize::OreillerGeant)
+                    .item();
+            }
+            prize.item()
+        })
+        .collect();
+    (drawn, instead)
 }
 
 /// The karts of this game by id: ours (`NetKart`), and the others' bodies.
@@ -317,7 +399,8 @@ impl Karts<'_, '_, '_> {
 }
 
 /// Before the item and croquette rules: what the other peers told (claims, verdicts, items out,
-/// breaks, scattered croquettes), and the host's verdicts.
+/// breaks, scattered croquettes; issue #61: effects, rams, oreillers retargeted or gone), and the
+/// host's verdicts.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn receive_items(
     mut commands: Commands,
@@ -331,16 +414,21 @@ fn receive_items(
         Res<OnlineItemTable>,
         Res<RaceGrid>,
     ),
+    (online_race, race): (Option<Res<OnlineRace>>, Option<Res<Race>>),
     local: Query<(Entity, &'static NetKart), With<Kart>>,
     mut ours: Query<(&mut ItemSlots, &mut ItemStats, Option<&mut Croquettes>), With<Kart>>,
     mut spots: (
         Query<(&SpotIndex, &mut ItemBox)>,
         Query<(&SpotIndex, &mut TrackCroquette)>,
     ),
-    objects: Query<(Entity, &ItemObject)>,
+    mut objects: Query<(Entity, &mut ItemObject)>,
     mut inbox: Local<Vec<(PeerKey, Message)>>,
     mut verdicts: Local<Vec<Verdict>>,
-    (mut blasts, mut honks): (MessageWriter<Blast>, MessageWriter<Honked>),
+    (mut blasts, mut honks, mut effects): (
+        MessageWriter<Blast>,
+        MessageWriter<Honked>,
+        MessageWriter<ItemEffect>,
+    ),
 ) {
     let Some(lobby) = session.lobby.as_ref() else {
         return;
@@ -361,17 +449,24 @@ fn receive_items(
         sync: &sync,
     };
     // A new host: our undecided claims go again (the new one may not have them all, and answers
-    // again those it decided already).
+    // again those it decided already); issue #61: so do the grants of the oreillers géants we
+    // know in the race, and the new host waits a little before deciding one (a grant of the old
+    // host that reached us but not it comes first: never two oreillers).
     let host = lobby.host();
     if items.last_host != host {
         if items.last_host.is_some() {
             for mine in &items.mine {
                 items.outbox.push(Message::Claim(mine.claim));
             }
+            for verdict in items.arbiter.pillow_grants() {
+                items.outbox.push(Message::Verdict(verdict));
+            }
+            items.arbiter.handover(now + PILLOW_HANDOVER_TICKS);
         }
         items.last_host = host;
     }
-    // Who left: its claims are dropped, its items out disappear.
+    // Who left: its claims are dropped (and the oreillers its karts held), its items out
+    // disappear.
     for peer in std::mem::take(&mut items.left) {
         items.arbiter.forget(peer);
         items.objects.retain(|(entity, _, from)| {
@@ -380,6 +475,19 @@ fn receive_items(
             }
             *from != peer
         });
+    }
+    // Issue #61: the oreillers géants whose flight ended here (exploded, destroyed, gone with
+    // their thrower): another one may come.
+    let ended: Vec<ItemId> = items
+        .arbiter
+        .pillows()
+        .iter()
+        .filter_map(|pillow| pillow.thrown)
+        .filter(|id| !items.objects.iter().any(|(_, out, _)| out == id))
+        .collect();
+    for id in ended {
+        items.arbiter.pillow_ended(id);
+        items.targets.retain(|(out, _)| *out != id);
     }
     let respawn = |spot: Spot| respawn(spot, &item_tuning, &croquette_tuning);
     inbox.clear();
@@ -416,6 +524,7 @@ fn receive_items(
                         &mut commands,
                         &mut ours,
                         &mut spots,
+                        &objects,
                     );
                 }
             }
@@ -431,6 +540,10 @@ fn receive_items(
                     .max(out.id.seq.saturating_add(1))
                     .min(ItemId::HELD - 1);
                 items.log.thrown.push((out.id, out.item, out.tick));
+                if out.item == ItemKind::OreillerGeant {
+                    // Issue #61: it flies (one at a time), until its flight ends here.
+                    items.arbiter.pillow_thrown(out.id.owner, out.id);
+                }
                 // Broken already (its victim told us first: a third peer): nothing to show.
                 if items.broken.contains(&out.id) {
                     continue;
@@ -471,7 +584,8 @@ fn receive_items(
             }
             Message::Blast(blast) if blast.session == current => {
                 // Issue #18: a bombe exploded on what touched it, on another screen: here too,
-                // where it says (each peer judges its own karts in the blast).
+                // where it says (each peer judges its own karts in the blast). Issue #61: an
+                // oreiller géant too.
                 if items.broken.contains(&blast.id) {
                     continue;
                 }
@@ -507,6 +621,82 @@ fn receive_items(
                         kart,
                         at: Vec3::from_array(honk.position),
                     });
+                }
+            }
+            Message::Effect(effect) if effect.session == current => {
+                // Issue #61: a chantilly or a dégonflage of another peer's kart: on our karts,
+                // with its user's ranking (`items::apply_item_effects`: each victim decides).
+                if karts.authority(effect.kart) != Some(from) {
+                    continue;
+                }
+                items
+                    .log
+                    .effects
+                    .push((effect.kart, effect.item, effect.tick));
+                let entity = |kart: KartId| karts.entity(kart).unwrap_or(Entity::PLACEHOLDER);
+                let rank = effect
+                    .order
+                    .iter()
+                    .position(|kart| *kart == effect.kart)
+                    .map_or(0, |i| i as u32 + 1);
+                let [x, z] = effect.forward;
+                effects.write(ItemEffect {
+                    by: entity(effect.kart),
+                    item: effect.item,
+                    at: Vec3::from_array(effect.position),
+                    forward: Vec3::new(x, 0.0, z),
+                    rank,
+                    standings: Some(SharedStandings::new(
+                        effect.order.iter().map(|kart| entity(*kart)),
+                    )),
+                });
+            }
+            Message::Rammed(rammed) if rammed.session == current => {
+                // Issue #61: the victim's word: its rammer counts its hit.
+                if karts.authority(rammed.kart) != Some(from)
+                    || items.log.rams.iter().any(|(kart, by, _, tick)| {
+                        *kart == rammed.kart && *by == rammed.by && *tick == rammed.tick
+                    })
+                {
+                    continue;
+                }
+                items
+                    .log
+                    .rams
+                    .push((rammed.kart, rammed.by, rammed.item, rammed.tick));
+                if let Some(rammer) = karts.ours(rammed.by)
+                    && let Ok((_, mut stats, _)) = ours.get_mut(rammer)
+                {
+                    stats.hits_landed += 1;
+                }
+            }
+            Message::PillowGone(gone) if gone.session == current => {
+                // Issue #61: its kart's peer says so: another oreiller may come.
+                if karts.authority(gone.kart) != Some(from) {
+                    continue;
+                }
+                items.arbiter.pillow_gone(ClaimKey {
+                    spot: Spot::Pillow(gone.index),
+                    kart: gone.kart,
+                    tick: gone.tick,
+                });
+            }
+            Message::Retarget(retarget) if retarget.session == current => {
+                // Issue #61: its thrower's peer sends it after its leader.
+                if karts.authority(retarget.id.owner) != Some(from) {
+                    continue;
+                }
+                items
+                    .log
+                    .retargets
+                    .push((retarget.id, retarget.target, retarget.tick));
+                let target = retarget.target.and_then(|kart| karts.entity(kart));
+                if let Some((entity, ..)) =
+                    items.objects.iter().find(|(_, id, _)| *id == retarget.id)
+                    && let Ok((_, mut object)) = objects.get_mut(*entity)
+                    && let Motion::Pillow { flight, .. } = object.motion
+                {
+                    object.motion = Motion::Pillow { target, flight };
                 }
             }
             Message::Scatter(scatter) if scatter.session == current => {
@@ -550,10 +740,11 @@ fn receive_items(
             _ => {}
         }
     }
-    // The host decides.
+    // The host decides (issue #61: the oreillers géants on the race's clock).
     if lobby.is_host() {
+        let rules = pillow_rules(online_race.as_deref().zip(race.as_deref()), &item_tuning);
         verdicts.clear();
-        items.arbiter.decide(respawn, &mut verdicts);
+        items.arbiter.decide(respawn, &rules, now, &mut verdicts);
         for verdict in verdicts.drain(..) {
             items.outbox.push(Message::Verdict(verdict));
             apply_verdict(
@@ -566,6 +757,7 @@ fn receive_items(
                 &mut commands,
                 &mut ours,
                 &mut spots,
+                &objects,
             );
         }
     }
@@ -601,11 +793,26 @@ fn motion_of(motion: OutMotion, karts: &Karts) -> Motion {
             grounded,
             impact,
         },
+        OutMotion::Pillow {
+            target: kart,
+            flight,
+        } => Motion::Pillow {
+            target: target(kart),
+            flight: match flight {
+                OutPillow::Track { distance, lateral } => PillowFlight::Track { distance, lateral },
+                OutPillow::Hover { left } if left >= OutPillow::WAITING => PillowFlight::Hover {
+                    left: f32::INFINITY,
+                },
+                OutPillow::Hover { left } => PillowFlight::Hover { left },
+                OutPillow::Drop => PillowFlight::Drop,
+            },
+        },
     }
 }
 
-/// The host decided a claim: ours refused, its roulettes or its croquette taken back; granted,
-/// the box or the croquette gone here too, back on the same tick as everywhere.
+/// The host decided a claim: ours refused, its roulettes or its croquette taken back (issue #61:
+/// an oreiller géant refused, the other draw instead); granted, the box or the croquette gone here
+/// too, back on the same tick as everywhere.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn apply_verdict(
     items: &mut OnlineItems,
@@ -620,9 +827,16 @@ fn apply_verdict(
         Query<(&SpotIndex, &mut ItemBox)>,
         Query<(&SpotIndex, &mut TrackCroquette)>,
     ),
+    objects: &Query<(Entity, &mut ItemObject)>,
 ) {
     let claim = verdict.claim;
     let key = ClaimKey::of(&claim);
+    // A race: a kart's grid slot is its id (its draws).
+    let slot = if claim.session == 0 {
+        0
+    } else {
+        u64::from(claim.kart)
+    };
     if let Some(index) = items
         .mine
         .iter()
@@ -643,8 +857,58 @@ fn apply_verdict(
                             held.lose(gained);
                         }
                     }
+                    Undo::Pillow(instead) => {
+                        let swapped = instead
+                            .item()
+                            .is_some_and(|(item, count)| slots.swap_pillow(item, count));
+                        if !swapped {
+                            // Thrown before the host said no (a very late verdict): it breaks
+                            // on every screen.
+                            let thrown = items.objects.iter().position(|(entity, id, _)| {
+                                id.owner == claim.kart
+                                    && objects.get(*entity).is_ok_and(|(_, object)| {
+                                        object.item == ItemKind::OreillerGeant
+                                    })
+                            });
+                            if let Some(at) = thrown {
+                                let (entity, id, _) = items.objects.swap_remove(at);
+                                commands.entity(entity).try_despawn();
+                                items.broke(id);
+                                let end = ItemBreak {
+                                    session: claim.session,
+                                    id,
+                                    kart: None,
+                                    landed: false,
+                                };
+                                items.log.breaks.push((end.id, end.kart, end.landed, now));
+                                items.outbox.push(Message::ItemBreak(end));
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+    // Issue #61: another kart's oreiller géant decided: refused, it drew the other prize instead,
+    // as on its peer's screen.
+    if let Pickup::Pillow { .. } = claim.pickup
+        && let Some(at) = items
+            .pillow_draws
+            .iter()
+            .position(|(kart, tick, _)| *kart == claim.kart && *tick == claim.tick)
+    {
+        let (.., instead) = items.pillow_draws.swap_remove(at);
+        if !verdict.granted
+            && let Some((.., drawn)) = items
+                .log
+                .draws
+                .iter_mut()
+                .find(|(kart, tick, _)| *kart == claim.kart && *tick == claim.tick)
+            && let Some(pillow) = drawn
+                .iter_mut()
+                .find(|(item, _)| *item == ItemKind::OreillerGeant)
+        {
+            *pillow = instead;
         }
     }
     if !verdict.granted {
@@ -668,20 +932,19 @@ fn apply_verdict(
                 item_box.respawn_in = left;
             }
             if karts.ours(claim.kart).is_none() {
-                // The same draws as its peer (a race: its grid slot is its id).
-                let slot = if claim.session == 0 {
-                    0
-                } else {
-                    u64::from(claim.kart)
-                };
-                let drawn = (0..u32::from(draws))
-                    .filter_map(|k| {
-                        table
-                            .draw(gap, draw_unit(seed, slot, u32::from(draw) + k))
-                            .item()
-                    })
-                    .collect();
+                // The same draws as its peer (an oreiller géant until the host says otherwise).
+                let (drawn, instead) = box_prizes(
+                    table,
+                    (seed, slot),
+                    (claim.session, u32::from(draw), draws, gap),
+                );
                 items.log.draws.push((claim.kart, claim.tick, drawn));
+                if let Some(instead) = instead {
+                    if items.pillow_draws.len() >= PILLOW_DRAWS_KEPT {
+                        items.pillow_draws.remove(0);
+                    }
+                    items.pillow_draws.push((claim.kart, claim.tick, instead));
+                }
             }
         }
         Pickup::Croquette { index } => {
@@ -701,6 +964,8 @@ fn apply_verdict(
                 *loose != id
             });
         }
+        // Issue #61: the record has it (`Arbiter::record`): one in the race.
+        Pickup::Pillow { .. } => {}
     }
 }
 
@@ -713,7 +978,7 @@ fn apply_break(
     karts: &Karts,
     commands: &mut Commands,
     ours: &mut Query<(&mut ItemSlots, &mut ItemStats, Option<&mut Croquettes>), With<Kart>>,
-    objects: &Query<(Entity, &ItemObject)>,
+    objects: &Query<(Entity, &mut ItemObject)>,
 ) {
     let owner = karts.ours(end.id.owner);
     if end.id.is_held() {
@@ -747,12 +1012,15 @@ fn apply_break(
         });
     }
     // Told twice (two peers judged the same item), it counts once. On two karts (it touched one
-    // on each screen: each victim decided), both count.
-    if items
-        .log
-        .breaks
-        .iter()
-        .any(|(id, kart, ..)| *id == end.id && *kart == end.kart)
+    // on each screen: each victim decided), both count. What a kart holds out has no number of its
+    // own (`ItemId::held`): each break of one is another item (issue #61: seen with every item in
+    // the boxes, two shields of a kart broken on the same kart, the second one was not counted).
+    if !end.id.is_held()
+        && items
+            .log
+            .breaks
+            .iter()
+            .any(|(id, kart, ..)| *id == end.id && *kart == end.kart)
     {
         return;
     }
@@ -812,14 +1080,19 @@ fn show_held_items(
 }
 
 /// After the item and croquette rules: what our karts did goes to every peer: their claims on
-/// boxes and croquettes, the items they threw or dropped, the items we judged broken (on our
-/// karts, on our shields), the croquettes they lost.
+/// boxes and croquettes (issue #61: and on the oreillers géants they drew), the items they threw
+/// or dropped, the items we judged broken (on our karts, on our shields), the croquettes they
+/// lost; issue #61: their chantilly and dégonflages, the karts that knocked ours over, the new
+/// targets of their oreillers, their oreillers gone without a throw.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn send_items(
     mut items: ResMut<OnlineItems>,
     sync: Res<KartSync>,
     time: Res<Time<Fixed>>,
-    local: Query<&NetKart, With<Kart>>,
+    (local, slots): (
+        Query<&NetKart, With<Kart>>,
+        Query<(&NetKart, &ItemSlots), With<Kart>>,
+    ),
     proxies: Query<&RemoteKartProxy>,
     spots: Query<&SpotIndex>,
     (mut boxes, mut taken, mut judged, mut blocked, mut lost): (
@@ -829,10 +1102,14 @@ fn send_items(
         MessageReader<ItemBlocked>,
         MessageReader<CroquettesLost>,
     ),
-    (mut blasts, mut honks): (MessageReader<Blast>, MessageReader<Honked>),
+    (mut blasts, mut honks, mut effects): (
+        MessageReader<Blast>,
+        MessageReader<Honked>,
+        MessageReader<ItemEffect>,
+    ),
     new_objects: Query<(Entity, &ItemObject), Added<ItemObject>>,
     new_loose: Query<(Entity, &LooseCroquette), Added<LooseCroquette>>,
-    (alive_objects, alive_loose): (Query<(), With<ItemObject>>, Query<(), With<LooseCroquette>>),
+    (alive_objects, alive_loose): (Query<&ItemObject>, Query<(), With<LooseCroquette>>),
 ) {
     let items = &mut *items;
     let session = sync.session();
@@ -848,6 +1125,7 @@ fn send_items(
         lost.clear();
         blasts.clear();
         honks.clear();
+        effects.clear();
         return;
     }
     let me = sync.me();
@@ -884,6 +1162,14 @@ fn send_items(
             gap: broken.gap,
         };
         claim(items, broken.kart, pickup, Undo::Box(broken.filled));
+        // Issue #61: an oreiller géant drawn from it: the host's rules decide.
+        if let Some(pillow) = broken.pillow {
+            let pickup = Pickup::Pillow {
+                index: index.0,
+                draw: pillow.draw.min(u32::from(u16::MAX)) as u16,
+            };
+            claim(items, broken.kart, pickup, Undo::Pillow(pillow.instead));
+        }
     }
     // Croquettes our karts picked up.
     for pick in taken.read() {
@@ -932,6 +1218,33 @@ fn send_items(
             position: honk.at.to_array(),
         }));
     }
+    // Our chantilly and dégonflages (issue #61): with the ranking we saw, for every peer.
+    for effect in effects.read() {
+        let Ok(net) = local.get(effect.by) else {
+            continue;
+        };
+        if !EFFECT_ITEMS.contains(&effect.item) {
+            continue;
+        }
+        let order = effect.standings.map_or_else(Vec::new, |standings| {
+            standings
+                .karts()
+                .iter()
+                .filter_map(|kart| id_of(*kart))
+                .collect()
+        });
+        let forward = effect.forward.with_y(0.0).normalize_or(Vec3::NEG_Z);
+        items.log.effects.push((net.0, effect.item, now));
+        items.outbox.push(Message::Effect(EffectOut {
+            session,
+            kart: net.0,
+            item: effect.item,
+            tick: now,
+            position: effect.at.to_array(),
+            forward: [forward.x, forward.z],
+            order,
+        }));
+    }
     // Items our karts threw or dropped (what they hold out goes with their states). Only those
     // that play online (issue #18).
     for (entity, object) in &new_objects {
@@ -946,7 +1259,23 @@ fn send_items(
         }
         let target = |target: Option<Entity>| target.and_then(id_of);
         let motion = match object.motion {
-            Motion::Ground | Motion::Held(_) | Motion::Pillow { .. } => OutMotion::Ground,
+            Motion::Ground | Motion::Held(_) => OutMotion::Ground,
+            Motion::Pillow {
+                target: kart,
+                flight,
+            } => OutMotion::Pillow {
+                target: target(kart),
+                flight: match flight {
+                    PillowFlight::Track { distance, lateral } => {
+                        OutPillow::Track { distance, lateral }
+                    }
+                    PillowFlight::Hover { left } if left.is_finite() => OutPillow::Hover { left },
+                    PillowFlight::Hover { .. } => OutPillow::Hover {
+                        left: OutPillow::WAITING,
+                    },
+                    PillowFlight::Drop => OutPillow::Drop,
+                },
+            },
             Motion::Bomb {
                 vertical,
                 grounded,
@@ -981,6 +1310,11 @@ fn send_items(
         };
         items.objects.push((entity, id, me));
         items.log.thrown.push((id, object.item, now));
+        if let OutMotion::Pillow { target, .. } = motion {
+            // Issue #61: it flies (one at a time); its target follows our leader.
+            items.arbiter.pillow_thrown(net.0, id);
+            items.targets.push((id, target));
+        }
         items.outbox.push(Message::ItemOut(ItemOut {
             session,
             id,
@@ -991,9 +1325,80 @@ fn send_items(
             motion,
         }));
     }
-    // Items that touched our karts: we decided.
+    // Issue #61: our oreillers géants after another kart (our leader changed).
+    for at in 0..items.targets.len() {
+        let (id, told) = items.targets[at];
+        let Some((entity, ..)) = items.objects.iter().find(|(_, out, _)| *out == id) else {
+            continue;
+        };
+        let Ok(&ItemObject {
+            motion: Motion::Pillow { target, .. },
+            ..
+        }) = alive_objects.get(*entity)
+        else {
+            continue;
+        };
+        let target = target.and_then(id_of);
+        if target != told {
+            items.targets[at].1 = target;
+            items.log.retargets.push((id, target, now));
+            items.outbox.push(Message::Retarget(Retarget {
+                session,
+                id,
+                target,
+                tick: now,
+            }));
+        }
+    }
+    // Issue #61: an oreiller géant the host gave one of our karts, gone without a throw (a
+    // dégonflage made it fall): we tell, another one may come.
+    let gone: Vec<Claim> = items
+        .arbiter
+        .pillows()
+        .iter()
+        .filter(|pillow| pillow.thrown.is_none())
+        .filter_map(|pillow| pillow.claim)
+        .filter(|claim| {
+            slots
+                .iter()
+                .any(|(net, held)| net.0 == claim.kart && !held.holds(ItemKind::OreillerGeant))
+        })
+        .collect();
+    for claim in gone {
+        let Pickup::Pillow { index, .. } = claim.pickup else {
+            continue;
+        };
+        items.arbiter.pillow_gone(ClaimKey::of(&claim));
+        items.outbox.push(Message::PillowGone(PillowGone {
+            session,
+            kart: claim.kart,
+            index,
+            tick: claim.tick,
+        }));
+    }
+    // Items that touched our karts: we decided. Issue #61: a kart in a super câlin or a fusée
+    // ran into one of ours (no item: `items::ram_karts`): knocked over, we tell (an immune kart
+    // says nothing: its contacts come every tick).
     for hit in judged.read() {
-        let (Some(object), Some(kart)) = (hit.object, id_of(hit.kart)) else {
+        let Some(kart) = id_of(hit.kart) else {
+            continue;
+        };
+        let Some(object) = hit.object else {
+            if hit.landed
+                && RAM_ITEMS.contains(&hit.item)
+                && local.contains(hit.kart)
+                && let Some(by) = id_of(hit.by)
+                && by != kart
+            {
+                items.log.rams.push((kart, by, hit.item, now));
+                items.outbox.push(Message::Rammed(Rammed {
+                    session,
+                    kart,
+                    by,
+                    item: hit.item,
+                    tick: now,
+                }));
+            }
             continue;
         };
         let id = if let Some(at) = items.objects.iter().position(|(e, ..)| *e == object) {

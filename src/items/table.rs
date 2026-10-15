@@ -9,9 +9,9 @@
 //!   three (`PelureX3`...).
 //! - [`ItemTable`]: the distribution by distance to the leader, read from `assets/data/items.ron`
 //!   (compiled into the game). The file keeps the game design's full table; a table can leave
-//!   some prizes out ([`ItemTable::from_file_with`]: online, the items that do not travel on the
-//!   network yet, [`Prize::online`]), and their weight goes to the others of the same row,
-//!   proportionally. A draw can also leave one out for a moment ([`DrawRow::pick_without`]: the
+//!   some prizes out ([`ItemTable::from_file_with`]: online, the items that would not travel on
+//!   the network, [`Prize::online`]: none since issue #61), and their weight goes to the others of
+//!   the same row, proportionally. A draw can also leave one out for a moment ([`DrawRow::pick_without`]: the
 //!   oreiller géant's rules, [`pillow_allowed`]).
 //! - **Deterministic draws** ([`draw_unit`]): from the race seed (`RaceGrid::seed`), the kart's
 //!   grid slot and how many items it drew before. Same race, same draws on every machine: the
@@ -128,18 +128,12 @@ impl ItemKind {
         }
     }
 
-    /// It plays online (issue #18, first step): what it does reaches the other peers. The
-    /// others are left out of the online table (`ItemTable::online`) until their network part
-    /// comes (issue #61).
+    /// It plays online: what it does reaches the other peers. Since issue #61, every item does
+    /// (the chantilly, the super câlin, the fusée, the dégonflage and the oreiller géant came
+    /// last). An item that would not (one of phase 3 before its network part) says so here: the
+    /// online table (`ItemTable::online`) leaves it out, its weight given to the rest of its row.
     pub fn online(self) -> bool {
-        !matches!(
-            self,
-            Self::Chantilly
-                | Self::SuperCalin
-                | Self::Fusee
-                | Self::Degonflage
-                | Self::OreillerGeant
-        )
+        true
     }
 }
 
@@ -336,7 +330,8 @@ impl ItemTable {
     }
 
     /// The game's table online (issue #18): the items that play online only
-    /// ([`Prize::online`]), the others' weight given to the rest of their row.
+    /// ([`Prize::online`]), the others' weight given to the rest of their row. Since issue #61,
+    /// every item plays online: it is the solo table.
     pub fn online() -> Self {
         Self::from_ron_with(ITEMS_RON, Prize::online).expect("assets/data/items.ron")
     }
@@ -538,15 +533,43 @@ mod tests {
         }
     }
 
+    /// The five items of phase 2 that did not play online until issue #61 (chantilly, super
+    /// câlin, fusée, dégonflage, oreiller géant), left out by hand: the table without them.
+    fn without_the_five() -> ItemTable {
+        ItemTable::from_ron_with(ITEMS_RON, |p: Prize| {
+            !matches!(
+                p,
+                Prize::Chantilly
+                    | Prize::SuperCalin
+                    | Prize::Fusee
+                    | Prize::Degonflage
+                    | Prize::OreillerGeant
+            )
+        })
+        .unwrap()
+    }
+
     /// GD § 8: the items left out of a table give their weight to the others of the row,
-    /// proportionally. Online (issue #18), the items that do not play online yet (chantilly,
-    /// super câlin, fusée, dégonflage, oreiller géant) are left out: the leader's row keeps its
-    /// 100 (pelure 30, pelote 25, croquette dorée 20, pelure x3 10, klaxon-canard 10, bombe 5);
-    /// 120 to 250 m: piment x3 25, abeille x3 20 and piment doré 15, out of 60; beyond 250 m:
-    /// piment doré 20 and piment x3 15, out of 35.
+    /// proportionally. Online, every item plays since issue #61: the online table is the solo
+    /// table, each prize with the game design's exact share. The redistribution is still checked,
+    /// the same way as when the five items of phase 2 that came last were left out of the online
+    /// table (#18): the leader's row keeps its 100 (pelure 30, pelote 25, croquette dorée 20,
+    /// pelure x3 10, klaxon-canard 10, bombe 5); 120 to 250 m: piment x3 25, abeille x3 20 and
+    /// piment doré 15, out of 60; beyond 250 m: piment doré 20 and piment x3 15, out of 35.
     #[test]
     fn items_left_out_give_their_weight_to_the_others_of_the_row() {
-        let table = ItemTable::online();
+        let online = ItemTable::online();
+        assert_eq!(online, ItemTable::embedded(), "online: the solo table");
+        assert!(Prize::ALL.iter().all(|p| p.online()));
+        assert!(ItemKind::ALL.iter().all(|i| i.online()));
+        let file: TableFile = ron::from_str(ITEMS_RON).unwrap();
+        for (row, drawn) in file.rows.iter().zip(&online.rows) {
+            assert_eq!(drawn.total(), 100, "row from {} m", row.from);
+            for (prize, weight) in &row.items {
+                assert!((drawn.probability(*prize) - *weight as f32 / 100.0).abs() < 1e-6);
+            }
+        }
+        let table = without_the_five();
         let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
         let leader = table.row(0.0);
         assert_eq!(leader.total(), 100);
@@ -572,7 +595,16 @@ mod tests {
         for row in &table.rows {
             let sum: f32 = row.prizes.iter().map(|(p, _)| row.probability(*p)).sum();
             assert!(close(sum, 1.0), "row from {}", row.from);
-            assert!(row.prizes.iter().all(|(p, _)| p.online()));
+            assert!(row.prizes.iter().all(|(p, _)| {
+                !matches!(
+                    p,
+                    Prize::Chantilly
+                        | Prize::SuperCalin
+                        | Prize::Fusee
+                        | Prize::Degonflage
+                        | Prize::OreillerGeant
+                )
+            }));
         }
     }
 
@@ -644,14 +676,18 @@ mod tests {
         assert_eq!(counts.len(), expected.count(), "row from {} m", row.from);
     }
 
-    /// Acceptance criterion of #16, again for #18: 10 000 draws per row, from the race seed and
-    /// the kart (as the game draws), give each prize its share within 4 standard deviations, in
-    /// the solo table (every item) and online (the items that play online, the others' weight
-    /// redistributed); and without the oreiller géant when its rules forbid it (its weight goes
-    /// to the rest of the row).
+    /// Acceptance criterion of #16, again for #18 and #61: 10 000 draws per row, from the race
+    /// seed and the kart (as the game draws), give each prize its share within 4 standard
+    /// deviations, in the solo table (every item), online (the solo table since #61) and in a
+    /// table that leaves items out (their weight redistributed); and without the oreiller géant
+    /// when its rules forbid it (its weight goes to the rest of the row).
     #[test]
     fn ten_thousand_draws_follow_the_table() {
-        for table in [ItemTable::embedded(), ItemTable::online()] {
+        for table in [
+            ItemTable::embedded(),
+            ItemTable::online(),
+            without_the_five(),
+        ] {
             for (r, row) in table.rows.iter().enumerate() {
                 let gap = row.from + 1.0;
                 let seed = r as u64 * 7 + 3;
