@@ -65,7 +65,7 @@ fn online_game_on(
     let mut app = crate::tests::game_app_unloaded(track, 0);
     let mut sync = KartSync::new(me, slot as KartId, 1);
     sync.clock = TickClock::with_offset(0);
-    sync.set_players([(other, [3, 1, 2, 1], other_slot, bot_color(other_slot))]);
+    sync.set_players([(other, [3, 1, 2, 1], other_slot, bot_color(other_slot), None)]);
     app.insert_resource(RaceMode::FreeRoam)
         .insert_resource(OnlineSlot(slot))
         .insert_resource(sync)
@@ -339,7 +339,7 @@ impl Arena {
         app.cleanup();
         let mut sync = KartSync::new(PeerKey(1), 0, 0);
         sync.clock = TickClock::with_offset(0);
-        sync.set_players([(REMOTE, [0, 0, 0, 0], 1, bot_color(1))]);
+        sync.set_players([(REMOTE, [0, 0, 0, 0], 1, bot_color(1), None)]);
         app.insert_resource(sync);
         let world = app.world_mut();
         let mut commands = world.commands();

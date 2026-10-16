@@ -432,7 +432,9 @@ fn online_mode(
                     sync.set_players(lobby.seats().iter().enumerate().filter_map(|(slot, key)| {
                         let profile = lobby.peer(*key)?.profile.as_ref()?;
                         let color = lobby.color_of(*key).unwrap_or(profile.color);
-                        Some((*key, profile.loadout, slot, color))
+                        // Issue #80: its name, for the tag over its kart.
+                        let name = Some(profile.name.as_str()).filter(|name| !name.is_empty());
+                        Some((*key, profile.loadout, slot, color, name))
                     }))
                 }
             }

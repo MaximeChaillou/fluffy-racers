@@ -1,10 +1,11 @@
-//! The player's options (issue #17, GD § 13): for now the keyboard layout, in a small menu kept
-//! in the browser between sessions. Made to take more options later: a field of
-//! [`PlayerOptions`] (with its default) and a line of [`OptionRow`].
+//! The player's options (issue #17, GD § 13): the keyboard layout and (issue #80) the names over
+//! the karts online, in a small menu kept in the browser between sessions. Made to take more
+//! options later: a field of [`PlayerOptions`] (with its default) and a line of [`OptionRow`].
 //!
 //! - **What**: [`PlayerOptions`]: the keyboard layout (AZERTY by default: the game is in
 //!   French), applied to the keyboard input (`KeyboardLayout`: the letters shown, and Z and Q
-//!   read in AZERTY). The driving aids of GD § 11 are not planned for now (Max, 2026-10-13).
+//!   read in AZERTY); the other players' pseudos over their karts online (on by default,
+//!   `net::tags`). The driving aids of GD § 11 are not planned for now (Max, 2026-10-13).
 //! - **Menu** ([`OptionsMenu`]): **O** opens and closes it (« options »: the same letter at the
 //!   same place in AZERTY and QWERTY, free in the game's controls, no Fn on a Mac), from the race
 //!   or from the selection screen. Up and down (arrows, or Z/S in AZERTY and W/S in QWERTY): the
@@ -41,11 +42,22 @@ const CLOSE_KEYS: [KeyCode; 2] = [KeyCode::Escape, OPTIONS_KEY];
 
 /// The local player's options (see the module's documentation). Missing fields in a stored text
 /// take their default: an option added later does not lose the others.
-#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct PlayerOptions {
     /// The keyboard: AZERTY or QWERTY.
     pub keyboard: KeyboardLayout,
+    /// Issue #80: online, the other players' pseudos over their karts (on by default).
+    pub name_tags: bool,
+}
+
+impl Default for PlayerOptions {
+    fn default() -> Self {
+        Self {
+            keyboard: KeyboardLayout::default(),
+            name_tags: true,
+        }
+    }
 }
 
 impl PlayerOptions {
@@ -65,6 +77,7 @@ impl PlayerOptions {
     pub fn value(&self, row: OptionRow) -> &'static str {
         match row {
             OptionRow::Keyboard => self.keyboard.label(),
+            OptionRow::NameTags => on_off(self.name_tags),
         }
     }
 
@@ -76,23 +89,33 @@ impl PlayerOptions {
                 let at = all.iter().position(|l| *l == self.keyboard).unwrap_or(0) as i32;
                 self.keyboard = all[(at + step).rem_euclid(all.len() as i32) as usize];
             }
+            // Two values: an odd step changes it.
+            OptionRow::NameTags => self.name_tags ^= step.rem_euclid(2) == 1,
         }
         self
     }
+}
+
+/// « Oui » or « Non ».
+pub fn on_off(on: bool) -> &'static str {
+    if on { "Oui" } else { "Non" }
 }
 
 /// The lines of the menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OptionRow {
     Keyboard,
+    /// Issue #80.
+    NameTags,
 }
 
 impl OptionRow {
-    pub const ALL: [Self; 1] = [OptionRow::Keyboard];
+    pub const ALL: [Self; 2] = [OptionRow::Keyboard, OptionRow::NameTags];
 
     pub fn label(self) -> &'static str {
         match self {
             OptionRow::Keyboard => "Clavier",
+            OptionRow::NameTags => "Noms au-dessus des karts",
         }
     }
 
@@ -102,6 +125,9 @@ impl OptionRow {
             OptionRow::Keyboard => {
                 "Les touches restent à la même place sous les doigts ; \
                  les lettres affichées suivent ton clavier."
+            }
+            OptionRow::NameTags => {
+                "En ligne : le pseudo des autres joueurs au-dessus de leur kart."
             }
         }
     }
@@ -132,6 +158,8 @@ pub enum OptionsAction {
     Change(OptionRow, i32),
     /// Picks a keyboard layout.
     Keyboard(KeyboardLayout),
+    /// Issue #80: shows or hides the names over the karts.
+    NameTags(bool),
 }
 
 /// The options' systems, in `Update`: keys, actions, then the options applied. The selection
@@ -222,6 +250,11 @@ fn apply_options_actions(
                     options.keyboard = layout;
                 }
             }
+            OptionsAction::NameTags(on) => {
+                if options.name_tags != on {
+                    options.name_tags = on;
+                }
+            }
         }
     }
 }
@@ -267,19 +300,27 @@ mod tests {
     use super::*;
     use crate::kart::{DEBUG_RESET_KEY, INTERACT_KEYS, ITEM_KEYS, JUMP_KEYS, LOOK_BACK_KEYS};
 
-    /// Issue #17: the options go to the browser and come back the same.
+    /// Issue #17: the options go to the browser and come back the same (issue #80: the names
+    /// over the karts too).
     #[test]
     fn options_survive_a_round_trip_through_the_storage_text() {
         for keyboard in KeyboardLayout::ALL {
-            let options = PlayerOptions { keyboard };
-            let text = options.to_ron();
-            assert_eq!(PlayerOptions::from_ron(&text), Ok(options), "{text}");
+            for name_tags in [true, false] {
+                let options = PlayerOptions {
+                    keyboard,
+                    name_tags,
+                };
+                let text = options.to_ron();
+                assert_eq!(PlayerOptions::from_ron(&text), Ok(options), "{text}");
+            }
         }
         let text = PlayerOptions {
             keyboard: KeyboardLayout::Qwerty,
+            name_tags: false,
         }
         .to_ron();
         assert!(text.contains("keyboard: Qwerty"), "{text}");
+        assert!(text.contains("name_tags: false"), "{text}");
     }
 
     /// A text from another version (a field missing, one unknown) keeps what it can read and
@@ -288,16 +329,54 @@ mod tests {
     #[test]
     fn missing_options_take_their_default_and_bad_texts_are_refused() {
         assert_eq!(PlayerOptions::from_ron("()"), Ok(PlayerOptions::default()));
+        // A text from before issue #80 (no `name_tags`): the names are shown.
         assert_eq!(
             PlayerOptions::from_ron("(keyboard: Qwerty)"),
             Ok(PlayerOptions {
-                keyboard: KeyboardLayout::Qwerty
+                keyboard: KeyboardLayout::Qwerty,
+                name_tags: true,
             })
         );
-        for bad in ["", "n'importe quoi", "(keyboard: Dvorak)", "(keyboard: 3)"] {
+        assert_eq!(
+            PlayerOptions::from_ron("(name_tags: false)"),
+            Ok(PlayerOptions {
+                keyboard: KeyboardLayout::Azerty,
+                name_tags: false,
+            })
+        );
+        for bad in [
+            "",
+            "n'importe quoi",
+            "(keyboard: Dvorak)",
+            "(keyboard: 3)",
+            "(name_tags: 3)",
+            "(name_tags: oui)",
+        ] {
             assert!(PlayerOptions::from_ron(bad).is_err(), "{bad}");
         }
         assert_eq!(PlayerOptions::default().keyboard, KeyboardLayout::Azerty);
+        assert!(
+            PlayerOptions::default().name_tags,
+            "issue #80: on by default"
+        );
+    }
+
+    /// Issue #80: the line of the names over the karts goes from « Oui » to « Non » and back,
+    /// whatever the direction.
+    #[test]
+    fn the_name_tags_line_turns_them_on_and_off() {
+        let options = PlayerOptions::default();
+        let row = OptionRow::NameTags;
+        assert_eq!(options.value(row), "Oui");
+        let off = options.changed(row, 1);
+        assert!(!off.name_tags);
+        assert_eq!(off.value(row), "Non");
+        assert_eq!(off.keyboard, options.keyboard, "only that line changes");
+        assert_eq!(off.changed(row, 1), options);
+        assert_eq!(options.changed(row, -1), off);
+        assert_eq!(options.changed(row, 2), options);
+        assert_eq!(options.changed(row, 0), options);
+        assert_eq!(OptionRow::ALL, [OptionRow::Keyboard, OptionRow::NameTags]);
     }
 
     #[test]

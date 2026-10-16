@@ -9,7 +9,7 @@ use bevy_egui::egui::{self, Color32, RichText};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 
 use super::{GameMode, MenuRow, RaceMenu, RaceMenuAction};
-use crate::admin::tracks;
+use crate::admin::{keep_focus_for_text_only, tracks};
 use crate::kart::{KeyboardLayout, SpeedClass};
 use crate::race::GrandPrixTuning;
 
@@ -62,10 +62,9 @@ fn race_menu_window(
         return;
     };
     // The arrows and Entrée are the menu's keys (`super::menu_keys`): no egui widget keeps the
-    // keyboard focus, or egui would move it or click it with them too.
-    if let Some(focused) = ctx.memory(|m| m.focused()) {
-        ctx.memory_mut(|m| m.surrender_focus(focused));
-    }
+    // keyboard focus, or egui would move it or click it with them too; only a text field of
+    // another window (issue #80: the lobby's pseudo), which takes the keys from the menu.
+    keep_focus_for_text_only(ctx);
     let circuits = tracks::circuits();
     let setup = menu.setup;
     egui::Window::new("Nouvelle course")

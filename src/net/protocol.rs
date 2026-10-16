@@ -3023,4 +3023,76 @@ mod tests {
         assert_eq!(read.name, "é".repeat(MAX_NAME_BYTES / 2));
         assert_eq!(PeerKey(0xabcd << 112).tag(), "abcd");
     }
+
+    /// Issue #80: the pseudo typed in the lobby goes in the `Hello` and comes back the same,
+    /// accents included, alone or relayed by the host (issue #63) to the others; a pseudo is never
+    /// cut by the wire (12 characters of 2 bytes at most). A name the wire cannot take whole is cut
+    /// at a character, still UTF-8; a name longer than the wire allows, of bad UTF-8, or cut short
+    /// by the end of the packet is refused with its reason.
+    #[test]
+    fn the_hello_carries_the_pseudo() {
+        let pseudo = super::super::pseudo::clean("Éloïse la très rapide").unwrap();
+        assert_eq!(pseudo, "Éloïse la tr");
+        let hello = Message::Hello(Profile {
+            name: pseudo.clone(),
+            loadout: [3, 1, 2, 0],
+            ready: false,
+            seated: true,
+            color: KartColor::ALL[3],
+        });
+        let bytes = hello.to_bytes();
+        assert_eq!(Message::decode(&bytes), Ok(hello.clone()));
+        let relayed = Message::Relayed {
+            origin: PeerKey(7 << 100),
+            message: Box::new(hello.clone()),
+        };
+        assert_eq!(Message::decode(&relayed.to_bytes()), Ok(relayed));
+        let widest = super::super::pseudo::clean(&"É".repeat(30)).unwrap();
+        assert!(widest.len() <= MAX_NAME_BYTES);
+        let wide = Message::Hello(Profile {
+            name: widest.clone(),
+            ..Default::default()
+        });
+        assert_eq!(
+            Message::decode(&wide.to_bytes()),
+            Ok(wide),
+            "a pseudo is never cut"
+        );
+        // A too long name (from another game): cut at a character.
+        let long = Message::Hello(Profile {
+            name: "Ééééééééééééééééééééééééééééééééééééééé".into(),
+            ..Default::default()
+        });
+        let Ok(Message::Hello(read)) = Message::decode(&long.to_bytes()) else {
+            panic!("not read back");
+        };
+        assert!(read.name.len() <= MAX_NAME_BYTES && read.name.starts_with("Éé"));
+        // The lobby keeps 16 characters of it (`Lobby::receive`).
+        let kept = Profile::clean_name(&read.name);
+        assert_eq!(kept.chars().count(), MAX_NAME_CHARS);
+        assert!(read.name.starts_with(&kept));
+
+        // The name's length is its first byte (after the version and the type).
+        let name_at = 3;
+        assert_eq!(usize::from(bytes[2]), pseudo.len());
+        let mut too_long = bytes.clone();
+        too_long[2] = MAX_NAME_BYTES as u8 + 1;
+        too_long.extend(std::iter::repeat_n(b'a', MAX_NAME_BYTES));
+        assert_eq!(
+            Message::decode(&too_long),
+            Err(DecodeError::Invalid("name length"))
+        );
+        // « É » is 0xC3 0x89: a lone continuation byte is not UTF-8.
+        let mut bad = bytes.clone();
+        assert_eq!(&bad[name_at..name_at + 2], "É".as_bytes());
+        bad[name_at] = 0x89;
+        assert_eq!(Message::decode(&bad), Err(DecodeError::Invalid("name")));
+        for cut in 2..name_at + pseudo.len() {
+            assert_eq!(
+                Message::decode(&bytes[..cut]),
+                Err(DecodeError::Truncated),
+                "{cut}"
+            );
+        }
+    }
 }

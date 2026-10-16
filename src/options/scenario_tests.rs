@@ -76,8 +76,21 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     assert_eq!(options(&app).keyboard, KeyboardLayout::Azerty);
     tap(&mut app, KeyCode::Enter);
     assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
-    // Up and down stay on the only line.
+    // Issue #80: down goes to the second line, the names over the karts (Entrée turns them
+    // off, right on again: the keyboard stays), and around back to the keyboard; up goes the
+    // other way round.
     tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::NameTags);
+    tap(&mut app, KeyCode::Enter);
+    assert!(!options(&app).name_tags);
+    tap(&mut app, KeyCode::ArrowRight);
+    assert!(options(&app).name_tags);
+    assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::Keyboard);
+    tap(&mut app, KeyCode::ArrowUp);
+    assert_eq!(menu(&app).row(), OptionRow::NameTags);
+    tap(&mut app, KeyCode::ArrowUp);
     assert_eq!(menu(&app).row(), OptionRow::Keyboard);
 
     tap(&mut app, KeyCode::Escape);
@@ -97,6 +110,10 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
         .write_message(OptionsAction::Keyboard(KeyboardLayout::Azerty));
     app.update();
     assert_eq!(layout(&app), KeyboardLayout::Azerty);
+    app.world_mut()
+        .write_message(OptionsAction::NameTags(false));
+    app.update();
+    assert!(!options(&app).name_tags);
     app.world_mut().write_message(OptionsAction::Close);
     app.update();
     assert!(!menu(&app).open && !paused(&app));
