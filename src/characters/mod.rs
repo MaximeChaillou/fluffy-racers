@@ -11,6 +11,10 @@
 //!   (`model.rs`, `animation.rs`, `visual.rs`: idle, a shake of the head when hit, a dance or a
 //!   nod at the finish; [`DriverTuning`]). Until it is there (headless: for good), primitives:
 //!   one shared material per character ([`DriverLooks`]), its color and ears.
+//! - **Soft** (issue #12): over its animation, the driver wobbles: damped springs on its body,
+//!   tail and wings follow the kart with a delay (braking, turns, drifts), squash on landings and
+//!   shocks, a mini-ragdoll of about 1 s when hit or struck (`wobble.rs`, pure; `wobble_visual.rs`;
+//!   [`WobbleTuning`]). Purely visual, nothing sent.
 //! - **Color** (issue #55): the player's kart's color ([`PlayerColor`]), a color of the palette
 //!   (`kart::KartColor`), pink until it chooses. Kept between sessions like the options
 //!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
@@ -30,9 +34,13 @@ mod model;
 mod roster;
 mod ui;
 mod visual;
+mod wobble;
+mod wobble_visual;
 
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod wobble_tests;
 
 pub use animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation};
 pub use model::{AnimalModelData, AnimalNode, AnimalPart, animal_model_data};
@@ -44,6 +52,11 @@ pub use ui::CharacterUiPlugin;
 pub use visual::{
     AnimalRoot, AnimalSlot, AnimalVisual, AnimalVisualPlugin, Animals, DriverDressed,
 };
+pub use wobble::{
+    LayerPivot, SpringTuning, WobbleInput, WobbleLevers, WobblePose, WobbleState, WobbleTuning,
+    layered,
+};
+pub use wobble_visual::{DriverWobble, WobbleLayer, WobblePlugin, WobbleSlot};
 
 use bevy::prelude::*;
 
@@ -153,7 +166,7 @@ impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Roster::embedded())
             .init_resource::<DriverTuning>()
-            .add_plugins(AnimalVisualPlugin)
+            .add_plugins((AnimalVisualPlugin, WobblePlugin))
             .init_resource::<PlayerLoadout>()
             .init_resource::<PlayerColor>()
             .init_resource::<SelectionScreen>()

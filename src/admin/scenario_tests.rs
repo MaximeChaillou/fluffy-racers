@@ -528,7 +528,8 @@ fn every_tuning_resource_is_in_the_panel() {
             "ItemTuning",
             "InteractionTuning",
             "NetTuning",
-            "DriverTuning"
+            "DriverTuning",
+            "WobbleTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {

@@ -1,5 +1,6 @@
-//! What the interactions look like (GD § 14 and 15, issue #34), in primitives until the soft
-//! characters and their mini-ragdoll (issue #12). Every kart's visual gets, once:
+//! What the interactions look like (GD § 14 and 15, issue #34), in primitives (the struck
+//! driver's mini-ragdoll is the soft characters', `characters::wobble`, issue #12). Every kart's
+//! visual gets, once:
 //!
 //! - an **arm** (a capsule) ending in a **paw** (a ball), hidden at rest. It rises as soon as the
 //!   Interaction button is down, swings at the kart struck (or into thin air, then windmills off

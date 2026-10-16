@@ -389,7 +389,8 @@ Toutes les valeurs sont dans la Resource `InteractionTuning` (panneau d'admin) ;
 - **Bots** : 10, 30 et 60 % des occasions. Les Difficile frappent un kart placé du côté du bord le plus proche avec une chance × 1,33, les autres × 0,67. Ils attrapent un kart qui va au moins 2 m/s plus vite qu'eux : jamais pour les Facile, 30 % des occasions pour les Normal, 70 % pour les Difficile. Ils tiennent 1,2 s (Normal) ou 1,6 s (Difficile), puis lâchent ; les Difficile jettent la cible de son côté, loin d'eux. Tenus, ils sautent après 1 s, 0,5 s ou 0,25 s selon leur niveau.
 - **Ressenti** :
   - fait : le bras (capsule) et la patte qui se lève dès l'appui, frappe, s'étire pendant l'attrape (l'élastique) et revient en « boing » ; le « pof » (losange jaune) ; le personnage qui se penche en moulinant ou se retourne vers son attrapeur ; un léger tremblement d'écran pour le joueur frappé ; la jauge de recharge dans le HUD ;
-  - pas encore fait : le cri, la vibration de la manette, les sons et le mini-ragdoll (#12).
+  - le mini-ragdoll (#12) : le pilote frappé ou touché par un objet ballotte environ 1 s (la tête jetée vers la patte, puis des ressorts plus mous), visuel seulement ;
+  - pas encore fait : le cri, la vibration de la manette et les sons.
 - **Sans interactions** : `InteractionTuning::enabled` les coupe. Les tests de conduite des bots tournent ainsi.
 
 ## 16. Priorités

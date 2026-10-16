@@ -13,10 +13,11 @@
 //! its animal is ready, and for good without a glTF loader (headless) or when the file is missing
 //! (a warning). Without Bevy's animation plugin, the animal sits still.
 //!
-//! **For the wobble (#12)**: the `body` and `tail` nodes carry [`AnimalPart`](super::AnimalPart);
-//! their `Transform` is written by the clip each frame (`AnimationSystems`, in `PostUpdate`), so a
-//! wobble goes on top of it, in a system after `AnimationSystems` and before
-//! `TransformSystems::Propagate`.
+//! **The wobble (#12)**: the `body`, `tail` and wing nodes carry [`AnimalPart`](super::AnimalPart)
+//! and a [`WobbleLayer`]; the driver its [`DriverWobble`], with where its tail and wings hang.
+//! Their `Transform` is written by the clip each frame (`AnimationSystems`, in `PostUpdate`), so
+//! the wobble goes on top of it, after `AnimationSystems` and before `TransformSystems::Propagate`
+//! (`wobble_visual.rs`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +29,9 @@ use bevy::transform::TransformSystems;
 
 use super::Roster;
 use super::animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation};
-use super::model::{AnimalModelData, animal_model_data};
+use super::model::{AnimalModelData, AnimalPart, animal_model_data};
+use super::wobble::{LayerPivot, WobbleLevers, WobbleState};
+use super::wobble_visual::{DriverWobble, WobbleLayer};
 use crate::interactions::Paw;
 use crate::kart::{DriverPrimitive, DriverVisual, KartBodyPivot, KartState};
 use crate::models::{Keep, ModelMaterials, ModelSystems, Models};
@@ -271,6 +274,8 @@ fn dress_drivers(
 
 /// Spawns `animal` under `driver`, its nodes animated by its root's `AnimationPlayer`, which
 /// starts its idle at a moment of its own (from the kart's entity: 12 karts do not sway in step).
+/// Its body, tail and wings get their wobble's layer (#12), the driver its wobble, which knows
+/// where they hang.
 fn spawn_animal(
     commands: &mut Commands,
     animal: &AnimalVisual,
@@ -279,6 +284,31 @@ fn spawn_animal(
     kart: Entity,
     character: usize,
 ) {
+    let placement = animal.data.placement(tuning);
+    // From the wobble's frame (the kart's) into the animal's (its file's), and the other way.
+    let to_file = placement.rotation.inverse();
+    let mut tail = None;
+    let mut wings = [None; 2];
+    for node in &animal.data.nodes {
+        let lever = placement.rotation * node.lever();
+        match node.part {
+            Some(AnimalPart::Tail) => tail = Some(lever),
+            Some(AnimalPart::LeftWing) => wings[0] = Some(lever),
+            Some(AnimalPart::RightWing) => wings[1] = Some(lever),
+            _ => {}
+        }
+    }
+    // In the kart, the animal's left (+X in its file) is the kart's left (-X).
+    let levers = WobbleLevers {
+        tail,
+        wings: wings
+            .iter()
+            .any(Option::is_some)
+            .then(|| [wings[0].unwrap_or(Vec3::NEG_X), wings[1].unwrap_or(Vec3::X)]),
+    };
+    commands
+        .entity(driver)
+        .insert(DriverWobble(WobbleState::new(levers)));
     let mut root = commands.spawn((
         AnimalRoot {
             kart,
@@ -286,7 +316,7 @@ fn spawn_animal(
             playing: AnimalAnimation::Idle,
             nodes: animal.graph.as_ref().map(|(_, nodes)| *nodes),
         },
-        animal.data.placement(tuning),
+        placement,
         Visibility::default(),
         ChildOf(driver),
     ));
@@ -320,7 +350,10 @@ fn spawn_animal(
             ));
         }
         if let Some(part) = node.part {
-            entity.insert(part);
+            entity.insert((
+                part,
+                WobbleLayer::new(driver, part.into(), LayerPivot::Own, to_file),
+            ));
         }
         spawned.push(entity.id());
     }
