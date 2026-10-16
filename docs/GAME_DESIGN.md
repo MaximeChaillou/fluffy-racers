@@ -201,13 +201,15 @@ Modèle MK8DX :
   - **Invincibilité** : durée de la protection après avoir été touché par un objet (§ 8).
 - **Trois gabarits**, avec le compromis classique (MK8DX) : les légers ont plus d'accélération et de maniabilité, les lourds plus de vitesse et de poids.
 
-Roster de départ (original, 3 par gabarit) :
+Roster de départ (original, 3 par gabarit ; validé par Max le 2026-10-15, #69 : les animaux du pack CC0 Cube Pets de Kenney) :
 
 | Gabarit | Animaux |
 |---|---|
-| Léger | souris, poussin, hamster |
+| Léger | poussin, pingouin, perroquet |
 | Moyen | chat, lapin, renard |
-| Lourd | ours, morse, vache |
+| Lourd | cochon, vache, éléphant |
+
+Dans chaque gabarit, le compromis reste celui du dessus ; l'éléphant est le plus lourd de tous, le poussin le plus léger. Un pilote est animé (#69) : il s'agite doucement en course et sur la grille, secoue la tête quand il est touché (objet, coup de patte), danse à l'arrivée s'il est sur le podium et hoche la tête de contentement sinon.
 
 Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osier, caisse à savon, baignoire), 3 jeux de roues (bobines de fil, pneus guimauve, pneus de tracteur) et 2 ailes (taie d'oreiller, plume). Le personnage moyen « chat » avec la caisse à savon, les pneus guimauve et la taie d'oreiller fait exactement le niveau du milieu (10) partout.
 

@@ -44,8 +44,13 @@ impl Build {
     fn loadout(self) -> Option<Loadout> {
         let names = match self {
             Self::Middle => return None,
-            Self::Light => ["Souris", "Panier en osier", "Bobines de fil", "Plume"],
-            Self::Heavy => ["Ours", "Baignoire", "Pneus de tracteur", "Taie d'oreiller"],
+            Self::Light => ["Poussin", "Panier en osier", "Bobines de fil", "Plume"],
+            Self::Heavy => [
+                "Cochon",
+                "Baignoire",
+                "Pneus de tracteur",
+                "Taie d'oreiller",
+            ],
         };
         let roster = Roster::embedded();
         let mut loadout = Loadout::default();

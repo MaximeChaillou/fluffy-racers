@@ -7,7 +7,7 @@
 //! - **Réglages**: every tuning resource ([`Tunings`]: `KartTuning`, `CroquetteTuning`,
 //!   `BotTuning` with each difficulty's `BotSkill`, `CameraTuning`, `RaceTuning`, `StatsTuning`
 //!   of issue #15, `ItemTuning` of issue #16, `InteractionTuning` of issue #34, `NetTuning` of
-//!   issue #8 with its network simulator), edited by
+//!   issue #8 with its network simulator, `DriverTuning` of issue #69), edited by
 //!   reflection (`tuning.rs`): a field added later shows up with no extra code; a new tuning
 //!   resource is one line in [`AdminPlugin`]. Modified values stand out and each one, or each
 //!   resource, goes back to its default in a click.
@@ -38,6 +38,7 @@ use bevy::prelude::*;
 
 use crate::bots::BotTuning;
 use crate::camera::CameraTuning;
+use crate::characters::DriverTuning;
 use crate::croquettes::CroquetteTuning;
 use crate::interactions::InteractionTuning;
 use crate::items::ItemTuning;
@@ -84,7 +85,8 @@ impl Plugin for AdminPlugin {
             .register::<StatsTuning>()
             .register::<ItemTuning>()
             .register::<InteractionTuning>()
-            .register::<NetTuning>();
+            .register::<NetTuning>()
+            .register::<DriverTuning>();
         app.insert_resource(tunings)
             .init_resource::<AdminPanel>()
             .init_resource::<AdminOptions>()

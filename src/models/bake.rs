@@ -21,10 +21,25 @@ pub struct BakedPart {
     pub uvs: Vec<[f32; 2]>,
 }
 
-/// A model: its parts. glTF's axes: +Y up, the model's front toward +Z.
+/// A node of a model's tree (issue #69): its name, its parent (an index into
+/// [`BakedModel::nodes`], always before it), its own transform (relative to its parent) and its
+/// part, if it has a mesh (an index into [`BakedModel::parts`]). An animated model needs it: its
+/// animations move the nodes (the Cube Pets' body, tail and legs), so each node becomes an entity.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BakedNode {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub local: Transform,
+    pub part: Option<usize>,
+}
+
+/// A model: its parts, and the tree of its nodes (issue #69). glTF's axes: +Y up, the model's
+/// front toward +Z.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BakedModel {
     pub parts: Vec<BakedPart>,
+    /// Every node of the file, from its roots down (a parent before its children).
+    pub nodes: Vec<BakedNode>,
 }
 
 /// One primitive of a mesh, as read from the file.
@@ -137,6 +152,22 @@ pub fn split_by_uv(part: &BakedPart, inside: impl Fn(Vec2) -> bool) -> (MeshData
 impl BakedModel {
     pub fn part(&self, name: &str) -> Option<&BakedPart> {
         self.parts.iter().find(|p| p.name == name)
+    }
+
+    /// The names from the root of the node `index` down to it (the node included): what the
+    /// glTF loader names an animation's target with (`AnimationTargetId::from_names`).
+    pub fn path(&self, index: usize) -> Vec<&str> {
+        let mut path = Vec::new();
+        let mut at = Some(index);
+        while let Some(i) = at {
+            let Some(node) = self.nodes.get(i) else {
+                break;
+            };
+            path.push(node.name.as_str());
+            at = node.parent;
+        }
+        path.reverse();
+        path
     }
 
     /// The box around the model in its own space (None: no vertex).

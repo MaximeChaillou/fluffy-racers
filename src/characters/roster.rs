@@ -9,6 +9,7 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 
 use crate::kart::{DriverEars, KartStats, MIDDLE_LEVEL, Stat, StatPoints};
+use crate::track::biome::is_model_id;
 
 /// The four RON files, compiled into the game.
 pub const CHARACTERS_RON: &str = include_str!("../../assets/data/characters.ron");
@@ -45,10 +46,21 @@ pub struct CharacterData {
     pub class: WeightClass,
     /// Size of the driver (1 = medium): the weight class shows on screen.
     pub size: f32,
-    /// Color of the driver (red, green, blue, 0 to 1).
+    /// The driver's 3D model (issue #69), "pack/name": `assets/models/pack/name.glb`, an animal
+    /// of Kenney's Cube Pets. Without it (or while it loads, or if the file is missing), the
+    /// driver stands in primitives, with the `color` and `ears` below.
+    #[serde(default, deserialize_with = "some_model")]
+    pub model: Option<String>,
+    /// Color of the driver in primitives (red, green, blue, 0 to 1).
     pub color: (f32, f32, f32),
+    /// Its ears in primitives.
     pub ears: DriverEars,
     pub stats: StatPoints,
+}
+
+/// `model: "pack/name"` in the file (no `Some(...)` around it); left out: None.
+fn some_model<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
 }
 
 /// A kart, a set of wheels or a wing, as written in `karts.ron`, `wheels.ron`, `wings.ron`.
@@ -167,6 +179,7 @@ impl Roster {
                 name: "Chat".to_string(),
                 class: WeightClass::Medium,
                 size: 1.0,
+                model: None,
                 color: (0.95, 0.65, 0.35),
                 ears: DriverEars::Pointy,
                 stats: StatPoints::uniform(4),
@@ -179,8 +192,8 @@ impl Roster {
     }
 
     /// Reads and checks the four files: every list has at least one entry, no name twice in a
-    /// list, at most 10 points per stat, a driver size and color that make sense, and a
-    /// `default` that names an entry of its list.
+    /// list, at most 10 points per stat, a driver size and color that make sense, a model named
+    /// "pack/name", and a `default` that names an entry of its list.
     pub fn parse(characters: &str, karts: &str, wheels: &str, wings: &str) -> Result<Self, String> {
         let characters: CharacterFile =
             ron::from_str(characters).map_err(|e| format!("characters.ron: {e}"))?;
@@ -211,6 +224,12 @@ impl Roster {
             let (r, g, b) = c.color;
             if [r, g, b].iter().any(|v| !(0.0..=1.0).contains(v)) {
                 return Err(format!("characters.ron: {}: color out of 0..=1", c.name));
+            }
+            if let Some(model) = c.model.as_deref().filter(|m| !is_model_id(m)) {
+                return Err(format!(
+                    "characters.ron: {}: model {model:?} is not \"pack/name\"",
+                    c.name
+                ));
             }
         }
         for (file, list, kind) in [
@@ -355,7 +374,8 @@ mod tests {
     }
 
     /// Issue #15 acceptance: the RON files load, with 9 animals in 3 weight classes, 3 karts,
-    /// 3 sets of wheels and 2 wings.
+    /// 3 sets of wheels and 2 wings. Issue #69: the roster Max chose among Kenney's Cube Pets
+    /// (2026-10-15), each animal with its own model of the pack.
     #[test]
     fn the_roster_files_load_with_every_character_and_part() {
         let roster = roster();
@@ -367,13 +387,21 @@ mod tests {
         assert_eq!(
             names(PartKind::Character),
             [
-                "Souris", "Poussin", "Hamster", "Chat", "Lapin", "Renard", "Ours", "Morse", "Vache"
+                "Poussin",
+                "Pingouin",
+                "Perroquet",
+                "Chat",
+                "Lapin",
+                "Renard",
+                "Cochon",
+                "Vache",
+                "Éléphant"
             ]
         );
         for (class, animals) in [
-            (WeightClass::Light, ["Souris", "Poussin", "Hamster"]),
+            (WeightClass::Light, ["Poussin", "Pingouin", "Perroquet"]),
             (WeightClass::Medium, ["Chat", "Lapin", "Renard"]),
-            (WeightClass::Heavy, ["Ours", "Morse", "Vache"]),
+            (WeightClass::Heavy, ["Cochon", "Vache", "Éléphant"]),
         ] {
             let found: Vec<&str> = roster
                 .characters_of(class)
@@ -390,12 +418,79 @@ mod tests {
             let i = roster.find(PartKind::Character, name).unwrap();
             roster.characters[i].size
         };
-        assert!(size("Souris") < size("Chat") && size("Chat") < size("Ours"));
-        // One color per animal.
+        // Every light one smaller than every medium one, every medium one smaller than every
+        // heavy one: the weight class shows on screen.
+        let sizes = |class| {
+            roster
+                .characters_of(class)
+                .map(|i| roster.characters[i].size)
+                .collect::<Vec<f32>>()
+        };
+        let biggest = |class| sizes(class).into_iter().fold(f32::MIN, f32::max);
+        let smallest = |class| sizes(class).into_iter().fold(f32::MAX, f32::min);
+        assert!(biggest(WeightClass::Light) < smallest(WeightClass::Medium));
+        assert!(biggest(WeightClass::Medium) < smallest(WeightClass::Heavy));
+        assert!(size("Poussin") < size("Chat") && size("Chat") < size("Éléphant"));
+        // One color per animal (its primitives), one model per animal, from the Cube Pets.
         for (i, a) in roster.characters.iter().enumerate() {
             for b in &roster.characters[i + 1..] {
                 assert_ne!(a.color, b.color, "{} and {}", a.name, b.name);
+                assert_ne!(a.model, b.model, "{} and {}", a.name, b.name);
             }
+        }
+        let models: Vec<&str> = roster
+            .characters
+            .iter()
+            .map(|c| c.model.as_deref().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            models,
+            [
+                "chick", "penguin", "parrot", "cat", "bunny", "fox", "pig", "cow", "elephant"
+            ]
+            .map(|animal| format!("cube-pets/animal-{animal}"))
+        );
+    }
+
+    /// Issue #69: the stats of each weight class stay within the class's bounds, and the
+    /// heaviest of all is the elephant, the lightest the chick.
+    #[test]
+    fn each_weight_class_keeps_its_bounds() {
+        let roster = roster();
+        for c in &roster.characters {
+            let s = |stat| c.stats.get(stat);
+            let (speed, weight, acceleration) =
+                (s(Stat::Speed), s(Stat::Weight), s(Stat::Acceleration));
+            let ok = match c.class {
+                WeightClass::Light => speed <= 3 && weight <= 2 && acceleration >= 5,
+                WeightClass::Medium => {
+                    (3..=5).contains(&speed) && (3..=4).contains(&weight) && acceleration >= 3
+                }
+                WeightClass::Heavy => speed >= 5 && weight >= 7 && acceleration <= 3,
+            };
+            assert!(ok, "{}: {:?}", c.name, c.stats);
+            assert!(Stat::ALL.iter().all(|stat| s(*stat) <= 8), "{}", c.name);
+            assert!(
+                Stat::ALL
+                    .iter()
+                    .map(|stat| u32::from(s(*stat)))
+                    .sum::<u32>()
+                    <= 32,
+                "{}: more points than the others",
+                c.name
+            );
+        }
+        let weight = |name: &str| {
+            let i = roster.find(PartKind::Character, name).unwrap();
+            roster.characters[i].stats.get(Stat::Weight)
+        };
+        for c in &roster.characters {
+            assert!(
+                weight("Éléphant") >= c.stats.get(Stat::Weight),
+                "{}",
+                c.name
+            );
+            assert!(weight("Poussin") <= c.stats.get(Stat::Weight), "{}", c.name);
         }
     }
 
@@ -518,5 +613,15 @@ mod tests {
         }
         let bad_size = CHARACTERS_RON.replacen("size: 0.78", "size: 3.0", 1);
         assert!(Roster::parse(&bad_size, &ok, &ok, &ok).is_err());
+        // Issue #69: a model must be named "pack/name".
+        for model in ["animal-cat", "cube-pets/animal cat", "cube-pets/x/y", ""] {
+            let bad = CHARACTERS_RON.replacen("\"cube-pets/animal-cat\"", &format!("{model:?}"), 1);
+            let error = Roster::parse(&bad, &ok, &ok, &ok).unwrap_err();
+            assert!(error.contains("Chat: model"), "{error}");
+        }
+        // Without a model, the driver stands in primitives.
+        let without = CHARACTERS_RON.replacen("model: \"cube-pets/animal-cat\",", "", 1);
+        let roster = Roster::parse(&without, &ok, &ok, &ok).unwrap();
+        assert_eq!(roster.characters[3].model, None);
     }
 }

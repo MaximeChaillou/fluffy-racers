@@ -1,8 +1,9 @@
-//! The models of the game (issue #11): every model a circuit, a biome or the kart names is in
-//! `assets/models/`, with its pack's licence and its line in `assets/CREDITS.md`, and nothing
-//! else is there; each one loads through Bevy's glTF loader and bakes (headless: the glTF plugin
-//! without a renderer); a whole game with the models dresses both circuits and the karts, and no
-//! piece of decor comes near the track.
+//! The models of the game (issue #11): every model a circuit, a biome, the kart or a character
+//! (issue #69) names is in `assets/models/`, with its pack's licence and its line in
+//! `assets/CREDITS.md`, and nothing else is there; each one loads through Bevy's glTF loader and
+//! bakes (headless: the glTF plugin without a renderer), the animals with their clips; a whole
+//! game with the models dresses both circuits, the karts and their drivers, and no piece of
+//! decor comes near the track; the drivers play what their karts go through.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -33,10 +34,21 @@ fn circuit_files() -> Vec<TrackData> {
         .collect()
 }
 
-/// Every model the game names: the kart's, every biome's, every circuit's props.
+/// The characters' models (issue #69), in the roster's order.
+fn animal_models() -> Vec<String> {
+    crate::characters::Roster::embedded()
+        .characters
+        .iter()
+        .filter_map(|c| c.model.clone())
+        .collect()
+}
+
+/// Every model the game names: the kart's, every biome's, every circuit's props, every
+/// character's (issue #69).
 fn named_models() -> BTreeSet<String> {
     let mut all: BTreeSet<String> = BTreeSet::new();
     all.insert(KART_MODEL.to_string());
+    all.extend(animal_models());
     for biome in biomes() {
         all.extend(biome.models().iter().map(|m| m.to_string()));
     }
@@ -55,6 +67,9 @@ fn every_model_is_there_with_its_licence_and_its_credits() {
     let credits = std::fs::read_to_string(format!("{ASSETS}/CREDITS.md")).unwrap();
     let packs: BTreeSet<&str> = named.iter().map(|m| pack_of(m)).collect();
     assert!(packs.len() >= 4, "{packs:?}");
+    // Issue #69: the nine animals, from Kenney's Cube Pets.
+    assert_eq!(animal_models().len(), 9);
+    assert!(packs.contains("cube-pets"), "{packs:?}");
     for pack in &packs {
         let licence = std::fs::read_to_string(format!("{ASSETS}/models/{pack}/License.txt"))
             .unwrap_or_else(|_| panic!("assets/models/{pack}/License.txt"));
@@ -120,11 +135,16 @@ fn every_model_is_there_with_its_licence_and_its_credits() {
 }
 
 /// Lets `app` load glTF files without a renderer: the glTF plugin, the image loader (a renderer
-/// registers it) and the assets the glTF loader makes.
+/// registers it), the assets the glTF loader makes, and Bevy's animations (issue #69: the
+/// animals' clips, played as in the game).
 fn load_gltf_headless(app: &mut App) {
     use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats, ImageLoader};
     app.insert_resource(CompressedImageFormatSupport(CompressedImageFormats::NONE))
-        .add_plugins((bevy::image::ImagePlugin::default(), GltfPlugin::default()))
+        .add_plugins((
+            bevy::image::ImagePlugin::default(),
+            GltfPlugin::default(),
+            AnimationPlugin,
+        ))
         .init_asset::<bevy::world_serialization::WorldAsset>()
         .register_asset_loader(ImageLoader::new(CompressedImageFormats::NONE));
     // What `App::run` does once the plugins are built: the glTF loader is registered then.
@@ -342,6 +362,308 @@ fn the_game_dresses_both_circuits_and_the_karts() {
             assert_eq!(material, visuals.paint(paint.shown));
         }
     }
+}
+
+/// Issue #69: each character's animal loads with its clips (the eight of the Cube Pets), is an
+/// animal (a body, no leg), its nodes named as the clips name them, and sits in its seat: facing
+/// the kart's front, its body's bottom on the seat, as big as its weight class says and never
+/// much wider than the kart nor too high for the camera to see over it.
+#[test]
+fn every_animal_loads_with_its_clips_and_sits_in_its_seat() {
+    use crate::characters::{AnimalAnimation, AnimalPart, DriverTuning, Roster, animal_model_data};
+    let mut app = loading_app();
+    app.add_plugins(ModelPlugin);
+    app.update();
+    let ids = animal_models();
+    {
+        let world = app.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let mut models = world.resource_mut::<Models>();
+        for id in &ids {
+            models.request_animated(id, Keep::Always, Some(&server));
+        }
+    }
+    wait_for_the_models(&mut app, &ids);
+    let roster = Roster::embedded();
+    let tuning = DriverTuning::default();
+    let models = app.world().resource::<Models>();
+    let clips = app.world().resource::<Assets<AnimationClip>>();
+    // The body's width at its size (m), by weight class.
+    let mut widths: Vec<(crate::characters::WeightClass, f32)> = Vec::new();
+    for character in &roster.characters {
+        let id = character.model.as_deref().unwrap();
+        let model = models
+            .get(id)
+            .unwrap_or_else(|| panic!("{id} did not load"));
+        let names: Vec<&str> = models
+            .clips(id)
+            .unwrap()
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "dance",
+                "eat",
+                "gesture-negative",
+                "gesture-positive",
+                "idle",
+                "run",
+                "static",
+                "walk"
+            ],
+            "{id}"
+        );
+        let animal = animal_model_data(model).unwrap_or_else(|| panic!("{id}: not an animal"));
+        assert!(
+            animal.nodes.iter().all(|n| !n.name.starts_with("leg-")),
+            "{id}: no leg"
+        );
+        let body = animal.node("body").unwrap();
+        assert_eq!(animal.nodes[body].part, Some(AnimalPart::Body));
+        assert!(animal.nodes[body].mesh.as_ref().unwrap().triangle_count() > 50);
+        assert_eq!(animal.nodes[0].path, [id.split('/').nth(1).unwrap()]);
+        // The clips move the nodes by the names we give them (the glTF loader's: the path from
+        // the file's root).
+        for animation in AnimalAnimation::ALL {
+            let handle = &models
+                .clips(id)
+                .unwrap()
+                .iter()
+                .find(|(name, _)| name == animation.clip())
+                .unwrap()
+                .1;
+            let clip = clips.get(handle).unwrap();
+            assert!(clip.duration() > 0.0, "{id}");
+            for name in ["root", "body"] {
+                let node = &animal.nodes[animal.node(name).unwrap()];
+                let target = bevy::animation::AnimationTargetId::from_iter(&node.path);
+                assert!(
+                    clip.curves_for_target(target).is_some(),
+                    "{id}: {} does not move {:?}",
+                    animation.clip(),
+                    node.path
+                );
+            }
+        }
+        // In its seat: the middle of its body's bottom on it, its face toward the front.
+        let placed = animal.placement(&tuning);
+        let seat = placed.transform_point(animal.seat_point);
+        assert!(seat.length() < 1e-4, "{id}: {seat}");
+        assert!(placed.rotation.mul_vec3(Vec3::Z).z < -0.99);
+        // Its size: the character's times the placement's.
+        let mesh = animal.nodes[body].mesh.as_ref().unwrap();
+        let (lo, hi) = mesh
+            .positions
+            .iter()
+            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+                (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p)))
+            });
+        let scale = tuning.model_scale * character.size;
+        let (width, height) = ((hi.x - lo.x) * scale, (hi.y - lo.y) * scale);
+        assert!(width < 1.6, "{id}: {width} m wide, the kart 1.3 m");
+        assert!((0.5..1.25).contains(&height), "{id}: {height} m high");
+        widths.push((character.class, (1.25 * scale)));
+    }
+    // The cube of a light one smaller than a medium one's, a medium one's than a heavy one's.
+    use crate::characters::WeightClass::*;
+    for (a, wa) in &widths {
+        for (b, wb) in &widths {
+            if matches!((a, b), (Light, Medium) | (Medium, Heavy) | (Light, Heavy)) {
+                assert!(wa < wb, "{a:?} {wa} vs {b:?} {wb}");
+            }
+        }
+    }
+}
+
+/// Waits until the game with the models (headless) has its 12 karts dressed and their 12 drivers
+/// seated in them.
+fn wait_for_the_drivers(app: &mut App) {
+    for _ in 0..3000 {
+        app.update();
+        let world = app.world_mut();
+        let drivers = world
+            .query::<&crate::characters::AnimalRoot>()
+            .iter(world)
+            .count();
+        if drivers == 12 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("the drivers never sat in their karts");
+}
+
+/// What each driver plays, by kart.
+fn playing(app: &mut App) -> Vec<(Entity, crate::characters::AnimalAnimation, bool)> {
+    let world = app.world_mut();
+    world
+        .query::<(&crate::characters::AnimalRoot, &AnimationPlayer)>()
+        .iter(world)
+        .map(|(root, player)| {
+            let node = root.nodes.unwrap()[root.playing.index()];
+            (root.kart, root.playing, player.is_playing_animation(node))
+        })
+        .collect()
+}
+
+/// Issue #69: in the whole game with the models (still headless, Bevy's animations on), the 12
+/// drivers sit in their karts: their primitives gone, each animal's meshes and graph shared by
+/// the karts it drives (one graph per animal), the body and the tail marked for the wobble. They
+/// idle on the grid; a kart hit by an item or struck by a paw shakes its head, then idles again;
+/// one over the line among the first three dances. The kart model and the physics are untouched.
+#[test]
+fn the_drivers_sit_in_their_karts_and_play_what_happens() {
+    use crate::characters::{AnimalAnimation, AnimalPart, AnimalRoot, PartKind, Roster};
+    use crate::kart::{DriverPrimitive, DriverVisual, HitReaction, KartState};
+    let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::default(), 11);
+    load_gltf_headless(&mut app);
+    wait_for_the_drivers(&mut app);
+    for _ in 0..5 {
+        app.update();
+    }
+    let roster = app.world().resource::<Roster>().clone();
+    let world = app.world_mut();
+    assert_eq!(
+        world
+            .query_filtered::<(), With<DriverPrimitive>>()
+            .iter(world)
+            .count(),
+        0,
+        "every primitive is gone"
+    );
+    // Each animal's graph and body mesh: one for the karts it drives.
+    let roots: Vec<(AnimalRoot, AssetId<AnimationGraph>)> = world
+        .query::<(&AnimalRoot, &AnimationGraphHandle)>()
+        .iter(world)
+        .map(|(root, graph)| (*root, graph.0.id()))
+        .collect();
+    assert_eq!(roots.len(), 12);
+    let characters: BTreeSet<usize> = roots.iter().map(|(r, _)| r.character).collect();
+    let graphs: BTreeSet<AssetId<AnimationGraph>> = roots.iter().map(|(_, g)| *g).collect();
+    assert!(characters.len() >= 6, "{characters:?}");
+    assert_eq!(graphs.len(), characters.len(), "one graph per animal");
+    let mut bodies: Vec<(AssetId<Mesh>, AssetId<StandardMaterial>)> = Vec::new();
+    let mut tails = 0;
+    for (part, mesh, material) in world
+        .query::<(&AnimalPart, &Mesh3d, &MeshMaterial3d<StandardMaterial>)>()
+        .iter(world)
+    {
+        match part {
+            AnimalPart::Body => bodies.push((mesh.0.id(), material.0.id())),
+            AnimalPart::Tail => tails += 1,
+        }
+    }
+    assert_eq!(bodies.len(), 12);
+    assert!(tails > 0);
+    let meshes: BTreeSet<AssetId<Mesh>> = bodies.iter().map(|(m, _)| *m).collect();
+    assert_eq!(meshes.len(), characters.len(), "one body mesh per animal");
+    // One material for every animal: the models' (vertex colors).
+    let shared = world.resource::<ModelMaterials>().vertex_colors.id();
+    assert!(bodies.iter().all(|(_, material)| *material == shared));
+    // The drivers' sizes still show their weight class (the driver's scale).
+    let sizes: BTreeSet<u32> = world
+        .query::<&DriverVisual>()
+        .iter(world)
+        .map(|d| (d.size * 100.0) as u32)
+        .collect();
+    assert!(sizes.len() >= 6, "{sizes:?}");
+    // The player's animal is the default one, the cat.
+    let player = crate::tests::player(&mut app);
+    let mine = roots.iter().find(|(r, _)| r.kart == player).unwrap().0;
+    assert_eq!(roster.name(PartKind::Character, mine.character), "Chat");
+
+    // On the grid, everyone idles.
+    let now = playing(&mut app);
+    assert_eq!(now.len(), 12);
+    assert!(
+        now.iter()
+            .all(|(_, animation, on)| *animation == AnimalAnimation::Idle && *on),
+        "{now:?}"
+    );
+    // Three bots: one hit by an item, one struck by a paw, one over the line.
+    let bots: Vec<Entity> = roots
+        .iter()
+        .map(|(r, _)| r.kart)
+        .filter(|k| *k != player)
+        .take(3)
+        .collect();
+    let world = app.world_mut();
+    *world.get_mut::<KartState>(bots[0]).unwrap() = KartState::Hit {
+        reaction: HitReaction::Spin,
+        elapsed: 0,
+        duration: 30,
+    };
+    {
+        let mut paw = world.get_mut::<crate::interactions::Paw>(bots[1]).unwrap();
+        paw.struck_count += 1;
+        paw.struck_ticks = 0;
+    }
+    world
+        .get_mut::<crate::race::RaceProgress>(bots[2])
+        .unwrap()
+        .finish = Some(0);
+    for _ in 0..3 {
+        app.update();
+    }
+    let of = |app: &mut App, kart: Entity| {
+        playing(app)
+            .into_iter()
+            .find(|(k, ..)| *k == kart)
+            .map(|(_, animation, on)| (animation, on))
+            .unwrap()
+    };
+    assert_eq!(of(&mut app, bots[0]), (AnimalAnimation::Shake, true));
+    assert_eq!(of(&mut app, bots[1]), (AnimalAnimation::Shake, true));
+    assert_eq!(of(&mut app, bots[2]), (AnimalAnimation::Dance, true));
+    assert_eq!(of(&mut app, player), (AnimalAnimation::Idle, true));
+    // The hit is over (half a second), and the strike a second later: back to idle, while the
+    // one over the line still dances.
+    for _ in 0..70 {
+        app.update();
+    }
+    assert!(!matches!(
+        app.world().get::<KartState>(bots[0]),
+        Some(KartState::Hit { .. })
+    ));
+    assert_eq!(of(&mut app, bots[0]), (AnimalAnimation::Idle, true));
+    assert_eq!(of(&mut app, bots[1]), (AnimalAnimation::Idle, true));
+    assert_eq!(of(&mut app, bots[2]), (AnimalAnimation::Dance, true));
+    // The clips move the animals: a body's rotation is not the file's at rest.
+    let world = app.world_mut();
+    let moved = world
+        .query::<(&AnimalPart, &Transform)>()
+        .iter(world)
+        .any(|(part, t)| *part == AnimalPart::Body && t.rotation != Quat::IDENTITY);
+    assert!(moved, "the clips move the bodies");
+
+    // A restart spawns every kart again: from its very first frame, each new kart shows its
+    // animal, never its primitives (the drivers are dressed in `PostUpdate`).
+    app.world_mut()
+        .write_message(crate::level::LoadLevel::restart(
+            crate::race::RaceMode::Race,
+        ));
+    let mut frames = 0;
+    for _ in 0..300 {
+        app.update();
+        let world = app.world_mut();
+        let primitives = world
+            .query_filtered::<(), With<DriverPrimitive>>()
+            .iter(world)
+            .count();
+        assert_eq!(primitives, 0, "a driver in primitives on a frame");
+        let new = world
+            .query::<&AnimalRoot>()
+            .iter(world)
+            .filter(|root| !roots.iter().any(|(old, _)| old.kart == root.kart))
+            .count();
+        frames += 1;
+        if new == 12 {
+            break;
+        }
+    }
+    assert!(frames < 300, "the karts never came back");
 }
 
 /// Measure (issue #11): entities, entities with a mesh (shown: neither it nor a parent hidden) and

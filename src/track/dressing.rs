@@ -177,7 +177,10 @@ pub fn stand_in_tree() -> BakedModel {
             |_| color,
         );
     }
-    BakedModel { parts: vec![part] }
+    BakedModel {
+        parts: vec![part],
+        ..default()
+    }
 }
 
 #[cfg(test)]

@@ -6,8 +6,11 @@
 //!   keeps it), and the bots' (`bots::bot_loadout`, from their grid slot). A kart's stats are the
 //!   sum of its four parts (`kart::KartStats`), converted once when it spawns
 //!   (`kart::kart_body_with_stats`).
-//! - **Looks**: one shared material per character ([`DriverLooks`]); the driver's size shows its
-//!   weight class, its color and ears the animal.
+//! - **Looks**: the driver's size shows its weight class. Its animal (issue #69): the
+//!   character's Cube Pet (Kenney, CC0) sits in the kart and plays what its kart goes through
+//!   (`model.rs`, `animation.rs`, `visual.rs`: idle, a shake of the head when hit, a dance or a
+//!   nod at the finish; [`DriverTuning`]). Until it is there (headless: for good), primitives:
+//!   one shared material per character ([`DriverLooks`]), its color and ears.
 //! - **Color** (issue #55): the player's kart's color ([`PlayerColor`]), a color of the palette
 //!   (`kart::KartColor`), pink until it chooses. Kept between sessions like the options
 //!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
@@ -22,17 +25,25 @@
 //!   Its egui interface (`ui.rs`) only exists with a renderer; the keys and the actions
 //!   ([`SelectionAction`]) are headless and tested.
 
+mod animation;
+mod model;
 mod roster;
 mod ui;
+mod visual;
 
 #[cfg(test)]
 mod scenario_tests;
 
+pub use animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation};
+pub use model::{AnimalModelData, AnimalNode, AnimalPart, animal_model_data};
 pub use roster::{
     CHARACTERS_RON, CharacterData, KARTS_RON, Loadout, PartData, PartKind, Roster, WHEELS_RON,
     WINGS_RON, WeightClass, is_middle,
 };
 pub use ui::CharacterUiPlugin;
+pub use visual::{
+    AnimalRoot, AnimalSlot, AnimalVisual, AnimalVisualPlugin, Animals, DriverDressed,
+};
 
 use bevy::prelude::*;
 
@@ -141,6 +152,8 @@ pub struct CharacterPlugin;
 impl Plugin for CharacterPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Roster::embedded())
+            .init_resource::<DriverTuning>()
+            .add_plugins(AnimalVisualPlugin)
             .init_resource::<PlayerLoadout>()
             .init_resource::<PlayerColor>()
             .init_resource::<SelectionScreen>()
@@ -177,9 +190,11 @@ fn create_driver_looks(
     let looks = roster
         .characters
         .iter()
-        .map(|character| {
+        .enumerate()
+        .map(|(index, character)| {
             let (r, g, b) = character.color;
             DriverLook {
+                character: index,
                 size: character.size,
                 material: materials.add(Color::srgb(r, g, b)),
                 ears: character.ears,
