@@ -42,6 +42,14 @@ impl Default for TrackChoice {
 /// The test circuit of issue #3.
 pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
 
+/// The mirror mode (issue #19, GD § 1): the circuits are built as the mirror image of their file
+/// (`TrackData::mirrored`: the track, its spots, its decor and its grid; the bots' racing line
+/// follows from the track). Read when a circuit is built: `crate::level::LoadLevel` applies a
+/// change. Solo only for now: online, the room's circuits are never mirrored (`crate::net` puts
+/// this back to false in a room).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MirrorMode(pub bool);
+
 /// Where the local player's kart starts, available once the track is built. On a circuit it is
 /// the pole; the player's actual grid slot comes from `race::RaceGrid` (behind the bots).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -126,6 +134,7 @@ pub struct TrackPlugin;
 impl Plugin for TrackPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TrackChoice>()
+            .init_resource::<MirrorMode>()
             .init_asset::<TrackData>()
             .init_asset_loader::<circuit::TrackLoader>()
             .add_systems(

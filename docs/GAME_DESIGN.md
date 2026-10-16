@@ -23,6 +23,25 @@ Les valeurs marquées **(MK8DX)** viennent de sources publiques sur le jeu. Cell
 | Départ | Grille en quinconce, compte à rebours « 3, 2, 1, GO » d'une seconde par étape |
 | Modes | Course libre, Grand Prix, Contre-la-montre (3 piments, fantôme), En ligne (jusqu'à 12), Bataille (plus tard) |
 
+### Grand Prix (#19)
+
+- **La coupe** : les quatre premiers circuits de `assets/tracks/index.ron`, dans cet ordre (Prairie Pompon, Anneau Guimauve, Crique Câline, Col des Moufles), dans la classe et le mode miroir choisis pour tout le Grand Prix.
+- **Points** : ceux du tableau ci-dessus, d'après le classement final de chaque course (le tableau clos de #70 : un coureur encore en piste prend sa place estimée).
+- **Égalités** (non tranché par MK8DX dans nos sources ; notre règle) : à points égaux, le mieux classé de la **dernière course** passe devant, puis celui de la course d'avant, et ainsi de suite. Tous les coureurs ont une place à chaque course : il n'y a donc jamais d'égalité au bout du compte.
+- **Grille de la course suivante** (comme MK8DX) : l'ordre inverse du classement général, le leader en dernière position. La première course part comme une course libre : les bots devant, le joueur derrière.
+- **Les mêmes adversaires** : chaque bot garde son animal, ses pièces, sa couleur et son nom d'une course à l'autre, quelle que soit sa place sur la grille.
+- **Entre les courses** : le classement de la course, puis le classement général (points de la course et total) ; Entrée lance la suivante.
+- **Podium** : après la quatrième course, les trois premiers sur leurs marches, qui dansent, caméra fixe ; Entrée relance un Grand Prix.
+- **Refaire une course** (un nouveau kart choisi avec G, « Relancer » du panneau d'admin) : la course du Grand Prix repart, ses points sont repris.
+- **En solo pour l'instant**. En ligne, le Grand Prix viendra plus tard (l'hôte devra porter le classement et la grille).
+
+### Classes de vitesse et miroir (#19)
+
+- **Classes** : le multiplicateur de vitesse max s'applique à tous les karts (bots compris) ; l'accélération suit (le moteur atteint la vitesse max dans le même temps), la direction non : les courbes s'élargissent avec la vitesse, on lève le pied ou on freine plus avant les virages en 200cc. 150cc est le jeu tel qu'il est réglé.
+- **200cc** (§ 3, point 7) : freiner en drift ralentit doucement (12 m/s², à régler), jamais sous 12 m/s (à régler, au-dessus de la vitesse qui casse un drift), et resserre la courbe de 15 % (à régler) ; le drift et sa charge continuent. Dans les autres classes, le frein casse le drift comme avant.
+- **Miroir** : le circuit est inversé gauche-droite (tracé, dévers, bonus sur la route, sable, décor, grille : la pole passe de l'autre côté). Les modèles du décor ne sont pas retournés.
+- **En ligne** : 150cc et sans miroir pour l'instant.
+
 ## 2. Conduite de base
 
 C'est de l'arcade : le kart est piloté par une **machine à états** (au sol, saut, drift, boost, en l'air, figure, touché, dépannage) et des **courbes de réglage**. La physique Rapier gère les collisions et le contact avec le sol, mais **ne décide pas du ressenti**.
@@ -59,7 +78,7 @@ D'après MK8DX :
    Les seuils 270 et 570 sont ceux de MK8 sur Wii U. Dans MK8DX, ils dépendent de la stat MT ; 870 est notre extrapolation pour le 3e palier.
 5. **Relâcher le bouton** déclenche le boost du palier atteint. Relâcher avant le premier palier ne donne rien.
 6. L'ultra mini-turbo est **désactivé quand la direction assistée est active** (MK8DX). Sans objet tant que les aides ne sont pas prévues (§ 11).
-7. **En 200cc**, freiner pendant un drift resserre la courbe sans casser le drift.
+7. **En 200cc**, freiner pendant un drift resserre la courbe sans casser le drift (notre implémentation, #19 : voir « Classes de vitesse et miroir », § 1).
 
 ## 4. Départ fusée
 
@@ -253,6 +272,7 @@ Le confort qui existe déjà (#17) :
 | Regarder derrière (tenir) | C | X / Y |
 | Options | O | — |
 | En ligne (salon) | L | — |
+| Nouvelle course : circuit, Grand Prix, classe, miroir | N | — |
 | Pause | Échap | Start |
 
 - Les touches sont des **positions physiques** : W/A/S/D se lisent Z/Q/S/D sur un clavier AZERTY. X, F, E et C portent la même lettre en AZERTY et en QWERTY.
@@ -264,6 +284,7 @@ Le confort qui existe déjà (#17) :
 - **Interaction** : X se tient de la main gauche à côté de Shift et d'Espace quand on conduit aux flèches ; F est l'équivalent de E pour qui conduit avec W/A/S/D (Z/Q/S/D). À la manette, RB se tient à l'index pendant que le pouce garde A (accélérer) : RB quitte donc le saut/drift, qui reste sur RT.
 - **Ni Ctrl ni Alt** : Ctrl + W (Cmd + W sur Mac) ferme l'onglet et le navigateur ne laisse pas la page l'empêcher ; Alt ouvre les menus de certains navigateurs.
 - Touches de debug déjà prises : B (boost), R (pélican), F3 (overlay), I (un objet dans la main, #18 : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ; Entrée et Espace relancent la course depuis le classement.
+- **Nouvelle course** (#19) : **N** (« nouvelle course » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ouvre et ferme le menu de course, depuis la course ou l'écran de sélection (qu'il remplace) : le **mode** (course libre ou Grand Prix), le **circuit** (course libre ; un Grand Prix court la coupe), la **classe** (50cc à 200cc, 150cc par défaut) et le **miroir**. Haut / Bas : la ligne ; Gauche / Droite : le choix ; **Entrée** lance la course ou le Grand Prix ; **Échap** ou N referment le menu sans rien changer. Le jeu est en pause tant qu'il est ouvert. En ligne, N ne fait rien (le salon choisit). Dans un Grand Prix, Entrée (ou Espace, A à la manette) sur l'écran de classement passe au classement général, puis à la course suivante.
 - **Choix du pilote et du kart** (#15) : l'écran de sélection s'ouvre au lancement du jeu et avec **G** (« garage » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac). Flèches haut et bas (ou Z/S en AZERTY, W/S en QWERTY) : la ligne ; gauche et droite (Q/D ou A/D) : le choix ; **Entrée** lance la course avec ce choix ; **Échap** ou G referment l'écran sans rien changer. Le jeu est en pause tant qu'il est ouvert (en ligne, non : voir plus bas).
 - **En ligne** (#7) : **L** (« en ligne » : même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac) ouvre et ferme le salon : « Créer une partie », le lien d'invitation, la liste des joueurs (nom, animal, ping, hôte), « Prêt » et « Quitter la partie ». Il s'ouvre tout seul avec `?room=CODE` dans l'adresse (`--room CODE` en natif). Il se manie à la souris et **ne met pas le jeu en pause**. Tant que le menu d'options est ouvert, L ne fait rien. L'hôte y choisit le circuit et lance la course quand tout le monde est prêt (#9). Depuis #64 : le salon s'ouvre aussi tout seul en arrivant dans la partie et à la fin de chaque course, et se ferme au départ ; l'action principale est en gros (« Lancer la course » chez l'hôte, grisé avec sa raison, « Bob n'est pas prêt. » ; « Prêt ! » chez les autres ; l'hôte n'a pas à se dire prêt) ; hors course, **un bandeau en haut de l'écran** dit le salon, ses joueurs et quoi faire (« Salon ABCDE · 3 joueurs · Tu es l'hôte : choisis le circuit puis lance la course (L) », « … · En attente de l'hôte (Ana)… »).
 - **Pas de pause en ligne** (#9, décision de Max) : dans une partie en ligne, aucun menu ne met le jeu en pause (options, « Pilote et kart », panneau d'admin, salon) : les autres continuent de courir. Le kart du joueur roule en roue libre tant qu'un menu a les touches. Un nouveau kart choisi pendant une course sert à la course suivante.

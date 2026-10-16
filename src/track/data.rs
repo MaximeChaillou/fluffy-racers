@@ -53,6 +53,10 @@ pub struct TrackData {
     /// biome's.
     #[serde(default)]
     pub props: Vec<PropData>,
+    /// Issue #19: this is the mirror image of the file ([`TrackData::mirrored`]), never written in
+    /// a file. The starting grid follows (the pole on the other side).
+    #[serde(skip)]
+    pub mirrored: bool,
 }
 
 /// A piece placed by hand beyond the walls (issue #11), facing the track.
@@ -273,6 +277,45 @@ impl TrackData {
     /// refuses).
     pub fn biome(&self) -> Option<&'static BiomeData> {
         self.biome.as_deref().and_then(biome::biome)
+    }
+
+    /// The mirror image of the circuit (issue #19, GD § 1: the mirror mode), left and right
+    /// swapped: every control point mirrored across the X = 0 plane (x → -x), its banking turned
+    /// the other way, everything placed across the road on the other side (offsets, sand patches),
+    /// the props on the other side. The centerline of the mirror is exactly the mirror image of
+    /// the original (Catmull-Rom is linear in its points), the same length: a point `offset`
+    /// across the road at the same spline parameter is the mirror image of the original's at
+    /// `-offset`. Mirrored twice, the file comes back.
+    pub fn mirrored(&self) -> Self {
+        let flip = |offset: f32| -offset;
+        let mut data = self.clone();
+        data.mirrored = !self.mirrored;
+        for point in &mut data.points {
+            point.pos.0 = -point.pos.0;
+            point.bank = -point.bank;
+        }
+        for zone in &mut data.offroad {
+            (zone.left, zone.right) = (flip(zone.right), flip(zone.left));
+        }
+        for ramp in &mut data.trick_ramps {
+            ramp.offset = flip(ramp.offset);
+        }
+        for pad in &mut data.boost_pads {
+            pad.offset = flip(pad.offset);
+        }
+        for row in &mut data.item_boxes {
+            for offset in &mut row.offsets {
+                *offset = flip(*offset);
+            }
+        }
+        for line in &mut data.croquettes {
+            line.offset = flip(line.offset);
+        }
+        for prop in &mut data.props {
+            prop.side = prop.side.mirrored();
+            prop.yaw = -prop.yaw;
+        }
+        data
     }
 }
 

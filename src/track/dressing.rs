@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use super::circuit::{TrackHandle, to_mesh};
 use super::data::TrackData;
 use super::decor::{decor_models, place_decor};
-use super::layout::TrackLayout;
+use super::layout::{CenterLine, TrackLayout};
 use super::mesh::MeshData;
 use crate::level::LevelScoped;
 use crate::models::bake::{BakedModel, BakedPart, Primitive, bake_primitive};
@@ -65,7 +65,13 @@ pub fn dress_circuit(
         return;
     }
 
-    let plan = place_decor(&layout.center, data.biome(), &data.props, data.decor_seed);
+    // The mirror mode (issue #19): the mirror image of the file's decor, piece by piece.
+    let plan = if layout.mirrored {
+        let center = CenterLine::new(&data.points, data.sample_step);
+        place_decor(&center, data.biome(), &data.props, data.decor_seed).mirrored()
+    } else {
+        place_decor(&layout.center, data.biome(), &data.props, data.decor_seed)
+    };
     for piece in &plan.left_out {
         warn!("decor of {}: no room for {piece}", layout.name);
     }

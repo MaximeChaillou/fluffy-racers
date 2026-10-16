@@ -81,6 +81,18 @@ pub enum Side {
     Right,
 }
 
+impl Side {
+    /// The same side on the mirrored circuit (issue #19): left and right swap, the inside and
+    /// the outside of the loop stay.
+    pub fn mirrored(self) -> Self {
+        match self {
+            Side::Left => Side::Right,
+            Side::Right => Side::Left,
+            other => other,
+        }
+    }
+}
+
 /// Pieces strewn beyond the walls (deterministic for a circuit).
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -287,19 +299,25 @@ pub fn biome(name: &str) -> Option<&'static BiomeData> {
 mod tests {
     use super::*;
 
+    /// Issue #11, and #19 (Max: « des ambiances variées »): four ambiances, the meadow, the
+    /// pastry land, the snow and the beach.
     #[test]
-    fn the_biomes_file_is_valid_and_has_the_two_ambiances() {
+    fn the_biomes_file_is_valid_and_has_the_four_ambiances() {
         let biomes = parse_biomes(BIOMES_RON).unwrap();
         let names: Vec<&str> = biomes.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["Prairie", "Guimauve"]);
+        assert_eq!(names, ["Prairie", "Guimauve", "Neige", "Plage"]);
         assert_eq!(biomes, super::biomes());
-        // Two distinct ambiances: other sky, ground and road, and no model in common.
-        let (prairie, guimauve) = (&biomes[0].palette, &biomes[1].palette);
-        assert_ne!(prairie.sky, guimauve.sky);
-        assert_ne!(prairie.ground, guimauve.ground);
-        assert_ne!(prairie.asphalt, guimauve.asphalt);
-        let (a, b) = (biomes[0].models(), biomes[1].models());
-        assert!(a.iter().all(|m| !b.contains(m)), "{a:?} / {b:?}");
+        // Distinct ambiances, two by two: other sky, ground and road, and no model in common.
+        for (i, one) in biomes.iter().enumerate() {
+            for other in &biomes[i + 1..] {
+                let (p, q) = (&one.palette, &other.palette);
+                assert_ne!(p.sky, q.sky, "{} / {}", one.name, other.name);
+                assert_ne!(p.ground, q.ground, "{} / {}", one.name, other.name);
+                assert_ne!(p.asphalt, q.asphalt, "{} / {}", one.name, other.name);
+                let (a, b) = (one.models(), other.models());
+                assert!(a.iter().all(|m| !b.contains(m)), "{a:?} / {b:?}");
+            }
+        }
         // Each mixes two packs (issue #11: a biome can mix packs).
         for biome in &biomes {
             let mut packs: Vec<&str> = biome.models().iter().map(|m| pack_of(m)).collect();

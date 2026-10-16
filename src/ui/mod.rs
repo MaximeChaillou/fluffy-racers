@@ -24,8 +24,9 @@ use crate::kart::{ItemEffects, PlayerKart};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use crate::track::GRID_SLOTS;
 use format::{
-    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_ONLINE, RESULTS_TITLE, ResultsTime, write_best_lap,
-    write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
+    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_GRAND_PRIX, RESULTS_FOOTER_ONLINE, RESULTS_TITLE,
+    ResultsTime, write_best_lap, write_croquettes, write_lap, write_ordinal, write_racer_count,
+    write_racer_name, write_time,
 };
 
 /// Root of the in-race HUD.
@@ -772,10 +773,15 @@ fn show_results(
     mut commands: Commands,
     race: Res<Race>,
     online: Option<Res<crate::level::Online>>,
+    grand_prix: Option<Res<crate::race::GrandPrix>>,
     mut shown: ResMut<ResultsShown>,
     screens: Query<Entity, With<ResultsScreen>>,
 ) {
-    let showing = race.phase() == RacePhase::Results;
+    // Issue #19: in a Grand Prix, its standings and its podium take the results' place.
+    let showing = race.phase() == RacePhase::Results
+        && grand_prix
+            .as_ref()
+            .is_none_or(|gp| gp.stage == crate::race::GrandPrixStage::Racing);
     if !showing {
         for screen in &screens {
             commands.entity(screen).despawn();
@@ -855,6 +861,8 @@ fn show_results(
                         text(
                             if online.is_some() {
                                 RESULTS_FOOTER_ONLINE
+                            } else if grand_prix.is_some() {
+                                RESULTS_FOOTER_GRAND_PRIX
                             } else {
                                 RESULTS_FOOTER
                             },

@@ -12,6 +12,7 @@ pub mod items;
 pub mod kart;
 pub mod level;
 pub mod models;
+pub mod modes;
 pub mod net;
 pub mod options;
 pub mod race;
@@ -37,6 +38,7 @@ use kart::{
 };
 use level::LevelPlugin;
 use models::ModelPlugin;
+use modes::ModesPlugin;
 use net::{KartId, KartSyncPlugin, NetKart, NetPlugin, OnlineSlot};
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
@@ -66,8 +68,9 @@ impl Plugin for SimulationPlugin {
 /// The whole game: simulation, track, race rules, croquettes, items, the interactions between
 /// karts (issue #34), characters and their selection screen, player kart, bots, visuals, sounds,
 /// camera, HUD, debug overlay, the player's options (issue #17), admin panel and the network's
-/// rooms and lobby (issue #7; the egui parts only with a renderer), and the other players' karts
-/// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room).
+/// rooms and lobby (issue #7; the egui parts only with a renderer), the other players' karts
+/// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room), and the game modes
+/// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix).
 /// `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -111,6 +114,7 @@ impl Plugin for GamePlugin {
                     AdminPlugin,
                     NetPlugin,
                     KartSyncPlugin,
+                    ModesPlugin,
                 ),
             ))
             .add_systems(Startup, spawn_light)

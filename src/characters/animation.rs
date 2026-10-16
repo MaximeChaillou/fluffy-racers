@@ -9,6 +9,8 @@
 //!   the next race (the results screen included).
 //! - **Nod** (`gesture-positive`): over the line further back, for
 //!   [`DriverTuning::finish_nod_seconds`]; then idle.
+//! - **On the podium** of a Grand Prix (issue #19): the three of them dance, whatever their last
+//!   race.
 //!
 //! Online, the other players' karts play the same from what their states say (their
 //! `KartState`, their paw's strikes and their finish, which already come over the network): no
@@ -119,6 +121,8 @@ pub struct DriverFacts {
     pub struck_ticks: Option<u32>,
     /// Over the line (None: still racing, or no race).
     pub finish: Option<Finish>,
+    /// On the podium of a Grand Prix (issue #19): its place, 0 = the winner.
+    pub podium: Option<usize>,
 }
 
 /// What the driver plays: a hit or a strike first, then the finish, else idle.
@@ -129,6 +133,9 @@ pub fn driver_animation(facts: &DriverFacts, tuning: &DriverTuning) -> AnimalAni
         .is_some_and(|t| t < ticks(tuning.struck_seconds));
     if facts.hit || struck {
         return AnimalAnimation::Shake;
+    }
+    if facts.podium.is_some() {
+        return AnimalAnimation::Dance;
     }
     match facts.finish {
         Some(finish) if finish.place < tuning.cheer_places => AnimalAnimation::Dance,
@@ -234,5 +241,23 @@ mod tests {
         };
         assert_eq!(AnimalAnimation::Shake.speed(&tuning), 0.5);
         assert_eq!(AnimalAnimation::Idle.speed(&tuning), 1.0);
+    }
+
+    /// Issue #19: the three of the podium dance, even the one that finished the last race far
+    /// back (and so would only nod, then idle).
+    #[test]
+    fn the_podium_dances() {
+        let tuning = DriverTuning::default();
+        for place in 0..3 {
+            let mut facts = finished(8, 30.0);
+            assert_eq!(driver_animation(&facts, &tuning), AnimalAnimation::Idle);
+            facts.podium = Some(place);
+            assert_eq!(driver_animation(&facts, &tuning), AnimalAnimation::Dance);
+            let unraced = DriverFacts {
+                podium: Some(place),
+                ..default()
+            };
+            assert_eq!(driver_animation(&unraced, &tuning), AnimalAnimation::Dance);
+        }
     }
 }

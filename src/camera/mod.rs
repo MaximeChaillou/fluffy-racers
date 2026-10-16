@@ -106,6 +106,16 @@ impl ChaseCamera {
     }
 }
 
+/// A still view instead of the chase (issue #19: the podium of a Grand Prix): the camera stands at
+/// `eye` and looks at `look_at` with a vertical field of view of `fov_degrees`, as long as this
+/// resource is there. The chase rig waits underneath, untouched.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct FixedView {
+    pub eye: Vec3,
+    pub look_at: Vec3,
+    pub fov_degrees: f32,
+}
+
 /// A short screen shake (GD § 14: "un léger tremblement d'écran sur les chocs"), put on a kart
 /// body by what shakes it (issue #34: a paw strike or a throw received). The chase camera that
 /// follows this kart moves by [`shake_offset`]; its springs never see it, so the chase goes on
@@ -194,6 +204,7 @@ impl Plugin for CameraPlugin {
 fn chase(
     time: Res<Time>,
     tuning: Res<CameraTuning>,
+    fixed: Option<Res<FixedView>>,
     kart_tuning: Res<KartTuning>,
     rapier: ReadRapierContext,
     visuals: Query<(&Transform, &InterpolatedFrom), Without<ChaseCamera>>,
@@ -210,6 +221,13 @@ fn chase(
     let now = time.elapsed_secs();
     let context = rapier.single().ok();
     for (mut camera, mut transform, mut projection) in &mut cameras {
+        if let Some(view) = fixed.as_deref() {
+            *transform = Transform::from_translation(view.eye).looking_at(view.look_at, Vec3::Y);
+            if let Projection::Perspective(perspective) = &mut *projection {
+                perspective.fov = view.fov_degrees.to_radians();
+            }
+            continue;
+        }
         let Ok((target, source)) = visuals.get(camera.target) else {
             continue;
         };

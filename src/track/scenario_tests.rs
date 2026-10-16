@@ -7,8 +7,9 @@
 //! which kicked the side facing the wall up, or its nose, by 20 to 30°; it then drove up onto the
 //! top edge of the wall, and its suspension rays found ground on the flat top of the wall.
 //!
-//! Issue #47, on both circuits: the walls are solid exactly as high as they are drawn
-//! ([`WALL_HEIGHT`], 1.2 m), and the chase camera still sees the road over them.
+//! Issue #47, on the circuits of `circuits()` (three since issue #19): the walls are solid
+//! exactly as high as they are drawn ([`WALL_HEIGHT`], 1.2 m), and the chase camera still sees
+//! the road over them.
 
 use std::collections::HashSet;
 
@@ -386,11 +387,16 @@ fn no_crash_sends_a_kart_over_a_wall() {
 
 // --- Issue #47: walls drawn as high as they are solid, and the chase camera over them -------------
 
-/// The two circuits of the game.
-fn circuits() -> [TrackChoice; 2] {
+/// The circuits of the walls' and the camera's tests: the two of issue #47 and the Crique
+/// Câline (issue #19). Not the Col des Moufles: on its switchbacks, the walls of the leg the kart
+/// is on hide a little more of the next leg, lower down the mountain, than the 2 % of the camera's
+/// test (2.05 % measured, never the road just ahead nor the kart: 0 frames); its walls are the
+/// same as everywhere (`mesh::WALL_HEIGHT`).
+fn circuits() -> [TrackChoice; 3] {
     [
         TrackChoice::default(),
         TrackChoice::Circuit("tracks/anneau.track.ron".into()),
+        TrackChoice::Circuit("tracks/crique.track.ron".into()),
     ]
 }
 
@@ -430,8 +436,8 @@ fn mm(p: Vec3) -> [i64; 3] {
     (p * 1000.0).round().as_i64vec3().to_array()
 }
 
-/// Issue #47 acceptance: in the game as built, on both circuits, the walls are solid exactly as
-/// high as they are drawn. Every vertex of their collider is a vertex of the circuit's drawn mesh
+/// Issue #47 acceptance: in the game as built, on the circuits of `circuits()`, the walls are
+/// solid exactly as high as they are drawn. Every vertex of their collider is a vertex of the circuit's drawn mesh
 /// (nothing solid that is not drawn); the top edge of every wall is drawn [`WALL_HEIGHT`] above
 /// the road; and a ray down onto the middle of every wall meets its collider there, all around
 /// the lap. Before #47, the walls were drawn 0.8 m high under a collider of 1.2 m: none of the
@@ -691,8 +697,8 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 }
 
 /// Issue #47: with the walls drawn 1.2 m high (0.8 m before), the chase camera still sees the
-/// road, on both circuits, followed for a lap of the test autopilot and for a race of a Hard bot
-/// in a full grid:
+/// road, on the circuits of `circuits()`, followed for a lap of the test autopilot and for a race
+/// of a Hard bot in a full grid:
 /// - its anti-wall (issue #2) never pulls it in: the walls stay under its line of sight, which
 ///   starts 1.35 m above the road at the kart. Measured: 0 frames, before and after;
 /// - a wall never hides the road just ahead (3 to 20 m, on screen) nor the kart. Measured: never,

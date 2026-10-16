@@ -232,7 +232,7 @@ fn apply_player_options(options: Res<PlayerOptions>, mut layout: ResMut<Keyboard
 }
 
 /// The controls (GD § 13) with the letters of `layout`: (action, keys), for the menu.
-pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 11] {
+pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 12] {
     let [up, left, down, right] = layout.letters();
     [
         ("Accélérer", format!("Haut ou {up}")),
@@ -249,6 +249,10 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 11] {
         ),
         ("Regarder derrière", "C (tenir)".to_string()),
         ("Pilote et kart", "G".to_string()),
+        (
+            "Nouvelle course (circuit, Grand Prix, classe, miroir)",
+            "N".to_string(),
+        ),
         ("Options", "O".to_string()),
         ("En ligne (partie entre amis)", "L".to_string()),
         ("Panneau d'admin", "P".to_string()),
@@ -319,6 +323,8 @@ mod tests {
         let menus = [
             OPTIONS_KEY,
             crate::characters::SELECTION_KEY,
+            // Issue #19: the race menu.
+            crate::modes::RACE_MENU_KEY,
             crate::admin::ADMIN_PANEL_KEY,
             // Issue #7: the lobby window.
             crate::net::LOBBY_KEY,

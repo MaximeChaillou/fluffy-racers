@@ -62,7 +62,7 @@ use crate::kart::{
     Remote, StatEffects, StatsTuning, TrickTracker, bot_colors, kart_body_with_stats,
     spawn_kart_visual_with_driver,
 };
-use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer};
+use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer, RacerName};
 use crate::track::TrackLayout;
 
 /// A kart driven by the computer.
@@ -187,23 +187,32 @@ fn spawn_bots(
         (None, None) => ColorSet::default(),
     };
     let colors = bot_colors(grid.bot_count(), players);
-    for slot in grid.bot_slots() {
+    // Issue #19: a bot is its entrant (its character, parts, color, seed and name), wherever it
+    // starts: the same bot from one race of a Grand Prix to the next.
+    for (slot, entrant) in grid.bots_on_grid() {
         let Some(spawn) = layout.grid.get(slot).copied() else {
-            break;
+            continue;
         };
-        let loadout = bot_loadout(&roster, grid.seed, slot);
-        let body = commands
-            .spawn((
-                Name::new(format!("Bot {}", slot + 1)),
-                kart_body_with_stats(&kart_tuning, &stats_tuning, roster.stats(&loadout), spawn),
-                Racer::new(slot),
-                bot(tuning.grid_difficulty, bot_seed(grid.seed, slot), &tuning),
-                KartPaint(colors[slot]),
-            ))
-            .id();
+        let loadout = bot_loadout(&roster, grid.seed, entrant);
+        let mut body = commands.spawn((
+            Name::new(format!("Bot {}", entrant + 1)),
+            kart_body_with_stats(&kart_tuning, &stats_tuning, roster.stats(&loadout), spawn),
+            Racer::new(slot),
+            bot(
+                tuning.grid_difficulty,
+                bot_seed(grid.seed, entrant),
+                &tuning,
+            ),
+            KartPaint(colors[entrant]),
+        ));
+        if slot != entrant {
+            // The results name it after its entrant, not its slot (« Kart N »).
+            body.insert(RacerName(format!("Kart {}", entrant + 1)));
+        }
+        let body = body.id();
         if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
-            spawn_kart_visual_with_driver(&mut commands, visuals, body, colors[slot], driver);
+            spawn_kart_visual_with_driver(&mut commands, visuals, body, colors[entrant], driver);
         }
     }
 }
