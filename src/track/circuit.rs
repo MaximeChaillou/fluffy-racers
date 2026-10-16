@@ -1,6 +1,7 @@
 //! Loading a circuit file and building it: meshes, Rapier colliders, gameplay spots, in the colors
-//! of its biome (issue #11; its decor comes once its models are there, `dressing.rs`). Every root
-//! entity built here is `LevelScoped`: reloading the level (issue #36) removes them all.
+//! of its biome (issue #11; its decor comes once its models are there, `dressing.rs`), and its start
+//! line (issue #79, `start_line.rs`: drawn only). Every root entity built here is `LevelScoped`:
+//! reloading the level (issue #36) removes them all.
 
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext, RenderAssetUsages};
@@ -13,6 +14,7 @@ use super::biome::{Palette, Rgb};
 use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, GROUND_HEIGHT, MeshData};
+use super::start_line::StartLine;
 use super::water;
 use super::{MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
 use crate::level::LevelScoped;
@@ -139,16 +141,19 @@ pub fn build_circuit_when_loaded(
     let generated = mesh::generate(&layout.center, data, &palette);
     light_the_sky(&mut commands, &palette);
 
-    // One mesh and one material (vertex colors) for the whole circuit: a single draw call.
+    // One mesh and one material (vertex colors) for the whole circuit: a single draw call. Issue
+    // #79: the start line and its arch in it, drawn only (no collider).
     let track_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
         ..default()
     });
+    let mut drawn = generated.combined();
+    drawn.append(&StartLine::of(&layout.center).mesh(&palette, &layout.lakes));
     commands.spawn((
         LevelScoped,
         Name::new(format!("Track: {}", layout.name)),
-        Mesh3d(meshes.add(to_mesh(&generated.combined()))),
+        Mesh3d(meshes.add(to_mesh(&drawn))),
         MeshMaterial3d(track_material),
         Transform::default(),
     ));

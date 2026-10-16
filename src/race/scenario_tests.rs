@@ -65,6 +65,17 @@ fn hud_text(app: &mut App, field: HudText) -> String {
         .unwrap()
 }
 
+/// The lap counter's scale and whether it is gold (issue #79: it pops at each new lap).
+fn lap_counter(app: &mut App) -> (f32, bool) {
+    let world = app.world_mut();
+    let mut texts = world.query::<(&HudText, &UiTransform, &TextColor)>();
+    texts
+        .iter(world)
+        .find(|(f, ..)| **f == HudText::Lap)
+        .map(|(_, transform, color)| (transform.scale.x, color.0 != Color::WHITE))
+        .unwrap()
+}
+
 /// A key pressed this frame (`just_pressed`), as the window would send it.
 fn tap(app: &mut App, key_code: KeyCode, logical_key: Key) {
     let window = Entity::PLACEHOLDER;
@@ -227,6 +238,8 @@ fn the_countdown_holds_the_karts_then_go_releases_them() {
 
 /// Issue #5 acceptance: a full race is playable solo. The autopilot of #3 drives 3 laps; the
 /// laps, times and HUD are consistent; the finish banner, the results and a restart follow.
+/// Issue #79: the lap counter pops in gold as the kart crosses the line into laps 2 and 3, and
+/// "DERNIER TOUR !" shows at the start of lap 3.
 #[test]
 fn a_full_three_lap_race_then_results_and_restart() {
     let (mut app, kart) = race_app();
@@ -236,6 +249,9 @@ fn a_full_three_lap_race_then_results_and_restart() {
 
     let mut racing_ticks = 0;
     let mut lap_texts = Vec::new();
+    // For each lap text: the biggest the counter grew while it showed, and whether it was gold.
+    let mut pops: Vec<(f32, bool)> = Vec::new();
+    let mut final_lap_banner = None;
     let mut max_ticks = (150.0 * TICK_HZ) as usize;
     while race(&app).phase() != RacePhase::Finished {
         max_ticks -= 1;
@@ -251,13 +267,26 @@ fn a_full_three_lap_race_then_results_and_restart() {
         }
         let lap = hud_text(&mut app, HudText::Lap);
         if lap_texts.last() != Some(&lap) {
-            lap_texts.push(lap);
+            lap_texts.push(lap.clone());
+            pops.push((1.0, false));
+        }
+        let (scale, gold) = lap_counter(&mut app);
+        let pop = pops.last_mut().unwrap();
+        *pop = (pop.0.max(scale), pop.1 || gold);
+        if final_lap_banner.is_none() && hud_text(&mut app, HudText::Banner) == "DERNIER TOUR !" {
+            final_lap_banner = Some(lap);
         }
         // Never towed: the autopilot stays on the track.
         assert!(!tow(&app, kart).is_carrying());
     }
     let p = progress(&app, kart);
     assert_eq!(lap_texts, vec!["Tour 1/3", "Tour 2/3", "Tour 3/3"]);
+    assert_eq!(pops[0], (1.0, false), "no pop at the start");
+    for (lap, pop) in lap_texts.iter().zip(&pops).skip(1) {
+        assert!(pop.0 > 1.5 && pop.1, "{lap}: {pop:?}");
+    }
+    assert_eq!(final_lap_banner.as_deref(), Some("Tour 3/3"));
+    assert_eq!(lap_counter(&mut app), (1.0, false), "settled");
     assert!(p.finished());
     assert_eq!(p.passed, course.checkpoints_to_finish());
     assert_eq!(p.lap_times.len(), 3);

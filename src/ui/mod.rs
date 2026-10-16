@@ -1,8 +1,9 @@
 //! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, the two item
 //! slots (issue #16: hand and reserve, each item a shape and a color of its own, the roulette
 //! flashing through them, "x3" for a triple), the croquettes held (issue #14: the counter pops at
-//! each pick-up, shakes when some are lost, turns gold at 10), the chantilly's cream over the
-//! screen (issue #18), and the results screen (issue #70: live, until the race closes them).
+//! each pick-up, shakes when some are lost, turns gold at 10), the lap counter (issue #79: it pops
+//! in gold at each new lap), the chantilly's cream over the screen (issue #18), and the results
+//! screen (issue #70: live, until the race closes them).
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
@@ -50,18 +51,22 @@ pub enum HudText {
 pub struct CroquetteCounter;
 
 /// Seconds since the followed racer last picked a croquette up, and since it last lost some
-/// (they drive the counter's pop and shake).
+/// (they drive the croquette counter's pop and shake); since it started a new lap (issue #79: the
+/// lap counter's pop). One resource for the HUD's counters: a resource is an entity in Bevy 0.20,
+/// and one more archetype before the grid would change every bot race (see `STATUS.md`).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct CroquetteCounterAnimation {
+pub struct CounterAnimation {
     pub since_gain: f32,
     pub since_loss: f32,
+    pub since_lap: f32,
 }
 
-impl Default for CroquetteCounterAnimation {
+impl Default for CounterAnimation {
     fn default() -> Self {
         Self {
             since_gain: f32::INFINITY,
             since_loss: f32::INFINITY,
+            since_lap: f32::INFINITY,
         }
     }
 }
@@ -325,7 +330,7 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudShown>()
-            .init_resource::<CroquetteCounterAnimation>()
+            .init_resource::<CounterAnimation>()
             .init_resource::<ResultsShown>()
             .add_systems(
                 Update,
@@ -334,7 +339,7 @@ impl Plugin for HudPlugin {
                     update_hud,
                     update_item_slots,
                     show_cream,
-                    animate_croquette_counter,
+                    animate_counters,
                     show_results,
                     update_results,
                 )
@@ -568,7 +573,7 @@ fn update_hud(
     tuning: Res<RaceTuning>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
     mut shown: ResMut<HudShown>,
-    mut animation: ResMut<CroquetteCounterAnimation>,
+    mut animation: ResMut<CounterAnimation>,
     racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
     held: Query<&Croquettes>,
     mut texts: Query<(&HudText, &mut Text, &mut TextColor)>,
@@ -596,6 +601,10 @@ fn update_hud(
             animation.since_gain = 0.0;
         } else if values.croquettes < old.croquettes && race.started() {
             animation.since_loss = 0.0;
+        }
+        // Issue #79: the lap counter pops as the racer crosses the line into a new lap.
+        if pop::lap_pops((old.lap, old.laps), (values.lap, values.laps)) && race.started() {
+            animation.since_lap = 0.0;
         }
     }
     let changed = |field: HudText| {
@@ -742,18 +751,23 @@ fn show_cream(
     }
 }
 
-/// The croquette counter's pop (scale) and shake (offset), every frame.
-fn animate_croquette_counter(
+/// The counters' animations, every frame of them (nothing to do the rest of the time): the
+/// croquette counter's pop (scale) and shake (offset); the lap counter's pop (issue #79), which
+/// grows from its bottom left corner (it stays on screen, in the corner) and turns gold for
+/// [`pop::LAP_POP_TIME`] after a new lap.
+fn animate_counters(
     time: Res<Time>,
-    mut animation: ResMut<CroquetteCounterAnimation>,
+    mut animation: ResMut<CounterAnimation>,
     mut counters: Query<&mut UiTransform, With<CroquetteCounter>>,
+    mut laps: Query<(&HudText, &mut UiTransform, &mut TextColor), Without<CroquetteCounter>>,
 ) {
     let dt = time.delta_secs();
     if animation.since_gain.is_finite() || animation.since_loss.is_finite() {
         animation.since_gain += dt;
         animation.since_loss += dt;
         if animation.since_gain > pop::POP_TIME && animation.since_loss > pop::SHAKE_TIME {
-            *animation = CroquetteCounterAnimation::default();
+            animation.since_gain = f32::INFINITY;
+            animation.since_loss = f32::INFINITY;
         }
     }
     let wanted = UiTransform {
@@ -763,6 +777,31 @@ fn animate_croquette_counter(
     };
     for mut transform in &mut counters {
         transform.set_if_neq(wanted);
+    }
+
+    if !animation.since_lap.is_finite() {
+        return;
+    }
+    animation.since_lap += dt;
+    let popping = animation.since_lap < pop::LAP_POP_TIME;
+    if !popping {
+        animation.since_lap = f32::INFINITY;
+    }
+    let scale = pop::lap_pop_scale(animation.since_lap);
+    // Scaled about its middle, then moved by half its growth (a share of its own size): right
+    // and up.
+    let shift = 50.0 * (scale - 1.0);
+    let wanted = UiTransform {
+        scale: Vec2::splat(scale),
+        translation: Val2::percent(shift, -shift),
+        ..default()
+    };
+    let color = TextColor(if popping { RANK_COLOR } else { TEXT_COLOR });
+    for (field, mut transform, mut text_color) in &mut laps {
+        if *field == HudText::Lap {
+            transform.set_if_neq(wanted);
+            text_color.set_if_neq(color);
+        }
     }
 }
 

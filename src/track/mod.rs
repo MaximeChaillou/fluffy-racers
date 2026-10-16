@@ -1,6 +1,6 @@
 //! Tracks and terrain: circuits generated from data files (`assets/tracks/*.track.ron`,
-//! issue #3), dressed after their biome (issue #11: colors, decor of 3D models), and the flat test
-//! ground of issue #1.
+//! issue #3), dressed after their biome (issue #11: colors, decor of 3D models), with their start
+//! line and its arch (issue #79), and the flat test ground of issue #1.
 
 pub mod biome;
 pub mod circuit;
@@ -9,6 +9,7 @@ pub mod decor;
 pub mod dressing;
 pub mod layout;
 pub mod mesh;
+pub mod start_line;
 pub mod test_ground;
 pub mod water;
 
@@ -24,6 +25,7 @@ pub use circuit::{
 pub use data::{OffroadZone, PropData, TrackData};
 pub use dressing::CircuitDecor;
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
+pub use start_line::StartLine;
 pub use water::{Gap, Lake, gap_at, water_depth};
 
 /// Which track to build. Defaults to the test circuit.

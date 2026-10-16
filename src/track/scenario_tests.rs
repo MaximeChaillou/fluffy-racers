@@ -755,3 +755,176 @@ fn the_chase_camera_sees_the_road_over_the_walls() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+// --- Issue #79: the start line, drawn only -------------------------------------------------------
+
+/// Issue #79 acceptance, on every circuit of the game and its mirror, as the game builds them:
+/// the start line's band and arch are drawn with the circuit (each of their vertices is one of
+/// the circuit's mesh), and none of it is solid, so the physics does not change. A ray down each
+/// post (its middle and near its four edges), from above its top to 5 cm above the ground, meets
+/// no collider; nor do rays across the banner from post to post (near its bottom, its middle and
+/// its top, near its two faces and between them); rays down onto the band meet the road itself,
+/// [`LINE_HEIGHT`] under the band, across the road and the curbs.
+#[test]
+fn the_start_line_is_drawn_and_nothing_of_it_is_solid() {
+    use crate::track::start_line::{
+        BANNER_BOTTOM, BANNER_HEIGHT, BANNER_THICKNESS, LINE_DEPTH, LINE_HEIGHT, POST_WIDTH,
+    };
+    use crate::track::water::ground_height;
+    use crate::track::{MirrorMode, StartLine};
+
+    let runs: Vec<(TrackChoice, bool)> = crate::admin::tracks::circuits()
+        .iter()
+        .flat_map(|entry| [false, true].map(|mirror| (entry.choice(), mirror)))
+        .collect();
+    assert!(runs.len() >= 10);
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let threads: Vec<_> = runs
+            .iter()
+            .map(|(track, mirror)| {
+                scope.spawn(move || {
+                    let mut app = game_app_unloaded(track.clone(), 0);
+                    app.insert_resource(MirrorMode(*mirror));
+                    single_threaded(&mut app);
+                    wait_for_the_player(&mut app);
+                    // The circuit file loads asynchronously (ten at once here).
+                    for tries in 0.. {
+                        let world = app.world();
+                        if world.contains_resource::<Race>()
+                            && world
+                                .get_resource::<TrackLayout>()
+                                .is_some_and(|layout| layout.mirrored == *mirror)
+                        {
+                            break;
+                        }
+                        assert!(
+                            tries < 2000,
+                            "{track:?}: the circuit never came: race {}, layout {:?}",
+                            world.contains_resource::<Race>(),
+                            world.get_resource::<TrackLayout>().map(|l| l.mirrored)
+                        );
+                        app.update();
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                    }
+                    for _ in 0..3 {
+                        app.update();
+                    }
+                    let world = app.world_mut();
+                    let layout = world.resource::<TrackLayout>().clone();
+                    assert_eq!(layout.mirrored, *mirror);
+                    let name = format!("{}{}", layout.name, if *mirror { " (miroir)" } else { "" });
+                    let mut failures = Vec::new();
+
+                    // Drawn: every vertex of the line is one of the circuit's mesh.
+                    let line = StartLine::of(&layout.center);
+                    let handle = world
+                        .query::<(&Name, &Mesh3d)>()
+                        .iter(world)
+                        .find(|(name, _)| name.as_str().starts_with("Track:"))
+                        .map(|(_, mesh)| mesh.0.clone())
+                        .expect("the circuit's mesh");
+                    let drawn: HashSet<[i64; 3]> = match world
+                        .resource::<Assets<Mesh>>()
+                        .get(&handle)
+                        .unwrap()
+                        .attribute(Mesh::ATTRIBUTE_POSITION)
+                    {
+                        Some(VertexAttributeValues::Float32x3(positions)) => {
+                            positions.iter().map(|p| mm(Vec3::from_array(*p))).collect()
+                        }
+                        other => panic!("positions: {other:?}"),
+                    };
+                    let mesh = line.mesh(&Default::default(), &layout.lakes);
+                    let undrawn = mesh
+                        .positions
+                        .iter()
+                        .filter(|p| !drawn.contains(&mm(Vec3::from_array(**p))))
+                        .count();
+                    if undrawn > 0 {
+                        failures.push(format!("{name}: {undrawn} vertices of the line not drawn"));
+                    }
+
+                    // Not solid: rays against every collider of the game.
+                    let colliders: Vec<(Collider, GlobalTransform, Option<Surface>)> = world
+                        .query::<(&Collider, &GlobalTransform, Option<&Surface>)>()
+                        .iter(world)
+                        .map(|(c, t, s)| (c.clone(), *t, s.copied()))
+                        .collect();
+                    let first_hit = |from: Vec3, to: Vec3| {
+                        let (direction, length) = ((to - from).normalize(), from.distance(to));
+                        colliders
+                            .iter()
+                            .filter_map(|(collider, transform, surface)| {
+                                let (_, rotation, translation) =
+                                    transform.to_scale_rotation_translation();
+                                collider
+                                    .cast_ray(translation, rotation, from, direction, length, true)
+                                    .map(|toi| (toi, *surface))
+                            })
+                            .min_by(|a, b| a.0.total_cmp(&b.0))
+                    };
+                    let s = line.sample;
+                    let right = s.forward.cross(Vec3::Y).normalize();
+                    let back = right.cross(Vec3::Y);
+                    let top = s.position.y + line.top();
+                    for post in line.posts() {
+                        let ground = ground_height(&layout.lakes, post.xz());
+                        let edge = 0.45 * POST_WIDTH;
+                        for (a, b) in [
+                            (0.0, 0.0),
+                            (-1.0, -1.0),
+                            (-1.0, 1.0),
+                            (1.0, -1.0),
+                            (1.0, 1.0),
+                        ] {
+                            let p = post + right * a * edge + back * b * edge;
+                            let (from, to) = (p.with_y(top + 1.0), p.with_y(ground + 0.05));
+                            if let Some(hit) = first_hit(from, to) {
+                                failures.push(format!(
+                                    "{name}: a post is solid at {hit:?} under {from}"
+                                ));
+                            }
+                        }
+                    }
+                    let [left, right_post] = line.posts();
+                    for height in [0.05, BANNER_HEIGHT / 2.0, BANNER_HEIGHT - 0.05] {
+                        for along in [-0.45, 0.0, 0.45] {
+                            let shift = Vec3::Y * (BANNER_BOTTOM + height)
+                                + back * along * BANNER_THICKNESS;
+                            if let Some(hit) = first_hit(left + shift, right_post + shift) {
+                                failures.push(format!(
+                                    "{name}: the banner is solid ({hit:?}) at {height} m"
+                                ));
+                            }
+                        }
+                    }
+                    let half = line.half_width();
+                    for across in [-0.97, -0.5, 0.0, 0.5, 0.97] {
+                        for along in [-0.4, 0.0, 0.4] {
+                            let on_band = s.point(across * half, LINE_HEIGHT)
+                                + s.forward * along * LINE_DEPTH;
+                            let hit = first_hit(on_band + s.up, on_band - s.up);
+                            match hit {
+                                Some((toi, Some(Surface::Road)))
+                                    if (toi - 1.0 - LINE_HEIGHT).abs() < 0.002 => {}
+                                other => failures.push(format!(
+                                    "{name}: under the band at {on_band}: {other:?}"
+                                )),
+                            }
+                        }
+                    }
+                    failures
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
