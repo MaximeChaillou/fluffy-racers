@@ -1325,6 +1325,151 @@ fn a_boomerang_spins_out_a_kart_and_bounces_off_a_wall() {
     );
 }
 
+/// Issue #88 acceptance (Max: « il tourne avec le kart »): a boomerang-os curves to the side its
+/// thrower steers at the throw: full left, to the left, further than thrown straight (which goes
+/// left too, as in #21); full right, to the right, never left, the mirror image of full left;
+/// half right, to the right but less. The curve is fixed at the throw: steering the other way
+/// afterwards changes nothing.
+#[test]
+fn a_boomerang_curves_to_the_side_its_thrower_steers() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let home = arena.transform(kart).translation;
+    // How far it went left and right of its thrower on its way out, and its curve then.
+    let throw = |arena: &mut Arena, steer: f32, then: f32| {
+        arena.give(kart, ItemKind::Boomerang, 1);
+        arena.tap(kart, KartInput { steer, ..default() });
+        let (entity, _) = arena.boomerangs()[0];
+        let curve_of = |o: &ItemObject| match o.motion {
+            Motion::Boomerang { curve, .. } => curve,
+            _ => panic!("{o:?}"),
+        };
+        let first = curve_of(&arena.boomerangs()[0].1);
+        let (mut leftmost, mut rightmost) = (0.0f32, 0.0f32);
+        let mut ticks = 0;
+        loop {
+            let object = *arena.app.world().get::<ItemObject>(entity).unwrap();
+            if matches!(
+                object.motion,
+                Motion::Boomerang {
+                    returning: true,
+                    ..
+                }
+            ) {
+                assert_eq!(curve_of(&object), first, "fixed at the throw");
+                break;
+            }
+            leftmost = leftmost.min(object.position.x - home.x);
+            rightmost = rightmost.max(object.position.x - home.x);
+            arena.tick(&[(
+                kart,
+                KartInput {
+                    steer: then,
+                    ..default()
+                },
+            )]);
+            ticks += 1;
+            assert!(ticks < 120, "never turned back");
+        }
+        arena.until(3.0, &[], |a| {
+            a.app.world().get::<ItemObject>(entity).is_none()
+        });
+        assert!(!arena.state(kart).is_hit(), "caught");
+        (leftmost, rightmost, first)
+    };
+    let straight = throw(&mut arena, 0.0, 1.0);
+    let left = throw(&mut arena, -1.0, 1.0);
+    let right = throw(&mut arena, 1.0, -1.0);
+    let half = throw(&mut arena, 0.5, -1.0);
+    println!("straight {straight:?}, left {left:?}, right {right:?}, half right {half:?}");
+    assert!(
+        straight.0 < -3.0 && straight.1 < 0.5,
+        "straight: left (#21)"
+    );
+    assert!(
+        left.2 > 0.0 && left.0 < straight.0 - 3.0 && left.1 < 0.5,
+        "full left"
+    );
+    assert!(
+        right.2 < 0.0 && right.1 > 10.0 && right.0 > -0.5,
+        "full right"
+    );
+    assert!(
+        (left.0 + right.1).abs() < 0.5,
+        "mirror images: {left:?} {right:?}"
+    );
+    assert!(
+        half.2 < 0.0 && half.1 > 3.0 && half.1 < right.1 - 2.0 && half.0 > -0.5,
+        "half right"
+    );
+}
+
+/// Issue #88: a boomerang-os steered to the right breaks on the first kart on its curve (a spin
+/// out), and the next one on its way is not touched (Max: « il s'arrête au premier kart
+/// touché »). Thrown straight, it curves left, away from both: no hit.
+#[test]
+fn a_steered_boomerang_breaks_on_the_first_kart_on_its_curve() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let right = KartInput {
+        steer: 1.0,
+        ..default()
+    };
+    arena.give(kart, ItemKind::Boomerang, 3);
+    // Its path to the right, with nobody around: where it is 12 m and 24 m out.
+    arena.tap(kart, right);
+    let (entity, _) = arena.boomerangs()[0];
+    let (mut near, mut far) = (None, None);
+    while let Some(object) = arena.app.world().get::<ItemObject>(entity).copied() {
+        if let Motion::Boomerang {
+            travelled,
+            returning: false,
+            ..
+        } = object.motion
+        {
+            if travelled >= 12.0 && near.is_none() {
+                near = Some(object.position);
+            }
+            if travelled >= 24.0 && far.is_none() {
+                far = Some(object.position);
+            }
+        }
+        arena.tick(&[]);
+    }
+    let (near, far) = (near.unwrap(), far.unwrap());
+    assert!(near.x > 1.5 && far.x > near.x + 4.0, "{near} {far}");
+    let first = arena.parked(near.x, near.z);
+    let second = arena.parked(far.x, far.z);
+    // Straight: to its left, it misses both and comes back.
+    arena.tap(kart, KartInput::default());
+    let (entity, _) = arena.boomerangs()[0];
+    arena.until(3.0, &[], |a| {
+        a.app.world().get::<ItemObject>(entity).is_none()
+    });
+    assert!(!arena.state(first).is_hit() && !arena.state(second).is_hit());
+    assert_eq!(arena.stats(kart).hits_landed, 0);
+    // To the right: the first one spins, it breaks there; the second one is never touched.
+    arena.tap(kart, right);
+    let ticks = arena.until(1.0, &[], |a| a.state(first).is_hit());
+    assert!(ticks < 30, "{ticks}");
+    assert!(
+        matches!(
+            arena.state(first),
+            KartState::Hit {
+                reaction: HitReaction::Spin,
+                ..
+            }
+        ),
+        "{:?}",
+        arena.state(first)
+    );
+    assert!(arena.boomerangs().is_empty(), "broken on the first one");
+    arena.run(1.5, &[]);
+    assert!(!arena.state(second).is_hit());
+    assert_eq!(arena.stats(kart).hits_landed, 1);
+    assert_eq!(arena.stats(second).hits_taken, 0);
+}
+
 /// Issue #21 (GD § 8: « 8 objets autour du kart, à utiliser un par un »): a piñata comes out as
 /// its eight items turning around the kart; each press uses the one in front, as itself: the
 /// pelure dropped, the pelote rolling, the abeille flying, the bombe lobbed, the piment's boost,
@@ -1520,32 +1665,55 @@ fn the_pie_voleuse_hides_the_kart_and_steals_an_item() {
     ));
 }
 
-/// Issue #21: who a pie voleuse steals from: the closest kart ahead in the race that holds
-/// something, else the closest behind; off a race, the closest one that holds something; nobody
-/// when nobody holds anything. The way a boomerang-os comes back: it turns toward its thrower at
-/// its turn rate, straight at it once close.
+/// Issue #21, then #88 (Max: « un kart au hasard, avec une probabilité d'autant plus forte que ce
+/// kart est devant »): who a pie voleuse steals from. In a race, a racer that holds something,
+/// ahead of it or behind, where the draw falls on the weights of their places (with 5 racers and
+/// the power 2: 25, 16, the thief's 9 left out, 4, 1); never the thief, never a kart with nothing
+/// to take. Off a race, the closest one that holds something; nobody when nobody holds anything.
+/// The way a boomerang-os comes back: it turns toward its thrower at its turn rate, straight at
+/// it once close.
 #[test]
 fn the_pie_voleuse_picks_its_victim_and_the_boomerang_comes_back() {
     let [a, b, c, d, thief] = [1, 2, 3, 4, 5].map(|i| Entity::from_raw_u32(i).unwrap());
     let standings = [a, b, thief, c, d];
     let holds = |set: Vec<Entity>| move |e: Entity| set.contains(&e);
     let at = Vec3::ZERO;
-    let victim = |set: Vec<Entity>| steal_victim(thief, at, &standings, &[], holds(set));
-    assert_eq!(victim(vec![a, b, c]), Some(b), "the closest ahead");
-    assert_eq!(victim(vec![a, c]), Some(a));
-    assert_eq!(
-        victim(vec![c, d, thief]),
-        Some(c),
-        "nobody ahead: the closest behind"
-    );
-    assert_eq!(victim(vec![thief]), None);
+    let victim = |set: Vec<Entity>, unit: f32| {
+        steal_victim(thief, at, &standings, &[], holds(set), unit, 2.0)
+    };
+    // a, b and c hold something: 25 + 16 + 4 = 45.
+    for (unit, expected) in [
+        (0.0, a),
+        (24.9 / 45.0, a),
+        (25.1 / 45.0, b),
+        (40.9 / 45.0, b),
+        (41.1 / 45.0, c),
+        (0.999_999, c),
+    ] {
+        assert_eq!(victim(vec![a, b, c], unit), Some(expected), "{unit}");
+    }
+    // Only behind it: c (4) and d (1).
+    assert_eq!(victim(vec![c, d, thief], 0.79), Some(c));
+    assert_eq!(victim(vec![c, d, thief], 0.81), Some(d));
+    // Nothing to take: nobody, whatever the draw.
+    for unit in [0.0, 0.5, 0.999] {
+        assert_eq!(victim(vec![thief], unit), None);
+        assert_eq!(victim(vec![], unit), None);
+    }
+    // The weights: the leader's N^k down to 1 for the last one; 0 makes them all alike.
+    assert_eq!(steal_weight(1, 12, 2.0), 144.0);
+    assert_eq!(steal_weight(2, 12, 2.0), 121.0);
+    assert_eq!(steal_weight(12, 12, 2.0), 1.0);
+    assert_eq!(steal_weight(1, 12, 1.0), 12.0);
+    assert_eq!(steal_weight(1, 12, 0.0), steal_weight(12, 12, 0.0));
     let positions = [
         (a, Vec3::new(30.0, 0.0, 0.0)),
         (b, Vec3::new(0.0, 0.0, -8.0)),
         (c, Vec3::new(-5.0, 0.0, 0.0)),
         (thief, Vec3::ZERO),
     ];
-    let off_race = |set: Vec<Entity>| steal_victim(thief, at, &[], &positions, holds(set));
+    let off_race =
+        |set: Vec<Entity>| steal_victim(thief, at, &[], &positions, holds(set), 0.5, 2.0);
     assert_eq!(
         off_race(vec![a, b, c, thief]),
         Some(c),
@@ -1563,6 +1731,89 @@ fn the_pie_voleuse_picks_its_victim_and_the_boomerang_comes_back() {
     // Close: straight at it.
     let close = boomerang_heading(Vec3::NEG_Z, Vec3::new(3.0, 1.0, 4.0), dt, 6.0, 8.0);
     assert!((close - Vec3::new(0.6, 0.0, 0.8)).length() < 1e-5);
+}
+
+/// Issue #88 acceptance (statistical): 12 racers, the thief 7th, the 3rd and the 10th with
+/// nothing to take. Over 10 000 thefts drawn as the game draws them (`steal_unit`: the race
+/// seed, the thief's grid slot, its items used), each racer is robbed as often as its weight says
+/// (`(N - rank + 1)^k`, the default power), within 4 standard deviations; the leader the most of
+/// all; never the thief, never a kart without an item. With the power 0, every holder alike.
+#[test]
+fn the_pie_voleuse_robs_the_karts_ahead_most_often() {
+    let tuning = ItemTuning::default();
+    let karts: Vec<Entity> = (1..=12).map(|i| Entity::from_raw_u32(i).unwrap()).collect();
+    let thief = karts[6];
+    let empty = [karts[2], karts[9]];
+    let holds = |e: Entity| e != thief && !empty.contains(&e);
+    const DRAWS: u32 = 10_000;
+    for power in [tuning.pie_rank_power, 1.0, 0.0] {
+        let mut robbed = [0u32; 12];
+        for number in 0..DRAWS {
+            let unit = steal_unit(0xbeef, 6, number);
+            let victim = steal_victim(thief, Vec3::ZERO, &karts, &[], holds, unit, power)
+                .expect("someone holds something");
+            robbed[karts.iter().position(|e| *e == victim).unwrap()] += 1;
+        }
+        let weight = |i: usize| {
+            if holds(karts[i]) {
+                steal_weight(i + 1, karts.len(), power)
+            } else {
+                0.0
+            }
+        };
+        let total: f32 = (0..12).map(weight).sum();
+        for (i, count) in robbed.iter().enumerate() {
+            let p = weight(i) / total;
+            let expected = DRAWS as f32 * p;
+            let sigma = (DRAWS as f32 * p * (1.0 - p)).sqrt();
+            assert!(
+                (*count as f32 - expected).abs() <= 4.0 * sigma.max(1.0),
+                "power {power}, rank {}: {count} against {expected:.0} ± {sigma:.0}: {robbed:?}",
+                i + 1
+            );
+            if !holds(karts[i]) {
+                assert_eq!(*count, 0, "power {power}, rank {}: {robbed:?}", i + 1);
+            }
+        }
+        if power > 0.0 {
+            let most = robbed.iter().max().unwrap();
+            assert_eq!(robbed[0], *most, "the leader the most: {robbed:?}");
+            assert!(
+                robbed[0] > robbed[1] && robbed[1] > robbed[11],
+                "{robbed:?}"
+            );
+        }
+        println!("power {power}: {robbed:?}");
+    }
+}
+
+/// Issue #88: the curve of a boomerang-os from its thrower's steering: to the side it steers, as
+/// much as it steers (the full curve at full lock), and the default one (to its left) thrown
+/// straight or with a light touch.
+#[test]
+fn a_boomerang_curves_with_the_steering() {
+    let t = ItemTuning::default();
+    assert_eq!(
+        boomerang_curve(-1.0, &t),
+        t.boomerang_steer_curve,
+        "full left"
+    );
+    assert_eq!(
+        boomerang_curve(1.0, &t),
+        -t.boomerang_steer_curve,
+        "full right"
+    );
+    assert_eq!(boomerang_curve(0.5, &t), -0.5 * t.boomerang_steer_curve);
+    assert_eq!(boomerang_curve(-0.5, &t), 0.5 * t.boomerang_steer_curve);
+    assert_eq!(boomerang_curve(2.0, &t), -t.boomerang_steer_curve);
+    for straight in [0.0, 0.1, -0.1, f32::NAN] {
+        assert_eq!(
+            boomerang_curve(straight, &t),
+            t.boomerang_curve,
+            "{straight}"
+        );
+    }
+    assert!(t.boomerang_curve > 0.0, "thrown straight: to its left");
 }
 
 // --- The whole game -------------------------------------------------------------------------

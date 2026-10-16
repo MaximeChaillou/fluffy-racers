@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
 use super::race_tests::{
-    ANA, BOB, Room, assert_same_progress, bots_drive_the_players, common_tick, lobby, player_of,
-    progress_by_slot, seated, standings, start_race,
+    ANA, BOB, CYD, Room, assert_same_progress, bots_drive_the_players, common_tick, lobby,
+    player_of, progress_by_slot, seated, standings, start_race,
 };
 use super::*;
 use crate::bots::RacingLine;
@@ -17,7 +17,7 @@ use crate::croquettes::{Croquettes, LooseCroquette, TrackCroquette};
 use crate::interpolation::PhysicsPose;
 use crate::items::{
     ItemBox, ItemKind, ItemObject, ItemSlots, ItemStats, ItemTable, ItemTuning, Motion,
-    OnlineItemTable, PillowFlight, Slot, deflate_time,
+    OnlineItemTable, PillowFlight, Slot, deflate_time, steal_unit, steal_victim,
 };
 use crate::kart::{
     HitReaction, Invincibility, ItemEffects, Kart, KartInput, KartState, PlayerKart,
@@ -1971,4 +1971,246 @@ fn a_race_with_the_items_of_phase_three_ends_the_same_for_everyone() {
     }
     let (ana, bob) = (room.view(ANA), room.view(BOB));
     assert_same_story(ana, bob);
+}
+
+// --- Issue #88: the pie voleuse's draw, the boomerang-os's curve --------------------------------
+
+/// `key`'s steering, for the next frames.
+fn steer(room: &mut Room, key: PeerKey, steer: f32) {
+    let app = room.app(key);
+    let kart = player_of(app);
+    app.world_mut().get_mut::<KartInput>(kart).unwrap().steer = steer;
+}
+
+/// Issue #88 acceptance (in memory): Ana throws a boomerang-os with her wheels to the right, then
+/// straight. Its curve goes with it (her steering at the throw, in its `ItemOut`): it curves to
+/// her right on both screens, the same path tick by tick on its way out, and comes back to her.
+#[test]
+fn a_steered_boomerang_flies_the_same_curve_on_every_screen() {
+    let mut room = racing();
+    let ana = pose(&room, ANA);
+    // Bob far behind, out of its way.
+    place(
+        &mut room,
+        BOB,
+        Transform {
+            translation: ana.translation - *ana.forward() * 60.0,
+            ..ana
+        },
+    );
+    for _ in 0..30 {
+        room.frame();
+    }
+    let ana = pose(&room, ANA);
+    let full = tuning(&room).boomerang_steer_curve;
+    give(&mut room, ANA, ItemKind::Boomerang, 3);
+    steer(&mut room, ANA, 1.0);
+    use_item(&mut room, ANA);
+    steer(&mut room, ANA, 0.0);
+    // Where it is on both screens, and how it flies: (screen, id, common tick, where, out, curve).
+    let mut seen: Vec<(PeerKey, ItemId, u32, Vec3, bool, f32)> = Vec::new();
+    for _ in 0..240 {
+        for key in [ANA, BOB] {
+            let app = room.view(key);
+            let tick = common_tick(app);
+            for (id, object) in boomerangs(app) {
+                if let Motion::Boomerang {
+                    returning, curve, ..
+                } = object.motion
+                {
+                    seen.push((key, id, tick, object.position, !returning, curve));
+                }
+            }
+        }
+        if [ANA, BOB]
+            .iter()
+            .all(|key| boomerangs(room.view(*key)).is_empty())
+            && seen.iter().any(|(key, ..)| *key == BOB)
+        {
+            break;
+        }
+        room.frame();
+    }
+    for key in [ANA, BOB] {
+        assert!(
+            boomerangs(room.view(key)).is_empty(),
+            "{key:?}: never came back"
+        );
+        let mine: Vec<_> = seen.iter().filter(|(k, ..)| *k == key).collect();
+        assert!(!mine.is_empty(), "{key:?}");
+        assert!(
+            mine.iter().all(|(.., curve)| (*curve + full).abs() < 1e-6),
+            "{key:?}: its curve, full right"
+        );
+        let lateral = |at: &Vec3| (*at - ana.translation).dot(*ana.right());
+        let out = mine.iter().filter(|(.., flying_out, _)| *flying_out);
+        let (most, least) = out.fold((f32::MIN, f32::MAX), |(most, least), (.., at, _, _)| {
+            (most.max(lateral(at)), least.min(lateral(at)))
+        });
+        println!("{key:?}: {most:.2} m to her right at most, {least:.2} at least");
+        assert!(most > 2.0 && least > -0.5, "{key:?}: to her right");
+    }
+    // The same boomerang at the same place on both screens, tick by tick, on its way out.
+    let mut compared = 0;
+    let mut worst = 0.0f32;
+    for (_, id, tick, at, out, _) in seen.iter().filter(|(key, ..)| *key == BOB) {
+        if !out {
+            continue;
+        }
+        if let Some((.., ana_at, _, _)) = seen
+            .iter()
+            .find(|(key, i, t, _, o, _)| *key == ANA && i == id && t == tick && *o)
+        {
+            compared += 1;
+            worst = worst.max(at.distance(*ana_at));
+        }
+    }
+    println!(
+        "the boomerang on both screens: {compared} ticks compared, {worst:.4} m apart at worst"
+    );
+    assert!(compared >= 10, "{compared}");
+    assert!(worst < 0.01, "{worst}");
+    assert!(!state(&room, ANA).is_hit() && !state(&room, BOB).is_hit());
+}
+
+/// The network id of a kart of a game (ours, or another peer's).
+fn kart_id(app: &App, entity: Entity) -> KartId {
+    let world = app.world();
+    world
+        .get::<NetKart>(entity)
+        .map(|kart| kart.0)
+        .or_else(|| world.get::<RemoteKartProxy>(entity).map(|proxy| proxy.kart))
+        .expect("a kart of the race")
+}
+
+/// Issue #88 acceptance (in memory): three players; Ana and Cyd hold an item, Bob uses a pie
+/// voleuse, three times. Each time Bob's game draws the victim on its own ranking, exactly as
+/// solo (`steal_victim`, from his race seed, his grid slot and his items used), and asks the
+/// victim's game, which gives up its item (the victim decides): the same theft in the three
+/// logs, the victim's slot empty on its own screen, the other one's untouched, the item ready in
+/// Bob's slot.
+#[test]
+fn a_pie_voleuse_draws_its_victim_on_its_thrower_screen() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob"), (CYD, "Cyd")]);
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    for key in [ANA, BOB, CYD] {
+        let app = room.app(key);
+        let kart = player_of(app);
+        app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+    }
+    // Ana 30 m ahead of Bob, Cyd 15 m: Bob last.
+    let bob = pose(&room, BOB);
+    for (key, ahead) in [(ANA, 30.0), (CYD, 15.0)] {
+        place(
+            &mut room,
+            key,
+            Transform {
+                translation: bob.translation + *bob.forward() * ahead,
+                ..bob
+            },
+        );
+    }
+    place(&mut room, BOB, bob);
+    for _ in 0..30 {
+        room.frame();
+    }
+    let power = tuning(&room).pie_rank_power;
+    let (ana_id, bob_id, cyd_id) = (
+        id_of(room.view(ANA)),
+        id_of(room.view(BOB)),
+        id_of(room.view(CYD)),
+    );
+    let seed = room
+        .view(BOB)
+        .world()
+        .resource::<crate::race::RaceGrid>()
+        .seed;
+    let bob_slot = {
+        let app = room.view(BOB);
+        app.world().get::<Racer>(player_of(app)).unwrap().grid_slot as u64
+    };
+    let proxies = |app: &App| -> Vec<Entity> {
+        let sync = app.world().resource::<KartSync>();
+        [ANA, CYD]
+            .iter()
+            .filter_map(|key| sync.remote(*key).and_then(|remote| remote.proxy))
+            .collect()
+    };
+    let mut robbed = Vec::new();
+    for theft in 0..3 {
+        give(&mut room, ANA, ItemKind::Bombe, 1);
+        give(&mut room, CYD, ItemKind::Piment, 3);
+        room.until(1.0, "their items in their states on Bob's screen", |app| {
+            id_of(app) != bob_id || {
+                let holding = proxies(app);
+                holding.len() == 2
+                    && holding.iter().all(|proxy| {
+                        app.world()
+                            .get::<ItemSlots>(*proxy)
+                            .is_some_and(|slots| slots.stealable().is_some())
+                    })
+            }
+        });
+        // What Bob's game draws, from what it shows: his ranking, the karts that hold something.
+        let expected = {
+            let app = room.view(BOB);
+            let world = app.world();
+            let me = player_of(app);
+            let standings = world.resource::<Race>().standings.clone();
+            assert_eq!(standings.len(), 3);
+            assert_eq!(standings.last(), Some(&me), "Bob last");
+            let holding = proxies(app);
+            let used = world.get::<ItemStats>(me).unwrap().used + 1;
+            let unit = steal_unit(seed, bob_slot, used);
+            let victim = steal_victim(
+                me,
+                Vec3::ZERO,
+                &standings,
+                &[],
+                |e| holding.contains(&e),
+                unit,
+                power,
+            )
+            .expect("both hold something");
+            kart_id(app, victim)
+        };
+        give(&mut room, BOB, ItemKind::PieVoleuse, 1);
+        use_item(&mut room, BOB);
+        room.until(1.0, "the theft told", |app| {
+            items(app).log.steals.len() == theft + 1
+        });
+        for _ in 0..5 {
+            room.frame();
+        }
+        let told = items(room.view(BOB)).log.steals[theft];
+        assert_eq!((told.0, told.1), (bob_id, expected), "Bob's draw");
+        let (victim, other, taken, left) = if expected == ana_id {
+            (ANA, CYD, (ItemKind::Bombe, 1), (ItemKind::Piment, 3))
+        } else {
+            assert_eq!(expected, cyd_id);
+            (CYD, ANA, (ItemKind::Piment, 3), (ItemKind::Bombe, 1))
+        };
+        assert_eq!((told.2, told.3), taken);
+        assert_eq!(
+            slots(&room, victim).hand,
+            Slot::Empty,
+            "{victim:?} gave it up"
+        );
+        assert_eq!(
+            slots(&room, other).hand.item(),
+            Some(left),
+            "{other:?} kept it"
+        );
+        assert_eq!(slots(&room, BOB).hand.item(), Some(taken), "Bob got it");
+        robbed.push(victim);
+    }
+    println!("robbed: {robbed:?}");
+    for key in [ANA, CYD] {
+        assert_eq!(
+            items(room.view(key)).log.steals,
+            items(room.view(BOB)).log.steals,
+            "{key:?}"
+        );
+    }
 }

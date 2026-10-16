@@ -29,13 +29,15 @@
 //!     steals from behind);
 //!   - **piñata**: out at once, then one press about every second (the item in front goes);
 //!   - **boomerang-os**: like a pelote: at a kart in its sights, backwards at a kart close
-//!     behind, ahead anyway after a while (each throw once the last one is back).
+//!     behind, ahead anyway after a while (each throw once the last one is back). Issue #88: it
+//!     steers toward its target at the throw ([`boomerang_aim`]): the boomerang curves with the
+//!     steering.
 //!
 //! The bots also go for the item boxes a little (`driver.rs`, `Senses::item_box`).
 
 use super::rng::BotRng;
 use super::tuning::{BotSkill, BotTuning};
-use crate::items::ItemKind;
+use crate::items::{ItemKind, ItemTuning, boomerang_curve};
 
 /// Mixed into a bot's seed for its item draws: apart from its driving draws.
 const ITEM_SEED: u64 = 0x17E3_5EED_0016;
@@ -130,6 +132,45 @@ fn in_sights(ahead: Option<(f32, f32)>, cone: f32) -> bool {
 /// Whether a kart follows close behind, right in its wake.
 fn followed_close(behind: Option<(f32, f32)>) -> bool {
     behind.is_some_and(|(_, angle)| angle.abs() <= 0.35)
+}
+
+/// The steering a bot throws its boomerang-os with (issue #88: « ils braquent vers leur
+/// cible »): the boomerang curves with it (`items::boomerang_curve`), so the bot steers for the
+/// arc that meets the kart `ahead` (distance, angle off its heading, right positive) where that
+/// kart will be once the boomerang catches up with it, as if it kept going at the bot's own
+/// `speed` along the heading (no further than the boomerang's range). The steering gives no curve
+/// below a light touch (the default one), so a kart dead ahead gets the lightest curve that
+/// still counts, or the default one when it is closer.
+pub fn boomerang_aim(ahead: (f32, f32), speed: f32, tuning: &ItemTuning) -> f32 {
+    let (distance, angle) = ahead;
+    let v = tuning.boomerang_speed.max(1.0);
+    let side = distance * angle.sin();
+    let along = (distance * angle.cos()).max(0.0);
+    // It catches up at `v - speed` (at least a third of its speed: a kart in a boost).
+    let closing = (v - speed.max(0.0)).max(v / 3.0);
+    let meet = (along * v / closing)
+        .min(tuning.boomerang_range)
+        .max(along.min(1.0));
+    // The circle tangent to the heading through (side, meet): its curvature, right positive.
+    let curvature = 2.0 * side / (side * side + meet * meet).max(1e-3);
+    let wanted = -curvature * v;
+    let full = tuning.boomerang_steer_curve.max(1e-3);
+    let steer = (-wanted / full).clamp(-1.0, 1.0);
+    if steer.abs() >= tuning.boomerang_straight_steer {
+        return steer;
+    }
+    // Under the light touch: the lightest curve on its side, or the default one if closer.
+    let light = if steer >= 0.0 {
+        tuning.boomerang_straight_steer
+    } else {
+        -tuning.boomerang_straight_steer
+    };
+    let error = |steer: f32| (boomerang_curve(steer, tuning) - wanted).abs();
+    if error(0.0) < error(light) {
+        0.0
+    } else {
+        light
+    }
 }
 
 /// One tick of the bot's item button.
@@ -416,6 +457,48 @@ mod tests {
         boomerang.ahead = None;
         boomerang.behind = Some((5.0, 0.1));
         assert_eq!(press(&boomerang), Some(back));
+    }
+
+    /// Issue #88: a bot steers its boomerang-os toward its target at the throw: a kart ahead on
+    /// its right, to the right; on its left, to the left; further to the side, more (up to full
+    /// lock); dead ahead, the lightest curve that counts. The arc it gets passes close to where
+    /// the target will be, much closer than the default curve.
+    #[test]
+    fn bots_steer_their_boomerang_toward_their_target() {
+        let t = ItemTuning::default();
+        let speed = 25.0;
+        let right = boomerang_aim((12.0, 0.15), speed, &t);
+        let left = boomerang_aim((12.0, -0.15), speed, &t);
+        assert!(right >= t.boomerang_straight_steer, "{right}");
+        assert!((left + right).abs() < 1e-5, "{left} {right}");
+        let wide = boomerang_aim((12.0, 0.4), speed, &t);
+        assert!(wide > right, "{wide} {right}");
+        assert_eq!(boomerang_aim((6.0, 1.2), speed, &t), 1.0, "full lock");
+        let ahead = boomerang_aim((15.0, 0.0), speed, &t);
+        assert_eq!(ahead.abs(), t.boomerang_straight_steer, "{ahead}");
+        // Where the arc passes, against where the target will be (a slower kart: within range).
+        for (distance, angle) in [(10.0f32, 0.2f32), (8.0, -0.3), (12.0, 0.1)] {
+            let speed = 20.0;
+            let v = t.boomerang_speed;
+            let along = distance * angle.cos();
+            let meet = (along * v / (v - speed)).min(t.boomerang_range);
+            let side = distance * angle.sin();
+            // The lateral offset of an arc of yaw rate `curve` (left positive) after `meet` m.
+            let offset = |curve: f32| {
+                let radius = v / curve.abs().max(1e-6);
+                let swept = meet / radius;
+                -curve.signum() * radius * (1.0 - swept.cos())
+            };
+            let aimed = offset(boomerang_curve(
+                boomerang_aim((distance, angle), speed, &t),
+                &t,
+            ));
+            let straight = offset(t.boomerang_curve);
+            assert!(
+                (aimed - side).abs() < 1.0 && (aimed - side).abs() < (straight - side).abs(),
+                "{distance} m, {angle} rad: aimed {aimed}, straight {straight}, target {side}"
+            );
+        }
     }
 
     /// Issue #18: a piment doré on a straight, then a boost after the other while its window is
