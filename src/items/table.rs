@@ -2,9 +2,9 @@
 //! Unit-tested.
 //!
 //! - [`ItemKind`]: the items a kart can hold and use: those of phase 1 (pelure, pelote de laine,
-//!   abeille, piment, croquette dorée, issue #16) and of phase 2 (issue #18: piment doré, bombe à
+//!   abeille, piment, croquette dorée, issue #16), of phase 2 (issue #18: piment doré, bombe à
 //!   confettis, chantilly, super câlin, fusée à confettis, dégonflage, oreiller géant,
-//!   klaxon-canard).
+//!   klaxon-canard) and of phase 3 (issue #21: pie voleuse, piñata, boomerang-os).
 //! - [`Prize`]: what a box can give, as written in the distribution table: an item, alone or by
 //!   three (`PelureX3`...).
 //! - [`ItemTable`]: the distribution by distance to the leader, read from `assets/data/items.ron`
@@ -22,7 +22,7 @@ use serde::Deserialize;
 /// The distribution table of the game (GD § 8), compiled into the game.
 pub const ITEMS_RON: &str = include_str!("../../assets/data/items.ron");
 
-/// An item a kart can hold, use, throw or drop (GD § 8, phases 1 and 2).
+/// An item a kart can hold, use, throw or drop (GD § 8, phases 1 to 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ItemKind {
     /// Trap on the ground: spin out. Dragged behind as a shield.
@@ -58,10 +58,19 @@ pub enum ItemKind {
     /// Klaxon-canard (issue #18): a shock wave around the kart that destroys the items close by,
     /// the oreiller géant included.
     KlaxonCanard,
+    /// Pie voleuse (issue #21): about 3 s invisible (items go through it, nothing aims at it),
+    /// and it steals the item of the closest kart ahead in the race that holds one.
+    PieVoleuse,
+    /// Piñata (issue #21): eight items turn around the kart (pelure, pelote, abeille, bombe,
+    /// piment, chantilly, super câlin, croquette dorée), used one at a time: the one in front.
+    Pinata,
+    /// Boomerang-os (issue #21): thrown, it curves out and comes back to its thrower; three
+    /// throws, the next one once it is back (or broken).
+    Boomerang,
 }
 
 impl ItemKind {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::Pelure,
         Self::Pelote,
         Self::Abeille,
@@ -75,6 +84,9 @@ impl ItemKind {
         Self::Degonflage,
         Self::OreillerGeant,
         Self::KlaxonCanard,
+        Self::PieVoleuse,
+        Self::Pinata,
+        Self::Boomerang,
     ];
 
     /// Held out behind the kart while the item button is held (GD § 8: pelure, pelote).
@@ -86,7 +98,22 @@ impl ItemKind {
     pub fn is_object(self) -> bool {
         matches!(
             self,
-            Self::Pelure | Self::Pelote | Self::Abeille | Self::Bombe | Self::OreillerGeant
+            Self::Pelure
+                | Self::Pelote
+                | Self::Abeille
+                | Self::Bombe
+                | Self::OreillerGeant
+                | Self::Boomerang
+        )
+    }
+
+    /// Several of it come out around the kart at the first press, then go one press at a time:
+    /// an "x3" of pelures, pelotes or abeilles, the piñata's eight (issue #21). Not the
+    /// boomerang's three throws, nor three piments.
+    pub fn deploys(self) -> bool {
+        matches!(
+            self,
+            Self::Pelure | Self::Pelote | Self::Abeille | Self::Pinata
         )
     }
 
@@ -106,6 +133,9 @@ impl ItemKind {
             Self::Degonflage => "Degonflage",
             Self::OreillerGeant => "Oreiller geant",
             Self::KlaxonCanard => "Klaxon-canard",
+            Self::PieVoleuse => "Pie voleuse",
+            Self::Pinata => "Pinata",
+            Self::Boomerang => "Boomerang-os",
         }
     }
 
@@ -125,13 +155,17 @@ impl ItemKind {
             Self::Degonflage => "Dégonflage",
             Self::OreillerGeant => "Oreiller géant",
             Self::KlaxonCanard => "Klaxon-canard",
+            Self::PieVoleuse => "Pie voleuse",
+            Self::Pinata => "Piñata",
+            Self::Boomerang => "Boomerang-os",
         }
     }
 
     /// It plays online: what it does reaches the other peers. Since issue #61, every item does
     /// (the chantilly, the super câlin, the fusée, the dégonflage and the oreiller géant came
-    /// last). An item that would not (one of phase 3 before its network part) says so here: the
-    /// online table (`ItemTable::online`) leaves it out, its weight given to the rest of its row.
+    /// last), and those of phase 3 with their network part (issue #21). An item that would not
+    /// says so here: the online table (`ItemTable::online`) leaves it out, its weight given to
+    /// the rest of its row.
     pub fn online(self) -> bool {
         true
     }
@@ -158,10 +192,15 @@ pub enum Prize {
     Degonflage,
     OreillerGeant,
     KlaxonCanard,
+    // --- Phase 3 (GD § 8, issue #21).
+    PieVoleuse,
+    Pinata,
+    /// Its three throws (one item, `count` 3).
+    Boomerang,
 }
 
 impl Prize {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Prize::Pelure,
         Prize::PelureX3,
         Prize::Pelote,
@@ -179,9 +218,13 @@ impl Prize {
         Prize::Degonflage,
         Prize::OreillerGeant,
         Prize::KlaxonCanard,
+        Prize::PieVoleuse,
+        Prize::Pinata,
+        Prize::Boomerang,
     ];
 
-    /// The item and how many of it (every prize of the table is in the game since issue #18).
+    /// The item and how many of it (every prize of the table is in the game since issue #18; the
+    /// piñata comes with its eight items, the boomerang-os with its three throws).
     pub fn item(self) -> Option<(ItemKind, u8)> {
         Some(match self {
             Prize::Pelure => (ItemKind::Pelure, 1),
@@ -201,6 +244,9 @@ impl Prize {
             Prize::Degonflage => (ItemKind::Degonflage, 1),
             Prize::OreillerGeant => (ItemKind::OreillerGeant, 1),
             Prize::KlaxonCanard => (ItemKind::KlaxonCanard, 1),
+            Prize::PieVoleuse => (ItemKind::PieVoleuse, 1),
+            Prize::Pinata => (ItemKind::Pinata, PINATA_ITEMS.len() as u8),
+            Prize::Boomerang => (ItemKind::Boomerang, BOOMERANG_THROWS),
         })
     }
 
@@ -213,15 +259,36 @@ impl Prize {
         self.item().is_some_and(|(item, _)| item.online())
     }
 
-    /// Its name in the admin panel ("x3" for a triple).
+    /// Its name in the admin panel ("x3" for a triple; the piñata and the boomerang-os by their
+    /// name alone).
     pub fn name(self) -> String {
         match self.item() {
-            Some((item, count)) if count > 1 => format!("{} x{count}", item.name()),
+            Some((item, count))
+                if count > 1 && !matches!(item, ItemKind::Pinata | ItemKind::Boomerang) =>
+            {
+                format!("{} x{count}", item.name())
+            }
             Some((item, _)) => item.name().to_string(),
             None => format!("{self:?}"),
         }
     }
 }
+
+/// The piñata's eight items (issue #21, GD § 8: « 8 objets autour du kart »), in their places
+/// around the kart: the `k`-th turns at `k` eighths of a turn. Each one is used as itself.
+pub const PINATA_ITEMS: [ItemKind; 8] = [
+    ItemKind::Pelure,
+    ItemKind::Pelote,
+    ItemKind::Abeille,
+    ItemKind::Bombe,
+    ItemKind::Piment,
+    ItemKind::Chantilly,
+    ItemKind::SuperCalin,
+    ItemKind::CroquetteDoree,
+];
+
+/// The boomerang-os's throws (issue #21, GD § 8: « utilisable 3 fois »).
+pub const BOOMERANG_THROWS: u8 = 3;
 
 /// A row of the table file: from this distance to the leader on, these prizes with these
 /// weights.
@@ -533,6 +600,38 @@ mod tests {
         }
     }
 
+    /// Issue #21: the items of phase 3 are in the table, where their equivalents of MK8DX are:
+    /// the pie voleuse and the boomerang-os in the middle of the pack, the piñata far behind;
+    /// none for the leader. Each prize has its own name in the admin panel (the boomerang-os is
+    /// its three throws, the piñata its eight items).
+    #[test]
+    fn the_items_of_phase_three_are_in_the_table() {
+        let table = ItemTable::embedded();
+        let share = |gap: f32, prize: Prize| table.row(gap).probability(prize);
+        for prize in [Prize::PieVoleuse, Prize::Pinata, Prize::Boomerang] {
+            assert_eq!(share(0.0, prize), 0.0, "{prize:?}: not for the leader");
+        }
+        assert!(share(20.0, Prize::Boomerang) > 0.0 && share(60.0, Prize::Boomerang) > 0.0);
+        assert!(share(20.0, Prize::PieVoleuse) > 0.0 && share(200.0, Prize::PieVoleuse) > 0.0);
+        assert_eq!(share(20.0, Prize::Pinata), 0.0);
+        assert!(share(300.0, Prize::Pinata) > share(60.0, Prize::Pinata));
+        assert_eq!(
+            Prize::Pinata.item(),
+            Some((ItemKind::Pinata, PINATA_ITEMS.len() as u8))
+        );
+        assert_eq!(Prize::Boomerang.item(), Some((ItemKind::Boomerang, 3)));
+        assert_eq!(Prize::Pinata.name(), "Piñata");
+        assert_eq!(Prize::Boomerang.name(), "Boomerang-os");
+        assert_eq!(Prize::PeloteX3.name(), "Pelote de laine x3");
+        let names: Vec<String> = Prize::ALL.iter().map(|p| p.name()).collect();
+        for (i, name) in names.iter().enumerate() {
+            assert!(!names[i + 1..].contains(name), "{name} twice");
+        }
+        assert!(ItemKind::Boomerang.is_object() && !ItemKind::Boomerang.deploys());
+        assert!(ItemKind::Pinata.deploys() && !ItemKind::Pinata.is_object());
+        assert!(!ItemKind::PieVoleuse.is_object());
+    }
+
     /// The five items of phase 2 that did not play online until issue #61 (chantilly, super
     /// câlin, fusée, dégonflage, oreiller géant), left out by hand: the table without them.
     fn without_the_five() -> ItemTable {
@@ -554,8 +653,10 @@ mod tests {
     /// table, each prize with the game design's exact share. The redistribution is still checked,
     /// the same way as when the five items of phase 2 that came last were left out of the online
     /// table (#18): the leader's row keeps its 100 (pelure 30, pelote 25, croquette dorée 20,
-    /// pelure x3 10, klaxon-canard 10, bombe 5); 120 to 250 m: piment x3 25, abeille x3 20 and
-    /// piment doré 15, out of 60; beyond 250 m: piment doré 20 and piment x3 15, out of 35.
+    /// pelure x3 10, klaxon-canard 10, bombe 5); with the weights of issue #21 (the items of phase
+    /// 3 in the table): 15 to 50 m, 95 (abeille 20); 50 to 120 m, 90; 120 to 250 m: piment x3 20,
+    /// abeille x3 15, piment doré 15, piñata 10 and pie voleuse 5, out of 65; beyond 250 m:
+    /// piment doré 20, piment x3 10 and piñata 10, out of 40.
     #[test]
     fn items_left_out_give_their_weight_to_the_others_of_the_row() {
         let online = ItemTable::online();
@@ -577,21 +678,26 @@ mod tests {
         assert!(close(leader.probability(Prize::Bombe), 0.05));
         let second = table.row(20.0);
         assert_eq!(second.total(), 95);
-        assert!(close(second.probability(Prize::Abeille), 25.0 / 95.0));
+        assert!(close(second.probability(Prize::Abeille), 20.0 / 95.0));
         assert_eq!(second.probability(Prize::Chantilly), 0.0);
-        assert_eq!(table.row(60.0).total(), 85);
+        assert_eq!(table.row(60.0).total(), 90);
         let far = table.row(200.0);
-        assert_eq!(far.total(), 60);
-        assert!(close(far.probability(Prize::PimentX3), 25.0 / 60.0));
-        assert!(close(far.probability(Prize::AbeilleX3), 20.0 / 60.0));
-        assert!(close(far.probability(Prize::PimentDore), 15.0 / 60.0));
+        assert_eq!(far.total(), 65);
+        assert!(close(far.probability(Prize::PimentX3), 20.0 / 65.0));
+        assert!(close(far.probability(Prize::AbeilleX3), 15.0 / 65.0));
+        assert!(close(far.probability(Prize::PimentDore), 15.0 / 65.0));
+        assert!(close(far.probability(Prize::Pinata), 10.0 / 65.0));
         assert_eq!(far.probability(Prize::Fusee), 0.0);
         let last = table.row(1000.0);
         assert_eq!(
             last.prizes,
-            vec![(Prize::PimentDore, 20), (Prize::PimentX3, 35)]
+            vec![
+                (Prize::PimentDore, 20),
+                (Prize::PimentX3, 30),
+                (Prize::Pinata, 40)
+            ]
         );
-        assert!(close(last.probability(Prize::PimentDore), 20.0 / 35.0));
+        assert!(close(last.probability(Prize::PimentDore), 20.0 / 40.0));
         for row in &table.rows {
             let sum: f32 = row.prizes.iter().map(|(p, _)| row.probability(*p)).sum();
             assert!(close(sum, 1.0), "row from {}", row.from);

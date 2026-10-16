@@ -660,7 +660,7 @@ fn to_the_game(
             }
         }
         // Issue #53: the items and the croquettes (#18: explosions, klaxons; #61: effects,
-        // rams, oreillers).
+        // rams, oreillers; #21: the pies voleuses' thefts).
         Message::Claim(_)
         | Message::Verdict(_)
         | Message::ItemOut(_)
@@ -671,7 +671,9 @@ fn to_the_game(
         | Message::Effect(_)
         | Message::Rammed(_)
         | Message::PillowGone(_)
-        | Message::Retarget(_) => {
+        | Message::Retarget(_)
+        | Message::Steal(_)
+        | Message::Stolen(_) => {
             if let Some(items) = items {
                 items.receive(from, message.clone());
             }

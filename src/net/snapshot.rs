@@ -7,7 +7,7 @@
 //!   ([`KartLook`]: the phase, drift side and sparks, a hit's spin or tumble, the boost flames, a
 //!   stalled engine, the blinking of invincibility, the slipstream's wind lines, the drift's slip
 //!   angle and the wheels; what it holds out, issue #53; a super câlin, a fusée, a dégonflage,
-//!   issue #61).
+//!   issue #61; a piñata out, an item a pie voleuse can take, invisible, issue #21).
 //! - [`KartSnapshot`] (`protocol.rs`): the same, quantized, 48 bytes. Position to the millimeter
 //!   (±2 100 km), rotation as « smallest three » on 48 bits (about 0.005°), velocities to the
 //!   cm/s (±327 m/s) and the mrad/s (±32 rad/s).
@@ -17,7 +17,7 @@
 
 use bevy::math::{Quat, Vec3};
 
-use super::protocol::{HELD_ITEMS, KartId, KartSnapshot};
+use super::protocol::{HELD_ITEMS, ITEMS_HIDDEN, ITEMS_STEALABLE, KartId, KartSnapshot};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{
     Boost, DriftMotion, DriftSide, HitReaction, Invincibility, ItemEffects, KartEnvironment,
@@ -108,6 +108,12 @@ pub struct KartLook {
     /// flags.
     pub gliding: bool,
     pub underwater: bool,
+    /// Issue #21: the piñata's items left around it (one bit each, `items::PINATA_ITEMS`; 0
+    /// without a piñata out); it holds an item a pie voleuse can take
+    /// (`ItemSlots::stealable`); it is invisible (a pie voleuse).
+    pub pinata: u8,
+    pub stealable: bool,
+    pub hidden: bool,
 }
 
 /// What a kart holds out around it (issue #53, `ItemSlots::held_out`): a single pelure or pelote
@@ -177,6 +183,51 @@ impl HeldLook {
     }
 }
 
+/// The placeholder of an item a remote kart holds in a slot (issue #21): its states only say it
+/// holds one a pie voleuse can take, not which. Only `ItemSlots::stealable` reads it.
+const UNKNOWN_ITEM: Slot = Slot::Ready {
+    item: ItemKind::Pelure,
+    count: 1,
+};
+
+impl KartLook {
+    /// What `slots` say on the wire (issues #53 and #21): what they hold out, the piñata's items
+    /// left, whether a pie voleuse could take an item.
+    pub fn set_items(&mut self, slots: Option<&ItemSlots>) {
+        self.held = slots.and_then(HeldLook::of);
+        self.pinata = slots
+            .filter(|s| s.deployed && s.hand.item().is_some_and(|(i, _)| i == ItemKind::Pinata))
+            .map_or(0, |s| s.pinata);
+        self.stealable = slots.is_some_and(|s| s.stealable().is_some());
+    }
+
+    /// Slots that look the same (a remote kart's on our screen): its shields, its piñata's
+    /// items (issue #21), and an unknown item in its reserve if a pie voleuse can take one.
+    pub fn slots(&self) -> ItemSlots {
+        let mut slots = HeldLook::slots(self.held);
+        if self.pinata != 0 && self.held.is_none() {
+            slots.hand = Slot::Ready {
+                item: ItemKind::Pinata,
+                count: self.pinata.count_ones() as u8,
+            };
+            slots.deployed = true;
+            slots.pinata = self.pinata;
+        }
+        if self.stealable {
+            slots.reserve = UNKNOWN_ITEM;
+        }
+        slots
+    }
+
+    /// Whether `slots` (a remote kart's on our screen) look like these items.
+    pub fn shows_slots(&self, slots: &ItemSlots) -> bool {
+        let shown = self.slots();
+        HeldLook::of(slots) == self.held
+            && slots.pinata == shown.pinata
+            && slots.stealable().is_some() == self.stealable
+    }
+}
+
 /// The parts of a kart that its look comes from.
 pub struct LookParts<'a> {
     pub state: &'a KartState,
@@ -219,6 +270,7 @@ impl KartLook {
             deflated: parts.effects.deflated > 0.0,
             gliding: parts.environment.gliding,
             underwater: parts.environment.underwater,
+            hidden: parts.effects.hidden(),
             ..Default::default()
         };
         look.phase = match *parts.state {
@@ -360,7 +412,11 @@ impl KartSnapshot {
                 .slipstream
                 .map_or(0, |fill| (fill * 255.0).round().clamp(1.0, 255.0) as u8),
             wheels,
-            items: HeldLook::byte(look.held),
+            items: HeldLook::byte(look.held)
+                | if look.stealable { ITEMS_STEALABLE } else { 0 }
+                | if look.hidden { ITEMS_HIDDEN } else { 0 },
+            // A piñata out is all it holds out.
+            pinata: if look.held.is_none() { look.pinata } else { 0 },
         }
     }
 
@@ -397,6 +453,9 @@ impl KartSnapshot {
             deflated: self.flags & 0b1_0000 != 0,
             gliding: self.flags & 0b10_0000 != 0,
             underwater: self.flags & 0b100_0000 != 0,
+            pinata: self.pinata,
+            stealable: self.items & ITEMS_STEALABLE != 0,
+            hidden: self.items & ITEMS_HIDDEN != 0,
         };
         KartPose {
             tick: self.tick,
@@ -534,6 +593,9 @@ pub(crate) mod tests {
             deflated: true,
             gliding: true,
             underwater: false,
+            pinata: 0,
+            stealable: true,
+            hidden: true,
         }
     }
 
@@ -717,6 +779,73 @@ pub(crate) mod tests {
             KartSnapshot::quantize(0, &pose).pose().look.slipstream,
             Some(1.0 / 255.0)
         );
+    }
+
+    /// Issue #21: a piñata out (its items left), an item a pie voleuse can take, invisible:
+    /// they come back from the wire, each on its own; the slots they give a remote kart hold the
+    /// same piñata out, and an item to take. A piñata out is all a kart holds out.
+    #[test]
+    fn the_items_of_phase_three_come_back() {
+        use crate::items::{PINATA_FULL, Use};
+        let mut pinata = ItemSlots::default();
+        pinata.give(ItemKind::Pinata, 8, 0);
+        pinata.give(ItemKind::Bombe, 1, 0);
+        assert_eq!(
+            pinata.step_button(true, false),
+            Use::Deploy {
+                item: ItemKind::Pinata,
+                count: 8
+            }
+        );
+        pinata.take_pinata(2);
+        let mut out = KartLook::default();
+        out.set_items(Some(&pinata));
+        assert_eq!(out.held, None);
+        assert_eq!(out.pinata, PINATA_FULL & !0b100);
+        assert!(out.stealable, "the bombe in the reserve");
+        for (pinata, stealable, hidden) in [
+            (0, false, false),
+            (0b1011_0101, true, false),
+            (0, false, true),
+            (0xff, true, true),
+        ] {
+            let pose = KartPose {
+                look: KartLook {
+                    held: None,
+                    pinata,
+                    stealable,
+                    hidden,
+                    ..look()
+                },
+                ..Default::default()
+            };
+            let wire = KartSnapshot::quantize(0, &pose);
+            let back = wire.pose().look;
+            assert_eq!(
+                (back.pinata, back.stealable, back.hidden),
+                (pinata, stealable, hidden)
+            );
+            assert!(crate::net::protocol::valid_held_items(wire.items));
+            let slots = back.slots();
+            assert!(back.shows_slots(&slots));
+            assert_eq!(slots.stealable().is_some(), stealable);
+            assert_eq!(
+                slots.held_out().map(|(_, n)| n),
+                (pinata != 0).then(|| pinata.count_ones() as u8)
+            );
+            assert!((0..8).all(|k| slots.has_pinata(k) == (pinata & (1 << k) != 0)));
+        }
+        // A piñata out with something held out cannot be (it never is): the piñata is left out.
+        let both = KartPose {
+            look: KartLook {
+                pinata: 0xff,
+                ..look()
+            },
+            ..Default::default()
+        };
+        let wire = KartSnapshot::quantize(0, &both);
+        assert_eq!(wire.pinata, 0);
+        assert_eq!(wire.pose().look.held, look().held);
     }
 
     /// The look of a kart's components, and the components that look the same.

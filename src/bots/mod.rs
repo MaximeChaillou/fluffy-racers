@@ -270,21 +270,22 @@ fn item_box_ahead(
 }
 
 /// The closest kart ahead within `ahead_range` (distance, angle off the heading) and behind
-/// within `behind_range` (distance, angle off straight back), for the items (issue #16).
+/// within `behind_range` (distance, angle off straight back), for the items (issue #16). The
+/// karts `hidden` (issue #21: invisible after a pie voleuse) are not seen.
 fn karts_around(
     me: Entity,
     position: Vec3,
     forward: Vec3,
     neighbors: &[Neighbor],
-    ahead_range: f32,
-    behind_range: f32,
+    hidden: &[Entity],
+    (ahead_range, behind_range): (f32, f32),
 ) -> (Option<(f32, f32)>, Option<(f32, f32)>) {
     let flat = forward.with_y(0.0).normalize_or(Vec3::NEG_Z);
     let mut ahead: Option<(f32, f32)> = None;
     let mut behind: Option<(f32, f32)> = None;
     for other in neighbors {
         let to = other.position - position;
-        if other.entity == me || to.y.abs() > 3.0 {
+        if other.entity == me || to.y.abs() > 3.0 || hidden.contains(&other.entity) {
             continue;
         }
         let distance = to.with_y(0.0).length();
@@ -319,8 +320,11 @@ fn drive_bots(
     mut neighbors: Local<Vec<Neighbor>>,
     mut boxes: Local<Vec<Vec3>>,
     mut dangers: Local<Vec<(Entity, Vec3)>>,
-    mut in_reach: Local<Vec<ReachKart>>,
-    karts: Query<(Entity, &Transform, &Velocity), Or<(With<Kart>, With<Remote>)>>,
+    (mut in_reach, mut hidden): (Local<Vec<ReachKart>>, Local<Vec<Entity>>),
+    karts: Query<
+        (Entity, &Transform, &Velocity, Option<&ItemEffects>),
+        Or<(With<Kart>, With<Remote>)>,
+    >,
     item_boxes: Query<(&Transform, &ItemBox)>,
     objects: Query<&ItemObject>,
     mut bots: Query<(
@@ -355,11 +359,23 @@ fn drive_bots(
         .map(|ticks| ticks as f32 / TICK_HZ as f32);
     let trick_window = (kart_tuning.trick_window * TICK_HZ as f32).round() as u32;
     neighbors.clear();
-    neighbors.extend(karts.iter().map(|(entity, transform, velocity)| Neighbor {
-        entity,
-        position: transform.translation,
-        velocity: velocity.linear,
-    }));
+    neighbors.extend(
+        karts
+            .iter()
+            .map(|(entity, transform, velocity, _)| Neighbor {
+                entity,
+                position: transform.translation,
+                velocity: velocity.linear,
+            }),
+    );
+    // Issue #21: nothing aims at an invisible kart (a pie voleuse).
+    hidden.clear();
+    hidden.extend(
+        karts
+            .iter()
+            .filter(|(.., effects)| effects.is_some_and(|e| e.hidden()))
+            .map(|(entity, ..)| entity),
+    );
     // Online too (issue #53): the host's bots take boxes and use their items as solo.
     let items_on = item_tuning.as_ref().is_some_and(|t| t.enabled);
     boxes.clear();
@@ -451,8 +467,8 @@ fn drive_bots(
                 transform.translation,
                 *transform.forward(),
                 &neighbors,
-                tuning.item_ahead_range,
-                tuning.item_behind_range,
+                &hidden,
+                (tuning.item_ahead_range, tuning.item_behind_range),
             );
             let straight = brain
                 .sample

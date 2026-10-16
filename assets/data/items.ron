@@ -9,9 +9,15 @@
 // la même ligne (`src/items/table.rs`) ; il fait de même avec l'oreiller géant quand ses règles
 // l'interdisent (un seul à la fois, 30 s entre deux, aucun avant 20 s de course).
 //
+// Les objets de phase 3 (#21) n'avaient pas de poids dans le game design : la pie voleuse et le
+// boomerang-os au milieu du peloton, la piñata loin derrière (comme leurs équivalents de MK8DX).
+// Leur part est prise sur les objets les plus fréquents de la même ligne (abeilles, piments,
+// pelures), chaque ligne garde 100.
+//
 // Noms : Pelure, PelureX3, Pelote (pelote de laine), PeloteX3, Abeille, AbeilleX3, Piment,
 // PimentX3, CroquetteDoree ; phase 2 : PimentDore, Bombe (bombe à confettis), Chantilly,
-// SuperCalin, Fusee (fusée à confettis), Degonflage, OreillerGeant, KlaxonCanard.
+// SuperCalin, Fusee (fusée à confettis), Degonflage, OreillerGeant, KlaxonCanard ; phase 3 :
+// PieVoleuse, Pinata (piñata), Boomerang (boomerang-os, 3 lancers).
 (
     rows: [
         // Leader, ou à moins de 15 m.
@@ -21,23 +27,23 @@
         ]),
         // 15 à 50 m.
         (from: 15.0, items: [
-            (Pelote, 20), (Abeille, 25), (Pelure, 15), (Piment, 15), (Bombe, 10), (PeloteX3, 10),
-            (Chantilly, 5),
+            (Pelote, 20), (Abeille, 20), (Pelure, 10), (Piment, 15), (Bombe, 10), (PeloteX3, 10),
+            (Chantilly, 5), (Boomerang, 5), (PieVoleuse, 5),
         ]),
         // 50 à 120 m.
         (from: 50.0, items: [
-            (Abeille, 25), (AbeilleX3, 15), (Piment, 20), (PimentX3, 15), (Chantilly, 10),
-            (OreillerGeant, 5), (PeloteX3, 10),
+            (Abeille, 20), (AbeilleX3, 15), (Piment, 15), (PimentX3, 10), (Chantilly, 5),
+            (OreillerGeant, 5), (PeloteX3, 10), (Boomerang, 10), (PieVoleuse, 5), (Pinata, 5),
         ]),
         // 120 à 250 m.
         (from: 120.0, items: [
-            (PimentX3, 25), (AbeilleX3, 20), (SuperCalin, 15), (PimentDore, 15), (OreillerGeant, 10),
-            (Fusee, 10), (Degonflage, 5),
+            (PimentX3, 20), (AbeilleX3, 15), (SuperCalin, 15), (PimentDore, 15), (OreillerGeant, 5),
+            (Fusee, 10), (Degonflage, 5), (Pinata, 10), (PieVoleuse, 5),
         ]),
         // Plus de 250 m.
         (from: 250.0, items: [
-            (SuperCalin, 25), (Fusee, 25), (PimentDore, 20), (PimentX3, 15), (Degonflage, 10),
-            (OreillerGeant, 5),
+            (SuperCalin, 20), (Fusee, 25), (PimentDore, 20), (PimentX3, 10), (Degonflage, 10),
+            (OreillerGeant, 5), (Pinata, 10),
         ]),
     ],
 )

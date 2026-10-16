@@ -12,6 +12,11 @@
 //!   ([`Blast`]), a burst of confetti around a pale flash; the **klaxon-canard**, an orange ring
 //!   that spreads out; a **super câlin**, a pink glow around the kart; a **fusée à confettis**,
 //!   an orange shell with a white nose around the kart.
+//! - **Phase 3** (issue #21): the **boomerang-os**, a cream bone (a shaft and four knobs)
+//!   spinning flat as it flies; the **piñata**'s eight items around the kart, each in its own
+//!   shape (the piment, the chantilly, the super câlin and the croquette dorée have one too, out
+//!   only in a piñata); the **pie voleuse**'s ghost: the kart vanishes, a white ghost with two
+//!   eyes stands for it, plain for its own player, barely there for the others.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -22,7 +27,7 @@ use bevy::transform::TransformSystems;
 use super::table::ItemKind;
 use super::{Blast, Honked, ItemBox, ItemObject, ItemTuning};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::kart::ItemEffects;
+use crate::kart::{ItemEffects, PlayerKart};
 use crate::level::LevelScoped;
 use crate::track::ItemBoxSpot;
 
@@ -38,6 +43,8 @@ const CONFETTI: usize = 14;
 const CONFETTI_SPEED: f32 = 9.0;
 /// The klaxon-canard's ring spreads out in this long (s).
 const HONK_TIME: f32 = 0.4;
+/// A boomerang-os spins this fast as it flies (rad/s, issue #21).
+const BOOMERANG_SPIN: f32 = 22.0;
 /// The confetti colors (GD § 14: bright).
 const CONFETTI_COLORS: [Color; 5] = [
     Color::srgb(1.0, 0.25, 0.45),
@@ -79,6 +86,16 @@ pub struct ItemVisualAssets {
     calin_material: Handle<StandardMaterial>,
     rocket_material: Handle<StandardMaterial>,
     rocket_nose_material: Handle<StandardMaterial>,
+    // Issue #21.
+    bone_material: Handle<StandardMaterial>,
+    chili_material: Handle<StandardMaterial>,
+    stem_material: Handle<StandardMaterial>,
+    cream_material: Handle<StandardMaterial>,
+    hug_material: Handle<StandardMaterial>,
+    gold_material: Handle<StandardMaterial>,
+    ghost_material: Handle<StandardMaterial>,
+    faint_ghost_material: Handle<StandardMaterial>,
+    ghost_eye_material: Handle<StandardMaterial>,
 }
 
 impl ItemVisualAssets {
@@ -130,6 +147,27 @@ impl ItemVisualAssets {
             }),
             rocket_material: materials.add(Color::srgb(1.0, 0.45, 0.1)),
             rocket_nose_material: materials.add(Color::srgb(0.98, 0.98, 0.95)),
+            bone_material: materials.add(Color::srgb(0.98, 0.93, 0.8)),
+            chili_material: materials.add(Color::srgb(0.9, 0.12, 0.08)),
+            stem_material: materials.add(Color::srgb(0.2, 0.65, 0.2)),
+            cream_material: materials.add(Color::srgb(1.0, 0.97, 0.88)),
+            hug_material: materials.add(StandardMaterial {
+                emissive: LinearRgba::rgb(0.5, 0.15, 0.3),
+                ..StandardMaterial::from(Color::srgb(1.0, 0.45, 0.75))
+            }),
+            gold_material: materials.add(StandardMaterial {
+                emissive: LinearRgba::rgb(0.35, 0.25, 0.02),
+                ..StandardMaterial::from(Color::srgb(1.0, 0.78, 0.15))
+            }),
+            ghost_material: materials.add(StandardMaterial {
+                unlit: true,
+                ..translucent(Color::srgba(0.95, 0.97, 1.0, 0.4))
+            }),
+            faint_ghost_material: materials.add(StandardMaterial {
+                unlit: true,
+                ..translucent(Color::srgba(0.95, 0.97, 1.0, 0.07))
+            }),
+            ghost_eye_material: materials.add(unlit(Color::srgb(0.12, 0.12, 0.2))),
         }
     }
 }
@@ -170,6 +208,9 @@ pub enum EffectKind {
     Calin,
     /// Fusée à confettis: an orange shell.
     Rocket,
+    /// Pie voleuse (issue #21): a ghost in the kart's place (plain for its own player, faint for
+    /// the others).
+    Ghost,
 }
 
 /// The visual of an item effect around `kart` (issue #18), following its interpolated pose.
@@ -381,6 +422,77 @@ fn dress_items(
                             .with_scale(Vec3::splat(0.09)),
                     ));
                 }
+                ItemKind::Boomerang => {
+                    // Issue #21: a cream bone, flat: a shaft and two knobs at each end.
+                    parts.spawn((
+                        Mesh3d(assets.strip.clone()),
+                        MeshMaterial3d(assets.bone_material.clone()),
+                        Transform::from_rotation(Quat::from_rotation_z(FRAC_PI_2))
+                            .with_scale(Vec3::new(1.3, 1.0, 1.3) * radius * 2.2),
+                    ));
+                    for x in [-1.0f32, 1.0] {
+                        for z in [-1.0f32, 1.0] {
+                            parts.spawn((
+                                Mesh3d(assets.ball.clone()),
+                                MeshMaterial3d(assets.bone_material.clone()),
+                                Transform::from_xyz(x * radius * 1.25, 0.0, z * radius * 0.28)
+                                    .with_scale(Vec3::splat(radius * 0.36)),
+                            ));
+                        }
+                    }
+                }
+                ItemKind::Piment => {
+                    // Issue #21 (out in a piñata only): a red chili, a green stem.
+                    parts.spawn((
+                        Mesh3d(assets.strip.clone()),
+                        MeshMaterial3d(assets.chili_material.clone()),
+                        Transform::from_rotation(Quat::from_rotation_z(0.5))
+                            .with_scale(Vec3::new(1.8, 0.9, 1.8)),
+                    ));
+                    parts.spawn((
+                        Mesh3d(assets.ball.clone()),
+                        MeshMaterial3d(assets.stem_material.clone()),
+                        Transform::from_xyz(-0.17, 0.3, 0.0).with_scale(Vec3::splat(0.09)),
+                    ));
+                }
+                ItemKind::Chantilly => {
+                    // A swirl of cream: two white balls, one on the other.
+                    parts.spawn((
+                        Mesh3d(assets.ball.clone()),
+                        MeshMaterial3d(assets.cream_material.clone()),
+                        Transform::from_scale(Vec3::new(0.32, 0.22, 0.32)),
+                    ));
+                    parts.spawn((
+                        Mesh3d(assets.ball.clone()),
+                        MeshMaterial3d(assets.cream_material.clone()),
+                        Transform::from_xyz(0.0, 0.2, 0.0).with_scale(Vec3::splat(0.17)),
+                    ));
+                }
+                ItemKind::SuperCalin => {
+                    // A pink heart: two balls side by side over a point.
+                    for side in [-1.0f32, 1.0] {
+                        parts.spawn((
+                            Mesh3d(assets.ball.clone()),
+                            MeshMaterial3d(assets.hug_material.clone()),
+                            Transform::from_xyz(side * 0.12, 0.08, 0.0)
+                                .with_scale(Vec3::splat(0.17)),
+                        ));
+                    }
+                    parts.spawn((
+                        Mesh3d(assets.ball.clone()),
+                        MeshMaterial3d(assets.hug_material.clone()),
+                        Transform::from_xyz(0.0, -0.1, 0.0).with_scale(Vec3::new(0.2, 0.16, 0.13)),
+                    ));
+                }
+                ItemKind::CroquetteDoree => {
+                    // A golden ring, standing.
+                    parts.spawn((
+                        Mesh3d(assets.band.clone()),
+                        MeshMaterial3d(assets.gold_material.clone()),
+                        Transform::from_rotation(Quat::from_rotation_x(FRAC_PI_2))
+                            .with_scale(Vec3::splat(0.26)),
+                    ));
+                }
                 ItemKind::OreillerGeant => {
                     // A big white cushion edged in blue, four tufts at its corners.
                     parts.spawn((
@@ -525,7 +637,7 @@ fn animate_blasts(
 fn show_effects(
     mut commands: Commands,
     assets: Res<ItemVisualAssets>,
-    karts: Query<(Entity, &ItemEffects), Changed<ItemEffects>>,
+    karts: Query<(Entity, &ItemEffects, Has<PlayerKart>), Changed<ItemEffects>>,
     looks: Query<(Entity, &EffectLook)>,
     all: Query<&ItemEffects>,
 ) {
@@ -533,15 +645,17 @@ fn show_effects(
         let on = all.get(look.kart).is_ok_and(|effects| match look.kind {
             EffectKind::Calin => effects.calin > 0.0,
             EffectKind::Rocket => effects.rocket > 0.0,
+            EffectKind::Ghost => effects.hidden(),
         });
         if !on {
             commands.entity(look_entity).try_despawn();
         }
     }
-    for (kart, effects) in &karts {
+    for (kart, effects, player) in &karts {
         for (kind, on) in [
             (EffectKind::Calin, effects.calin > 0.0),
             (EffectKind::Rocket, effects.rocket > 0.0),
+            (EffectKind::Ghost, effects.hidden()),
         ] {
             if !on || looks.iter().any(|(_, l)| l.kart == kart && l.kind == kind) {
                 continue;
@@ -576,6 +690,31 @@ fn show_effects(
                         MeshMaterial3d(assets.rocket_nose_material.clone()),
                         Transform::from_xyz(0.0, 0.25, -1.55).with_scale(Vec3::new(0.7, 0.55, 0.6)),
                     ));
+                }
+                EffectKind::Ghost => {
+                    // Issue #21: a sheet ghost the size of the kart; its own player sees it
+                    // plainly (with its eyes), the others barely.
+                    let material = if player {
+                        assets.ghost_material.clone()
+                    } else {
+                        assets.faint_ghost_material.clone()
+                    };
+                    parts.spawn((
+                        Mesh3d(assets.shell.clone()),
+                        MeshMaterial3d(material),
+                        Transform::from_xyz(0.0, 0.2, 0.0).with_scale(Vec3::new(0.75, 0.55, 0.75)),
+                        NotShadowCaster,
+                    ));
+                    if player {
+                        for x in [-0.25f32, 0.25] {
+                            parts.spawn((
+                                Mesh3d(assets.ball.clone()),
+                                MeshMaterial3d(assets.ghost_eye_material.clone()),
+                                Transform::from_xyz(x, 0.85, -0.62).with_scale(Vec3::splat(0.12)),
+                                NotShadowCaster,
+                            ));
+                        }
+                    }
                 }
             });
         }
@@ -624,6 +763,8 @@ fn place_items(
                     .looking_to(item.velocity, Vec3::Y)
                     .rotation
             }
+            // Issue #21: the boomerang-os spins flat as it flies.
+            ItemKind::Boomerang => Quat::from_rotation_y(item.age * BOOMERANG_SPIN),
             // The oreiller géant flies flat, its long side across its path.
             ItemKind::OreillerGeant if flat.length() > 0.1 => {
                 Transform::default().looking_to(flat, Vec3::Y).rotation

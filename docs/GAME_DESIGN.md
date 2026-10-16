@@ -21,7 +21,7 @@ Les valeurs marquées **(MK8DX)** viennent de sources publiques sur le jeu. Cell
 | Grand Prix | 4 courses ; points du 1er au 12e : **15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1** (MK8) |
 | Classes de vitesse | 50cc, 100cc, **150cc (par défaut)**, 200cc, plus un mode miroir. Multiplicateurs de vitesse max : 0,75 / 0,87 / 1,0 / 1,25 (à régler) |
 | Départ | Grille en quinconce, compte à rebours « 3, 2, 1, GO » d'une seconde par étape |
-| Modes | Course libre, Grand Prix, Contre-la-montre (3 piments, fantôme), En ligne (jusqu'à 12), Bataille (plus tard) |
+| Modes | Course libre, Grand Prix, Contre-la-montre (3 piments, fantôme), En ligne (jusqu'à 12). **Pas de mode Bataille** (décision de Max du 2026-10-16, #21) |
 
 ### Grand Prix (#19)
 
@@ -117,7 +117,7 @@ D'après MK8DX :
 - **Deux emplacements** : un objet en main et un en réserve.
 - **Traîner un objet derrière soi** : maintenir le bouton Objet garde une pelure ou une pelote derrière le kart, comme bouclier.
 - **La distribution dépend de la distance au leader, pas de la position** (MK8DX). Plus on est loin du 1er, plus les objets sont puissants. MK8 utilise 10 tranches de distance.
-- **Touché** : **tête-à-queue** (≈ 1 s, objets légers) ou **culbute** (≈ 1,6 s, explosions et gros objets). Ensuite, une **invincibilité** de 1 à 2 s, qui dépend de la stat Invincibilité (MK8DX : 1,5 s environ en Bataille).
+- **Touché** : **tête-à-queue** (≈ 1 s, objets légers) ou **culbute** (≈ 1,6 s, explosions et gros objets). Ensuite, une **invincibilité** de 1 à 2 s, qui dépend de la stat Invincibilité (MK8DX : 1,5 s environ, mesuré dans son mode bataille).
 
 ### Notre implémentation (phase 1, #16)
 
@@ -161,7 +161,7 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots da
 - **Klaxon-canard** : tous les objets à moins de 9 m de son lanceur, sauf les siens, sont détruits : posés, lancés, traînés ou tournant autour d'un autre kart, l'oreiller géant compris. Il ne touche pas les karts.
 - **Réactions** : la bombe, l'oreiller géant, le super câlin et la fusée font une **culbute** ; la victime décide, comme pour tout objet.
 - **Invincibilité et immunités** :
-  - ce qui touche ou explose (bombe, oreiller géant, karts en super câlin ou en fusée) épargne un kart déjà touché, invincible (après un objet, en super câlin, en fusée), avec le pélican ou arrivé ; l'objet casse quand même ;
+  - ce qui touche ou explose (bombe, oreiller géant, karts en super câlin ou en fusée) épargne un kart déjà touché, invincible (après un objet, en super câlin, en fusée ; depuis #21, invisible après une pie voleuse), avec le pélican ou arrivé ; l'objet casse quand même (sauf sur un kart invisible : il le traverse) ;
   - la chantilly et le dégonflage épargnent un kart invincible, avec le pélican ou arrivé, mais pas un kart en tête-à-queue ou en culbute ;
   - le super câlin et la fusée rendent invincible : ni objet, ni coup de patte, ni attrape (§ 15) ;
   - le piment doré ne protège de rien (un boost) ;
@@ -169,6 +169,24 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots da
 - **Bots** (`BotSkill::item_delay` avant tout objet) : le piment doré en ligne droite, puis un boost après l'autre ; la bombe sur un kart devant entre 7 et 24 m, ou posée devant un kart qui suit ; la chantilly, le dégonflage et l'oreiller géant dès qu'un kart est devant au classement (le leader garde son oreiller) ; le super câlin avec un kart à moins de 12 m ou en ligne droite ; la fusée dès qu'elle est prête ; le klaxon-canard quand l'objet d'un autre arrive à moins de 9 m.
 - **En ligne** (#18 puis #61) : tous les objets, avec la table solo. La victime décide toujours pour son kart. La chantilly et le dégonflage suivent le classement de leur lanceur au moment où il les utilise (le même rang pour un kart sur tous les écrans). Les règles de l'oreiller géant (pas avant 20 s, un seul à la fois, 30 s entre deux) sont celles de l'hôte, sur l'horloge commune : un oreiller refusé devient le même tirage sans lui, comme en solo ; l'oreiller vise le leader du classement de son lanceur.
 - **Debug** : la touche **I** met dans la main du joueur l'objet suivant de la liste (tous les objets, « x3 » compris), prêt à servir ; le panneau d'admin (P) a un menu « Donner un objet ». En ligne, seulement dans une version de développement (`cargo run`, `trunk serve`), et seulement les objets qui marchent en ligne (tous depuis #61).
+
+### Notre implémentation (phase 3, #21)
+
+Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; la table de distribution dans `assets/data/items.ron` (voir plus bas : leurs parts sont les nôtres, le game design n'en donnait pas).
+
+- **Pie voleuse** : invisible pendant 3 s. Son joueur voit à la place de son kart un fantôme blanc translucide, avec deux yeux ; les autres n'en voient presque rien (le même fantôme, à peine visible). Pendant ce temps :
+  - les objets la **traversent** (aucun contact), rien ne la vise (l'abeille, l'oreiller géant, les bots), aucune patte ne l'atteint ;
+  - elle est invincible (sans clignoter) : explosions, chantilly, dégonflage et karts qui renversent l'épargnent aussi ;
+  - elle peut toujours prendre des boîtes et utiliser ses objets.
+
+  Au moment où elle sert, elle **vole l'objet** du kart le plus proche **devant elle au classement** qui en a un à prendre (sinon le plus proche derrière ; hors course, le kart le plus proche qui en a un). On prend l'objet prêt dans sa main (un « x3 » ou une piñata sortis restent autour de lui, comme un piment doré dont la fenêtre est ouverte), sinon celui de sa réserve ; jamais une roulette qui tourne. L'objet volé arrive prêt dans un emplacement libre de la voleuse. Si personne n'a rien, elle ne vole rien (elle reste invisible).
+- **Piñata** : au premier appui, ses **8 objets** sortent et tournent autour du kart, plus loin et plus lentement qu'un « x3 » (2,4 m, 2,5 rad/s) : pelure, pelote, abeille, bombe, piment, chantilly, super câlin et croquette dorée. Ils protègent comme un « x3 » (un objet qui les touche casse avec l'un d'eux) ; tant qu'elle tourne, sa bombe n'explose pas (elle casse comme un bouclier, ou renverse le kart qu'elle touche), sinon elle renverserait son propre kart. Chaque appui suivant utilise **celui qui est devant** le kart, comme s'il était seul : la pelure posée là où elle tournait, la pelote lancée, l'abeille, la bombe, le boost du piment, la chantilly, le super câlin, les deux croquettes. Touché, le kart perd ceux qui restent.
+- **Boomerang-os** : **3 lancers**, un par appui. Lancé devant (ou derrière, avec Bas/S ou C), il file au ras du sol à 42 m/s en tournant vers sa gauche, sur 30 m, puis **revient** vers son lanceur (en virant au plus de 6 rad/s, droit sur lui à moins de 8 m), qui le rattrape à 2 m : le lancer suivant est prêt à ce moment-là, pas avant. Le premier muret à l'aller le renvoie ; au retour, il rebondit sur 2 murets et casse au troisième. Il casse sur le premier kart qu'il touche (**tête-à-queue**, un objet léger) et le lancer suivant est prêt aussitôt ; il ne touche jamais son lanceur. Il disparaît au bout de 5 s s'il n'est pas revenu.
+- **Bots** : la pie voleuse dès qu'un kart est devant au classement (le leader au bout d'un moment : il vole derrière lui) ; la piñata tout de suite, puis un appui par seconde environ ; le boomerang-os comme une pelote : sur un kart dans leur ligne de mire, derrière sur un kart qui suit de près, devant au bout d'un moment. Ils ne visent pas un kart invisible.
+- **En ligne** (#21) : les trois, avec la table solo.
+  - Le **boomerang-os** part comme les autres objets : son lanceur fait autorité sur sa trajectoire. Au retour, chaque écran l'envoie vers le kart du lanceur tel qu'il le montre, et c'est le lanceur qui dit quand il l'a rattrapé : il disparaît alors partout. La victime décide toujours si elle est touchée.
+  - La **piñata** sortie voyage avec l'état du kart (les objets qui restent) : tout le monde la voit tourner.
+  - La **pie voleuse** : « invisible » voyage avec l'état du kart (son fantôme pâle chez les autres, son invincibilité). Le vol est une demande au pair de la victime, choisie d'après ce que disent les états des karts (« il a un objet à prendre ») ; ce pair donne ce que son kart tient à ce moment-là, s'il tient encore quelque chose, et le dit à tous : le pair de la voleuse le met dans son emplacement.
 
 ### Nos objets (originaux)
 
@@ -197,13 +215,15 @@ Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un 
 
 La distance est mesurée le long de la ligne de course, en mètres, jusqu'au leader. Le leader lui-même utilise la première ligne.
 
+Les objets de phase 3 (#21) n'avaient pas de part : la pie voleuse et le boomerang-os sont au milieu du peloton, la piñata loin derrière, comme leurs équivalents dans MK8DX. Leur part est prise sur les objets les plus fréquents de la même ligne (abeilles, piments, pelures), et chaque ligne fait toujours 100 %.
+
 | Distance au leader | Objets probables |
 |---|---|
 | leader / < 15 m | Pelure 30 %, Pelote 25 %, Croquette dorée 20 %, Pelure x3 10 %, Klaxon-canard 10 %, Bombe 5 % |
-| 15 – 50 m | Pelote 20 %, Abeille 25 %, Pelure 15 %, Piment 15 %, Bombe 10 %, Pelote x3 10 %, Chantilly 5 % |
-| 50 – 120 m | Abeille 25 %, Abeille x3 15 %, Piment 20 %, Piment x3 15 %, Chantilly 10 %, Oreiller géant 5 %, Pelote x3 10 % |
-| 120 – 250 m | Piment x3 25 %, Abeille x3 20 %, Super câlin 15 %, Piment doré 15 %, Oreiller géant 10 %, Fusée 10 %, Dégonflage 5 % |
-| > 250 m | Super câlin 25 %, Fusée 25 %, Piment doré 20 %, Piment x3 15 %, Dégonflage 10 %, Oreiller géant 5 % |
+| 15 – 50 m | Pelote 20 %, Abeille 20 %, Pelure 10 %, Piment 15 %, Bombe 10 %, Pelote x3 10 %, Chantilly 5 %, Boomerang-os 5 %, Pie voleuse 5 % |
+| 50 – 120 m | Abeille 20 %, Abeille x3 15 %, Piment 15 %, Piment x3 10 %, Chantilly 5 %, Oreiller géant 5 %, Pelote x3 10 %, Boomerang-os 10 %, Pie voleuse 5 %, Piñata 5 % |
+| 120 – 250 m | Piment x3 20 %, Abeille x3 15 %, Super câlin 15 %, Piment doré 15 %, Oreiller géant 5 %, Fusée 10 %, Dégonflage 5 %, Piñata 10 %, Pie voleuse 5 % |
+| > 250 m | Super câlin 20 %, Fusée 25 %, Piment doré 20 %, Piment x3 10 %, Dégonflage 10 %, Oreiller géant 5 %, Piñata 10 % |
 
 La table est une donnée de configuration (RON), pas du code. Tant qu'un objet n'est pas implémenté, on le retire de la table et on redistribue son poids proportionnellement sur les autres lignes.
 
@@ -389,7 +409,7 @@ Le niveau de Poids (0 à 20, § 9) module la **force**, jamais la portée ni les
 | Drift | oui | non | oui | non |
 | En l'air (tremplin), figure | non | non | non | non |
 | Touché (§ 8) | non | non | non | non |
-| Invincible (après un objet, super câlin…) | oui | oui | non | non |
+| Invincible (après un objet, super câlin, pie voleuse…) | oui | oui | non | non |
 | Pélican dépanneur | non | non | non | non |
 | Calage du départ (§ 4) | non | non | oui | oui |
 | Avant le GO, après l'arrivée | non | non | non | non |
@@ -442,4 +462,4 @@ Toutes les valeurs sont dans la Resource `InteractionTuning` (panneau d'admin) ;
 | **1b – Objets (solo)** | Boîtes, roulette, 2 emplacements, traîner, distribution par distance, objets de phase 1, réactions quand on est touché et invincibilité |
 | **1c – Interactions (solo)** | Coup de patte et attrape entre karts (§ 15), effet du Poids, immunités, bots. Avant le réseau, pour que la synchronisation les prévoie dès le départ |
 | **2 – En ligne** | Rooms P2P, synchronisation des karts, course synchronisée avec objets et croquettes, signalisation de prod. Plus les objets de phase 2. |
-| **3 – Contenu** | Vrais modèles, personnages mous, Grand Prix et classes, anti-gravité, planeur, eau, objets de phase 3, mode Bataille |
+| **3 – Contenu** | Vrais modèles, personnages mous, Grand Prix et classes, anti-gravité, planeur, eau, objets de phase 3 |

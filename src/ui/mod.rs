@@ -250,6 +250,30 @@ pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
             9.0,
             0.0,
         ),
+        // Issue #21. A black and white magpie: a black body, a white edge, slanted.
+        ItemKind::PieVoleuse => (
+            Vec2::new(40.0, 30.0),
+            Color::srgb(0.08, 0.08, 0.12),
+            Color::srgb(0.95, 0.95, 1.0),
+            6.0,
+            -20.0,
+        ),
+        // A piñata: sky blue, a thick pink ring.
+        ItemKind::Pinata => (
+            Vec2::splat(34.0),
+            Color::srgb(0.35, 0.8, 1.0),
+            Color::srgb(1.0, 0.25, 0.45),
+            7.0,
+            45.0,
+        ),
+        // A cream bone, slanted, edged in brown.
+        ItemKind::Boomerang => (
+            Vec2::new(52.0, 16.0),
+            Color::srgb(0.98, 0.93, 0.8),
+            Color::srgb(0.55, 0.4, 0.25),
+            4.0,
+            35.0,
+        ),
     }
 }
 

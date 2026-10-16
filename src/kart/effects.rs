@@ -8,6 +8,8 @@
 //!   racing line; invincible too, and the karts it runs into tumble.
 //! - **Dégonflage**: smaller (a visual) and slower (`MaxSpeedFactors::items`).
 //! - **Chantilly**: cream on the screen (the HUD); a bot drives less precisely.
+//! - **Pie voleuse** (issue #21): invisible (a ghost: seen faintly by its own player only),
+//!   invincible meanwhile (its `Invincibility`, without blinking); the items go through it.
 
 use bevy::prelude::*;
 
@@ -26,6 +28,8 @@ pub struct ItemEffects {
     pub creamed: f32,
     /// ...and how long it lasts in all (it fades out at the end).
     pub creamed_for: f32,
+    /// Pie voleuse (issue #21): invisible, the items go through it.
+    pub ghost: f32,
 }
 
 impl ItemEffects {
@@ -35,7 +39,16 @@ impl ItemEffects {
     }
 
     pub fn is_active(&self) -> bool {
-        self.calin > 0.0 || self.rocket > 0.0 || self.deflated > 0.0 || self.creamed > 0.0
+        self.calin > 0.0
+            || self.rocket > 0.0
+            || self.deflated > 0.0
+            || self.creamed > 0.0
+            || self.ghost > 0.0
+    }
+
+    /// Invisible (issue #21: a pie voleuse): nothing aims at it, the items go through it.
+    pub fn hidden(&self) -> bool {
+        self.ghost > 0.0
     }
 
     /// Counts every effect down by `dt` seconds.
@@ -45,6 +58,7 @@ impl ItemEffects {
             &mut self.rocket,
             &mut self.deflated,
             &mut self.creamed,
+            &mut self.ghost,
         ] {
             *left = (*left - dt).max(0.0);
         }
@@ -128,10 +142,12 @@ mod tests {
             deflated_for: 1.0,
             creamed: 0.1,
             creamed_for: 4.0,
+            ghost: 0.25,
         };
-        assert!(effects.rams() && effects.is_active());
+        assert!(effects.rams() && effects.is_active() && effects.hidden());
         effects.tick(0.3);
         assert_eq!(effects.rocket, 0.0);
+        assert!(!effects.hidden(), "the pie voleuse's 0.25 s are over");
         assert!((effects.calin - 0.2).abs() < 1e-6);
         assert!(effects.rams());
         effects.tick(1.0);
