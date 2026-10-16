@@ -13,6 +13,11 @@
 //!   - an **"x3"** of pelures, pelotes or abeilles comes out at the first press (the pelures in a
 //!     row behind, the pelotes and abeilles turning around the kart) and stays in the hand: each
 //!     next press drops or throws one;
+//!   - the **piñata** (issue #21) is the same with its eight items turning around the kart
+//!     ([`PINATA_ITEMS`], [`ItemSlots::pinata`]): each next press uses the one in front (the
+//!     item rules choose it, [`ItemSlots::take_pinata`]), as itself;
+//!   - the **boomerang-os** (issue #21) is three throws, one per press (the item rules wait for
+//!     the last one to come back before the next);
 //!   - the others are used at the press: abeille, piment (one at a time for an "x3"), croquette
 //!     dorée, and those of phase 2 (issue #18);
 //!   - a **piment doré** stays in the hand for its window (about 7 s from the first press,
@@ -22,7 +27,10 @@
 //! - Hit by an item or carried by the pelican, a kart loses what it held out
 //!   ([`ItemSlots::lose_held_out`]): the dragged item, the rest of an "x3" out.
 
-use super::table::ItemKind;
+use super::table::{ItemKind, PINATA_ITEMS};
+
+/// The piñata's eight items all there (issue #21, [`ItemSlots::pinata`]).
+pub const PINATA_FULL: u8 = u8::MAX >> (8 - PINATA_ITEMS.len());
 
 /// One of a kart's two item slots.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -88,6 +96,9 @@ pub struct ItemSlots {
     /// The piment doré's window (issue #18): ticks left, 0 before its first press. It stays in
     /// the hand meanwhile; at the end it is used up.
     pub golden: u32,
+    /// The piñata out (issue #21): which of its eight items are left around the kart, one bit
+    /// each ([`PINATA_ITEMS`]: bit `k` for the `k`-th). 0 when no piñata is out.
+    pub pinata: u8,
 }
 
 impl ItemSlots {
@@ -131,6 +142,7 @@ impl ItemSlots {
         };
         self.deployed = false;
         self.golden = 0;
+        self.pinata = 0;
     }
 
     /// Whether something counts down: a roulette, the piment doré's window.
@@ -192,6 +204,7 @@ impl ItemSlots {
         self.hand = self.reserve;
         self.reserve = Slot::Empty;
         self.deployed = false;
+        self.pinata = 0;
     }
 
     /// One of the hand's items is used: one less, the reserve moves in after the last one.
@@ -225,7 +238,10 @@ impl ItemSlots {
             return Use::None;
         };
         if self.deployed {
-            self.use_one();
+            // The piñata's item in front goes: the item rules choose it (`take_pinata`).
+            if item != ItemKind::Pinata {
+                self.use_one();
+            }
             return Use::Fire { item, back };
         }
         if count == 1 && item.draggable() {
@@ -233,8 +249,11 @@ impl ItemSlots {
             self.shift();
             return Use::Drag(item);
         }
-        if count > 1 && item.is_object() {
+        if count > 1 && item.deploys() {
             self.deployed = true;
+            if item == ItemKind::Pinata {
+                self.pinata = PINATA_FULL;
+            }
             return Use::Deploy { item, count };
         }
         // The piment doré stays in the hand for its window: a boost per press.
@@ -267,10 +286,86 @@ impl ItemSlots {
     }
 
     /// One of the items held out broke (it stopped another item, or hit a kart): the dragged
-    /// one, else one of the "x3" out (the reserve moves in after the last one).
+    /// one, else one of the "x3" out (the reserve moves in after the last one). For one of the
+    /// piñata's: [`ItemSlots::take_pinata`].
     pub fn lose_one_held_out(&mut self) {
         if self.dragging.take().is_none() && self.deployed {
-            self.use_one();
+            if self.pinata != 0 {
+                let first = self.pinata.trailing_zeros() as usize;
+                self.take_pinata(first);
+            } else {
+                self.use_one();
+            }
+        }
+    }
+
+    /// The `k`-th item of the piñata out (issue #21) goes: used (the one in front at a press),
+    /// or broken on something. Returns which item it is, `None` if it was not there. After the
+    /// last one, the reserve moves in.
+    pub fn take_pinata(&mut self, k: usize) -> Option<ItemKind> {
+        let bit = 1u8.checked_shl(k as u32)?;
+        let item = *PINATA_ITEMS.get(k)?;
+        if !self.deployed || self.pinata & bit == 0 {
+            return None;
+        }
+        self.pinata &= !bit;
+        let left = self.pinata.count_ones() as u8;
+        match self.hand {
+            Slot::Ready {
+                item: ItemKind::Pinata,
+                ..
+            } if left > 0 => {
+                self.hand = Slot::Ready {
+                    item: ItemKind::Pinata,
+                    count: left,
+                };
+            }
+            _ => self.shift(),
+        }
+        Some(item)
+    }
+
+    /// Whether the `k`-th item of the piñata is still out around the kart (issue #21).
+    pub fn has_pinata(&self, k: usize) -> bool {
+        self.deployed
+            && matches!(
+                self.hand,
+                Slot::Ready {
+                    item: ItemKind::Pinata,
+                    ..
+                }
+            )
+            && 1u8
+                .checked_shl(k as u32)
+                .is_some_and(|bit| self.pinata & bit != 0)
+    }
+
+    /// What a pie voleuse would take from this kart (issue #21): the item ready in its hand
+    /// (not an "x3" or a piñata out, not a piment doré whose window is open), else the one ready
+    /// in its reserve. Nothing in a roulette, nothing held out.
+    pub fn stealable(&self) -> Option<(ItemKind, u8)> {
+        match (self.hand, self.reserve) {
+            (Slot::Ready { item, count }, _) if !self.deployed && self.golden == 0 => {
+                Some((item, count))
+            }
+            (_, Slot::Ready { item, count }) => Some((item, count)),
+            _ => None,
+        }
+    }
+
+    /// A pie voleuse takes [`ItemSlots::stealable`] (issue #21): gone from its slot (the reserve
+    /// moves into an emptied hand). Returns what it took.
+    pub fn steal(&mut self) -> Option<(ItemKind, u8)> {
+        match (self.hand, self.reserve) {
+            (Slot::Ready { item, count }, _) if !self.deployed && self.golden == 0 => {
+                self.shift();
+                Some((item, count))
+            }
+            (_, Slot::Ready { item, count }) => {
+                self.reserve = Slot::Empty;
+                Some((item, count))
+            }
+            _ => None,
         }
     }
 
@@ -349,6 +444,7 @@ impl ItemSlots {
 
 #[cfg(test)]
 mod tests {
+    use super::super::table::BOOMERANG_THROWS;
     use super::*;
     use ItemKind::*;
 
@@ -701,6 +797,139 @@ mod tests {
         slots.tick();
         slots.revoke([true, false]);
         assert_eq!(slots.hand, ready(Abeille, 1));
+    }
+
+    /// Issue #21 (GD § 8): a piñata comes out at the first press, its eight items around the
+    /// kart; each next press takes the one the item rules pick (the one in front), as itself; one
+    /// broken on something goes too; after the last one, the reserve moves in. Hit, the kart
+    /// loses those left.
+    #[test]
+    fn a_pinata_comes_out_then_goes_one_item_at_a_time() {
+        let mut slots = ItemSlots::default();
+        slots.give(Pinata, 8, 0);
+        slots.give(Piment, 1, 0);
+        assert_eq!(slots.hand, ready(Pinata, 8));
+        assert_eq!(
+            press(&mut slots, false).0,
+            Use::Deploy {
+                item: Pinata,
+                count: 8
+            }
+        );
+        assert_eq!(slots.pinata, PINATA_FULL);
+        assert_eq!(PINATA_FULL.count_ones() as usize, PINATA_ITEMS.len());
+        assert_eq!(slots.held_out(), Some((Pinata, 8)));
+        assert!((0..8).all(|k| slots.has_pinata(k)));
+        // A press: the item rules choose which one goes.
+        assert_eq!(
+            press(&mut slots, true).0,
+            Use::Fire {
+                item: Pinata,
+                back: true
+            }
+        );
+        assert_eq!(
+            slots.hand,
+            ready(Pinata, 8),
+            "nothing taken by the press itself"
+        );
+        assert_eq!(slots.take_pinata(3), Some(PINATA_ITEMS[3]));
+        assert_eq!(slots.take_pinata(3), None, "gone already");
+        assert!(!slots.has_pinata(3));
+        assert_eq!(slots.held_out(), Some((Pinata, 7)));
+        // One broken on something: the first one left.
+        slots.lose_one_held_out();
+        assert!(!slots.has_pinata(0));
+        assert_eq!(slots.hand, ready(Pinata, 6));
+        for k in [1, 2, 4, 5, 6] {
+            assert_eq!(slots.take_pinata(k), Some(PINATA_ITEMS[k]));
+            assert!(!slots.has_room());
+        }
+        assert_eq!(slots.take_pinata(7), Some(PINATA_ITEMS[7]));
+        assert_eq!(
+            (slots.hand, slots.pinata, slots.deployed),
+            (ready(Piment, 1), 0, false)
+        );
+        // Hit with a piñata out: the rest is lost.
+        let mut hit = ItemSlots::default();
+        hit.give(Pinata, 8, 0);
+        press(&mut hit, false);
+        hit.take_pinata(5);
+        assert!(hit.lose_held_out());
+        assert_eq!((hit.hand, hit.pinata), (Slot::Empty, 0));
+        assert_eq!(hit.take_pinata(1), None);
+        // The eight are different items, of phase 1 and 2.
+        for (i, a) in PINATA_ITEMS.iter().enumerate() {
+            assert!(PINATA_ITEMS[i + 1..].iter().all(|b| b != a));
+            assert!(!matches!(a, PieVoleuse | Pinata | Boomerang));
+        }
+    }
+
+    /// Issue #21: the boomerang-os is three throws, one per press (not an "x3" around the kart);
+    /// after the third, the reserve moves in.
+    #[test]
+    fn a_boomerang_is_three_throws() {
+        let mut slots = ItemSlots::default();
+        slots.give(Boomerang, BOOMERANG_THROWS, 0);
+        slots.give(Pelote, 1, 0);
+        for left in [2, 1] {
+            assert_eq!(
+                press(&mut slots, false).0,
+                Use::Instant {
+                    item: Boomerang,
+                    back: false
+                }
+            );
+            assert_eq!(slots.hand, ready(Boomerang, left));
+            assert_eq!(slots.held_out(), None);
+        }
+        assert_eq!(
+            press(&mut slots, true).0,
+            Use::Instant {
+                item: Boomerang,
+                back: true
+            }
+        );
+        assert_eq!((slots.hand, slots.reserve), (ready(Pelote, 1), Slot::Empty));
+    }
+
+    /// Issue #21: a pie voleuse takes the item ready in the hand, else the one ready in the
+    /// reserve; nothing in a roulette, nothing held out, not a piment doré in its window.
+    #[test]
+    fn a_pie_voleuse_takes_the_hand_else_the_reserve() {
+        let mut slots = ItemSlots::default();
+        assert_eq!(slots.steal(), None);
+        slots.give(Abeille, 3, 0);
+        slots.give(Bombe, 1, 0);
+        assert_eq!(slots.stealable(), Some((Abeille, 3)));
+        assert_eq!(slots.steal(), Some((Abeille, 3)));
+        assert_eq!((slots.hand, slots.reserve), (ready(Bombe, 1), Slot::Empty));
+        assert_eq!(slots.steal(), Some((Bombe, 1)));
+        assert_eq!(slots, ItemSlots::default());
+        // An "x3" out stays (it is around the kart); the reserve goes.
+        let mut out = ItemSlots::default();
+        out.give(Pelote, 3, 0);
+        out.give(Piment, 1, 0);
+        press(&mut out, false);
+        assert_eq!(out.steal(), Some((Piment, 1)));
+        assert_eq!(out.held_out(), Some((Pelote, 3)));
+        assert_eq!(out.steal(), None);
+        // A roulette spinning: nothing yet; a piment doré in its window: the reserve only.
+        let mut spinning = ItemSlots::default();
+        spinning.give(Fusee, 1, 90);
+        assert_eq!(spinning.stealable(), None);
+        let mut golden = ItemSlots::default();
+        golden.give(PimentDore, 1, 0);
+        golden.start_golden(100);
+        assert_eq!(golden.steal(), None);
+        golden.give(Chantilly, 1, 0);
+        assert_eq!(golden.steal(), Some((Chantilly, 1)));
+        assert_eq!(golden.hand, ready(PimentDore, 1));
+        // A dragged pelure is out: only the slots count.
+        let mut dragging = ItemSlots::default();
+        dragging.give(Pelure, 1, 0);
+        dragging.step_button(true, false);
+        assert_eq!(dragging.steal(), None);
     }
 
     /// Issue #61: the host refused an oreiller géant: the slot that holds it gets the other draw

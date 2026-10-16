@@ -457,6 +457,8 @@ impl Lobby {
             | Message::Rammed(_)
             | Message::PillowGone(_)
             | Message::Retarget(_)
+            | Message::Steal(_)
+            | Message::Stolen(_)
             | Message::KartState(_)
             | Message::KartStates(_) => {
                 if self.hosting {

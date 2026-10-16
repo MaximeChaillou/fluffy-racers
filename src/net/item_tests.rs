@@ -927,6 +927,14 @@ pub(super) fn assert_same_story(a: &App, b: &App) {
     assert_eq!(m.0, n.0, "the same chantilly and dégonflages");
     assert_eq!(m.1, n.1, "the same karts knocked over");
     assert_eq!(m.2, n.2, "the same oreillers after the same karts");
+    // Issue #21: the same thefts of the pies voleuses.
+    let steals = |app: &App| {
+        let mut steals = items(app).log.steals.clone();
+        steals.retain(|(.., tick)| *tick <= cutoff);
+        steals.sort_by_key(|(thief, victim, .., tick)| (*tick, *thief, *victim));
+        steals
+    };
+    assert_eq!(steals(a), steals(b), "the same thefts");
     // Every hit one side knew a second ago, the other knows too.
     let hits = |app: &App| -> Vec<(ItemId, Option<KartId>, bool, u32)> {
         items(app)
@@ -1616,6 +1624,342 @@ fn a_race_with_every_item_ends_the_same_for_everyone() {
     }
     // Each player used at least its first two (the chantilly and the fusée, the dégonflage and
     // the super câlin).
+    for (index, key) in [ANA, BOB].into_iter().enumerate() {
+        let app = room.view(key);
+        let used = app.world().get::<ItemStats>(drivers[index]).unwrap().used;
+        assert!(
+            used >= 2,
+            "{key:?} used {used} items, left: {:?}",
+            queues[index]
+        );
+    }
+    let (ana, bob) = (room.view(ANA), room.view(BOB));
+    assert_same_story(ana, bob);
+}
+
+// --- Issue #21: the pie voleuse, the piñata, the boomerang-os ----------------------------------
+
+/// The boomerangs out in a game (the network's), by id.
+fn boomerangs(app: &App) -> Vec<(ItemId, ItemObject)> {
+    items(app)
+        .objects()
+        .filter_map(|(entity, id)| {
+            let object = *app.world().get::<ItemObject>(entity)?;
+            (object.item == ItemKind::Boomerang).then_some((id, object))
+        })
+        .collect()
+}
+
+/// Issue #21 acceptance: Ana throws a boomerang-os at Bob, 12 m ahead. It flies at the same place
+/// on both screens; Bob's game decides that it hits his kart (a spin out), tells everyone: gone on
+/// both screens, Ana counts her hit, and her next throw is ready at once.
+#[test]
+fn a_boomerang_hits_where_the_victim_decides() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 12.0);
+    give(&mut room, ANA, ItemKind::Boomerang, 3);
+    use_item(&mut room, ANA);
+    room.until(1.0, "the boomerang on Bob's screen", |app| {
+        !boomerangs(app).is_empty() || matches!(state_of(app), KartState::Hit { .. })
+    });
+    room.until(2.0, "Bob hit, told", |app| {
+        items(app).log.breaks.len() == 1 && boomerangs(app).is_empty()
+    });
+    assert!(
+        matches!(
+            state(&room, BOB),
+            KartState::Hit {
+                reaction: HitReaction::Spin,
+                ..
+            }
+        ),
+        "{:?}",
+        state(&room, BOB)
+    );
+    assert_eq!(stats(&room, ANA).hits_landed, 1, "Ana's hit, told by Bob");
+    let bob_id = id_of(room.view(BOB));
+    for key in [ANA, BOB] {
+        let log = &items(room.view(key)).log;
+        assert_eq!(log.thrown[0].1, ItemKind::Boomerang, "{key:?}");
+        assert_eq!(
+            (log.breaks[0].1, log.breaks[0].2),
+            (Some(bob_id), true),
+            "{key:?}"
+        );
+    }
+    // The next throw at once: two left.
+    use_item(&mut room, ANA);
+    assert_eq!(boomerangs(room.view(ANA)).len(), 1);
+    assert_eq!(
+        slots(&room, ANA).hand,
+        Slot::Ready {
+            item: ItemKind::Boomerang,
+            count: 1
+        }
+    );
+}
+
+/// The player's kart's state in a game.
+fn state_of(app: &App) -> KartState {
+    *app.world().get::<KartState>(player_of(app)).unwrap()
+}
+
+/// Issue #21 acceptance: Ana throws a boomerang-os with nobody in its way: it flies out and comes
+/// back to her on both screens (on Bob's, after her kart as he sees it). She catches it on her
+/// screen and tells: gone on Bob's too, from the same item. Then her next throw is ready.
+#[test]
+fn a_boomerang_comes_back_to_its_thrower_on_every_screen() {
+    let mut room = racing();
+    let ana = pose(&room, ANA);
+    // Bob far behind, out of its way.
+    place(
+        &mut room,
+        BOB,
+        Transform {
+            translation: ana.translation - *ana.forward() * 60.0,
+            ..ana
+        },
+    );
+    for _ in 0..30 {
+        room.frame();
+    }
+    give(&mut room, ANA, ItemKind::Boomerang, 3);
+    use_item(&mut room, ANA);
+    room.until(1.0, "on Bob's screen", |app| !boomerangs(app).is_empty());
+    let (id, _) = boomerangs(room.view(BOB))[0];
+    let mut returned = false;
+    room.until(3.0, "caught", |app| {
+        if lobby(app).is_host()
+            && let Some((_, object)) = boomerangs(app).first()
+        {
+            returned |= matches!(
+                object.motion,
+                Motion::Boomerang {
+                    returning: true,
+                    ..
+                }
+            );
+        }
+        boomerangs(app).is_empty()
+    });
+    assert!(returned, "it came back");
+    for _ in 0..10 {
+        room.frame();
+    }
+    for key in [ANA, BOB] {
+        let log = &items(room.view(key)).log;
+        assert!(boomerangs(room.view(key)).is_empty(), "{key:?}");
+        assert!(
+            log.breaks
+                .iter()
+                .any(|(broken, kart, landed, _)| *broken == id && kart.is_none() && !landed),
+            "{key:?}: {:?}",
+            log.breaks
+        );
+    }
+    assert!(!state(&room, ANA).is_hit() && !state(&room, BOB).is_hit());
+    assert_eq!(stats(&room, BOB).hits_taken, 0);
+    use_item(&mut room, ANA);
+    assert_eq!(boomerangs(room.view(ANA)).len(), 1, "the next throw");
+}
+
+/// Issue #21 acceptance: Ana's piñata out: Bob sees its eight items around her kart (her states
+/// say which are left); one used, seven; all used, none.
+#[test]
+fn a_pinata_shows_around_its_kart_on_every_screen() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, 40.0);
+    let start = pose(&room, ANA);
+    give(&mut room, ANA, ItemKind::Pinata, 8);
+    use_item(&mut room, ANA);
+    // Ana stays where she is (a piment would send her over her own pelure).
+    let stay = |room: &mut Room| {
+        place(room, ANA, start);
+        let app = room.app(ANA);
+        let kart = player_of(app);
+        *app.world_mut().get_mut::<crate::kart::Boost>(kart).unwrap() = Default::default();
+    };
+    let shown = |app: &App| {
+        let mut kinds: Vec<ItemKind> = items(app)
+            .shown_held()
+            .filter_map(|(entity, _)| app.world().get::<ItemObject>(entity))
+            .filter(|o| matches!(o.held(), Some(crate::items::Hold::Pinata(_))))
+            .map(|o| o.item)
+            .collect();
+        kinds.sort();
+        kinds
+    };
+    room.until(1.0, "the piñata on Bob's screen", |app| {
+        lobby(app).is_host() || shown(app).len() == 8
+    });
+    let mut all = crate::items::PINATA_ITEMS.to_vec();
+    all.sort();
+    assert_eq!(shown(room.view(BOB)), all);
+    use_item(&mut room, ANA);
+    stay(&mut room);
+    room.until(1.0, "seven left on Bob's screen", |app| {
+        lobby(app).is_host() || shown(app).len() == 7
+    });
+    assert_eq!(slots(&room, ANA).held_out(), Some((ItemKind::Pinata, 7)));
+    for _ in 0..7 {
+        for _ in 0..20 {
+            room.frame();
+        }
+        use_item(&mut room, ANA);
+        stay(&mut room);
+    }
+    room.until(1.0, "none left on Bob's screen", |app| {
+        lobby(app).is_host() || shown(app).is_empty()
+    });
+    assert_eq!(slots(&room, ANA).held_out(), None);
+    assert_eq!(stats(&room, ANA).used, 8);
+}
+
+/// Issue #21 acceptance: Bob, behind, uses a pie voleuse: Ana's kart, ahead in his ranking and
+/// holding a bombe (her states say she holds something), gives it up on her screen (her game
+/// decides) and tells: Bob's kart gets it, ready. For 3 s Bob's kart is invisible: on Ana's screen
+/// too (a faint ghost), and invincible there: her pelote goes through it.
+#[test]
+fn a_pie_voleuse_steals_from_the_other_players_kart() {
+    let mut room = racing();
+    bob_ahead_of_ana(&mut room, -15.0);
+    give(&mut room, ANA, ItemKind::Bombe, 1);
+    room.until(1.0, "Ana's item in her states", |app| {
+        lobby(app).is_host()
+            || app
+                .world()
+                .resource::<KartSync>()
+                .remote(ANA)
+                .and_then(|remote| remote.proxy)
+                .and_then(|proxy| app.world().get::<ItemSlots>(proxy))
+                .is_some_and(|slots| slots.stealable().is_some())
+    });
+    give(&mut room, BOB, ItemKind::PieVoleuse, 1);
+    use_item(&mut room, BOB);
+    assert!(item_effects(&room, BOB).hidden());
+    room.until(1.0, "the theft told", |app| {
+        items(app).log.steals.len() == 1
+    });
+    for _ in 0..5 {
+        room.frame();
+    }
+    assert_eq!(slots(&room, ANA).hand, Slot::Empty, "Ana gave it up");
+    assert_eq!(
+        slots(&room, BOB).hand,
+        Slot::Ready {
+            item: ItemKind::Bombe,
+            count: 1
+        },
+        "Bob got it"
+    );
+    let (ana_id, bob_id) = (id_of(room.view(ANA)), id_of(room.view(BOB)));
+    for key in [ANA, BOB] {
+        let steals = &items(room.view(key)).log.steals;
+        assert_eq!(steals.len(), 1, "{key:?}");
+        assert_eq!(
+            (steals[0].0, steals[0].1, steals[0].2, steals[0].3),
+            (bob_id, ana_id, ItemKind::Bombe, 1),
+            "{key:?}"
+        );
+    }
+    assert_eq!(
+        items(room.view(ANA)).log.steals,
+        items(room.view(BOB)).log.steals
+    );
+    // Invisible on Ana's screen, and invincible there.
+    let shown = shown_effects(room.view(ANA), BOB);
+    assert!(shown.hidden(), "{shown:?}");
+    let proxy = room
+        .view(ANA)
+        .world()
+        .resource::<KartSync>()
+        .remote(BOB)
+        .and_then(|remote| remote.proxy)
+        .unwrap();
+    assert!(
+        room.view(ANA)
+            .world()
+            .get::<Invincibility>(proxy)
+            .unwrap()
+            .is_active()
+    );
+    // About 3 s, then shown again everywhere.
+    room.until(4.0, "visible again", |app| {
+        if lobby(app).is_host() {
+            !shown_effects(app, BOB).hidden()
+        } else {
+            !item_effects_of(app).hidden()
+        }
+    });
+    assert!(!item_effects(&room, BOB).hidden());
+}
+
+/// The player's kart's item effects in a game.
+fn item_effects_of(app: &App) -> ItemEffects {
+    *app.world().get::<ItemEffects>(player_of(app)).unwrap()
+}
+
+/// Issue #21 acceptance (in memory): a race to the end, two players driven by bots and 4 bots
+/// (Ana's), with the items of phase 3 given to the players one after the other (Ana: a piñata, a
+/// boomerang-os, a pie voleuse; Bob: a pie voleuse, a piñata, a boomerang-os) on top of what the
+/// boxes give. The same results on both screens, and the same story of the items (the thefts
+/// too).
+#[test]
+fn a_race_with_the_items_of_phase_three_ends_the_same_for_everyone() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 4, 1);
+    let drivers = [player_of(room.view(ANA)), player_of(room.view(BOB))];
+    bots_drive_the_players(&mut room);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let mut queues = [
+        vec![
+            crate::items::Prize::Pinata,
+            crate::items::Prize::Boomerang,
+            crate::items::Prize::PieVoleuse,
+        ],
+        vec![
+            crate::items::Prize::PieVoleuse,
+            crate::items::Prize::Pinata,
+            crate::items::Prize::Boomerang,
+        ],
+    ];
+    let feed = |app: &mut App, kart: Entity, queue: &mut Vec<crate::items::Prize>| {
+        let Some(mut slots) = app.world_mut().get_mut::<ItemSlots>(kart) else {
+            return;
+        };
+        if slots.hand.is_empty()
+            && slots.reserve.is_empty()
+            && slots.dragging.is_none()
+            && !queue.is_empty()
+            && let Some((item, count)) = queue.remove(0).item()
+        {
+            slots.give(item, count, 0);
+        }
+    };
+    let mut frames = 0;
+    while room.view(ANA).world().resource::<Race>().phase() != RacePhase::Results
+        || room.view(BOB).world().resource::<Race>().phase() != RacePhase::Results
+    {
+        for (index, key) in [ANA, BOB].into_iter().enumerate() {
+            feed(room.app(key), drivers[index], &mut queues[index]);
+        }
+        room.frame();
+        frames += 1;
+        assert!(frames < 150 * 60, "the race never ended");
+    }
+    for _ in 0..10 {
+        room.frame();
+    }
+    let (ana, bob) = (
+        progress_by_slot(room.app(ANA)),
+        progress_by_slot(room.app(BOB)),
+    );
+    assert_same_progress(&ana, &bob);
+    assert_eq!(standings(room.app(ANA)), standings(room.app(BOB)));
+    for key in [ANA, BOB] {
+        println!("{key:?}: {}", items(room.view(key)).summary());
+    }
+    // Each player used its first two (a piñata's items count one by one).
     for (index, key) in [ANA, BOB].into_iter().enumerate() {
         let app = room.view(key);
         let used = app.world().get::<ItemStats>(drivers[index]).unwrap().used;

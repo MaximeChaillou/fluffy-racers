@@ -1177,6 +1177,394 @@ fn the_klaxon_destroys_the_items_around() {
     assert!(!arena.state(other).is_hit(), "no kart is hit");
 }
 
+// --- Phase 3 (issue #21) ----------------------------------------------------------------------
+
+impl Arena {
+    /// The boomerangs out, by spawn order.
+    fn boomerangs(&mut self) -> Vec<(Entity, ItemObject)> {
+        self.objects()
+            .into_iter()
+            .filter(|(_, o)| o.item == ItemKind::Boomerang)
+            .collect()
+    }
+}
+
+/// Issue #21 (GD § 8: « boomerang qui revient, utilisable 3 fois »): thrown ahead, a boomerang-os
+/// flies out about 30 m, curving to its left, then comes back to its thrower, who catches it: the
+/// next throw is ready then, not before (a press meanwhile does nothing). Three throws, never a
+/// hit on its own thrower; then the reserve moves in.
+#[test]
+fn a_boomerang_flies_out_comes_back_and_is_thrown_three_times() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let tuning = ItemTuning::default();
+    arena.give(kart, ItemKind::Boomerang, 3);
+    arena.give(kart, ItemKind::Piment, 1);
+    let home = arena.transform(kart).translation;
+    for throw in 0..3u8 {
+        arena.tap(kart, KartInput::default());
+        let flying = arena.boomerangs();
+        assert_eq!(flying.len(), 1, "throw {throw}");
+        let (entity, start) = flying[0];
+        assert!(start.velocity.dot(Vec3::NEG_Z) > tuning.boomerang_speed * 0.9);
+        let left = 2 - throw;
+        if left > 0 {
+            assert_eq!(
+                arena.slots(kart).hand,
+                Slot::Ready {
+                    item: ItemKind::Boomerang,
+                    count: left
+                }
+            );
+            // A press while it flies: nothing more.
+            arena.tap(kart, KartInput::default());
+            assert_eq!(arena.boomerangs().len(), 1);
+            assert_eq!(
+                arena.slots(kart).hand.item(),
+                Some((ItemKind::Boomerang, left))
+            );
+        }
+        let (mut furthest, mut leftmost) = (0.0f32, 0.0f32);
+        let mut ticks = 0;
+        while arena.app.world().get::<ItemObject>(entity).is_some() {
+            let at = arena
+                .app
+                .world()
+                .get::<ItemObject>(entity)
+                .unwrap()
+                .position;
+            furthest = furthest.max(at.with_y(0.0).distance(home.with_y(0.0)));
+            leftmost = leftmost.min(at.x);
+            arena.tick(&[]);
+            ticks += 1;
+            assert!(ticks < 200, "never came back");
+        }
+        assert!(
+            (tuning.boomerang_range * 0.85..tuning.boomerang_range * 1.3).contains(&furthest),
+            "{furthest}"
+        );
+        assert!(leftmost < -3.0, "it curves to its left: {leftmost}");
+        assert!(ticks < 150, "back in under 2.5 s: {ticks}");
+        assert!(!arena.state(kart).is_hit(), "caught, not hit");
+    }
+    assert_eq!(
+        arena.slots(kart).hand,
+        Slot::Ready {
+            item: ItemKind::Piment,
+            count: 1
+        }
+    );
+    assert_eq!(arena.stats(kart).used, 3);
+    assert_eq!(arena.stats(kart).hits_taken, 0);
+}
+
+/// Issue #21: a boomerang-os breaks on the first kart it touches (a spin out, a light item); the
+/// next throw is ready at once. A wall on its way out sends it back early, and it is caught.
+#[test]
+fn a_boomerang_spins_out_a_kart_and_bounces_off_a_wall() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let victim = arena.parked(0.0, -12.0);
+    arena.give(kart, ItemKind::Boomerang, 3);
+    arena.tap(kart, KartInput::default());
+    let ticks = arena.until(1.0, &[], |a| a.state(victim).is_hit());
+    assert!(ticks < 30, "{ticks}");
+    assert!(
+        matches!(
+            arena.state(victim),
+            KartState::Hit {
+                reaction: HitReaction::Spin,
+                ..
+            }
+        ),
+        "{:?}",
+        arena.state(victim)
+    );
+    assert!(arena.boomerangs().is_empty(), "broken on it");
+    assert_eq!(arena.stats(kart).hits_landed, 1);
+    // The next throw at once (backwards: a wall 8 m behind sends it back).
+    arena.wall(Vec3::new(0.0, 1.0, 8.0), Vec3::new(20.0, 1.0, 0.5));
+    arena.tap(
+        kart,
+        KartInput {
+            look_back: true,
+            ..default()
+        },
+    );
+    let (entity, out) = arena.boomerangs()[0];
+    assert!(out.velocity.z > 0.0, "thrown backwards");
+    let returning = |a: &Arena| {
+        matches!(
+            a.app.world().get::<ItemObject>(entity).map(|o| o.motion),
+            Some(Motion::Boomerang {
+                returning: true,
+                ..
+            })
+        )
+    };
+    let ticks = arena.until(1.0, &[], returning);
+    assert!(ticks < 20, "the wall sent it back: {ticks}");
+    let furthest = arena
+        .app
+        .world()
+        .get::<ItemObject>(entity)
+        .unwrap()
+        .position
+        .z;
+    assert!(furthest < 8.0, "{furthest}");
+    arena.until(2.0, &[], |a| {
+        a.app.world().get::<ItemObject>(entity).is_none()
+    });
+    assert!(!arena.state(kart).is_hit());
+    assert_eq!(
+        arena.slots(kart).hand,
+        Slot::Ready {
+            item: ItemKind::Boomerang,
+            count: 1
+        }
+    );
+}
+
+/// Issue #21 (GD § 8: « 8 objets autour du kart, à utiliser un par un »): a piñata comes out as
+/// its eight items turning around the kart; each press uses the one in front, as itself: the
+/// pelure dropped, the pelote rolling, the abeille flying, the bombe lobbed, the piment's boost,
+/// the chantilly, the super câlin, the croquette dorée's two croquettes. Eight presses, eight
+/// items, then the reserve moves in.
+#[test]
+fn a_pinata_turns_eight_items_around_the_kart_and_uses_the_one_in_front() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let tuning = ItemTuning::default();
+    arena.give(kart, ItemKind::Pinata, 8);
+    arena.give(kart, ItemKind::Pelote, 1);
+    arena.tap(kart, KartInput::default());
+    let around = arena.objects();
+    assert_eq!(around.len(), 8);
+    let center = arena.transform(kart).translation;
+    let mut kinds: Vec<ItemKind> = around.iter().map(|(_, o)| o.item).collect();
+    kinds.sort();
+    let mut expected = PINATA_ITEMS.to_vec();
+    expected.sort();
+    assert_eq!(kinds, expected);
+    for (_, object) in &around {
+        assert!(matches!(object.held(), Some(Hold::Pinata(_))));
+        let flat = (object.position - center).with_y(0.0).length();
+        assert!((flat - tuning.pinata_orbit_radius).abs() < 0.05, "{flat}");
+    }
+    let mut used = Vec::new();
+    let mut boosted = false;
+    let mut hugged = false;
+    let mut thrown = Vec::new();
+    for press in 0..8 {
+        // A lane of its own for each press: the kart never meets what it left in the others
+        // (its pelure, its bombe's blast), even boosted.
+        arena.place(kart, Transform::from_xyz(30.0 * press as f32, 0.55, 0.0));
+        arena.run(0.3, &[]);
+        // The one in front now.
+        let forward = *arena.transform(kart).forward();
+        let at = arena.transform(kart).translation;
+        let front = arena
+            .objects()
+            .into_iter()
+            .filter(|(_, o)| matches!(o.held(), Some(Hold::Pinata(_))))
+            .max_by(|(_, a), (_, b)| {
+                (a.position - at)
+                    .dot(forward)
+                    .total_cmp(&(b.position - at).dot(forward))
+            })
+            .map(|(e, o)| (e, o.item))
+            .unwrap();
+        let before = arena.objects().len();
+        arena.tap(kart, KartInput::default());
+        assert!(
+            arena.app.world().get::<ItemObject>(front.0).is_none(),
+            "press {press}: the one in front went"
+        );
+        used.push(front.1);
+        boosted |= arena.boost(kart).is_active();
+        hugged |= arena.effects(kart).calin > 0.0;
+        let left = arena
+            .objects()
+            .iter()
+            .filter(|(_, o)| matches!(o.held(), Some(Hold::Pinata(_))))
+            .count();
+        assert_eq!(left, 7 - press, "press {press}");
+        if front.1.is_object() {
+            assert!(
+                arena.objects().len() >= before,
+                "press {press}: {:?} out",
+                front.1
+            );
+            thrown.push(front.1);
+        }
+    }
+    used.sort();
+    assert_eq!(used, expected, "each one once");
+    assert!(boosted && hugged);
+    assert_eq!(arena.held(kart), 2, "the croquette dorée");
+    thrown.sort();
+    assert_eq!(
+        thrown,
+        [
+            ItemKind::Pelure,
+            ItemKind::Pelote,
+            ItemKind::Abeille,
+            ItemKind::Bombe
+        ]
+    );
+    assert_eq!(
+        arena.slots(kart).hand,
+        Slot::Ready {
+            item: ItemKind::Pelote,
+            count: 1
+        }
+    );
+    assert_eq!(arena.stats(kart).used, 8);
+}
+
+/// Issue #21: a piñata's items are shields, like an "x3": a pelote thrown at the kart breaks on
+/// the first one in its way (both gone), the kart is not hit, seven are left.
+#[test]
+fn a_pinatas_items_are_shields() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let thrower = arena.other_kart(Transform::from_xyz(0.0, 0.55, 20.0));
+    arena.give(kart, ItemKind::Pinata, 8);
+    arena.tap(kart, KartInput::default());
+    arena.give(thrower, ItemKind::Pelote, 1);
+    arena.tap(thrower, KartInput::default());
+    arena.run(1.5, &[]);
+    assert!(!arena.state(kart).is_hit());
+    assert_eq!(arena.slots(kart).held_out(), Some((ItemKind::Pinata, 7)));
+    assert_eq!(arena.stats(kart).blocked, 1);
+    assert!(
+        arena
+            .objects()
+            .iter()
+            .all(|(_, o)| o.item != ItemKind::Pelote || o.owner != thrower)
+    );
+}
+
+/// Issue #21 (GD § 8: « rend invisible environ 3 s et vole l'objet d'un adversaire »): the pie
+/// voleuse takes the item of the closest kart that holds one (off a race), ready in the thief's
+/// slot; for about 3 s the thief is not shown (a ghost stands for it), invincible without blinking:
+/// a pelote goes through it; then it is back, unprotected.
+#[test]
+fn the_pie_voleuse_hides_the_kart_and_steals_an_item() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let empty = arena.parked(4.0, -6.0);
+    let holder = arena.parked(-4.0, -15.0);
+    let far = arena.parked(0.0, -60.0);
+    arena.give(holder, ItemKind::Bombe, 1);
+    arena.give(holder, ItemKind::Abeille, 3);
+    arena.give(far, ItemKind::Fusee, 1);
+    arena.give(kart, ItemKind::PieVoleuse, 1);
+    arena.tap(kart, KartInput::default());
+    let tuning = ItemTuning::default();
+    assert_eq!(
+        arena.slots(kart).hand,
+        Slot::Ready {
+            item: ItemKind::Bombe,
+            count: 1
+        },
+        "the closest holder's hand"
+    );
+    assert_eq!(
+        arena.slots(holder).hand,
+        Slot::Ready {
+            item: ItemKind::Abeille,
+            count: 3
+        }
+    );
+    assert_eq!(arena.slots(empty), ItemSlots::default());
+    assert!(!arena.slots(far).hand.is_empty());
+    let effects = arena.effects(kart);
+    assert!(effects.hidden() && effects.ghost > tuning.pie_time - 0.05);
+    let invincibility = arena.invincibility(kart);
+    assert!(invincibility.is_active());
+    for t in 0..60 {
+        assert!(!crate::kart::shown_with_effects(
+            &invincibility,
+            Some(&effects),
+            t as f32 / 60.0
+        ));
+    }
+    // A pelote at it: through it, nothing.
+    let thrower = arena.other_kart(Transform::from_xyz(0.0, 0.55, 15.0));
+    arena.give(thrower, ItemKind::Pelote, 1);
+    arena.tap(thrower, KartInput::default());
+    arena.run(0.6, &[]);
+    assert!(!arena.state(kart).is_hit());
+    let pelote = arena
+        .objects()
+        .into_iter()
+        .find(|(_, o)| o.item == ItemKind::Pelote)
+        .expect("it went through");
+    assert!(pelote.1.position.z < -1.5, "{}", pelote.1.position);
+    // About 3 s in all, then shown and unprotected again.
+    let left = arena.effects(kart).ghost;
+    assert!(left > 2.0, "{left}");
+    let ticks = arena.until(3.0, &[], |a| !a.effects(kart).hidden());
+    assert!(
+        (ticks as f32 - left * TICKS_PER_SECOND).abs() <= 2.0,
+        "{ticks} for {left} s"
+    );
+    arena.tick(&[]);
+    assert!(!arena.invincibility(kart).is_active());
+    let effects = arena.effects(kart);
+    assert!(crate::kart::shown_with_effects(
+        &arena.invincibility(kart),
+        Some(&effects),
+        0.0
+    ));
+}
+
+/// Issue #21: who a pie voleuse steals from: the closest kart ahead in the race that holds
+/// something, else the closest behind; off a race, the closest one that holds something; nobody
+/// when nobody holds anything. The way a boomerang-os comes back: it turns toward its thrower at
+/// its turn rate, straight at it once close.
+#[test]
+fn the_pie_voleuse_picks_its_victim_and_the_boomerang_comes_back() {
+    let [a, b, c, d, thief] = [1, 2, 3, 4, 5].map(|i| Entity::from_raw_u32(i).unwrap());
+    let standings = [a, b, thief, c, d];
+    let holds = |set: Vec<Entity>| move |e: Entity| set.contains(&e);
+    let at = Vec3::ZERO;
+    let victim = |set: Vec<Entity>| steal_victim(thief, at, &standings, &[], holds(set));
+    assert_eq!(victim(vec![a, b, c]), Some(b), "the closest ahead");
+    assert_eq!(victim(vec![a, c]), Some(a));
+    assert_eq!(
+        victim(vec![c, d, thief]),
+        Some(c),
+        "nobody ahead: the closest behind"
+    );
+    assert_eq!(victim(vec![thief]), None);
+    let positions = [
+        (a, Vec3::new(30.0, 0.0, 0.0)),
+        (b, Vec3::new(0.0, 0.0, -8.0)),
+        (c, Vec3::new(-5.0, 0.0, 0.0)),
+        (thief, Vec3::ZERO),
+    ];
+    let off_race = |set: Vec<Entity>| steal_victim(thief, at, &[], &positions, holds(set));
+    assert_eq!(
+        off_race(vec![a, b, c, thief]),
+        Some(c),
+        "off a race: the closest"
+    );
+    assert_eq!(off_race(vec![a, b]), Some(b));
+    assert_eq!(off_race(vec![thief]), None);
+
+    let dt = 1.0 / 60.0;
+    // Its thrower far behind: a turn of at most the turn rate.
+    let turned = boomerang_heading(Vec3::NEG_Z, Vec3::new(0.0, 0.0, 50.0), dt, 6.0, 8.0);
+    assert!((turned.angle_between(Vec3::NEG_Z) - 0.1).abs() < 1e-4);
+    let left = boomerang_heading(Vec3::NEG_Z, Vec3::new(-50.0, 0.0, 0.0), dt, 6.0, 8.0);
+    assert!(left.x < 0.0, "toward it, to the left");
+    // Close: straight at it.
+    let close = boomerang_heading(Vec3::NEG_Z, Vec3::new(3.0, 1.0, 4.0), dt, 6.0, 8.0);
+    assert!((close - Vec3::new(0.6, 0.0, 0.8)).length() < 1e-5);
+}
+
 // --- The whole game -------------------------------------------------------------------------
 
 mod game {

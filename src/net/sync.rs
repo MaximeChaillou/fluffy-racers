@@ -42,7 +42,7 @@ use super::interp::{
 };
 use super::netsim::NetSim;
 use super::protocol::{KartId, KartSnapshot, Message, PeerKey};
-use super::snapshot::{HeldLook, KartLook, KartPose, LookParts};
+use super::snapshot::{KartLook, KartPose, LookParts};
 use super::tuning::NetTuning;
 use crate::characters::{DriverLooks, Loadout, Roster};
 use crate::interactions::Paw;
@@ -692,7 +692,7 @@ fn spawn_remote_karts(
                     now_velocity: shown.velocity,
                 },
                 Paw::default(),
-                HeldLook::slots(shown.look.held),
+                shown.look.slots(),
             ),
         ));
         if remote.racer {
@@ -884,8 +884,9 @@ fn record_our_kart(
             effects: item_effects,
             environment,
         });
-        // Issue #53: its shields, drawn by the others.
-        look.held = slots.and_then(HeldLook::of);
+        // Issue #53: its shields, drawn by the others; issue #21: its piñata, whether a pie
+        // voleuse can take one of its items.
+        look.set_items(slots);
         let pose = KartPose {
             tick,
             position: transform.translation,
@@ -917,6 +918,8 @@ fn show_effects(effects: &mut ItemEffects, look: &KartLook) {
     let mut next = *effects;
     next.calin = shown(next.calin, look.calin);
     next.rocket = shown(next.rocket, look.rocket);
+    // Issue #21: invisible (a pie voleuse): its faint ghost, nothing aims at it.
+    next.ghost = shown(next.ghost, look.hidden);
     if look.deflated {
         if next.deflated <= 0.0 {
             next.deflated = SHOWN_DEFLATED;
@@ -1007,12 +1010,12 @@ fn show_remote_karts(
             };
             environment.set_if_neq(shown);
         }
-        // Issue #53: what it holds out, its shields on our screen (`items::move_items`).
-        if let Some(mut slots) = slots {
-            let held = HeldLook::slots(look.held);
-            if HeldLook::of(&slots) != look.held {
-                *slots = held;
-            }
+        // Issue #53: what it holds out, its shields on our screen (`items::move_items`); issue
+        // #21: its piñata's items, and an item a pie voleuse can take.
+        if let Some(mut slots) = slots
+            && !look.shows_slots(&slots)
+        {
+            *slots = look.slots();
         }
         let own = effects.tuning(&kart_tuning);
         state.set_if_neq(look.kart_state(&own));

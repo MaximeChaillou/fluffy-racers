@@ -41,6 +41,15 @@
 //!   after the leader of its thrower's ranking, by id, and its thrower's peer tells when that
 //!   leader changes ([`Retarget`]); each peer judges its karts in its crush. Gone without a throw
 //!   (a dégonflage), its kart's peer says so ([`PillowGone`]).
+//! - **Phase 3** (issue #21): the **boomerang-os** goes out like the others ([`ItemOut`],
+//!   `OutMotion::Boomerang`); on its way back it goes after its thrower's body on each screen,
+//!   and its thrower's peer tells when it caught it (an [`ItemBreak`] without a kart: gone on
+//!   every screen). The **piñata** out travels in its kart's states (`KartSnapshot::pinata`):
+//!   every peer draws its items around the kart. The **pie voleuse**: invisible, its kart says so
+//!   in its states (invincible meanwhile, a faint ghost on the others' screens); its theft is
+//!   asked of the victim's peer ([`Steal`]: the victim chosen among the karts whose states say
+//!   they hold an item to take), which gives up what its kart holds then and tells everyone
+//!   ([`Stolen`]): the thief's peer puts it in its slot.
 //! - **The host** (issue #63: the room's creator, from start to end) decides every claim, and
 //!   only its verdicts count. The items thrown by a peer that leaves disappear; the host leaving
 //!   ends the room.
@@ -55,7 +64,7 @@ use super::pickups::{Arbiter, ClaimKey, PillowRules};
 use super::protocol::{
     BlastOut, Claim, EFFECT_ITEMS, EffectOut, Honk, ItemBreak, ItemId, ItemOut, KartId, LooseId,
     MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow, PeerKey, Pickup, PillowGone, RAM_ITEMS,
-    Rammed, Retarget, Scatter, Spot, Verdict,
+    Rammed, Retarget, Scatter, Spot, Steal, Stolen, Verdict,
 };
 use super::sync::{KartSync, NetKart, RemoteKartProxy};
 use super::{NetSession, online::local_tick};
@@ -65,9 +74,9 @@ use crate::croquettes::{
 };
 use crate::items::{
     Blast, BoxBroken, CatchUp, Flight, Hold, Honked, ItemBlocked, ItemBox, ItemEffect,
-    ItemHitJudged, ItemKind, ItemObject, ItemSlots, ItemStats, ItemSystems, ItemTable, ItemTuning,
-    Motion, OnlineItemTable, PillowFlight, Prize, SharedStandings, blast_radius, draw_unit,
-    held_offset, item_radius,
+    ItemHitJudged, ItemKind, ItemObject, ItemSlots, ItemStats, ItemSteal, ItemStolen, ItemSystems,
+    ItemTable, ItemTuning, Motion, OnlineItemTable, PINATA_ITEMS, PillowFlight, Prize,
+    SharedStandings, blast_radius, draw_unit, held_offset, item_radius,
 };
 use crate::kart::{Kart, KartSystems};
 use crate::race::{Race, RaceGrid, seconds_to_ticks};
@@ -129,6 +138,9 @@ pub struct ItemLog {
     pub rams: Vec<(KartId, KartId, ItemKind, u32)>,
     /// Oreillers géants after another kart (issue #61): which, after whom, the common tick.
     pub retargets: Vec<(ItemId, Option<KartId>, u32)>,
+    /// What pies voleuses took (issue #21, the victim's word): the thief, the victim, the item and
+    /// how many, the common tick (the victim's).
+    pub steals: Vec<(KartId, KartId, ItemKind, u8, u32)>,
 }
 
 /// The items and croquettes online (see the module's documentation): inserted with
@@ -419,10 +431,11 @@ fn receive_items(
     mut objects: Query<(Entity, &mut ItemObject)>,
     mut inbox: Local<Vec<(PeerKey, Message)>>,
     mut verdicts: Local<Vec<Verdict>>,
-    (mut blasts, mut honks, mut effects): (
+    (mut blasts, mut honks, mut effects, mut steals): (
         MessageWriter<Blast>,
         MessageWriter<Honked>,
         MessageWriter<ItemEffect>,
+        MessageWriter<ItemSteal>,
     ),
 ) {
     let Some(lobby) = session.lobby.as_ref() else {
@@ -670,6 +683,36 @@ fn receive_items(
                     object.motion = Motion::Pillow { target, flight };
                 }
             }
+            Message::Steal(steal) if steal.session == current => {
+                // Issue #21: a pie voleuse of another peer's kart, after one of ours: our kart
+                // gives up what it holds now (`items::apply_steals`), and we tell (`send_items`).
+                if karts.authority(steal.thief) != Some(from) {
+                    continue;
+                }
+                if let (Some(victim), Some(thief)) =
+                    (karts.ours(steal.victim), karts.entity(steal.thief))
+                {
+                    steals.write(ItemSteal { thief, victim });
+                }
+            }
+            Message::Stolen(stolen) if stolen.session == current => {
+                // Issue #21: the victim's word: the thief gets it, ready, if it is ours.
+                if karts.authority(stolen.victim) != Some(from) {
+                    continue;
+                }
+                items.log.steals.push((
+                    stolen.thief,
+                    stolen.victim,
+                    stolen.item,
+                    stolen.count,
+                    stolen.tick,
+                ));
+                if let Some(thief) = karts.ours(stolen.thief)
+                    && let Ok((mut slots, ..)) = ours.get_mut(thief)
+                {
+                    slots.give(stolen.item, stolen.count, 0);
+                }
+            }
             Message::Scatter(scatter) if scatter.session == current => {
                 if karts.authority(scatter.kart) != Some(from) {
                     continue;
@@ -777,6 +820,17 @@ fn motion_of(motion: OutMotion, karts: &Karts) -> Motion {
                 OutPillow::Hover { left } => PillowFlight::Hover { left },
                 OutPillow::Drop => PillowFlight::Drop,
             },
+        },
+        OutMotion::Boomerang {
+            returning,
+            travelled,
+            bounces_left,
+            fall,
+        } => Motion::Boomerang {
+            returning,
+            travelled,
+            bounces_left: u32::from(bounces_left),
+            fall,
         },
     }
 }
@@ -959,7 +1013,11 @@ fn apply_break(
             items.log.breaks.push((end.id, end.kart, end.landed, now));
             return;
         };
+        let mut pinata = false;
         if let Ok((mut slots, ..)) = ours.get_mut(owner) {
+            // Issue #21: one of a piñata's (its first one left: its item goes with it,
+            // `items::move_items`).
+            pinata = slots.pinata != 0;
             slots.lose_one_held_out();
         }
         let leaving = objects
@@ -967,10 +1025,10 @@ fn apply_break(
             .filter(|(_, o)| o.owner == owner)
             .filter_map(|(entity, o)| o.held().map(|hold| (entity, hold)))
             .max_by_key(|(_, hold)| match hold {
-                Hold::Trail(k) | Hold::Orbit(k) => *k,
+                Hold::Trail(k) | Hold::Orbit(k) | Hold::Pinata(k) => *k,
                 Hold::Dragged => 0,
             });
-        if let Some((entity, _)) = leaving {
+        if let Some((entity, _)) = leaving.filter(|_| !pinata) {
             commands.entity(entity).try_despawn();
         }
     } else {
@@ -1031,14 +1089,9 @@ fn show_held_items(
         let Some((item, count)) = slots.held_out() else {
             continue;
         };
-        let radius = item_radius(item, &tuning);
         let holds = if slots.dragging.is_some() { 1 } else { count };
-        for k in 0..holds {
-            let hold = match (slots.dragging.is_some(), item) {
-                (true, _) => Hold::Dragged,
-                (false, ItemKind::Pelure) => Hold::Trail(k),
-                (false, _) => Hold::Orbit(k),
-            };
+        let mut shown = |item: ItemKind, hold: Hold| {
+            let radius = item_radius(item, &tuning);
             let at = transform.transform_point(held_offset(hold, 3, radius, 0.0, &tuning));
             let entity = commands
                 .spawn((
@@ -1048,6 +1101,23 @@ fn show_held_items(
                 ))
                 .id();
             items.shown_held.push((entity, kart));
+        };
+        if item == ItemKind::Pinata {
+            // Issue #21: the piñata's items left, each as itself.
+            for (k, held) in PINATA_ITEMS.iter().enumerate() {
+                if slots.has_pinata(k) {
+                    shown(*held, Hold::Pinata(k as u8));
+                }
+            }
+            continue;
+        }
+        for k in 0..holds {
+            let hold = match (slots.dragging.is_some(), item) {
+                (true, _) => Hold::Dragged,
+                (false, ItemKind::Pelure) => Hold::Trail(k),
+                (false, _) => Hold::Orbit(k),
+            };
+            shown(item, hold);
         }
     }
 }
@@ -1075,10 +1145,12 @@ fn send_items(
         MessageReader<ItemBlocked>,
         MessageReader<CroquettesLost>,
     ),
-    (mut blasts, mut honks, mut effects): (
+    (mut blasts, mut honks, mut effects, mut steals, mut stolen): (
         MessageReader<Blast>,
         MessageReader<Honked>,
         MessageReader<ItemEffect>,
+        MessageReader<ItemSteal>,
+        MessageReader<ItemStolen>,
     ),
     new_objects: Query<(Entity, &ItemObject), Added<ItemObject>>,
     new_loose: Query<(Entity, &LooseCroquette), Added<LooseCroquette>>,
@@ -1099,6 +1171,8 @@ fn send_items(
         blasts.clear();
         honks.clear();
         effects.clear();
+        steals.clear();
+        stolen.clear();
         return;
     }
     let me = sync.me();
@@ -1218,6 +1292,40 @@ fn send_items(
             order,
         }));
     }
+    // Issue #21: our pies voleuses after another peer's kart: its peer gives up what it holds.
+    for steal in steals.read() {
+        let (Ok(thief), None, Some(victim)) = (
+            local.get(steal.thief),
+            local.get(steal.victim).ok(),
+            id_of(steal.victim),
+        ) else {
+            continue;
+        };
+        items.outbox.push(Message::Steal(Steal {
+            session,
+            thief: thief.0,
+            victim,
+            tick: now,
+        }));
+    }
+    // What our karts gave up to a pie voleuse (ours or another peer's): we tell.
+    for theft in stolen.read() {
+        let (Ok(victim), Some(thief)) = (local.get(theft.victim), id_of(theft.thief)) else {
+            continue;
+        };
+        items
+            .log
+            .steals
+            .push((thief, victim.0, theft.item, theft.count, now));
+        items.outbox.push(Message::Stolen(Stolen {
+            session,
+            thief,
+            victim: victim.0,
+            item: theft.item,
+            count: theft.count,
+            tick: now,
+        }));
+    }
     // Items our karts threw or dropped (what they hold out goes with their states). Only those
     // that play online (issue #18).
     for (entity, object) in &new_objects {
@@ -1275,6 +1383,17 @@ fn send_items(
                 flight: Flight::Dive,
             } => OutMotion::Dive {
                 target: target(kart),
+            },
+            Motion::Boomerang {
+                returning,
+                travelled,
+                bounces_left,
+                fall,
+            } => OutMotion::Boomerang {
+                returning,
+                travelled,
+                bounces_left: bounces_left.min(255) as u8,
+                fall,
             },
         };
         let id = ItemId {
@@ -1475,6 +1594,33 @@ fn send_items(
                 .push((scatter.kart, scatter.loss, scatter.tick, scatter.to.clone()));
             items.outbox.push(Message::Scatter(scatter));
         }
+    }
+    // Issue #21: our boomerangs gone by themselves (caught by their thrower, mostly: on the
+    // others' screens its body is a little behind, its copy might go on): gone on every screen.
+    let mut caught = Vec::new();
+    for (entity, id, peer) in &items.objects {
+        if *peer == me
+            && !alive_objects.contains(*entity)
+            && !items.broken.contains(id)
+            && items
+                .log
+                .thrown
+                .iter()
+                .any(|(thrown, item, _)| thrown == id && *item == ItemKind::Boomerang)
+        {
+            caught.push(*id);
+        }
+    }
+    for id in caught {
+        items.broke(id);
+        let end = ItemBreak {
+            session,
+            id,
+            kart: None,
+            landed: false,
+        };
+        items.log.breaks.push((end.id, end.kart, end.landed, now));
+        items.outbox.push(Message::ItemBreak(end));
     }
     // What is gone here by itself (too old, broken on a wall, fallen, vanished).
     items

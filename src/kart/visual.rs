@@ -725,12 +725,16 @@ pub fn shown_while_invincible(invincibility: &Invincibility, now: f32) -> bool {
 
 /// Same, with its item effects (issue #18): a super câlin or a fusée makes it invincible too,
 /// but it does not blink then (it glows, `crate::items`): only the protection after a hit
-/// blinks.
+/// blinks. Invisible (issue #21, a pie voleuse), it is not shown at all: a ghost stands for it
+/// (`crate::items`, faint for the others).
 pub fn shown_with_effects(
     invincibility: &Invincibility,
     effects: Option<&ItemEffects>,
     now: f32,
 ) -> bool {
+    if effects.is_some_and(|e| e.hidden()) {
+        return false;
+    }
     effects.is_some_and(|e| e.rams()) || shown_while_invincible(invincibility, now)
 }
 

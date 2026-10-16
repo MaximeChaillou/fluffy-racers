@@ -42,6 +42,16 @@
 //!   Immunities: the items that touch or explode ([`immune_to_items`]) and the dégonflage and
 //!   the chantilly ([`immune_to_effects`]: they reach a kart spinning too) spare the invincible
 //!   karts (after a hit, in a super câlin, in a fusée), the pelican's and those past the finish.
+//! - **Phase 3** (issue #21, GD § 8):
+//!   - **pie voleuse**: about 3 s invisible (`ItemEffects::ghost`, and invincible meanwhile: the
+//!     items go through it, nothing aims at it, no paw reaches it), and it steals the item of the
+//!     closest kart ahead in the race that holds one, else behind ([`steal_victim`],
+//!     [`ItemSteal`]: the victim gives it up);
+//!   - **piñata**: its eight items ([`PINATA_ITEMS`]) turn around the kart (shields, like an
+//!     "x3"); each press uses the one in front ([`pinata_in_front`]) as itself;
+//!   - **boomerang-os**: thrown ahead (or behind), it curves out, then comes back to its thrower
+//!     ([`Motion::Boomerang`]), who catches it; three throws, the next one once it is back (or
+//!     broken). It breaks on the first kart it touches (a spin out), never on its thrower.
 //! - **Debug** ([`GiveItem`]): the I key cycles through every item into the player's hand, the
 //!   admin panel gives any (online: only in a debug build, and only what plays online).
 //!
@@ -73,12 +83,13 @@ mod scenario_tests;
 
 pub use objects::{
     FALL_LIMIT_SPEED, GROUND_PROBE_DOWN, GROUND_PROBE_UP, Hold, ITEM_GRAVITY, KART_RIDE_HEIGHT,
-    Roll, RollStep, WALL_NORMAL_Y, held_offset, roll, segment_box, segment_sphere,
+    Roll, RollStep, WALL_NORMAL_Y, held_offset, pinata_angle, pinata_in_front, roll, segment_box,
+    segment_sphere,
 };
-pub use slots::{ItemSlots, Slot, Use};
+pub use slots::{ItemSlots, PINATA_FULL, Slot, Use};
 pub use table::{
-    DrawRow, ITEMS_RON, InvalidTable, ItemKind, ItemTable, Prize, TableFile, TableRow, draw_unit,
-    pillow_allowed,
+    BOOMERANG_THROWS, DrawRow, ITEMS_RON, InvalidTable, ItemKind, ItemTable, PINATA_ITEMS, Prize,
+    TableFile, TableRow, draw_unit, pillow_allowed,
 };
 pub use tuning::ItemTuning;
 pub use visual::{EffectKind, EffectLook, ItemVisualAssets, ItemVisualPlugin};
@@ -156,6 +167,15 @@ pub enum Motion {
     Pillow {
         target: Option<Entity>,
         flight: PillowFlight,
+    },
+    /// A boomerang-os (issue #21) on the ground: flying out (curving, `travelled` m so far), then
+    /// `returning` to its thrower; it bounces off `bounces_left` walls more. `fall`: its falling
+    /// speed off an edge.
+    Boomerang {
+        returning: bool,
+        travelled: f32,
+        bounces_left: u32,
+        fall: f32,
     },
 }
 
@@ -239,6 +259,7 @@ pub fn item_radius(item: ItemKind, tuning: &ItemTuning) -> f32 {
         ItemKind::Abeille => tuning.abeille_radius,
         ItemKind::Bombe => tuning.bombe_radius,
         ItemKind::OreillerGeant => tuning.oreiller_radius,
+        ItemKind::Boomerang => tuning.boomerang_radius,
         _ => 0.3,
     }
 }
@@ -281,6 +302,49 @@ pub fn deflate_time(rank: u32, racers: usize, first: f32, last: f32) -> f32 {
     }
     let t = (rank.saturating_sub(1) as f32 / (racers - 1) as f32).clamp(0.0, 1.0);
     first + (last - first) * t
+}
+
+/// Who a pie voleuse used by `thief` steals from (issue #21, GD § 8: « vole l'objet d'un
+/// adversaire »): the closest kart ahead of it in the race (`standings`, first to last) that
+/// holds an item to take (`holds`), else the closest one behind; off a race (or a kart not in
+/// it), the closest kart (`positions`) that holds one. `None`: nobody holds anything.
+pub fn steal_victim(
+    thief: Entity,
+    at: Vec3,
+    standings: &[Entity],
+    positions: &[(Entity, Vec3)],
+    holds: impl Fn(Entity) -> bool,
+) -> Option<Entity> {
+    if let Some(i) = standings.iter().position(|e| *e == thief) {
+        return standings[..i]
+            .iter()
+            .rev()
+            .chain(&standings[i + 1..])
+            .copied()
+            .find(|e| holds(*e));
+    }
+    positions
+        .iter()
+        .filter(|(e, _)| *e != thief && holds(*e))
+        .min_by(|(_, a), (_, b)| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
+        .map(|(e, _)| *e)
+}
+
+/// A pie voleuse (issue #21): `thief` steals from `victim` ([`steal_victim`]). The victim gives up
+/// what it holds ([`ItemSlots::steal`]: its peer, online), and the thief gets it, ready.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemSteal {
+    pub thief: Entity,
+    pub victim: Entity,
+}
+
+/// What a pie voleuse took (issue #21): `item` (`count` of it) went from `victim` to `thief`.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemStolen {
+    pub thief: Entity,
+    pub victim: Entity,
+    pub item: ItemKind,
+    pub count: u8,
 }
 
 /// `kart` was touched by an item of `by` (the item broke on it). The victim decides whether it
@@ -477,6 +541,8 @@ impl Plugin for ItemPlugin {
             .add_message::<ItemEffect>()
             .add_message::<Honked>()
             .add_message::<GiveItem>()
+            .add_message::<ItemSteal>()
+            .add_message::<ItemStolen>()
             .add_message::<LoseCroquettes>()
             .add_message::<CroquettePickedUp>()
             // Every kart holds items; every box spot of the track is a box.
@@ -499,6 +565,7 @@ impl Plugin for ItemPlugin {
                         tick_items,
                         take_boxes,
                         use_items,
+                        apply_steals,
                         apply_item_effects,
                         steer_rockets,
                         move_items,
@@ -987,6 +1054,27 @@ impl Launch<'_> {
                     forward * tuning.oreiller_speed,
                 )
             }
+            // Issue #21: off the front (or the back) on the ground, flying out; the first wall
+            // sends it back.
+            ItemKind::Boomerang => {
+                let (at, direction) = if aim_back {
+                    (back, -forward)
+                } else {
+                    (front, forward)
+                };
+                ItemObject::new(
+                    item,
+                    self.kart,
+                    Motion::Boomerang {
+                        returning: false,
+                        travelled: 0.0,
+                        bounces_left: 1,
+                        fall: 0.0,
+                    },
+                    at,
+                    direction * tuning.boomerang_speed,
+                )
+            }
             _ => return None,
         })
     }
@@ -1003,9 +1091,11 @@ fn spawn_object(commands: &mut Commands, object: ItemObject) {
 /// Every kart's item button: drag, release, deploy, fire, use (`slots.rs`). Items go out from
 /// the kart; a piment boosts it, a croquette dorée fills its pockets; a piment doré opens its
 /// window, a super câlin or a fusée starts on the kart, the chantilly, the dégonflage and the
-/// klaxon-canard act on the others ([`ItemEffect`], issue #18). A kart carried by the pelican or
-/// past the finish line loses what it held out and uses nothing; a kart spinning or tumbling, or
-/// in a fusée, uses nothing.
+/// klaxon-canard act on the others ([`ItemEffect`], issue #18). Issue #21: a pie voleuse makes it
+/// invisible and steals ([`ItemSteal`]); a piñata comes out around it, then its item in front
+/// goes at each press, as itself; a boomerang-os waits for the last one to come back. A kart
+/// carried by the pelican or past the finish line loses what it held out and uses nothing; a
+/// kart spinning or tumbling, or in a fusée, uses nothing.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn use_items(
     tuning: Res<ItemTuning>,
@@ -1014,9 +1104,9 @@ fn use_items(
     race: Option<Res<Race>>,
     course: Option<Res<Course>>,
     mut commands: Commands,
-    mut positions: Local<Vec<(Entity, Vec3)>>,
+    (mut positions, mut holders): (Local<Vec<(Entity, Vec3)>>, Local<Vec<Entity>>),
     objects: Query<(Entity, &ItemObject)>,
-    remotes: Query<(Entity, &Transform), (With<Remote>, Without<Kart>)>,
+    remotes: Query<(Entity, &Transform, Option<&ItemSlots>), (With<Remote>, Without<Kart>)>,
     mut karts: Query<
         (
             Entity,
@@ -1034,11 +1124,27 @@ fn use_items(
     >,
     mut picked: MessageWriter<CroquettePickedUp>,
     mut effects_out: MessageWriter<ItemEffect>,
+    mut steals: MessageWriter<ItemSteal>,
 ) {
     positions.clear();
     positions.extend(karts.iter().map(|(e, (t, _), ..)| (e, t.translation)));
     // Online (issue #53), the other peers' karts are targets too.
-    positions.extend(remotes.iter().map(|(e, t)| (e, t.translation)));
+    positions.extend(remotes.iter().map(|(e, t, _)| (e, t.translation)));
+    // Issue #21: the karts a pie voleuse may steal from (online, the other peers' karts as their
+    // states say: `ItemSlots::stealable` of what their bodies hold).
+    holders.clear();
+    holders.extend(
+        karts
+            .iter()
+            .filter(|(_, _, _, _, slots, ..)| slots.stealable().is_some())
+            .map(|(e, ..)| e),
+    );
+    holders.extend(
+        remotes
+            .iter()
+            .filter(|(_, _, slots)| slots.is_some_and(|s| s.stealable().is_some()))
+            .map(|(e, ..)| e),
+    );
     let croquettes_tuning = croquette_tuning.as_deref().cloned().unwrap_or_default();
     let started = race.as_ref().is_none_or(|r| r.started());
     for (
@@ -1063,6 +1169,7 @@ fn use_items(
         };
         let leaving = |dragged: bool| {
             held_out()
+                .filter(|(_, o)| !matches!(o.held(), Some(Hold::Pinata(_))))
                 .filter(|(_, o)| (o.held() == Some(Hold::Dragged)) == dragged)
                 .max_by_key(|(_, o)| match o.held() {
                     Some(Hold::Trail(k) | Hold::Orbit(k)) => k,
@@ -1077,6 +1184,20 @@ fn use_items(
                     commands.entity(entity).try_despawn();
                 }
             }
+            if slots.button != input.item {
+                slots.button = input.item;
+            }
+            continue;
+        }
+        // Issue #21: the next throw of a boomerang-os once the last one is back (or broken).
+        let boomerang_out = matches!(
+            slots.hand,
+            Slot::Ready {
+                item: ItemKind::Boomerang,
+                ..
+            }
+        ) && has_out(&objects, kart, ItemKind::Boomerang);
+        if boomerang_out {
             if slots.button != input.item {
                 slots.button = input.item;
             }
@@ -1107,16 +1228,43 @@ fn use_items(
             }
             Use::Deploy { item, count } => {
                 for k in 0..count {
-                    let hold = if item == ItemKind::Pelure {
-                        Hold::Trail(k)
-                    } else {
-                        Hold::Orbit(k)
+                    // Issue #21: a piñata's eight are its items, each as itself.
+                    let (held_item, hold) = match item {
+                        ItemKind::Pinata => (
+                            PINATA_ITEMS[usize::from(k) % PINATA_ITEMS.len()],
+                            Hold::Pinata(k),
+                        ),
+                        ItemKind::Pelure => (item, Hold::Trail(k)),
+                        _ => (item, Hold::Orbit(k)),
                     };
-                    let at = held_position(transform, hold, item, 0.0, &tuning);
-                    let held = ItemObject::new(item, kart, Motion::Held(hold), at, Vec3::ZERO);
+                    let at = held_position(transform, hold, held_item, 0.0, &tuning);
+                    let held = ItemObject::new(held_item, kart, Motion::Held(hold), at, Vec3::ZERO);
                     spawn_object(&mut commands, held);
                 }
                 continue;
+            }
+            Use::Fire {
+                item: ItemKind::Pinata,
+                back,
+            } => {
+                // Issue #21: the piñata's item in front goes, as itself (a pelure where it was).
+                let age = held_out()
+                    .find_map(|(_, o)| matches!(o.held(), Some(Hold::Pinata(_))).then_some(o.age))
+                    .unwrap_or(0.0);
+                let k = pinata_in_front(slots.pinata, age, &tuning).unwrap_or(0);
+                let mut next = *slots;
+                let Some(real) = next.take_pinata(usize::from(k)) else {
+                    continue;
+                };
+                slots.set_if_neq(next);
+                let from = held_out()
+                    .find(|(_, o)| o.held() == Some(Hold::Pinata(k)))
+                    .map(|(e, o)| (e, o.position));
+                if let Some((entity, _)) = from {
+                    commands.entity(entity).try_despawn();
+                }
+                let at = from.map(|(_, at)| at).filter(|_| real == ItemKind::Pelure);
+                (real, back, at)
             }
             Use::Release { item, back } | Use::Fire { item, back } => {
                 let from = leaving(matches!(action, Use::Release { .. }));
@@ -1168,6 +1316,23 @@ fn use_items(
                 effects.rocket = tuning.fusee_time;
                 invincibility.start(tuning.fusee_time);
             }
+            ItemKind::PieVoleuse => {
+                // Issue #21: invisible (and invincible, without blinking) for its time, and a
+                // theft from the closest kart ahead that holds something.
+                effects.ghost = tuning.pie_time;
+                invincibility.start(tuning.pie_time);
+                let standings = race.as_ref().map_or(&[][..], |r| &r.standings[..]);
+                if let Some(victim) =
+                    steal_victim(kart, transform.translation, standings, &positions, |e| {
+                        holders.contains(&e)
+                    })
+                {
+                    steals.write(ItemSteal {
+                        thief: kart,
+                        victim,
+                    });
+                }
+            }
             ItemKind::Chantilly | ItemKind::Degonflage | ItemKind::KlaxonCanard => {
                 // Online (issue #61): with the ranking this peer sees, for every peer.
                 let standings = online.as_ref().map(|_| {
@@ -1190,6 +1355,57 @@ fn use_items(
                 }
             }
         }
+    }
+}
+
+/// Whether `kart` has one of its own `item` out (thrown, or held out around it).
+fn has_out(objects: &Query<(Entity, &ItemObject)>, kart: Entity, item: ItemKind) -> bool {
+    objects
+        .iter()
+        .any(|(_, o)| o.owner == kart && o.item == item)
+}
+
+/// One of the items `slots` held out (`hold`) broke: one of the piñata's (issue #21), else the
+/// dragged one or one of an "x3".
+fn lose_held(slots: &mut ItemSlots, hold: Option<Hold>) {
+    match hold {
+        Some(Hold::Pinata(k)) => {
+            slots.take_pinata(usize::from(k));
+        }
+        _ => slots.lose_one_held_out(),
+    }
+}
+
+/// The pie voleuse's thefts (issue #21, [`ItemSteal`]): a victim of ours gives up what it holds
+/// ([`ItemSlots::steal`]), and the thief gets it, ready ([`ItemStolen`]; online, a thief or a
+/// victim of another peer goes through `crate::net`). A victim with nothing left to take gives
+/// nothing.
+fn apply_steals(
+    mut steals: MessageReader<ItemSteal>,
+    mut karts: Query<&mut ItemSlots, With<Kart>>,
+    mut stolen: MessageWriter<ItemStolen>,
+) {
+    for steal in steals.read() {
+        if steal.thief == steal.victim {
+            continue;
+        }
+        let Ok(mut victim) = karts.get_mut(steal.victim) else {
+            continue;
+        };
+        let mut next = *victim;
+        let Some((item, count)) = next.steal() else {
+            continue;
+        };
+        victim.set_if_neq(next);
+        if let Ok(mut thief) = karts.get_mut(steal.thief) {
+            thief.give(item, count, 0);
+        }
+        stolen.write(ItemStolen {
+            thief: steal.thief,
+            victim: steal.victim,
+            item,
+            count,
+        });
     }
 }
 
@@ -1284,7 +1500,7 @@ fn apply_item_effects(
                     if object.held().is_some()
                         && let Ok((.., mut slots, _)) = karts.get_mut(object.owner)
                     {
-                        slots.lose_one_held_out();
+                        lose_held(&mut slots, object.held());
                     }
                     blocked.write(ItemBlocked {
                         object: entity,
@@ -1392,6 +1608,7 @@ fn move_items(
             Option<&ItemSlots>,
             Option<&RaceProgress>,
             Has<Remote>,
+            Option<&ItemEffects>,
         ),
         Or<(With<Kart>, With<Remote>)>,
     >,
@@ -1411,15 +1628,17 @@ fn move_items(
                 .map(|(_, hit)| (hit.time_of_impact, hit.normal))
         })
     };
-    // A kart an abeille may go after: on the track, racing.
+    // A kart an abeille may go after: on the track, racing, not invisible (issue #21).
     let chaseable = |entity: Entity| {
         karts
             .get(entity)
             .ok()
-            .filter(|(_, _, state, _, progress, _)| {
-                **state != KartState::Respawning && !progress.is_some_and(|p| p.finished())
+            .filter(|(_, _, state, _, progress, _, effects)| {
+                **state != KartState::Respawning
+                    && !progress.is_some_and(|p| p.finished())
+                    && !effects.is_some_and(|e| e.hidden())
             })
-            .map(|(_, transform, _, _, progress, _)| {
+            .map(|(_, transform, _, _, progress, _, _)| {
                 (transform.translation, progress.map(|p| p.distance))
             })
     };
@@ -1434,6 +1653,16 @@ fn move_items(
         item.age += dt;
         let radius = item.radius(&tuning);
         match item.motion {
+            // Issue #21: one of a piñata's, while it is still out.
+            Motion::Held(Hold::Pinata(k)) => match karts.get(item.owner) {
+                Ok((_, transform, _, Some(slots), ..)) if slots.has_pinata(usize::from(k)) => {
+                    item.position =
+                        held_position(transform, Hold::Pinata(k), item.item, item.age, &tuning);
+                    item.velocity = (item.position - item.previous) / dt;
+                    true
+                }
+                _ => false,
+            },
             Motion::Held(hold) => match karts.get(item.owner) {
                 Ok((_, transform, _, Some(slots), ..))
                     if slots.held_out().is_some_and(|(held, _)| held == item.item)
@@ -1547,7 +1776,9 @@ fn move_items(
             Motion::Pillow { target, flight } => {
                 // After the leader now (the one it had, without a race). Online (issue #61), one
                 // of another peer goes after the leader its thrower's peer sees (`Retarget`).
-                let ours = karts.get(item.owner).is_ok_and(|(.., remote)| !remote);
+                let ours = karts
+                    .get(item.owner)
+                    .is_ok_and(|(_, _, _, _, _, remote, _)| !remote);
                 let leader = if ours { leader } else { None };
                 let target = leader.or(target).filter(|t| chaseable(*t).is_some());
                 let chased = target.and_then(chaseable);
@@ -1631,6 +1862,61 @@ fn move_items(
                 item.motion = Motion::Pillow { target, flight };
                 item.age < tuning.oreiller_lifetime
             }
+            Motion::Boomerang {
+                mut returning,
+                mut travelled,
+                bounces_left,
+                fall,
+            } => {
+                // Issue #21: out, curving to its left; then back to its thrower (where its body
+                // is: online, where this peer shows it).
+                let heading = item.velocity.with_y(0.0).normalize_or(Vec3::NEG_Z);
+                let owner = karts.get(item.owner).ok().map(|(_, t, ..)| t.translation);
+                let direction = match (returning, owner) {
+                    (false, _) => Quat::from_rotation_y(tuning.boomerang_curve * dt) * heading,
+                    (true, Some(owner)) => boomerang_heading(
+                        heading,
+                        owner - item.position,
+                        dt,
+                        tuning.boomerang_turn_rate,
+                        tuning.boomerang_home_distance,
+                    ),
+                    (true, None) => heading,
+                };
+                let mut rolling = Roll {
+                    position: item.position,
+                    velocity: direction * tuning.boomerang_speed,
+                    fall,
+                    bounces_left,
+                };
+                let rolled = roll(&mut rolling, radius, dt, cast);
+                item.position = rolling.position;
+                item.velocity = rolling.velocity;
+                travelled += tuning.boomerang_speed * dt;
+                let mut bounces_left = rolling.bounces_left;
+                if !returning
+                    && (rolled == RollStep::Bounced || travelled >= tuning.boomerang_range)
+                {
+                    returning = true;
+                    bounces_left = tuning.boomerang_bounces;
+                }
+                item.motion = Motion::Boomerang {
+                    returning,
+                    travelled,
+                    bounces_left,
+                    fall: rolling.fall,
+                };
+                // Back in its thrower's hand: gone, the next throw is ready.
+                let caught = returning
+                    && owner.is_some_and(|owner| {
+                        owner.with_y(0.0).distance(item.position.with_y(0.0))
+                            <= tuning.boomerang_catch
+                            && (owner.y - item.position.y).abs() < 3.0
+                    });
+                !caught
+                    && !matches!(rolled, RollStep::Broke | RollStep::Fell)
+                    && item.age < tuning.boomerang_lifetime
+            }
             Motion::Homing { target, flight } => {
                 let mut target = target.filter(|t| chaseable(*t).is_some());
                 let flight = match (flight, course.as_deref()) {
@@ -1709,7 +1995,10 @@ fn move_items(
         if behind > 0
             && matches!(
                 item.motion,
-                Motion::Rolling { .. } | Motion::Homing { .. } | Motion::Bomb { .. }
+                Motion::Rolling { .. }
+                    | Motion::Homing { .. }
+                    | Motion::Bomb { .. }
+                    | Motion::Boomerang { .. }
             )
         {
             item.previous = from;
@@ -1732,6 +2021,23 @@ fn move_items(
             }
         }
     }
+}
+
+/// The heading of a boomerang-os coming back (issue #21): from `heading` toward its thrower
+/// (`to`: from the boomerang to it), turning at most `turn_rate` (rad/s) over `dt`, or straight at
+/// it once within `home` m (it never circles around its thrower). Horizontal.
+pub fn boomerang_heading(heading: Vec3, to: Vec3, dt: f32, turn_rate: f32, home: f32) -> Vec3 {
+    let heading = heading.with_y(0.0).normalize_or(Vec3::NEG_Z);
+    let flat = to.with_y(0.0);
+    let Some(want) = flat.try_normalize() else {
+        return heading;
+    };
+    if flat.length() <= home {
+        return want;
+    }
+    let angle = heading.cross(want).y.atan2(heading.dot(want));
+    let most = turn_rate * dt;
+    Quat::from_rotation_y(angle.clamp(-most, most)) * heading
 }
 
 /// How far an explosion of `item` reaches (m).
@@ -1762,9 +2068,11 @@ struct Contact {
 }
 
 impl Contact {
-    /// It explodes on what it touches (issue #18): a bombe.
+    /// It explodes on what it touches (issue #18): a bombe out (issue #21: one of a piñata's,
+    /// held out around its kart, breaks like a shield, or hits the kart it touches, without a
+    /// blast that would knock over its own kart).
     fn explodes(&self) -> bool {
-        self.item == ItemKind::Bombe
+        self.item == ItemKind::Bombe && self.held.is_none()
     }
 
     /// Nothing stops it but a klaxon-canard (issue #18): an oreiller géant.
@@ -1793,7 +2101,7 @@ fn collide_items(
     mut broken: Local<Vec<bool>>,
     mut bodies: Local<Vec<(Entity, Transform)>>,
     objects: Query<(Entity, &ItemObject)>,
-    karts: Query<(Entity, &Transform, &KartState), With<Kart>>,
+    karts: Query<(Entity, &Transform, &KartState, Option<&ItemEffects>), With<Kart>>,
     mut slots: Query<(&mut ItemSlots, &mut ItemStats)>,
     mut hits: MessageWriter<ItemHit>,
     mut blocked: MessageWriter<ItemBlocked>,
@@ -1815,11 +2123,14 @@ fn collide_items(
         return;
     }
     bodies.clear();
+    // Issue #21: the items go through an invisible kart (a pie voleuse).
     bodies.extend(
         karts
             .iter()
-            .filter(|(_, _, state)| **state != KartState::Respawning)
-            .map(|(e, t, _)| (e, *t)),
+            .filter(|(_, _, state, effects)| {
+                **state != KartState::Respawning && !effects.is_some_and(|e| e.hidden())
+            })
+            .map(|(e, t, ..)| (e, *t)),
     );
     broken.clear();
     broken.resize(items.len(), false);
@@ -1868,9 +2179,11 @@ fn collide_items(
             }
         }
         for (kart, transform) in bodies.iter() {
+            // Its own abeille never hits its thrower, nor its own boomerang-os (issue #21: it
+            // catches it).
             if *kart == a.owner
                 && (a.held.is_some()
-                    || a.item == ItemKind::Abeille
+                    || matches!(a.item, ItemKind::Abeille | ItemKind::Boomerang)
                     || a.age < tuning.own_item_delay)
             {
                 continue;
@@ -1891,7 +2204,7 @@ fn collide_items(
                     if c.held.is_some()
                         && let Ok((mut held, mut stats)) = slots.get_mut(c.owner)
                     {
-                        held.lose_one_held_out();
+                        lose_held(&mut held, c.held);
                         stats.blocked += 1;
                     }
                     if c.explodes() {
@@ -1909,7 +2222,7 @@ fn collide_items(
                 if a.held.is_some()
                     && let Ok((mut held, _)) = slots.get_mut(a.owner)
                 {
-                    held.lose_one_held_out();
+                    lose_held(&mut held, a.held);
                 }
                 if a.explodes() || a.unstoppable() {
                     burst(&a, a.from.lerp(a.to, t.min(1.0)), &mut blasts);

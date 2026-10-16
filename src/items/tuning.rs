@@ -1,4 +1,4 @@
-//! Item tuning (GD § 8, issues #16 and #18). Values marked "GD" come from `docs/GAME_DESIGN.md` ("à régler"
+//! Item tuning (GD § 8, issues #16, #18 and #21). Values marked "GD" come from `docs/GAME_DESIGN.md` ("à régler"
 //! there); the others are our own starting points. Tweak them here (or in the admin panel), never
 //! hard-code them in systems. The distribution of the items by distance to the leader is data, not
 //! a tuning value: `assets/data/items.ron` (`table.rs`).
@@ -176,6 +176,38 @@ pub struct ItemTuning {
     // --- Klaxon-canard (GD § 8, issue #18: a shock wave that destroys the items close by) ---
     /// The items within this distance of the kart's center are destroyed (m).
     pub klaxon_radius: f32,
+
+    // --- Pie voleuse (GD § 8, issue #21: invisible about 3 s, steals an item) ---------------
+    /// Invisible this long (s, GD § 8: about 3 s): items go through it, nothing aims at it, no
+    /// paw reaches it (it is invincible meanwhile, without blinking).
+    pub pie_time: f32,
+
+    // --- Piñata (GD § 8, issue #21: 8 items around the kart, used one at a time) -----------
+    /// Its eight items turn around the kart at this distance from its center (m), wider than an
+    /// "x3"...
+    pub pinata_orbit_radius: f32,
+    /// ...this fast (rad/s): slow enough to pick the one in front.
+    pub pinata_orbit_speed: f32,
+
+    // --- Boomerang-os (GD § 8, issue #21: comes back, three throws) ------------------------
+    /// What touches it.
+    pub boomerang_radius: f32,
+    /// Its speed, out and back (m/s): a pelote's, faster than a kart at top speed in a boost.
+    pub boomerang_speed: f32,
+    /// It flies out this far (m), curving...
+    pub boomerang_range: f32,
+    /// ...this fast to its left (rad/s), then turns back to its thrower...
+    pub boomerang_curve: f32,
+    /// ...at most this fast (rad/s), straight at it once this close (m)...
+    pub boomerang_turn_rate: f32,
+    pub boomerang_home_distance: f32,
+    /// ...and its thrower catches it this close (m, center to center): the next throw is ready.
+    pub boomerang_catch: f32,
+    /// Walls it bounces off on its way back (the first wall on its way out sends it back); the
+    /// next one breaks it.
+    pub boomerang_bounces: u32,
+    /// It falls apart this long after the throw if it never came back (s).
+    pub boomerang_lifetime: f32,
 }
 
 impl Default for ItemTuning {
@@ -259,6 +291,21 @@ impl Default for ItemTuning {
             oreiller_cooldown: 30.0,
 
             klaxon_radius: 9.0,
+
+            pie_time: 3.0,
+
+            pinata_orbit_radius: 2.4,
+            pinata_orbit_speed: 2.5,
+
+            boomerang_radius: 0.45,
+            boomerang_speed: 42.0,
+            boomerang_range: 30.0,
+            boomerang_curve: 0.6,
+            boomerang_turn_rate: 6.0,
+            boomerang_home_distance: 8.0,
+            boomerang_catch: 2.0,
+            boomerang_bounces: 2,
+            boomerang_lifetime: 5.0,
         }
     }
 }
@@ -266,6 +313,21 @@ impl Default for ItemTuning {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GD § 8, issue #21: the pie voleuse about 3 s; the boomerang-os outruns a kart in a boost
+    /// (it comes back to a thrower driving away) and comes back from further than its catch; the
+    /// piñata turns wider than an "x3", slower.
+    #[test]
+    fn phase_three_defaults_follow_the_game_design() {
+        let t = ItemTuning::default();
+        assert_eq!(t.pie_time, 3.0);
+        assert!(t.boomerang_speed > 28.5 * (1.0 + t.piment_strength));
+        assert!(t.boomerang_range > 4.0 * t.boomerang_catch);
+        assert!(t.boomerang_home_distance > t.boomerang_catch);
+        assert!(t.pinata_orbit_radius > t.orbit_radius);
+        assert!(t.pinata_orbit_speed < t.orbit_speed);
+        assert!(t.boomerang_lifetime * t.boomerang_speed > 2.0 * t.boomerang_range);
+    }
 
     /// GD § 8: the roulette spins about 1.5 s, a box comes back after about 2 s, a spin out lasts
     /// about 1 s and a tumble about 1.6 s, a piment boosts about 1.2 s, a croquette dorée gives 2.

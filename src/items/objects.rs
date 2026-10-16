@@ -42,6 +42,9 @@ pub enum Hold {
     Trail(u8),
     /// The `k`-th pelote or abeille of an "x3", turning around the kart.
     Orbit(u8),
+    /// The `k`-th item of a piñata (issue #21, `PINATA_ITEMS`), turning around the kart, wider
+    /// and slower than an "x3".
+    Pinata(u8),
 }
 
 /// Where a held item sits in its kart's frame (the kart looks down -Z, its back is +Z):
@@ -64,7 +67,35 @@ pub fn held_offset(hold: Hold, of: u8, radius: f32, time: f32, tuning: &ItemTuni
                 tuning.orbit_radius * angle.cos(),
             )
         }
+        Hold::Pinata(k) => {
+            let angle = pinata_angle(k, time, tuning);
+            Vec3::new(
+                tuning.pinata_orbit_radius * angle.sin(),
+                0.35 - KART_RIDE_HEIGHT,
+                tuning.pinata_orbit_radius * angle.cos(),
+            )
+        }
     }
+}
+
+/// Where the `k`-th item of a piñata is in its turn around the kart at `time` (issue #21): its
+/// angle (rad) from the back of the kart (+Z), turning toward its left. The front is at π.
+pub fn pinata_angle(k: u8, time: f32, tuning: &ItemTuning) -> f32 {
+    time * tuning.pinata_orbit_speed + k as f32 * TAU / super::table::PINATA_ITEMS.len() as f32
+}
+
+/// Which of the piñata's items `left` (one bit each) is the closest to the front of the kart at
+/// `time` (issue #21): the one a press uses. `None` when none is left.
+pub fn pinata_in_front(left: u8, time: f32, tuning: &ItemTuning) -> Option<u8> {
+    (0..super::table::PINATA_ITEMS.len() as u8)
+        .filter(|k| left & (1 << k) != 0)
+        .min_by(|a, b| {
+            let off = |k: u8| {
+                let angle = pinata_angle(k, time, tuning).rem_euclid(TAU);
+                (angle - std::f32::consts::PI).abs()
+            };
+            off(*a).total_cmp(&off(*b))
+        })
 }
 
 /// Where along the segment `a → b` (0 to 1) it first comes within `radius` of `center`, if it
@@ -364,5 +395,38 @@ mod tests {
         }
         let later = held_offset(Hold::Orbit(0), 3, 0.4, 1.4, &t);
         assert!(later.distance(orbit[0]) > 0.5, "it turns");
+    }
+
+    /// Issue #21: a piñata's eight items turn around the kart at their radius, an eighth of a
+    /// turn apart; the one a press uses is the one closest to the front of the kart (-Z), among
+    /// those left.
+    #[test]
+    fn a_pinatas_items_turn_around_and_the_front_one_goes() {
+        let t = ItemTuning::default();
+        for time in [0.0, 0.37, 1.9] {
+            let around: Vec<Vec3> = (0..8)
+                .map(|k| held_offset(Hold::Pinata(k), 8, 0.3, time, &t))
+                .collect();
+            for (k, p) in around.iter().enumerate() {
+                assert!((p.with_y(0.0).length() - t.pinata_orbit_radius).abs() < 1e-4);
+                let next = around[(k + 1) % 8];
+                let gap = p.with_y(0.0).angle_between(next.with_y(0.0));
+                assert!((gap - TAU / 8.0).abs() < 1e-3);
+            }
+            let front = pinata_in_front(u8::MAX, time, &t).unwrap();
+            let ahead = |k: u8| -around[usize::from(k)].z;
+            assert!((0..8).all(|k| ahead(front) >= ahead(k) - 1e-4), "{time}");
+            // Without the front one: the next closest to the front.
+            let left = !(1u8 << front);
+            let second = pinata_in_front(left, time, &t).unwrap();
+            assert_ne!(second, front);
+            assert!(
+                (0..8)
+                    .filter(|k| *k != front)
+                    .all(|k| ahead(second) >= ahead(k) - 1e-4)
+            );
+        }
+        assert_eq!(pinata_in_front(0, 1.0, &t), None);
+        assert_eq!(pinata_in_front(0b0100_0000, 1.0, &t), Some(6));
     }
 }

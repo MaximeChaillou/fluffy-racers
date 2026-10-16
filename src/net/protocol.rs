@@ -40,7 +40,11 @@
 //! newest state ([`Message::KartStates`], grouped by the peer that drives them). Version 9 (issue
 //! #70): the host's closed results ([`RaceResults`]: every racer's time, estimated for those
 //! still on track). Version 10 (issue #20): two more bits of a kart's flags, its glider open and
-//! under water ([`KART_FLAGS`]).
+//! under water ([`KART_FLAGS`]). Version 11 (issue #21): the items of phase 3: the boomerang-os
+//! thrown ([`OutMotion::Boomerang`]), a pie voleuse's theft asked of its victim's peer
+//! ([`Steal`]) and what that peer gave up ([`Stolen`]); in the kart states, two bits of the items
+//! byte (it holds an item a pie voleuse can take; invisible) and one more byte, the piñata's
+//! items left around the kart (`KartSnapshot::pinata`, 50 bytes).
 
 use std::fmt;
 
@@ -50,7 +54,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 10;
+pub const PROTOCOL_VERSION: u8 = 11;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -283,22 +287,27 @@ pub struct KartSnapshot {
     pub wheels: u16,
     /// What the kart holds out (issue #53, `items::ItemSlots::held_out`): bits 0-1 the item
     /// (0 nothing, 1 pelure, 2 pelote, 3 abeille), 2-3 how many (1 to 3), 4 dragged behind (a
-    /// single pelure or pelote; else an "x3" out); the others are 0. Every peer draws them and
-    /// knows the kart's shields.
+    /// single pelure or pelote; else an "x3" out). Every peer draws them and knows the kart's
+    /// shields. Issue #21: bit 5, it holds an item a pie voleuse can take
+    /// (`items::ItemSlots::stealable`); bit 6, it is invisible (a pie voleuse); bit 7 is 0.
     pub items: u8,
+    /// Issue #21: the piñata's items left around the kart, one bit each (`items::PINATA_ITEMS`);
+    /// 0 without a piñata out (then nothing else is held out: bits 0-4 of `items` are 0).
+    pub pinata: u8,
 }
 
 /// A kart state fits in a small unreliable packet (issue #8: fewer than 64 bytes).
 pub const MAX_KART_STATE_BYTES: usize = 64;
 
 /// The items that go out on the track, in their wire order (`ItemOut::item`). Issue #18: the
-/// bombe à confettis; issue #61: the oreiller géant.
-pub const OUT_ITEMS: [ItemKind; 5] = [
+/// bombe à confettis; issue #61: the oreiller géant; issue #21: the boomerang-os.
+pub const OUT_ITEMS: [ItemKind; 6] = [
     ItemKind::Pelure,
     ItemKind::Pelote,
     ItemKind::Abeille,
     ItemKind::Bombe,
     ItemKind::OreillerGeant,
+    ItemKind::Boomerang,
 ];
 
 /// The highest flags of a kart state (`KartSnapshot::flags`): bit 7 is 0. Issue #20: bit 5 is the
@@ -316,14 +325,19 @@ pub const RAM_ITEMS: [ItemKind; 2] = [ItemKind::SuperCalin, ItemKind::Fusee];
 /// The items a kart can hold out, in their wire order (`KartSnapshot::items`, from 1).
 pub const HELD_ITEMS: [ItemKind; 3] = [ItemKind::Pelure, ItemKind::Pelote, ItemKind::Abeille];
 
+/// Bit 5 of `KartSnapshot::items` (issue #21): it holds an item a pie voleuse can take.
+pub const ITEMS_STEALABLE: u8 = 0b10_0000;
+/// Bit 6 of `KartSnapshot::items` (issue #21): it is invisible (a pie voleuse).
+pub const ITEMS_HIDDEN: u8 = 0b100_0000;
+
 /// Whether `items` (`KartSnapshot::items`) is a possible value.
 pub fn valid_held_items(items: u8) -> bool {
     let (kind, count, dragged) = (items & 0b11, (items >> 2) & 0b11, items & 0b1_0000 != 0);
-    if items & 0b1110_0000 != 0 {
+    if items & 0b1000_0000 != 0 {
         return false;
     }
     if kind == 0 {
-        return items == 0;
+        return items & 0b1_1111 == 0;
     }
     // Only a single pelure or pelote is dragged.
     count >= 1 && (!dragged || (count == 1 && kind <= 2))
@@ -382,6 +396,14 @@ pub enum OutMotion {
     Pillow {
         target: Option<KartId>,
         flight: OutPillow,
+    },
+    /// A boomerang-os (issue #21): flying out (`travelled` m so far) or coming back to its
+    /// thrower, the walls it can still bounce off, its falling speed.
+    Boomerang {
+        returning: bool,
+        travelled: f32,
+        bounces_left: u8,
+        fall: f32,
     },
 }
 
@@ -498,6 +520,29 @@ pub struct Retarget {
     pub session: u8,
     pub id: ItemId,
     pub target: Option<KartId>,
+    pub tick: u32,
+}
+
+/// A pie voleuse (issue #21): `thief` steals from `victim` (the closest kart ahead of it in its
+/// peer's ranking that holds an item to take, as its states say), on common tick `tick`. Only
+/// the victim's peer acts: it gives up what its kart holds then, if anything ([`Stolen`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Steal {
+    pub session: u8,
+    pub thief: KartId,
+    pub victim: KartId,
+    pub tick: u32,
+}
+
+/// What a pie voleuse took (issue #21), told by the victim's peer: `count` of `item` went from
+/// `victim` to `thief` (whose peer puts it in its slot, ready).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stolen {
+    pub session: u8,
+    pub thief: KartId,
+    pub victim: KartId,
+    pub item: ItemKind,
+    pub count: u8,
     pub tick: u32,
 }
 
@@ -638,6 +683,10 @@ pub enum Message {
     PillowGone(PillowGone),
     /// An oreiller géant after another kart (issue #61).
     Retarget(Retarget),
+    /// A pie voleuse's theft, asked of the victim's peer (issue #21).
+    Steal(Steal),
+    /// What the victim's peer gave up to a pie voleuse (issue #21).
+    Stolen(Stolen),
     /// Latency and clock: `sent_ms` is the sender's clock, echoed back.
     Ping {
         sent_ms: u32,
@@ -695,6 +744,8 @@ const PONG: u8 = 33;
 const RAMMED: u8 = 34;
 const PILLOW_GONE: u8 = 35;
 const RETARGET: u8 = 36;
+const STEAL: u8 = 37;
+const STOLEN: u8 = 38;
 const KART_STATE: u8 = 40;
 const KART_STATES: u8 = 41;
 const RELAYED: u8 = 10;
@@ -742,6 +793,8 @@ impl Message {
             Message::Rammed(_) => RAMMED,
             Message::PillowGone(_) => PILLOW_GONE,
             Message::Retarget(_) => RETARGET,
+            Message::Steal(_) => STEAL,
+            Message::Stolen(_) => STOLEN,
             Message::Ping { .. } => PING,
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
@@ -916,6 +969,15 @@ impl Message {
                             OutPillow::Drop => out.push(2),
                         }
                     }
+                    OutMotion::Boomerang {
+                        returning,
+                        travelled,
+                        bounces_left,
+                        fall,
+                    } => {
+                        out.extend_from_slice(&[6, u8::from(returning), bounces_left]);
+                        put_floats(out, &[travelled, fall]);
+                    }
                 }
             }
             Message::ItemBreak(end) => {
@@ -975,6 +1037,21 @@ impl Message {
                 put_item_id(out, retarget.id);
                 out.push(retarget.target.unwrap_or(NO_KART));
                 put_u32(out, retarget.tick);
+            }
+            Message::Steal(steal) => {
+                out.extend_from_slice(&[steal.session, steal.thief, steal.victim]);
+                put_u32(out, steal.tick);
+            }
+            Message::Stolen(stolen) => {
+                let item = ItemKind::ALL.iter().position(|i| *i == stolen.item);
+                out.extend_from_slice(&[
+                    stolen.session,
+                    stolen.thief,
+                    stolen.victim,
+                    item.unwrap_or(0) as u8,
+                    stolen.count,
+                ]);
+                put_u32(out, stolen.tick);
             }
             Message::Ping { sent_ms } => put_u32(out, *sent_ms),
             Message::Pong {
@@ -1230,18 +1307,34 @@ impl Message {
                         };
                         OutMotion::Pillow { target, flight }
                     }
+                    6 => {
+                        let returning = reader.bool()?;
+                        let bounces_left = reader.u8()?;
+                        let [travelled, fall] = reader.floats()?;
+                        OutMotion::Boomerang {
+                            returning,
+                            travelled,
+                            bounces_left,
+                            fall,
+                        }
+                    }
                     _ => return Err(DecodeError::Invalid("item motion")),
                 };
                 // A pelure lies on the ground, a pelote rolls, an abeille flies (or rolls,
-                // thrown backwards), a bombe is a bombe, an oreiller géant an oreiller.
+                // thrown backwards), a bombe is a bombe, an oreiller géant an oreiller, a
+                // boomerang-os a boomerang.
                 let fits = match item {
                     ItemKind::Pelure => motion == OutMotion::Ground,
                     ItemKind::Pelote => matches!(motion, OutMotion::Rolling { .. }),
                     ItemKind::Bombe => matches!(motion, OutMotion::Bomb { .. }),
                     ItemKind::OreillerGeant => matches!(motion, OutMotion::Pillow { .. }),
+                    ItemKind::Boomerang => matches!(motion, OutMotion::Boomerang { .. }),
                     _ => !matches!(
                         motion,
-                        OutMotion::Ground | OutMotion::Bomb { .. } | OutMotion::Pillow { .. }
+                        OutMotion::Ground
+                            | OutMotion::Bomb { .. }
+                            | OutMotion::Pillow { .. }
+                            | OutMotion::Boomerang { .. }
                     ),
                 };
                 if !fits || id.is_held() {
@@ -1381,6 +1474,41 @@ impl Message {
                     tick: reader.u32()?,
                 })
             }
+            STEAL => {
+                let steal = Steal {
+                    session: reader.u8()?,
+                    thief: reader.kart()?,
+                    victim: reader.kart()?,
+                    tick: reader.u32()?,
+                };
+                if steal.thief == steal.victim {
+                    return Err(DecodeError::Invalid("a kart stealing from itself"));
+                }
+                Message::Steal(steal)
+            }
+            STOLEN => {
+                let session = reader.u8()?;
+                let thief = reader.kart()?;
+                let victim = reader.kart()?;
+                let item = *ItemKind::ALL
+                    .get(usize::from(reader.u8()?))
+                    .ok_or(DecodeError::Invalid("item"))?;
+                let count = reader.u8()?;
+                if thief == victim {
+                    return Err(DecodeError::Invalid("a kart stealing from itself"));
+                }
+                if count == 0 || usize::from(count) > crate::items::PINATA_ITEMS.len() {
+                    return Err(DecodeError::Invalid("items stolen"));
+                }
+                Message::Stolen(Stolen {
+                    session,
+                    thief,
+                    victim,
+                    item,
+                    count,
+                    tick: reader.u32()?,
+                })
+            }
             PING => Message::Ping {
                 sent_ms: reader.u32()?,
             },
@@ -1477,7 +1605,7 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-/// A kart's state (issue #8): 47 bytes.
+/// A kart's state (issue #8): 48 bytes (47 before the piñata of issue #21).
 fn put_snapshot(out: &mut Vec<u8>, kart: &KartSnapshot) {
     put_u32(out, kart.tick);
     out.extend_from_slice(&[kart.kart, kart.session]);
@@ -1494,7 +1622,7 @@ fn put_snapshot(out: &mut Vec<u8>, kart: &KartSnapshot) {
     out.extend_from_slice(&kart.slip.to_le_bytes());
     out.push(kart.slipstream);
     out.extend_from_slice(&kart.wheels.to_le_bytes());
-    out.push(kart.items);
+    out.extend_from_slice(&[kart.items, kart.pinata]);
 }
 
 /// A list of peers: a count byte, then 16 bytes each ([`MAX_PLAYERS`] at most).
@@ -1704,6 +1832,7 @@ impl Reader<'_> {
             slipstream: self.u8()?,
             wheels: u16::from_le_bytes(self.array()?),
             items: self.u8()?,
+            pinata: self.u8()?,
         };
         if kart.rotation[5] & 0x80 != 0 {
             return Err(DecodeError::Invalid("kart rotation"));
@@ -1717,6 +1846,10 @@ impl Reader<'_> {
         }
         if !valid_held_items(kart.items) {
             return Err(DecodeError::Invalid("kart items"));
+        }
+        // Issue #21: a piñata out is all the kart holds out.
+        if kart.pinata != 0 && kart.items & 0b1_1111 != 0 {
+            return Err(DecodeError::Invalid("kart piñata"));
         }
         Ok(kart)
     }
@@ -1783,6 +1916,7 @@ mod tests {
             slipstream: 200,
             wheels: 0xfedc,
             items: 0b1_0110,
+            pinata: 0,
         }
     }
 
@@ -1933,10 +2067,18 @@ mod tests {
                 slip: -128,
                 slipstream: 255,
                 wheels: 0xfedc,
-                items: 0b1_0110,
+                // Issue #21: it holds an item a pie voleuse can take, and it is invisible.
+                items: 0b111_0110,
+                pinata: 0,
             }),
             Message::KartState(KartSnapshot {
                 items: 0b1111,
+                ..KartSnapshot::default()
+            }),
+            // Issue #21: a piñata out, five of its items left.
+            Message::KartState(KartSnapshot {
+                items: 0b110_0000,
+                pinata: 0b1011_0101,
                 ..KartSnapshot::default()
             }),
             // Issue #53: the claims, the verdicts, the items and the croquettes.
@@ -2175,6 +2317,61 @@ mod tests {
                     flight: OutPillow::Drop,
                 },
             }),
+            // Issue #21: a boomerang-os on its way out, then back; a pie voleuse's theft and
+            // what its victim gave up.
+            Message::ItemOut(ItemOut {
+                session: 7,
+                id: ItemId {
+                    owner: 3,
+                    seq: 0xfffe,
+                },
+                item: ItemKind::Boomerang,
+                tick: 4_000_000_007,
+                position: [-12.5, 0.45, 300.25],
+                velocity: [42.0, 0.0, -1.5],
+                motion: OutMotion::Boomerang {
+                    returning: false,
+                    travelled: 12.25,
+                    bounces_left: 1,
+                    fall: 0.0,
+                },
+            }),
+            Message::ItemOut(ItemOut {
+                session: 1,
+                id: ItemId { owner: 0, seq: 2 },
+                item: ItemKind::Boomerang,
+                tick: 9,
+                position: [0.0; 3],
+                velocity: [0.0, 0.0, 42.0],
+                motion: OutMotion::Boomerang {
+                    returning: true,
+                    travelled: 40.5,
+                    bounces_left: 255,
+                    fall: 3.5,
+                },
+            }),
+            Message::Steal(Steal {
+                session: 7,
+                thief: 11,
+                victim: 0,
+                tick: 4_000_000_008,
+            }),
+            Message::Stolen(Stolen {
+                session: 7,
+                thief: 0,
+                victim: 11,
+                item: ItemKind::Boomerang,
+                count: 3,
+                tick: 4_000_000_009,
+            }),
+            Message::Stolen(Stolen {
+                session: 0,
+                thief: 5,
+                victim: 6,
+                item: ItemKind::Pinata,
+                count: 8,
+                tick: 0,
+            }),
             Message::Retarget(Retarget {
                 session: 7,
                 id: ItemId { owner: 5, seq: 4 },
@@ -2295,8 +2492,9 @@ mod tests {
         // issue #53 the claims, the verdicts, the items out, their breaks and the scattered
         // croquettes; issue #18 the explosions and the klaxons; issue #61 the effects, the karts
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
-        // bundles of kart states; issue #70 the closed results.
-        assert_eq!(kinds.len(), 30);
+        // bundles of kart states; issue #70 the closed results; issue #21 the thefts and what
+        // they took.
+        assert_eq!(kinds.len(), 32);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -2340,11 +2538,12 @@ mod tests {
         let seats = Message::Seats(vec![PeerKey(1); MAX_PLAYERS]);
         assert_eq!(seats.to_bytes().len(), 3 + 16 * MAX_PLAYERS);
         // Issue #8: a kart state in fewer than 64 bytes, whatever its values (47, then 48 with
-        // the session of issue #9, 49 with the items held out of issue #53).
+        // the session of issue #9, 49 with the items held out of issue #53, 50 with the piñata
+        // of issue #21).
         for message in every_message() {
             if let Message::KartState(_) = message {
                 let length = message.to_bytes().len();
-                assert_eq!(length, 49);
+                assert_eq!(length, 50);
                 assert!(length < MAX_KART_STATE_BYTES);
             }
         }
@@ -2406,12 +2605,16 @@ mod tests {
                 Message::Effect(effect) => assert_eq!(length, 30 + effect.order.len()),
                 Message::Rammed(_) | Message::PillowGone(_) => assert_eq!(length, 10),
                 Message::Retarget(_) => assert_eq!(length, 11),
+                // Issue #21: a theft in 9 bytes, what it took in 11.
+                Message::Steal(_) => assert_eq!(length, 9),
+                Message::Stolen(_) => assert_eq!(length, 11),
                 _ => {}
             }
         }
         // Issue #63: a relayed message is its own (without its version byte) after 2 bytes and
-        // its origin's 16; a bundle of kart states, 3 bytes, then 17 per peer and 47 per state:
-        // at most 771 bytes for 12 karts of 12 peers (one packet, well under 1 200 bytes).
+        // its origin's 16; a bundle of kart states, 3 bytes, then 17 per peer and 48 per state
+        // (47 before the piñata of issue #21): at most 783 bytes for 12 karts of 12 peers (one
+        // packet, well under 1 200 bytes).
         for message in every_message() {
             let length = message.to_bytes().len();
             match &message {
@@ -2420,7 +2623,7 @@ mod tests {
                 }
                 Message::KartStates(states) => {
                     let peers = states.chunk_by(|a, b| a.0 == b.0).count();
-                    assert_eq!(length, 3 + 17 * peers + 47 * states.len());
+                    assert_eq!(length, 3 + 17 * peers + 48 * states.len());
                 }
                 _ => {}
             }
@@ -2430,7 +2633,7 @@ mod tests {
                 .map(|i| (PeerKey(i), KartSnapshot::default()))
                 .collect(),
         );
-        assert_eq!(twelve.to_bytes().len(), 771);
+        assert_eq!(twelve.to_bytes().len(), 783);
         for message in every_message() {
             match &message {
                 // Issue #9: a race's start lists its players (16 bytes each): 213 bytes with 12.
@@ -2613,16 +2816,77 @@ mod tests {
         // three draws, of a kart beyond the grid; a verdict's flag of 2; an item thrown that is
         // not an object, held, or that moves as it cannot; a hit without a kart; a scatter of
         // nothing or of too many croquettes.
-        let items_at = kart.len() - 1;
-        for value in [0b100, 0b0001, 0b1_1001, 0b1_1011, 0b10_0101, 0b1000_0101] {
+        // Issue #21: bit 5 (an item a pie voleuse can take) and bit 6 (invisible) of the items,
+        // bit 7 stays free; a piñata out (the last byte) is all a kart holds out.
+        let (items_at, pinata_at) = (kart.len() - 2, kart.len() - 1);
+        for value in [
+            0b100,
+            0b0001,
+            0b1_1001,
+            0b1_1011,
+            0b1000_0101,
+            0b1000_0000,
+            0b111_0001,
+        ] {
             let mut bad = kart.clone();
             bad[items_at] = value;
             assert!(invalid(&bad), "items {value:#b}");
         }
-        for value in [0b0101, 0b1101, 0b1_0101, 0b1_0110] {
+        for value in [
+            0b0101, 0b1101, 0b1_0101, 0b1_0110, 0b10_0101, 0b100_0000, 0b111_0110,
+        ] {
             let mut good = kart.clone();
             good[items_at] = value;
             assert!(Message::decode(&good).is_ok(), "items {value:#b}");
+        }
+        for (items, pinata, ok) in [
+            (0, 0xff, true),
+            (0b110_0000, 0b1, true),
+            (0b0101, 0b1, false),
+            (0b1_0101, 0x80, false),
+        ] {
+            let mut bytes = kart.clone();
+            bytes[items_at] = items;
+            bytes[pinata_at] = pinata;
+            assert_eq!(
+                Message::decode(&bytes).is_ok(),
+                ok,
+                "items {items:#b}, piñata {pinata:#b}"
+            );
+        }
+        // Issue #21: a kart stealing from itself, an unknown item stolen, none, or more than a
+        // piñata's eight.
+        let steal = Message::Steal(Steal {
+            session: 1,
+            thief: 2,
+            victim: 3,
+            tick: 4,
+        })
+        .to_bytes();
+        assert!(Message::decode(&steal).is_ok());
+        let mut bad = steal.clone();
+        bad[4] = 2;
+        assert!(invalid(&bad), "from itself");
+        let stolen = Message::Stolen(Stolen {
+            session: 1,
+            thief: 2,
+            victim: 3,
+            item: ItemKind::Pelote,
+            count: 1,
+            tick: 4,
+        })
+        .to_bytes();
+        assert!(Message::decode(&stolen).is_ok());
+        for (at, value) in [
+            (4, 2),
+            (5, ItemKind::ALL.len() as u8),
+            (6, 0),
+            (6, 9),
+            (3, MAX_PLAYERS as u8),
+        ] {
+            let mut bad = stolen.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "stolen: byte {at} = {value}");
         }
         let claim = Claim {
             session: 1,
@@ -2668,18 +2932,19 @@ mod tests {
         };
         let bytes = Message::ItemOut(out).to_bytes();
         assert!(Message::decode(&bytes).is_ok());
-        // Not an object (beyond the oreiller géant, issue #61), a kart beyond the grid, the
+        // Not an object (beyond the boomerang-os, issue #21), a kart beyond the grid, the
         // number of what a kart holds out, an unknown motion, a pelote on the ground, a bombe
-        // that rolls, an oreiller géant that rolls.
+        // that rolls, an oreiller géant that rolls, a boomerang-os that rolls.
         for changes in [
-            &[(6, 5)][..],
+            &[(6, 6)][..],
             &[(6, 255)],
             &[(3, MAX_PLAYERS as u8)],
             &[(4, 0xff), (5, 0xff)],
-            &[(35, 6)],
+            &[(35, 7)],
             &[(35, 0)],
             &[(6, 3)],
             &[(6, 4)],
+            &[(6, 5)],
         ] {
             let mut bad = bytes.clone();
             for (at, value) in changes {
@@ -2696,6 +2961,22 @@ mod tests {
             target: Some(1),
             flight: OutPillow::Hover { left: 0.5 },
         };
+        let boomerang = OutMotion::Boomerang {
+            returning: true,
+            travelled: 1.0,
+            bounces_left: 2,
+            fall: 0.0,
+        };
+        // Issue #21: its returning flag is a boolean.
+        let mut bad = Message::ItemOut(ItemOut {
+            item: ItemKind::Boomerang,
+            motion: boomerang,
+            ..out
+        })
+        .to_bytes();
+        assert!(Message::decode(&bad).is_ok());
+        bad[36] = 2;
+        assert!(invalid(&bad), "boomerang flag");
         for (item, motion) in [
             (ItemKind::Pelure, OutMotion::Dive { target: None }),
             (ItemKind::Abeille, OutMotion::Ground),
@@ -2710,6 +2991,11 @@ mod tests {
             (ItemKind::Abeille, pillow),
             (ItemKind::Bombe, pillow),
             (ItemKind::Pelure, pillow),
+            // Issue #21: a boomerang-os flies as a boomerang, and only it.
+            (ItemKind::Boomerang, OutMotion::Ground),
+            (ItemKind::Boomerang, bomb),
+            (ItemKind::Pelote, boomerang),
+            (ItemKind::Abeille, boomerang),
         ] {
             let bad = Message::ItemOut(ItemOut {
                 item,
@@ -2925,7 +3211,7 @@ mod tests {
         twice.extend_from_slice(&one[3..]);
         assert!(invalid(&twice), "a peer twice");
         let mut other = twice.clone();
-        other[3 + 17 + 47] = 4;
+        other[3 + 17 + 48] = 4;
         assert!(Message::decode(&other).is_ok(), "two peers");
         let mut bad = one.clone();
         bad[20 + 4 + 2 + 12 + 6 + 12] = 0x07;

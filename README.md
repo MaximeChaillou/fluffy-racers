@@ -74,6 +74,10 @@ trunk serve          # dans un autre terminal : le jeu sur http://localhost:8080
      - **le super câlin** et **la fusée** (#61) : l'autre fenêtre voit ton halo rose ou ta coque orange ; fonce dans son kart : c'est **sa** fenêtre qui décide qu'il fait une culbute ;
      - **l'oreiller géant** (#61) : il vole vers le 1er de **ton** classement, le même dans les deux fenêtres, et l'écrase dans la sienne ; l'autre peut le détruire avec un klaxon-canard pendant qu'il plane au-dessus de lui. Les boîtes n'en donnent qu'un à la fois, pas avant 20 s de course ni dans les 30 s après le précédent : c'est l'hôte qui décide ; refusé, ta roulette s'arrête sur un autre objet ;
      - la console écrit ce qui est passé (`… 1 oreillers granted, 5 items out (2 bombes), 1 klaxons, 2 effects, 1 rams …`), les mêmes nombres des deux côtés ;
+   - **les objets de phase 3 en ligne** (#21), avec **I** comme ci-dessus :
+     - **le boomerang-os** (un os crème qui tourne à plat) : lancé, il part en tournant vers sa gauche et revient vers toi, dans les deux fenêtres ; tu le rattrapes, puis le lancer suivant (3 en tout). Sur l'autre kart, c'est **sa** fenêtre qui décide le tête-à-queue ;
+     - **la piñata** : ses 8 objets tournent autour de ton kart, **aussi dans l'autre fenêtre** ; chaque appui utilise celui qui est devant, il disparaît des deux côtés ;
+     - **la pie voleuse** : derrière l'autre joueur qui tient un objet, utilise-la : **sa** case d'objet se vide et l'objet arrive dans la tienne ; 3 s durant, ton kart est un fantôme (à peine visible dans sa fenêtre), et ses objets te traversent ;
    - **les bots de l'hôte** prennent des boîtes et lancent leurs objets comme en solo, dans les deux fenêtres ;
    - **un client s'en va** : les objets qu'il avait lancés disparaissent chez tous.
 10. **Les couleurs** (#55) : dans chaque fenêtre, **G** (« Pilote et kart »), monte sur la dernière ligne, **Couleur** (Haut depuis la première ligne), choisis avec Gauche / Droite (ou clique sur une pastille), puis **Entrée** :

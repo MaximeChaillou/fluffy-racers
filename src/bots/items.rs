@@ -24,6 +24,12 @@
 //!   - **fusée**: when it is ready (the autopilot follows the racing line);
 //!   - **klaxon-canard**: when another kart's item comes close (an oreiller géant above it), or
 //!     after a while.
+//! - phase 3 (issue #21):
+//!   - **pie voleuse**: as soon as a kart is ahead in the race (the leader after a while: it
+//!     steals from behind);
+//!   - **piñata**: out at once, then one press about every second (the item in front goes);
+//!   - **boomerang-os**: like a pelote: at a kart in its sights, backwards at a kart close
+//!     behind, ahead anyway after a while (each throw once the last one is back).
 //!
 //! The bots also go for the item boxes a little (`driver.rs`, `Senses::item_box`).
 
@@ -188,6 +194,8 @@ fn decide(
             ItemKind::Pelure => {
                 (brain.rng.chance(dt / tuning.item_drop_period.max(dt))).then_some(false)
             }
+            // Issue #21: the piñata's item in front, one after the other.
+            ItemKind::Pinata => Some(false),
             _ => None,
         };
         return match shot {
@@ -266,8 +274,15 @@ fn decide(
             ((senses.straight >= tuning.item_piment_straight && !senses.boosting) || patience_over)
                 .then_some(false)
         }
-        // An "x3" comes out at once.
-        (ItemKind::Pelure | ItemKind::Pelote | ItemKind::Abeille, 2..) => Some(false),
+        // Issue #21.
+        (ItemKind::PieVoleuse, _) => (ahead_in_race || patience_over).then_some(false),
+        (ItemKind::Boomerang, _) if in_sights(senses.ahead, skill.item_aim) => Some(false),
+        (ItemKind::Boomerang, _) if behind => Some(true),
+        (ItemKind::Boomerang, _) => patience_over.then_some(false),
+        // An "x3" comes out at once, a piñata too.
+        (ItemKind::Pelure | ItemKind::Pelote | ItemKind::Abeille, 2..) | (ItemKind::Pinata, _) => {
+            Some(false)
+        }
         (ItemKind::Abeille, _) if senses.rank > 1 => Some(false),
         (ItemKind::Abeille, _) if behind => Some(true),
         (ItemKind::Abeille, _) => patience_over.then_some(false),
@@ -354,6 +369,53 @@ mod tests {
         assert_eq!(press(&horn), None);
         horn.danger = true;
         assert_eq!(press(&horn), Some(ahead));
+    }
+
+    /// Issue #21: the pie voleuse with a kart ahead in the race (the leader after a while); the
+    /// piñata out at once, then its items one press at a time; the boomerang-os at a kart in its
+    /// sights, backwards at a kart close behind.
+    #[test]
+    fn phase_three_items_go_at_their_moment() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Normal);
+        let ticks = (skill.item_delay / DT) as usize + 5;
+        let press = |senses: &ItemSenses| {
+            first_press(&mut BotItemBrain::new(9), skill, &tuning, senses, ticks)
+                .map(|(_, buttons)| buttons)
+        };
+        let ahead = ItemButtons {
+            item: true,
+            back: false,
+        };
+        let back = ItemButtons {
+            item: true,
+            back: true,
+        };
+        let pie = senses(Some((ItemKind::PieVoleuse, 1)));
+        assert_eq!(press(&pie), Some(ahead));
+        let mut leader = pie;
+        leader.rank = 1;
+        assert_eq!(press(&leader), None);
+        let long = ((skill.item_delay + tuning.item_patience) / DT) as usize + 5;
+        assert!(first_press(&mut BotItemBrain::new(9), skill, &tuning, &leader, long).is_some());
+        // The piñata: out at once, then a press every shot period.
+        assert_eq!(press(&senses(Some((ItemKind::Pinata, 8)))), Some(ahead));
+        let mut out = senses(None);
+        out.held_out = Some((ItemKind::Pinata, 8));
+        let shots = run(&mut BotItemBrain::new(9), skill, &tuning, &out, 200);
+        assert!(shots.len() >= 3, "{shots:?}");
+        for pair in shots.windows(2) {
+            let gap = (pair[1].0 - pair[0].0) as f32 * DT;
+            assert!(gap >= tuning.item_shot_period - 1e-3, "{gap}");
+        }
+        // The boomerang-os: in its sights, behind, or after a while.
+        let mut boomerang = senses(Some((ItemKind::Boomerang, 3)));
+        assert_eq!(press(&boomerang), None);
+        boomerang.ahead = Some((18.0, 0.02));
+        assert_eq!(press(&boomerang), Some(ahead));
+        boomerang.ahead = None;
+        boomerang.behind = Some((5.0, 0.1));
+        assert_eq!(press(&boomerang), Some(back));
     }
 
     /// Issue #18: a piment doré on a straight, then a boost after the other while its window is
