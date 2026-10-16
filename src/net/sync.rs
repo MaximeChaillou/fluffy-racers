@@ -290,20 +290,20 @@ impl KartSync {
     }
 
     /// The other players of the room in free driving: their id, their parts, their seat (the id
-    /// of their kart) and their color (issue #55). Those not listed any more are gone (their kart
-    /// disappears).
-    pub fn set_players(
+    /// of their kart), their color (issue #55) and their name (issue #80: the tag over their
+    /// kart). Those not listed any more are gone (their kart disappears).
+    pub fn set_players<'a>(
         &mut self,
-        players: impl IntoIterator<Item = (PeerKey, [u8; 4], usize, KartColor)>,
+        players: impl IntoIterator<Item = (PeerKey, [u8; 4], usize, KartColor, Option<&'a str>)>,
     ) {
         let me = self.me;
         self.set_roster(players.into_iter().filter(|(peer, ..)| *peer != me).map(
-            |(peer, loadout, slot, color)| RosterEntry {
+            |(peer, loadout, slot, color, name)| RosterEntry {
                 kart: slot.min(GRID_SLOTS - 1) as KartId,
                 peer,
                 loadout: Some(loadout),
                 color,
-                name: None,
+                name,
                 racer: false,
                 left: false,
             },
@@ -314,7 +314,8 @@ impl KartSync {
     /// id, with the peer that has authority over it now. Those not listed any more are gone
     /// (their kart disappears); a kart whose peer changed (a new host takes the bots) starts its
     /// buffer over; one whose parts changed is spawned again; one whose color changed is painted
-    /// again (issue #55).
+    /// again (issue #55); one whose player changed its pseudo is renamed where it is (issue #80:
+    /// its `RacerName`, its tag), not spawned again.
     pub fn set_roster<'a>(&mut self, entries: impl IntoIterator<Item = RosterEntry<'a>>) {
         for remote in &mut self.remotes {
             remote.present = false;
@@ -348,7 +349,6 @@ impl KartSync {
                         && remote.name.as_deref() != Some(name)
                     {
                         remote.name = Some(name.to_string());
-                        remote.respawn = true;
                     }
                 }
                 None => self.remotes.push(RemoteKart::new(&entry)),
@@ -585,7 +585,7 @@ fn spawn_remote_karts(
     mut commands: Commands,
     mut sync: ResMut<KartSync>,
     start: Option<Res<PlayerStart>>,
-    mut proxies: Query<&mut KartPaint, With<RemoteKartProxy>>,
+    mut proxies: Query<(&mut KartPaint, Option<&mut RacerName>), With<RemoteKartProxy>>,
     roster: Res<Roster>,
     stats_tuning: Res<StatsTuning>,
     looks: Option<Res<DriverLooks>>,
@@ -602,10 +602,22 @@ fn spawn_remote_karts(
         return;
     }
     for remote in &mut sync.remotes {
-        let paint = remote.proxy.and_then(|proxy| proxies.get_mut(proxy).ok());
-        let alive = paint.is_some();
-        if let Some(mut paint) = paint {
+        let body = remote.proxy.and_then(|proxy| proxies.get_mut(proxy).ok());
+        let alive = body.is_some();
+        if let Some((mut paint, racer_name)) = body {
             paint.set_if_neq(KartPaint(remote.color));
+            // Issue #80: a new pseudo, in place (the results screen follows it).
+            match (racer_name, &remote.name) {
+                (Some(mut racer_name), Some(name)) if racer_name.0 != *name => {
+                    racer_name.0.clone_from(name);
+                }
+                (None, Some(name)) => {
+                    if let Some(proxy) = remote.proxy {
+                        commands.entity(proxy).insert(RacerName(name.clone()));
+                    }
+                }
+                _ => {}
+            }
         }
         if alive && !remote.respawn {
             continue;

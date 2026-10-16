@@ -923,7 +923,12 @@ fn results_row(
     race: &Race,
     course: &Course,
     row: usize,
-    racers: &Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
+    racers: &Query<(
+        &Racer,
+        &RaceProgress,
+        Has<PlayerKart>,
+        Option<Ref<RacerName>>,
+    )>,
 ) -> Option<ResultsRowView> {
     let (racer, closed) = if race.results_closed() {
         let line = race.results.get(row)?;
@@ -943,12 +948,18 @@ fn results_row(
 /// time and best lap, the order follows the standings, a racer still on track says so (with its
 /// lap), and once the results closed, the final table (estimated times). Every frame it only
 /// compares what each line shows; a text is rewritten when its value changes (no allocation, no
-/// new entity).
+/// new entity). Issue #80: a player who changes its pseudo (in the lobby, online) has its new
+/// name on its line at once.
 fn update_results(
     race: Res<Race>,
     course: Res<Course>,
     mut shown: ResMut<ResultsShown>,
-    racers: Query<(&Racer, &RaceProgress, Has<PlayerKart>, Option<&RacerName>)>,
+    racers: Query<(
+        &Racer,
+        &RaceProgress,
+        Has<PlayerKart>,
+        Option<Ref<RacerName>>,
+    )>,
     mut cells: Query<(&ResultsCell, &mut Text, &mut TextColor)>,
 ) {
     if race.phase() != RacePhase::Results {
@@ -958,7 +969,10 @@ fn update_results(
     for (row, view) in views.iter_mut().enumerate().take(shown.rows) {
         *view = results_row(&race, &course, row, &racers);
     }
-    if views == shown.views {
+    let renamed = racers
+        .iter()
+        .any(|(.., name)| name.is_some_and(|name| name.is_changed()));
+    if views == shown.views && !renamed {
         return;
     }
     for (cell, mut text, mut color) in &mut cells {
@@ -966,13 +980,14 @@ fn update_results(
             continue;
         };
         let new = views[cell.row];
-        if old == new {
+        let rename = renamed && cell.column == ResultsColumn::Name;
+        if old == new && !rename {
             continue;
         }
         // The local player's line in gold, wherever it goes.
         let player = new.is_some_and(|view| view.player);
         color.set_if_neq(TextColor(if player { RANK_COLOR } else { TEXT_COLOR }));
-        if !cell.column.changed(old, new) {
+        if !cell.column.changed(old, new) && !rename {
             continue;
         }
         let out = &mut text.0;
@@ -983,13 +998,13 @@ fn update_results(
         match cell.column {
             ResultsColumn::Rank => {}
             ResultsColumn::Name => {
-                let name = racers.get(view.racer).ok();
-                write_racer_name(
-                    out,
-                    view.player,
-                    name.map_or(0, |(racer, ..)| racer.grid_slot),
-                    name.and_then(|(.., name)| name).map(|n| n.0.as_str()),
-                );
+                let (slot, name) = racers
+                    .get(view.racer)
+                    .ok()
+                    .map_or((0, None), |(racer, .., name)| {
+                        (racer.grid_slot, name.map(|name| name.into_inner()))
+                    });
+                write_racer_name(out, view.player, slot, name.map(|name| name.0.as_str()));
             }
             ResultsColumn::Time => view.time.write_time(out),
             ResultsColumn::Detail => view.time.write_detail(out),

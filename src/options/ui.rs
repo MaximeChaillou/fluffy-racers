@@ -11,9 +11,9 @@ use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContext
 
 use super::{
     OPTIONS_STORAGE_KEY, OptionRow, OptionsAction, OptionsMenu, OptionsSystems, PlayerOptions,
-    controls,
+    controls, on_off,
 };
-use crate::admin::storage;
+use crate::admin::{keep_focus_for_text_only, storage};
 use crate::kart::KeyboardLayout;
 
 /// The line being changed.
@@ -69,10 +69,9 @@ fn options_window(
         return;
     };
     // The arrows, Entrée and Espace are the menu's keys (`super::options_keys`): no egui widget
-    // keeps the keyboard focus, or egui would move it or click it with them too.
-    if let Some(focused) = ctx.memory(|m| m.focused()) {
-        ctx.memory_mut(|m| m.surrender_focus(focused));
-    }
+    // keeps the keyboard focus, or egui would move it or click it with them too; only a text field
+    // of another window (issue #80: the lobby's pseudo), which takes the keys from the menu.
+    keep_focus_for_text_only(ctx);
     let layout = options.keyboard;
     egui::Window::new("Options")
         .id(egui::Id::new("fluffy-options"))
@@ -94,6 +93,15 @@ fn options_window(
                                 let text = RichText::new(choice.label()).strong();
                                 if ui.selectable_label(layout == choice, text).clicked() {
                                     actions.write(OptionsAction::Keyboard(choice));
+                                }
+                            }
+                        }
+                        // Issue #80.
+                        OptionRow::NameTags => {
+                            for on in [true, false] {
+                                let text = RichText::new(on_off(on)).strong();
+                                if ui.selectable_label(options.name_tags == on, text).clicked() {
+                                    actions.write(OptionsAction::NameTags(on));
                                 }
                             }
                         }

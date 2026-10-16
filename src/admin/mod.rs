@@ -32,7 +32,7 @@ mod ui;
 mod scenario_tests;
 
 pub use tuning::{Change, Field, ImportReport, SetError, Tuning, Tunings, Value};
-pub use ui::AdminUiPlugin;
+pub use ui::{AdminUiPlugin, keep_focus_for_text_only};
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -65,9 +65,12 @@ pub struct AdminOptions {
     pub skip_countdown: bool,
 }
 
-/// The keyboard is the panel's (typing in a text field, a list open): the game sees no key. The
-/// kart never reads the keyboard; its input systems read `ButtonInput<KeyCode>`, which is
-/// emptied each frame while this is true (egui reads the keyboard events, not that).
+/// The keyboard is egui's: typing in a text field (the panel's, or since issue #80 the lobby's
+/// pseudo), a list of the panel open. The game sees no key: neither the kart nor a shortcut (P,
+/// G, O, L, N, I...). The kart never reads the keyboard; its input systems and the shortcuts read
+/// `ButtonInput<KeyCode>`, which is emptied each frame while this is true (egui reads the
+/// keyboard events, not that). Set by the panel while it is open, by `ui::capture_for_text_fields`
+/// otherwise.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KeyboardCapture(pub bool);
 
@@ -97,9 +100,9 @@ impl Plugin for AdminPlugin {
             .init_resource::<KeyboardCapture>()
             .add_systems(
                 PreUpdate,
-                release_keyboard.after(InputSystems).run_if(
-                    |capture: Res<KeyboardCapture>, panel: Res<AdminPanel>| capture.0 && panel.open,
-                ),
+                release_keyboard
+                    .after(InputSystems)
+                    .run_if(|capture: Res<KeyboardCapture>| capture.0),
             )
             .add_systems(
                 Update,

@@ -39,6 +39,11 @@
 //!   every screen; the strikes and grabs between karts go to the peer that decides. Online, the
 //!   game never pauses.
 //!
+//! - **Pseudo** (issue #80, `pseudo.rs`): typed at the top of the lobby (`ui.rs`), kept in the
+//!   browser, `?pseudo=` winning over it; it goes out in the `Hello`, again at each change (the
+//!   host relays it), and shows in the lobby, on the results screen and, in the HUD's font, on a
+//!   tag over each other player's kart (`tags.rs`, « Noms au-dessus des karts » in the options).
+//!
 //! **Solo is unchanged**: without a room there is no socket; only the L key and the reading of
 //! the actions run each frame, the rest needs a [`NetSession`] (measured: no cost in the
 //! browser's single-threaded executor, STATUS.md « Métriques »).
@@ -56,6 +61,7 @@ mod netsim;
 mod online;
 mod pickups;
 mod protocol;
+pub mod pseudo;
 mod race;
 mod relay;
 mod room;
@@ -63,6 +69,7 @@ mod signaling;
 mod snapshot;
 mod socket;
 mod sync;
+pub mod tags;
 mod tuning;
 mod ui;
 
@@ -72,6 +79,8 @@ mod guide_tests;
 mod item_tests;
 #[cfg(test)]
 mod paint_tests;
+#[cfg(test)]
+mod pseudo_tests;
 #[cfg(test)]
 mod race_tests;
 #[cfg(test)]
@@ -125,13 +134,14 @@ pub use sync::{
     KartHistory, KartSync, KartSyncPlugin, NetKart, OnlineLevel, OnlineSlot, RemoteKart,
     RemoteKartProxy, RosterEntry, Showing, remote_body,
 };
+pub use tags::NameTagPlugin;
 pub use tuning::NetTuning;
 pub use ui::NetUiPlugin;
 
 use bevy::prelude::*;
 
 use crate::bots::BotTuning;
-use crate::characters::{PartKind, PlayerColor, PlayerLoadout, Roster};
+use crate::characters::{Loadout, PartKind, PlayerColor, PlayerLoadout, Roster};
 use crate::kart::KartColor;
 use crate::options::OptionsMenu;
 use crate::race::RaceTuning;
@@ -149,7 +159,8 @@ pub struct NetSettings {
     /// The signaling server ([`DEFAULT_SIGNAL_URL`]; in the browser, the page's own machine when
     /// it is local, [`default_signal`]; `?signal=`, `--signal`).
     pub signal: String,
-    /// `?pseudo=` / `--pseudo`; without it, the name of the player's character.
+    /// The pseudo (issue #80, `pseudo::clean`): typed in the lobby and kept in the browser, or
+    /// `?pseudo=` / `--pseudo`, which wins; without it, the name of the player's character.
     pub pseudo: Option<String>,
     /// Tries to reach the signaling server before giving up, 3 s apart.
     pub attempts: u16,
@@ -384,7 +395,8 @@ impl Plugin for NetPlugin {
                     ),
             );
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
-            app.add_plugins(NetUiPlugin);
+            // Issue #80: the tags over the other players' karts, on screen only.
+            app.add_plugins((NetUiPlugin, NameTagPlugin));
         }
     }
 }
@@ -585,11 +597,10 @@ fn profile_of(
     roster: Option<&Roster>,
 ) -> (String, [u8; 4]) {
     let loadout = loadout.map(|l| l.0).unwrap_or_default();
-    let name = settings.pseudo.clone().unwrap_or_else(|| {
-        roster
-            .map(|r| r.name(PartKind::Character, loadout.character).to_string())
-            .unwrap_or_else(|| "Joueur".to_string())
-    });
+    let name = settings
+        .pseudo
+        .clone()
+        .unwrap_or_else(|| character_name(Some(&loadout), roster));
     let parts = [
         loadout.character,
         loadout.kart,
@@ -597,6 +608,14 @@ fn profile_of(
         loadout.wing,
     ];
     (name, parts.map(|part| part.min(255) as u8))
+}
+
+/// Our name without a pseudo (issue #80: the hint of the lobby's field): our character's.
+pub fn character_name(loadout: Option<&Loadout>, roster: Option<&Roster>) -> String {
+    let character = loadout.map_or(0, |loadout| loadout.character);
+    roster
+        .map(|r| r.name(PartKind::Character, character).to_string())
+        .unwrap_or_else(|| "Joueur".to_string())
 }
 
 /// The parts of the game a message is for (issue #53: the items; #8: the kart states; #9: the

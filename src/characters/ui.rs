@@ -12,7 +12,7 @@ use bevy_egui::egui::{self, Color32, RichText};
 use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass};
 
 use super::{COLOR_STORAGE_KEY, PartKind, PlayerColor, Roster, SelectionAction, SelectionScreen};
-use crate::admin::storage;
+use crate::admin::{keep_focus_for_text_only, storage};
 use crate::kart::{KartColor, KeyboardLayout, MAX_LEVEL, Stat, display_level};
 
 /// The line being changed.
@@ -96,10 +96,9 @@ fn selection_window(
         return;
     };
     // The arrows and Entrée are the screen's keys (`super::selection_keys`): no egui widget keeps
-    // the keyboard focus, or egui would move it or click it with them too.
-    if let Some(focused) = ctx.memory(|m| m.focused()) {
-        ctx.memory_mut(|m| m.surrender_focus(focused));
-    }
+    // the keyboard focus, or egui would move it or click it with them too; only a text field of
+    // another window (issue #80: the lobby's pseudo), which takes the keys from the screen.
+    keep_focus_for_text_only(ctx);
     let stats = roster.stats(&screen.choice);
     egui::Window::new("Pilote et kart")
         .id(egui::Id::new("fluffy-selection"))

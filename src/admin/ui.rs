@@ -5,7 +5,8 @@
 //! on the game's camera when the panel opens, and removed with every egui component (and its font
 //! texture) when it closes. Without a context, bevy_egui runs no pass, lays nothing out and draws
 //! nothing, and the panel's own system (in egui's pass) does not run at all. What is left each
-//! frame: the test of the P key and the small « admin » button of `bevy_ui`.
+//! frame: the test of the P key, the small « admin » button of `bevy_ui`, and (issue #80) the
+//! look for a text field of another window with the keyboard (none without a context).
 
 use std::collections::HashSet;
 
@@ -16,8 +17,9 @@ use bevy::render::{Extract, ExtractSchedule, RenderApp};
 use bevy_egui::egui::{self, Color32, RichText};
 use bevy_egui::render::EguiCameraView;
 use bevy_egui::{
-    EguiContext, EguiGlobalSettings, EguiManagedTextures, EguiPlugin, EguiPreUpdateSet,
-    EguiPrimaryContextPass, EguiRenderOutput, PrimaryEguiContext,
+    EguiContext, EguiContexts, EguiGlobalSettings, EguiManagedTextures, EguiPlugin,
+    EguiPostUpdateSet, EguiPreUpdateSet, EguiPrimaryContextPass, EguiRenderOutput,
+    PrimaryEguiContext,
 };
 use bevy_rapier3d::prelude::Velocity;
 
@@ -111,6 +113,13 @@ impl Plugin for AdminUiPlugin {
         .add_systems(
             Last,
             browser_keys_while_typing.run_if(resource_changed::<KeyboardCapture>),
+        )
+        // Issue #80: a text field of another window (the lobby's pseudo) has the keyboard too.
+        .add_systems(
+            PostUpdate,
+            capture_for_text_fields
+                .after(EguiPostUpdateSet::EndPass)
+                .run_if(|panel: Res<AdminPanel>| !panel.open),
         )
         // The egui context also exists for the selection screen (issue #15): the panel only
         // draws itself when it is open.
@@ -247,8 +256,12 @@ pub(super) fn attach_egui_context(
             }
         }
     }
-    if !panel.open {
+    // No egui at all: no text field has the keyboard. Otherwise the panel (open) or
+    // `capture_for_text_fields` (closed) says whether one has it.
+    if !wanted {
         capture.set_if_neq(KeyboardCapture(false));
+    }
+    if !panel.open {
         if let Some(state) = state.as_mut() {
             state.export.clear();
         }
@@ -286,6 +299,28 @@ fn browser_keys_while_typing(
 /// Natively the clipboard goes through the system: nothing to do.
 #[cfg(not(target_arch = "wasm32"))]
 fn browser_keys_while_typing() {}
+
+/// No widget keeps the keyboard focus but a text field: buttons, sliders, check boxes and lists
+/// would otherwise be clicked or moved by the game's keys (the arrows, Espace, Entrée). Every egui
+/// window calls it at the start of its pass. A text field keeps it, even one of another window
+/// (issue #80: the lobby's pseudo, typed while the selection screen is open): the game then sees
+/// no key ([`KeyboardCapture`]).
+pub fn keep_focus_for_text_only(ctx: &egui::Context) {
+    if let Some(focused) = ctx.memory(|m| m.focused())
+        && !ctx.text_edit_focused()
+    {
+        ctx.memory_mut(|m| m.surrender_focus(focused));
+    }
+}
+
+/// Issue #80: while the panel is closed (open, it decides: its fields and its lists), a text
+/// field of any other window (the lobby's pseudo) takes the keyboard the same way: the game sees
+/// no key while one is typed in. After egui's pass: its focus as the frame leaves it. No egui
+/// context (no window open): no field.
+fn capture_for_text_fields(mut contexts: EguiContexts, mut capture: ResMut<KeyboardCapture>) {
+    let typing = contexts.ctx_mut().is_ok_and(|ctx| ctx.text_edit_focused());
+    capture.set_if_neq(KeyboardCapture(typing));
+}
 
 /// The small button that opens the panel (bottom of the screen).
 #[derive(Component, Clone, Copy, Debug)]
@@ -356,11 +391,7 @@ fn panel(world: &mut World) {
     };
     // Sliders, check boxes and lists keep the keyboard focus after a click, and egui would then
     // move them with the arrow keys the player drives with: only text fields keep it.
-    if let Some(focused) = ctx.memory(|m| m.focused())
-        && !ctx.text_edit_focused()
-    {
-        ctx.memory_mut(|m| m.surrender_focus(focused));
-    }
+    keep_focus_for_text_only(&ctx);
     world.resource_scope(|world, mut state: Mut<PanelState>| {
         world.resource_scope(|world, tunings: Mut<Tunings>| {
             draw(&ctx, world, &mut state, &tunings);

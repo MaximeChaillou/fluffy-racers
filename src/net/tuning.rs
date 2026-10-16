@@ -41,6 +41,12 @@ pub struct NetTuning {
     /// Issue #9: once the first player crossed the finish line, the host ends the race this long
     /// after at the latest (s, « à régler »): the players still racing are ranked where they are.
     pub finish_grace_s: f32,
+    /// Issue #80: the tag of another player's kart (its pseudo) floats this high over the
+    /// kart's origin (m): just over the driver's head...
+    pub name_tag_height: f32,
+    /// ...and shows up to this far from the camera (m): the karts close enough to matter, not a
+    /// cloud of names across the circuit.
+    pub name_tag_distance: f32,
     /// The network simulator (debug, `?netsim=120,20,5`): off by default.
     pub simulator: NetSimTuning,
 }
@@ -59,6 +65,8 @@ impl Default for NetTuning {
             send_interval_ticks: 2,
             start_lead_ms: 2_000.0,
             finish_grace_s: 30.0,
+            name_tag_height: 1.9,
+            name_tag_distance: 90.0,
             simulator: NetSimTuning::default(),
         }
     }
