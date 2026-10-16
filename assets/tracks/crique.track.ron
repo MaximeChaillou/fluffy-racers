@@ -1,0 +1,91 @@
+// "Crique Câline": a pirates' cove (issue #19). Original layout, flat, about 690 m a lap, turning
+// right: a long start straight, a fast right turn into gentle esses along the north beach, a
+// right turn into the cove (the inlet in the middle of the loop) and its tight hairpin to the
+// left, out of the cove to the east, and a long south straight with the trick ramp.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Crique Câline",
+    // Dressing (issue #11): the beach (`assets/data/biomes.ron`), the same every time (seed), and
+    // pieces placed by hand: pirate flags at the start line, a watch tower by the grid, a pirate
+    // ship moored beside the start straight and a wreck beyond the south straight.
+    biome: "Plage",
+    decor_seed: 7,
+    props: [
+        (model: "pirate-kit/flag-pirate", at: 0.0, side: Both, height: 4.0, radius: 1.0, gap: 0.3),
+        (model: "pirate-kit/tower-complete-small", at: 27.3, side: Left, height: 8.0, radius: 2.4, gap: 1.0),
+        (model: "pirate-kit/ship-pirate-small", at: 1.3, side: Left, height: 9.0, radius: 6.0, gap: 6.0),
+        (model: "pirate-kit/ship-wreck", at: 23.6, side: Left, height: 9.0, radius: 6.0, gap: 8.0, yaw: 30.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-2: start straight, heading north.
+        (pos: (0.0, 0.0, 40.0)),
+        (pos: (0.0, 0.0, 10.0)),
+        (pos: (0.0, 0.0, -20.0)),
+        // 3-4: a fast right turn.
+        (pos: (6.0, 0.0, -50.0)),
+        (pos: (26.0, 0.0, -70.0)),
+        // 5-8: gentle esses along the north beach, heading east.
+        (pos: (52.0, 0.0, -76.0)),
+        (pos: (76.0, 0.0, -70.0)),
+        (pos: (98.0, 0.0, -76.0)),
+        (pos: (120.0, 0.0, -68.0)),
+        // 9-12: the turn into the cove, heading west.
+        (pos: (132.0, 0.0, -46.0)),
+        (pos: (130.0, 0.0, -20.0)),
+        (pos: (116.0, 0.0, -2.0)),
+        (pos: (92.0, 0.0, 6.0)),
+        // 13-17: the cove's hairpin, to the left (radius 18 m at its apex).
+        (pos: (68.0, 0.0, 8.0), width: 13.0, shoulder: 2.0),
+        (pos: (53.0, 0.0, 14.7), width: 13.0, shoulder: 2.0),
+        (pos: (48.0, 0.0, 26.0), width: 13.0, shoulder: 2.0),
+        (pos: (53.0, 0.0, 37.3), width: 13.0, shoulder: 2.0),
+        (pos: (68.0, 0.0, 44.0), width: 13.0, shoulder: 2.0),
+        // 18-21: out of the cove, heading east, then south.
+        (pos: (92.0, 0.0, 46.0)),
+        (pos: (116.0, 0.0, 54.0)),
+        (pos: (130.0, 0.0, 74.0)),
+        (pos: (126.0, 0.0, 98.0)),
+        // 22-25: the long south straight with the trick ramp, heading west.
+        (pos: (106.0, 0.0, 112.0)),
+        (pos: (76.0, 0.0, 116.0)),
+        (pos: (44.0, 0.0, 116.0)),
+        (pos: (16.0, 0.0, 108.0)),
+        // 26-27: back on the start straight (the grid sits between 27 and 0).
+        (pos: (2.0, 0.0, 88.0)),
+        (pos: (0.0, 0.0, 64.0)),
+    ],
+    offroad: [
+        // Sand inside the cove's hairpin, and a sandy corner inside the turn into the cove.
+        (from: 13.6, to: 16.4, left: -1.0, right: -0.55),
+        (from: 9.3, to: 10.5, left: 0.6, right: 1.0),
+    ],
+    // Trick ramp (issue #13), on the south straight.
+    trick_ramps: [
+        (at: 23.0, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): on the start straight, out of the cove's hairpin, and on the south
+    // straight.
+    boost_pads: [
+        (at: 1.8, offset: 0.4),
+        (at: 17.6, offset: -0.3),
+        (at: 22.3, offset: -0.4),
+    ],
+    item_boxes: [
+        (at: 2.4, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 12.0, offsets: [-0.5, 0.0, 0.5]),
+        (at: 19.4, offsets: [-0.4, 0.4]),
+        (at: 24.4, offsets: [-0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on
+    // the grid.
+    croquettes: [
+        (from: 0.5, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 5.2, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 12.3, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 18.0, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 23.6, count: 5, spacing: 3.0, offset: 0.4),
+    ],
+)

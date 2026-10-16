@@ -55,14 +55,14 @@ use crate::interactions::{
 use crate::interpolation::InterpolationSystems;
 use crate::kart::{
     ColorSet, Kart, KartColor, KartPaint, KartSystems, OnlinePlayerColors, PALETTE_SIZE,
-    PlayerKart, Remote, SpawnPoint, bot_colors,
+    PlayerKart, RaceClass, Remote, SpawnPoint, bot_colors,
 };
 use crate::level::{LoadLevel, Online};
 use crate::race::{
-    Course, OnlineFlow, Race, RaceGrid, RaceMode, RaceProgress, RaceSystems, RaceTuning, Racer,
-    ResultLine, Standing, close_results, seconds_to_ticks,
+    Course, GrandPrix, OnlineFlow, Race, RaceGrid, RaceMode, RaceProgress, RaceSystems, RaceTuning,
+    Racer, ResultLine, Standing, close_results, seconds_to_ticks,
 };
-use crate::track::{GRID_SLOTS, TrackChoice, TrackLayout};
+use crate::track::{GRID_SLOTS, MirrorMode, TrackChoice, TrackLayout};
 
 /// The race online in progress here (issue #9): from its announcement to the next one (or the
 /// host's next circuit).
@@ -255,6 +255,7 @@ fn online_mode(
     race: Option<Res<OnlineRace>>,
     mut interaction_clock: Option<ResMut<InteractionClock>>,
     (choice, mode, mut grid): (Res<TrackChoice>, Res<RaceMode>, ResMut<RaceGrid>),
+    (mut class, mut mirror): (ResMut<RaceClass>, ResMut<MirrorMode>),
     roster: Option<Res<Roster>>,
     real: Res<Time<Real>>,
     mut time: ResMut<Time<Virtual>>,
@@ -293,6 +294,8 @@ fn online_mode(
                 clock.set_if_neq(InteractionClock::default());
             }
             *grid = level.solo_grid;
+            class.set_if_neq(RaceClass(level.solo_class));
+            mirror.set_if_neq(MirrorMode(level.solo_mirror));
             levels.write(LoadLevel::on(level.solo_track.clone(), level.solo_mode));
         }
         (None, Some(lobby)) => {
@@ -303,13 +306,21 @@ fn online_mode(
             commands.insert_resource(OnlineItems::default());
             commands.insert_resource(OnlineSlot(seat));
             commands.insert_resource(Online);
+            // Issue #19: online, 150cc on the circuits as they are, and a Grand Prix in progress
+            // ends (its grid order with it).
+            commands.remove_resource::<GrandPrix>();
+            grid.lineup = None;
             commands.insert_resource(OnlineLevel {
                 me,
                 solo_track: choice.clone(),
                 solo_mode: *mode,
                 solo_grid: *grid,
+                solo_class: class.0,
+                solo_mirror: mirror.0,
                 showing: Showing::Nothing,
             });
+            class.set_if_neq(RaceClass::default());
+            mirror.set_if_neq(MirrorMode::default());
             // The level follows on the next frame, once these are in.
         }
         (Some(level), Some(lobby)) => {
@@ -367,6 +378,7 @@ fn online_mode(
                                 0
                             },
                             seed: start.seed,
+                            lineup: None,
                         };
                         sync.set_session(session_of(start.race));
                         match slot {

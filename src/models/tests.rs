@@ -272,6 +272,8 @@ fn the_game_dresses_both_circuits_and_the_karts() {
     for (track, name) in [
         ("tracks/prairie.track.ron", "Prairie Pompon"),
         ("tracks/anneau.track.ron", "Anneau Guimauve"),
+        ("tracks/crique.track.ron", "Crique Câline"),
+        ("tracks/col.track.ron", "Col des Moufles"),
     ] {
         let mut app =
             crate::tests::game_app_unloaded(crate::track::TrackChoice::Circuit(track.into()), 11);

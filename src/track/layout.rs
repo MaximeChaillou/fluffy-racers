@@ -230,12 +230,19 @@ impl CenterLine {
             .collect()
     }
 
-    /// The 12 starting places, staggered behind the start line (GD § 1). Slot 0 is the pole.
+    /// The 12 starting places, staggered behind the start line (GD § 1). Slot 0 is the pole, on
+    /// the left of the road.
     pub fn grid(&self, slots: usize) -> Vec<Transform> {
+        self.grid_from(slots, -1.0)
+    }
+
+    /// The same, the pole on `pole_side` of the road (-1 left, 1 right): on the right on a
+    /// mirrored circuit (issue #19), the mirror image of the original grid.
+    pub fn grid_from(&self, slots: usize, pole_side: f32) -> Vec<Transform> {
         (0..slots)
             .map(|slot| {
                 let sample = self.at(-(GRID_FIRST_ROW + slot as f32 * GRID_SPACING));
-                let side = if slot % 2 == 0 { -1.0 } else { 1.0 };
+                let side = if slot % 2 == 0 { pole_side } else { -pole_side };
                 sample.transform(side * sample.half_width * GRID_LATERAL, GRID_HEIGHT)
             })
             .collect()
@@ -276,6 +283,8 @@ pub struct TrackLayout {
     pub respawns: Vec<f32>,
     /// Sand patches on the road, as in the file: the bots' racing line keeps out of them.
     pub offroad: Vec<OffroadZone>,
+    /// Issue #19: built from the mirror image of its file (`TrackData::mirrored`).
+    pub mirrored: bool,
 }
 
 /// Racers on the grid (GD § 1).
@@ -313,12 +322,14 @@ impl TrackLayout {
                 .map(|p| center.param_to_distance(*p))
                 .collect()
         };
+        let pole_side = if data.mirrored { 1.0 } else { -1.0 };
         Self {
             name: data.name.clone(),
-            grid: center.grid(GRID_SLOTS),
+            grid: center.grid_from(GRID_SLOTS, pole_side),
             checkpoints,
             respawns,
             offroad: data.offroad.clone(),
+            mirrored: data.mirrored,
             center,
         }
     }
@@ -474,6 +485,172 @@ mod tests {
         // Control point 6 is the hairpin apex.
         let apex = center.at(center.param_to_distance(6.0)).position;
         assert!(apex.distance(data.points[6].position()) < 0.5);
+    }
+
+    /// Every circuit of the game (`assets/tracks/index.ron`), as written.
+    fn every_circuit() -> Vec<TrackData> {
+        crate::admin::tracks::circuits()
+            .iter()
+            .map(|entry| {
+                let text = std::fs::read_to_string(format!(
+                    "{}/assets/{}",
+                    env!("CARGO_MANIFEST_DIR"),
+                    entry.asset_path()
+                ))
+                .unwrap();
+                let data = TrackData::from_ron(&text).unwrap();
+                data.validate().unwrap();
+                data
+            })
+            .collect()
+    }
+
+    /// Issue #19: on every circuit of the game and its mirror image, the walls never fold (no
+    /// turn tighter than the inner wall's offset), the road and the walls stay above the ground,
+    /// and no two parts of the track far apart along it (60 m and more) come so close that their
+    /// walls would touch: a meter at least between their outer faces.
+    #[test]
+    fn every_circuit_and_its_mirror_keep_their_parts_apart() {
+        let circuits = every_circuit();
+        assert!(circuits.len() >= 4, "issue #19: at least 4 circuits");
+        for data in circuits.iter().flat_map(|d| [d.clone(), d.mirrored()]) {
+            let name = format!(
+                "{}{}",
+                data.name,
+                if data.mirrored { " (miroir)" } else { "" }
+            );
+            let center = CenterLine::new(&data.points, data.sample_step);
+            let samples = center.samples();
+            for (i, s) in samples.iter().enumerate() {
+                let radius = center.turn_radius(i);
+                let wall = wall_offset(s) + WALL_THICKNESS;
+                assert!(
+                    radius > wall,
+                    "{name}: radius {radius} < wall {wall} at {}",
+                    s.distance
+                );
+                for side in [-1.0, 1.0] {
+                    let base = s.point(side * wall, 0.0);
+                    assert!(
+                        base.y > GROUND_HEIGHT,
+                        "{name}: under the ground at {}",
+                        s.distance
+                    );
+                }
+            }
+            let length = center.length();
+            for (i, a) in samples.iter().enumerate().step_by(2) {
+                for b in &samples[i + 1..] {
+                    let along = (b.distance - a.distance).min(length - (b.distance - a.distance));
+                    if along < 60.0 {
+                        continue;
+                    }
+                    let apart = a.position.xz().distance(b.position.xz());
+                    let needed = wall_offset(a) + wall_offset(b) + 2.0 * WALL_THICKNESS + 1.0;
+                    assert!(
+                        apart > needed,
+                        "{name}: the track at {:.0} m and at {:.0} m is {apart:.1} m apart \
+                         (walls need {needed:.1} m)",
+                        a.distance,
+                        b.distance
+                    );
+                }
+            }
+        }
+    }
+
+    /// Issue #19 (GD § 1, the mirror mode): the mirror image of every circuit is valid and is
+    /// exactly the mirror image of the original across the X = 0 plane: its centerline (the same
+    /// length, every sample mirrored, its right the mirror of the original's left, its banking
+    /// the other way), its checkpoints, its grid (the pole on the other side), every spot of the
+    /// file across the road (`offset` → `-offset`), its sand patches. Mirrored twice, the file
+    /// comes back.
+    #[test]
+    fn a_mirrored_circuit_is_the_mirror_image_of_the_original() {
+        let flip = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+        let close = |a: Vec3, b: Vec3| a.distance(b) < 2e-3;
+        for data in every_circuit() {
+            let mirrored = data.mirrored();
+            assert!(mirrored.mirrored && !data.mirrored);
+            assert_eq!(mirrored.validate(), Ok(()), "{}", data.name);
+            assert_eq!(mirrored.mirrored(), data, "{}: mirrored twice", data.name);
+            let (a, b) = (TrackLayout::new(&data), TrackLayout::new(&mirrored));
+            assert!(b.mirrored && !a.mirrored);
+            assert_eq!(a.name, b.name);
+            assert!((a.center.length() - b.center.length()).abs() < 1e-3);
+            assert_eq!(a.center.samples().len(), b.center.samples().len());
+            for (s, m) in a.center.samples().iter().zip(b.center.samples()) {
+                assert!(
+                    close(m.position, flip(s.position)),
+                    "{}: {s:?} / {m:?}",
+                    data.name
+                );
+                assert!(close(m.forward, flip(s.forward)), "{}", data.name);
+                assert!(close(m.right, -flip(s.right)), "{}", data.name);
+                assert!(close(m.up, flip(s.up)), "{}", data.name);
+                assert_eq!(m.half_width, s.half_width);
+            }
+            assert_eq!(a.checkpoints.len(), b.checkpoints.len());
+            for (c, m) in a.checkpoints.iter().zip(&b.checkpoints) {
+                assert!(close(m.sample.position, flip(c.sample.position)));
+            }
+            assert_eq!(a.respawns, b.respawns);
+            // The grid: the mirror image of every slot, the pole on the other side.
+            for (slot, (g, m)) in a.grid.iter().zip(&b.grid).enumerate() {
+                assert!(
+                    close(m.translation, flip(g.translation)),
+                    "{}: slot {slot}",
+                    data.name
+                );
+                assert!(close(*m.forward(), flip(*g.forward())));
+            }
+            let start = a.center.at(0.0);
+            let side = |t: &Transform, s: &TrackSample| (t.translation - s.position).dot(s.right);
+            assert!(side(&a.grid[0], &start) < 0.0, "the pole on the left");
+            assert!(
+                side(&b.grid[0], &b.center.at(0.0)) > 0.0,
+                "on the right, mirrored"
+            );
+            // The spots across the road, at the same distance along it.
+            let spot = |layout: &TrackLayout, at: f32, offset: f32| {
+                let s = layout.center.at(layout.center.param_to_distance(at));
+                s.point(offset * s.half_width, 0.0)
+            };
+            for (p, q) in data.boost_pads.iter().zip(&mirrored.boost_pads) {
+                assert!(close(
+                    spot(&b, q.at, q.offset),
+                    flip(spot(&a, p.at, p.offset))
+                ));
+            }
+            for (p, q) in data.trick_ramps.iter().zip(&mirrored.trick_ramps) {
+                assert!(close(
+                    spot(&b, q.at, q.offset),
+                    flip(spot(&a, p.at, p.offset))
+                ));
+            }
+            for (p, q) in data.item_boxes.iter().zip(&mirrored.item_boxes) {
+                for (x, y) in p.offsets.iter().zip(&q.offsets) {
+                    assert!(close(spot(&b, q.at, *y), flip(spot(&a, p.at, *x))));
+                }
+            }
+            for (p, q) in data.croquettes.iter().zip(&mirrored.croquettes) {
+                assert!(close(
+                    spot(&b, q.from, q.offset),
+                    flip(spot(&a, p.from, p.offset))
+                ));
+            }
+            for (p, q) in data.offroad.iter().zip(&b.offroad) {
+                assert_eq!((q.from, q.to), (p.from, p.to));
+                assert!(close(
+                    spot(&b, q.from, q.left),
+                    flip(spot(&a, p.from, p.right))
+                ));
+                assert!(close(
+                    spot(&b, q.from, q.right),
+                    flip(spot(&a, p.from, p.left))
+                ));
+            }
+        }
     }
 
     #[test]

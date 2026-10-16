@@ -1,0 +1,96 @@
+// "Col des Moufles": a snowy mountain pass (issue #19). Original layout, about 770 m a lap,
+// turning left: a long banked sweeper climbs from the start straight to a plateau 6 m up, then two
+// switchbacks (a hairpin to the right, then one to the left) come down the mountain, a long
+// descent and a flat straight with the trick ramp lead back to the start.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn left. The grid sits on the straight behind point 0.
+(
+    name: "Col des Moufles",
+    // Dressing (issue #11): the snow (`assets/data/biomes.ron`), the same every time (seed), and
+    // pieces placed by hand: nutcrackers at the start line, a giant decorated fir by the grid, a
+    // giant snowman on the plateau and a reindeer at the ramp.
+    biome: "Neige",
+    decor_seed: 19,
+    props: [
+        (model: "holiday-kit/nutcracker", at: 0.0, side: Both, height: 3.5, radius: 0.9, gap: 0.3),
+        (model: "holiday-kit/tree-decorated-snow", at: 29.4, side: Right, height: 9.0, radius: 3.4, gap: 1.0),
+        (model: "holiday-kit/snowman-hat", at: 8.5, side: Right, height: 5.0, radius: 2.4, gap: 1.0),
+        (model: "holiday-kit/reindeer", at: 26.4, side: Right, height: 3.0, radius: 1.6, gap: 0.8),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-2: start straight, heading north; the climb begins.
+        (pos: (0.0, 0.0, 20.0)),
+        (pos: (0.0, 0.0, -10.0)),
+        (pos: (0.0, 0.8, -40.0)),
+        // 3-7: long left sweeper, banked, climbing to the plateau.
+        (pos: (-4.0, 2.2, -65.0)),
+        (pos: (-18.0, 3.5, -84.0), bank: -8.0),
+        (pos: (-40.0, 4.5, -92.0), bank: -12.0),
+        (pos: (-62.0, 5.3, -84.0), bank: -8.0),
+        (pos: (-76.0, 5.8, -66.0)),
+        // 8-9: the plateau, heading south, gently down.
+        (pos: (-80.0, 6.0, -42.0)),
+        (pos: (-80.0, 5.6, -13.0)),
+        // 10-14: first switchback, a hairpin to the right (radius 20 m at its apex).
+        (pos: (-80.0, 5.0, 16.0), width: 13.0, shoulder: 2.0),
+        (pos: (-85.86, 4.9, 30.14), width: 13.0, shoulder: 2.0),
+        (pos: (-100.0, 4.8, 36.0), width: 13.0, shoulder: 2.0),
+        (pos: (-114.14, 4.7, 30.14), width: 13.0, shoulder: 2.0),
+        (pos: (-120.0, 4.6, 16.0), width: 13.0, shoulder: 2.0),
+        // 15: back north, down.
+        (pos: (-120.0, 4.0, -12.0)),
+        // 16-20: second switchback, a hairpin to the left.
+        (pos: (-120.0, 3.3, -40.0), width: 13.0, shoulder: 2.0),
+        (pos: (-125.86, 3.2, -54.14), width: 13.0, shoulder: 2.0),
+        (pos: (-140.0, 3.1, -60.0), width: 13.0, shoulder: 2.0),
+        (pos: (-154.14, 3.0, -54.14), width: 13.0, shoulder: 2.0),
+        (pos: (-160.0, 2.9, -40.0), width: 13.0, shoulder: 2.0),
+        // 21-25: the long descent, heading south, and the turn to the east.
+        (pos: (-160.0, 2.4, -14.0)),
+        (pos: (-160.0, 1.6, 16.0)),
+        (pos: (-157.0, 0.9, 46.0)),
+        (pos: (-146.0, 0.4, 72.0)),
+        (pos: (-122.0, 0.1, 88.0)),
+        // 26-27: the flat straight with the trick ramp, heading east.
+        (pos: (-86.0, 0.0, 94.0)),
+        (pos: (-44.0, 0.0, 94.0)),
+        // 28-30: the turn to the north, back on the start straight (the grid sits between 29
+        // and 0).
+        (pos: (-15.0, 0.0, 87.0)),
+        (pos: (0.0, 0.0, 66.0)),
+        (pos: (0.0, 0.0, 44.0)),
+    ],
+    offroad: [
+        // Deep snow inside both switchbacks: cutting the apex costs speed.
+        (from: 10.8, to: 13.2, left: 0.55, right: 1.0),
+        (from: 16.8, to: 19.2, left: -1.0, right: -0.55),
+    ],
+    // Trick ramp (issue #13), on the flat straight at the foot of the mountain.
+    trick_ramps: [
+        (at: 26.1, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): on the start straight, and out of each switchback.
+    boost_pads: [
+        (at: 1.6, offset: -0.4),
+        (at: 14.6, offset: 0.3),
+        (at: 20.6, offset: -0.3),
+    ],
+    item_boxes: [
+        (at: 2.6, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 8.6, offsets: [-0.5, 0.0, 0.5]),
+        (at: 21.8, offsets: [-0.4, 0.4]),
+        (at: 26.8, offsets: [0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on
+    // the grid.
+    croquettes: [
+        (from: 0.4, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 1.9, count: 4, spacing: 3.0, offset: -0.45),
+        (from: 8.2, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 14.3, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 22.2, count: 5, spacing: 3.0, offset: 0.4),
+        (from: 26.7, count: 4, spacing: 3.0, offset: -0.4),
+    ],
+)

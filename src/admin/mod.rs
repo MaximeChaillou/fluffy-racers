@@ -8,7 +8,7 @@
 //!   `BotTuning` with each difficulty's `BotSkill`, `CameraTuning`, `RaceTuning`, `StatsTuning`
 //!   of issue #15, `ItemTuning` of issue #16, `InteractionTuning` of issue #34, `NetTuning` of
 //!   issue #8 with its network simulator, `DriverTuning` of issue #69, `WobbleTuning` of issue
-//!   #12), edited by
+//!   #12, `SpeedClassTuning` and `GrandPrixTuning` of issue #19), edited by
 //!   reflection (`tuning.rs`): a field added later shows up with no extra code; a new tuning
 //!   resource is one line in [`AdminPlugin`]. Modified values stand out and each one, or each
 //!   resource, goes back to its default in a click.
@@ -43,9 +43,9 @@ use crate::characters::{DriverTuning, WobbleTuning};
 use crate::croquettes::CroquetteTuning;
 use crate::interactions::InteractionTuning;
 use crate::items::ItemTuning;
-use crate::kart::{KartTuning, StatsTuning};
+use crate::kart::{KartTuning, SpeedClassTuning, StatsTuning};
 use crate::net::NetTuning;
-use crate::race::{Race, RaceTuning, RocketStart};
+use crate::race::{GrandPrixTuning, Race, RaceTuning, RocketStart};
 
 /// Opens and closes the panel: a letter at the same place and with the same name in AZERTY and
 /// QWERTY, free in the game's controls (GD § 13), and reachable without Fn on a Mac (unlike F1 to
@@ -88,7 +88,9 @@ impl Plugin for AdminPlugin {
             .register::<InteractionTuning>()
             .register::<NetTuning>()
             .register::<DriverTuning>()
-            .register::<WobbleTuning>();
+            .register::<WobbleTuning>()
+            .register::<SpeedClassTuning>()
+            .register::<GrandPrixTuning>();
         app.insert_resource(tunings)
             .init_resource::<AdminPanel>()
             .init_resource::<AdminOptions>()

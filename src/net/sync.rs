@@ -91,6 +91,10 @@ pub struct OnlineLevel {
     pub solo_mode: RaceMode,
     /// The solo grid (bots, seed): a race online changes it.
     pub solo_grid: crate::race::RaceGrid,
+    /// Issue #19: the solo speed class and mirror mode, back once out of the room (online,
+    /// always 150cc and never mirrored, for now).
+    pub solo_class: crate::kart::SpeedClass,
+    pub solo_mirror: bool,
     /// What we show now.
     pub showing: Showing,
 }

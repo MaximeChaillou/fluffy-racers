@@ -13,7 +13,7 @@ use super::biome::{Palette, Rgb};
 use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, GROUND_HEIGHT, MeshData};
-use super::{PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
+use super::{MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
 use crate::level::LevelScoped;
 
 /// Loads `*.track.ron` files as [`TrackData`].
@@ -107,16 +107,25 @@ pub fn fall_back_when_loading_fails(
     }
 }
 
-/// Builds the circuit once its file is loaded.
+/// Builds the circuit once its file is loaded: its mirror image in the mirror mode (issue #19,
+/// [`MirrorMode`]).
 pub fn build_circuit_when_loaded(
     mut commands: Commands,
     handle: Res<TrackHandle>,
     tracks: Res<Assets<TrackData>>,
+    mirror: Option<Res<MirrorMode>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let Some(data) = tracks.get(&handle.0) else {
+    let Some(file) = tracks.get(&handle.0) else {
         return;
+    };
+    let mirrored;
+    let data = if mirror.is_some_and(|mirror| mirror.0) {
+        mirrored = file.mirrored();
+        &mirrored
+    } else {
+        file
     };
     let layout = TrackLayout::new(data);
     let palette = data.biome().map_or_else(Palette::default, |b| b.palette);

@@ -213,6 +213,7 @@ pub(super) fn attach_egui_context(
     selection: Option<Res<SelectionScreen>>,
     options: Option<Res<OptionsMenu>>,
     lobby: Option<Res<LobbyWindow>>,
+    race_menu: Option<Res<crate::modes::RaceMenu>>,
     mut commands: Commands,
     cameras: Query<(Entity, Has<PrimaryEguiContext>), With<ChaseCamera>>,
     mut textures: Option<ResMut<EguiManagedTextures>>,
@@ -221,8 +222,9 @@ pub(super) fn attach_egui_context(
     mut state: Option<ResMut<PanelState>>,
     mut time: Option<ResMut<Time<Virtual>>>,
 ) {
-    let choosing =
-        selection.is_some_and(|screen| screen.open) || options.is_some_and(|menu| menu.open);
+    let choosing = selection.is_some_and(|screen| screen.open)
+        || options.is_some_and(|menu| menu.open)
+        || race_menu.is_some_and(|menu| menu.open);
     // Issue #64: the room's banner too (`LobbyWindow::banner`: in a room, out of a race).
     let wanted = panel.open || choosing || lobby.is_some_and(|window| window.open || window.banner);
     for (camera, attached) in &cameras {

@@ -35,7 +35,7 @@ use super::wobble_visual::{DriverWobble, WobbleLayer};
 use crate::interactions::Paw;
 use crate::kart::{DriverPrimitive, DriverVisual, KartBodyPivot, KartState};
 use crate::models::{Keep, ModelMaterials, ModelSystems, Models};
-use crate::race::{Race, RaceProgress};
+use crate::race::{OnPodium, Race, RaceProgress};
 use crate::track::circuit::to_mesh;
 
 /// One animal, ready to sit in karts: its nodes' meshes and its clips, shared by every kart.
@@ -364,7 +364,12 @@ fn spawn_animal(
 fn animate_drivers(
     tuning: Res<DriverTuning>,
     race: Option<Res<Race>>,
-    karts: Query<(&KartState, Option<&Paw>, Option<&RaceProgress>)>,
+    karts: Query<(
+        &KartState,
+        Option<&Paw>,
+        Option<&RaceProgress>,
+        Option<&OnPodium>,
+    )>,
     mut drivers: Query<(
         &mut AnimalRoot,
         &mut AnimationPlayer,
@@ -373,7 +378,8 @@ fn animate_drivers(
 ) {
     let race_ticks = race.as_ref().map_or(0, |race| race.race_ticks());
     for (mut root, mut player, mut transitions) in &mut drivers {
-        let (Some(nodes), Ok((state, paw, progress))) = (root.nodes, karts.get(root.kart)) else {
+        let (Some(nodes), Ok((state, paw, progress, podium))) = (root.nodes, karts.get(root.kart))
+        else {
             continue;
         };
         let finish = progress.and_then(|p| p.finish).and_then(|finish| {
@@ -393,6 +399,7 @@ fn animate_drivers(
                 .filter(|paw| paw.struck_count > 0)
                 .map(|paw| paw.struck_ticks),
             finish,
+            podium: podium.map(|podium| podium.0),
         };
         let wanted = driver_animation(&facts, &tuning);
         if wanted == root.playing {

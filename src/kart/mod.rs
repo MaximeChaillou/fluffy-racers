@@ -14,7 +14,11 @@
 //! goes through the one `Boost` component (GD § 2). Hit by an item (issue #16), the kart spins
 //! out or tumbles (`KartState::Hit`: deaf to its driver, slowing down hard), then starts its
 //! invincibility. Every top speed multiplier (bots' catch-up, croquettes, stats, a tether
-//! holding the kart, the items of phase 2) goes through `MaxSpeedFactors`.
+//! holding the kart, the items of phase 2, the speed class of issue #19) goes through
+//! `MaxSpeedFactors`.
+//!
+//! The speed class of the race (GD § 1, issue #19, `class.rs`: [`RaceClass`]) multiplies every
+//! kart's top speed; in 200cc, braking in a drift tightens it instead of breaking it.
 //!
 //! The items of phase 2 (issue #18, `effects.rs`) leave their effects on the kart
 //! ([`ItemEffects`]: super câlin, fusée, dégonflage, chantilly), counted down with the boosts; a
@@ -25,6 +29,7 @@
 //! kart. A kart spawned without stats is at the middle level: exactly `KartTuning`.
 
 mod bump;
+mod class;
 mod drift;
 mod effects;
 mod input;
@@ -40,6 +45,7 @@ mod tuning;
 mod visual;
 
 pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
+pub use class::{RaceClass, SpeedClass, SpeedClassTuning, drift_brake_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use input::{
@@ -190,6 +196,9 @@ pub struct MaxSpeedFactors {
     /// The items of phase 2 (issue #18, [`ItemEffects::speed_factor`]): faster in a super
     /// câlin, slower deflated.
     pub items: f32,
+    /// The speed class of the race (GD § 1, issue #19, [`SpeedClassTuning::speed`]): exactly 1
+    /// at 150cc.
+    pub class: f32,
 }
 
 impl Default for MaxSpeedFactors {
@@ -200,13 +209,15 @@ impl Default for MaxSpeedFactors {
             stats: 1.0,
             tether: 1.0,
             items: 1.0,
+            class: 1.0,
         }
     }
 }
 
 impl MaxSpeedFactors {
     pub fn product(&self) -> f32 {
-        self.catch_up * self.croquettes * self.stats * self.tether * self.items
+        // The class last: at 150cc (1), exactly the product before the classes.
+        self.catch_up * self.croquettes * self.stats * self.tether * self.items * self.class
     }
 }
 
@@ -285,6 +296,8 @@ impl Plugin for KartPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KartTuning>()
             .init_resource::<StatsTuning>()
+            .init_resource::<SpeedClassTuning>()
+            .init_resource::<RaceClass>()
             .add_message::<KartBump>()
             .configure_sets(
                 FixedUpdate,
@@ -299,6 +312,7 @@ impl Plugin for KartPlugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    apply_speed_class,
                     combine_max_speed_factors,
                     boost_pads,
                     charge_slipstreams,
@@ -402,6 +416,21 @@ fn tick_timers(
     for mut stall in &mut stalls {
         if stall.is_active() {
             stall.tick(dt);
+        }
+    }
+}
+
+/// Issue #19: every kart's top speed factor of the race's class ([`RaceClass`]), written only when
+/// it changes (a kart spawned, another class): a comparison per kart and per tick.
+fn apply_speed_class(
+    class: Res<RaceClass>,
+    tuning: Res<SpeedClassTuning>,
+    mut karts: Query<&mut MaxSpeedFactors, With<Kart>>,
+) {
+    let factor = tuning.speed(class.0);
+    for mut factors in &mut karts {
+        if factors.class != factor {
+            factors.class = factor;
         }
     }
 }
@@ -598,6 +627,7 @@ fn charge_slipstreams(
 
 fn drive_karts(
     tuning: Res<KartTuning>,
+    (class, class_tuning): (Res<RaceClass>, Res<SpeedClassTuning>),
     time: Res<Time>,
     rapier: ReadRapierContext,
     surfaces: Query<&Surface>,
@@ -631,6 +661,8 @@ fn drive_karts(
         return;
     };
     let base = &*tuning;
+    // Issue #19 (GD § 3 point 7): in 200cc, braking in a drift tightens it.
+    let brake_drift = class_tuning.brake_drift(class.0);
     // The trick window in ticks (GD § 5: about 0.2 s).
     let trick_window = (base.trick_window / dt).round() as u32;
     // The suspension rays only find the ground (issue #27): a static collider whose `Surface` is
@@ -876,9 +908,22 @@ fn drive_karts(
                 forward_speed,
                 pull.tow_speed,
             );
+            // Braking in a drift where the class allows it (200cc, issue #19): the drift slows
+            // down gently and turns tighter, never broken by the brake.
+            let drift_braking = brake_drift
+                && input.brake > 0.0
+                && matches!(*state, KartState::Drifting { .. })
+                && drift_motion.side.is_some();
             // Hit by an item: it slows down hard, boost or not (GD § 8).
             let new_forward = match hit {
                 Some(reaction) => hit_forward_speed(tuning, forward_speed, reaction, dt),
+                None if drift_braking => drift_brake_speed(
+                    forward_speed,
+                    input.brake,
+                    class_tuning.drift_brake_decel,
+                    class_tuning.drift_brake_min_speed,
+                    dt,
+                ),
                 None => next_forward_speed(
                     tuning,
                     forward_speed,
@@ -902,10 +947,13 @@ fn drive_karts(
             // normal steering after it (`DriftMotion`, issue #30).
             let steering = target_yaw_rate(tuning, input.steer, new_forward);
             let target = match drift_motion.side {
-                Some(side) => drift_motion.yaw_target(
-                    steering,
-                    drift_yaw_rate(tuning, side, input.steer, new_forward),
-                ),
+                Some(side) => {
+                    let mut drift = drift_yaw_rate(tuning, side, input.steer, new_forward);
+                    if drift_braking {
+                        drift *= class_tuning.drift_brake_tighten.max(0.0);
+                    }
+                    drift_motion.yaw_target(steering, drift)
+                }
                 None => steering,
             };
             // In the air of a hop the kart mostly keeps its rotation: the stick acts slower.

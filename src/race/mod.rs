@@ -20,6 +20,7 @@
 
 mod course;
 mod flow;
+mod grand_prix;
 mod pelican;
 mod progress;
 mod ranking;
@@ -35,6 +36,7 @@ pub(crate) use course::tests::prairie as course_for_tests;
 
 pub use course::{Course, Projection, drop_point};
 pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
+pub use grand_prix::{CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, points_for};
 pub use pelican::{PelicanPlugin, PelicanVisual};
 pub use progress::{ProgressEvent, RaceProgress};
 pub use ranking::{RankEntry, distance_to_leader, rank, rank_by_order};
@@ -88,6 +90,11 @@ impl Racer {
 /// Who lines up on the grid (GD § 1: 12 racers): `bots` bots on the front slots, the local
 /// player behind them, like the first race of a Grand Prix in MK8DX. With no bot, the player is
 /// alone on the pole.
+///
+/// The racers are **entrants** (issue #19): entrants `0..bots` are the bots (entrant `e` is
+/// always the same bot: its character, parts, color and seed come from `e`), entrant `bots` the
+/// local player. By default entrant `e` starts on slot `e`; a Grand Prix lines them up in
+/// another order after its first race ([`RaceGrid::lineup`]).
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RaceGrid {
     /// Bots on the grid (issue #6), at most `GRID_SLOTS - 1`.
@@ -98,6 +105,10 @@ pub struct RaceGrid {
     /// the same bots from the seed of the host. The game keeps [`RaceGrid::GAME_SEED`] (the bots
     /// of every race before #40); a new seed applies at the next restart, when the bots spawn.
     pub seed: u64,
+    /// Issue #19: the entrant on each grid slot (`lineup[slot]`), when it is not the slot itself
+    /// (a race of a Grand Prix after the first: the reverse of the standings, GD § 1). `None`:
+    /// entrant `e` on slot `e`. Read when the racers spawn.
+    pub lineup: Option<[u8; crate::track::GRID_SLOTS]>,
 }
 
 impl Default for RaceGrid {
@@ -105,6 +116,7 @@ impl Default for RaceGrid {
         Self {
             bots: crate::track::GRID_SLOTS - 1,
             seed: Self::GAME_SEED,
+            lineup: None,
         }
     }
 }
@@ -123,9 +135,35 @@ impl RaceGrid {
         0..self.bot_count()
     }
 
-    /// Grid slot of the local player: right behind the bots.
+    /// Grid slot of the local player: right behind the bots (or where the lineup puts it).
     pub fn player_slot(&self) -> usize {
-        self.bot_count()
+        self.slot_of(self.bot_count())
+    }
+
+    /// The entrant starting on grid slot `slot` (see the type's documentation).
+    pub fn entrant_at(&self, slot: usize) -> usize {
+        self.lineup
+            .and_then(|lineup| lineup.get(slot).copied())
+            .map_or(slot, usize::from)
+    }
+
+    /// The grid slot of entrant `entrant`.
+    pub fn slot_of(&self, entrant: usize) -> usize {
+        match self.lineup {
+            Some(lineup) => lineup
+                .iter()
+                .position(|e| usize::from(*e) == entrant)
+                .unwrap_or(entrant),
+            None => entrant,
+        }
+    }
+
+    /// The bots on the grid: (grid slot, entrant), by slot.
+    pub fn bots_on_grid(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let racers = self.bot_count() + 1;
+        (0..racers)
+            .map(|slot| (slot, self.entrant_at(slot)))
+            .filter(|(_, entrant)| *entrant < self.bot_count())
     }
 }
 
@@ -162,6 +200,16 @@ pub struct OnlineFlow {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct DrivesOnAfterFinish;
 
+/// A racer whose engine is off for good (issue #19: the podium of a Grand Prix, `crate::modes`):
+/// nothing it asks moves it, like before GO.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Parked;
+
+/// A racer on the podium of a Grand Prix (issue #19, `crate::modes`): its place, 0 = the winner.
+/// Its driver dances (`crate::characters`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OnPodium(pub usize);
+
 /// The race in progress, created with the circuit. The static part lives in [`Course`].
 #[derive(Resource, Debug)]
 pub struct Race {
@@ -174,6 +222,9 @@ pub struct Race {
     /// Issue #70: the closed results, first to last (empty until they close): the results
     /// screen shows them instead of the live standings. Online, the host's.
     pub results: Vec<ResultLine<Entity>>,
+    /// Issue #19: close the results now, without waiting `RaceTuning::results_close_seconds`
+    /// (the player moves on in a Grand Prix). Solo only.
+    pub close_requested: bool,
     /// Scratch buffer of the ranking, kept between ticks so it never allocates.
     entries: Vec<RankEntry<Entity>>,
 }
@@ -186,6 +237,7 @@ impl Race {
             standings: Vec::with_capacity(crate::track::GRID_SLOTS),
             restart_requested: false,
             results: Vec::with_capacity(crate::track::GRID_SLOTS),
+            close_requested: false,
             entries: Vec::with_capacity(crate::track::GRID_SLOTS),
         }
     }
@@ -219,9 +271,10 @@ pub enum RaceSystems {
     Rank,
 }
 
-/// Keys and buttons of the results screen: race again (GD § 13 has no menu yet).
-const RESTART_KEYS: [KeyCode; 3] = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space];
-const RESTART_BUTTONS: [GamepadButton; 2] = [GamepadButton::South, GamepadButton::Start];
+/// Keys and buttons of the results screen: race again (GD § 13 has no menu yet); in a Grand Prix
+/// (issue #19), go on to its standings and its next race.
+pub const RESTART_KEYS: [KeyCode; 3] = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space];
+pub const RESTART_BUTTONS: [GamepadButton; 2] = [GamepadButton::South, GamepadButton::Start];
 
 /// The race rules. Headless: tests run them with `MinimalPlugins`. The visual of the pelican is
 /// [`PelicanPlugin`], the HUD is `crate::ui`.
@@ -230,6 +283,7 @@ pub struct RacePlugin;
 impl Plugin for RacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RaceTuning>()
+            .init_resource::<GrandPrixTuning>()
             .init_resource::<RaceGrid>()
             .init_resource::<RaceMode>()
             .configure_sets(
@@ -276,14 +330,19 @@ fn setup_race(mut commands: Commands, layout: Res<TrackLayout>, tuning: Res<Race
 }
 
 /// Results screen: Enter / Space or the gamepad's A / Start races again. Not while the game is
-/// paused (a menu is open: its keys are not the race's).
+/// paused (a menu is open: its keys are not the race's), nor in a Grand Prix (issue #19: the same
+/// keys go on to its standings, `crate::modes`).
 fn request_restart(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     time: Option<Res<Time<Virtual>>>,
     gamepads: Query<&Gamepad>,
+    grand_prix: Option<Res<GrandPrix>>,
     mut race: ResMut<Race>,
 ) {
-    if race.phase() != RacePhase::Results || time.is_some_and(|time| time.is_paused()) {
+    if race.phase() != RacePhase::Results
+        || time.is_some_and(|time| time.is_paused())
+        || grand_prix.is_some()
+    {
         return;
     }
     let key = keys.is_some_and(|keys| keys.any_just_pressed(RESTART_KEYS));
@@ -353,6 +412,7 @@ fn advance_race(
         return;
     }
     race.results.clear();
+    race.close_requested = false;
     for (
         racer,
         mut progress,
@@ -408,7 +468,8 @@ fn judge_rocket_starts(
 
 /// Nothing moves before GO (no input, and no boost: a boost pushes even without throttle);
 /// finished racers coast (they keep their steering), unless they drive on (bots). Looking
-/// behind (issue #17) stays allowed: only the camera reads it.
+/// behind (issue #17) stays allowed: only the camera reads it. A parked racer (issue #19) never
+/// moves again.
 fn gate_inputs(
     race: Res<Race>,
     mut racers: Query<
@@ -418,13 +479,14 @@ fn gate_inputs(
             &mut Stall,
             &RaceProgress,
             Has<DrivesOnAfterFinish>,
+            Has<Parked>,
         ),
         With<Racer>,
     >,
 ) {
     let started = race.started();
-    for (mut input, mut boost, mut stall, progress, drives_on) in &mut racers {
-        if !started {
+    for (mut input, mut boost, mut stall, progress, drives_on, parked) in &mut racers {
+        if !started || parked {
             input.set_if_neq(KartInput {
                 look_back: input.look_back,
                 ..default()
@@ -574,7 +636,7 @@ fn close_the_results(
         return;
     }
     let close = seconds_to_ticks(tuning.results_close_seconds);
-    if !race.flow.results_closed(&race.timings, close) {
+    if !race.flow.results_closed(&race.timings, close) && !race.close_requested {
         return;
     }
     let standings = race.standings.iter().filter_map(|entity| {

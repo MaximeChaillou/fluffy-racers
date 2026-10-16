@@ -34,14 +34,15 @@ use crate::croquettes::Croquettes;
 use crate::interactions::{InteractionTuning, Paw, PawStats};
 use crate::items::{ItemStats, ItemTuning};
 use crate::kart::{
-    KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, StatEffects,
+    KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, RaceClass, SpeedClass,
+    StatEffects,
 };
 use crate::race::{
     Course, DrivesOnAfterFinish, Race, RaceGrid, RacePhase, RaceProgress, RaceTuning, Racer, Tow,
     TowReason, ticks_to_seconds,
 };
 use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
-use crate::track::{TrackChoice, TrackData, TrackHandle, TrackLayout};
+use crate::track::{MirrorMode, TrackChoice, TrackData, TrackHandle, TrackLayout};
 use crate::ui::{DebugOverlay, HudText, SimulationCost};
 
 // --- Seeds -------------------------------------------------------------------------------------
@@ -2087,4 +2088,231 @@ fn measure_tick_cost_with_twelve_karts() {
         at(0.95),
         at(1.0)
     );
+}
+
+// --- Issue #19: every circuit, its mirror image, the speed classes --------------------------------
+
+/// Seeds of the races of issue #19 (every circuit and its mirror, the classes): the first four of
+/// [`RACE_SEEDS`], a race per seed and per configuration (or those of [`SEEDS_VARIABLE`]).
+fn circuit_seeds() -> Vec<u64> {
+    if std::env::var(SEEDS_VARIABLE).is_ok() {
+        return race_seeds();
+    }
+    RACE_SEEDS[..4].to_vec()
+}
+
+/// The game on the circuit file `path` (its mirror image or not, in `class`) with 11 bots and the
+/// race seed `seed`, without items nor interactions (these races measure the driving), once the
+/// race and its bots exist; the player's kart is driven by a Normal bot too.
+fn race_on_circuit(path: &str, mirror: bool, class: SpeedClass, seed: u64) -> App {
+    let mut app = game_app_unloaded(TrackChoice::Circuit(path.into()), 11);
+    app.world_mut().resource_mut::<RaceGrid>().seed = seed;
+    app.world_mut().resource_mut::<ItemTuning>().enabled = false;
+    app.world_mut().resource_mut::<InteractionTuning>().enabled = false;
+    app.insert_resource(MirrorMode(mirror))
+        .insert_resource(RaceClass(class));
+    single_threaded(&mut app);
+    wait_for_the_player(&mut app);
+    wait_for_the_bots(&mut app, 11);
+    player_becomes_a_bot(&mut app, BotDifficulty::Normal);
+    app
+}
+
+/// A race of [`race_on_circuit`], in plain numbers.
+struct CircuitRun {
+    race: RaceResult,
+    /// The circuit was built mirrored, its centerline the mirror image of the file's.
+    mirrored: bool,
+    length: f32,
+}
+
+fn run_on_circuit(path: &str, mirror: bool, class: SpeedClass, seed: u64) -> CircuitRun {
+    let mut app = race_on_circuit(path, mirror, class, seed);
+    let layout = app.world().resource::<TrackLayout>().clone();
+    let mut log = RaceLog::new(&mut app);
+    run_race(&mut app, &mut log, 180.0);
+    let label = format!(
+        "{}{}, {}",
+        layout.name,
+        if mirror { " (miroir)" } else { "" },
+        class.label()
+    );
+    CircuitRun {
+        race: RaceResult::of(&app, &log, &label),
+        mirrored: layout.mirrored,
+        length: layout.center.length(),
+    }
+}
+
+/// Issue #19 acceptance: the bots drive every circuit of the game (the two of issue #19 and the
+/// two before them) and the mirror image of each (GD § 1), 12 karts, Normal, 3 laps: every kart
+/// finishes, never towed in free driving (a bot leaving the track or stuck by itself), seldom
+/// towed at all, with reasonable lap times (an average speed of the fastest laps close to the
+/// karts' top speed, the slowest finish not far behind). The mirror image of a circuit has its
+/// length and is driven about as fast.
+#[test]
+fn bots_race_every_circuit_and_its_mirror() {
+    let seeds = circuit_seeds();
+    let mut failures = Vec::new();
+    for entry in crate::admin::tracks::circuits() {
+        let path = entry.asset_path();
+        let runs: Vec<(bool, u64)> = [false, true]
+            .into_iter()
+            .flat_map(|mirror| seeds.iter().map(move |seed| (mirror, *seed)))
+            .collect();
+        let results = std::thread::scope(|scope| {
+            let threads: Vec<_> = runs
+                .iter()
+                .map(|(mirror, seed)| {
+                    let path = path.clone();
+                    scope.spawn(move || run_on_circuit(&path, *mirror, SpeedClass::Cc150, *seed))
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect::<Vec<_>>()
+        });
+        for mirror in [false, true] {
+            let mine: Vec<&CircuitRun> = runs
+                .iter()
+                .zip(&results)
+                .filter(|((m, _), _)| *m == mirror)
+                .map(|(_, run)| run)
+                .collect();
+            print_reports(&seeds, mine.iter().map(|r| &r.race));
+            let title = format!(
+                "{}{}, 12 karts, Normal",
+                entry.name,
+                if mirror { " (miroir)" } else { "" }
+            );
+            let mut checks = Checks::new(&title, &seeds);
+            checks.every_race(
+                "built as asked (the mirror image or not)",
+                mine.iter().map(|r| r.mirrored == mirror),
+            );
+            checks.every_race(
+                "every kart finishes",
+                mine.iter().map(|r| r.race.all_finished()),
+            );
+            let length = mine[0].length;
+            // The fastest lap of the race, as an average speed (m/s): the karts' top speed is
+            // 28.5 m/s (boosts above it).
+            checks.at_least(
+                "fastest lap, average speed (m/s)",
+                &per_race(&mine, |r| length / lowest(&r.race.laps(0..3))),
+                Some(26.0),
+                Some(28.0),
+            );
+            checks.at_most(
+                "fastest lap, average speed (m/s), not faster than boosted all along",
+                &per_race(&mine, |r| length / lowest(&r.race.laps(0..3))),
+                Some(33.0),
+                None,
+            );
+            checks.below(
+                "slowest finish / fastest finish",
+                &per_race(&mine, |r| {
+                    highest(&r.race.finishes()) / lowest(&r.race.finishes())
+                }),
+                Some(1.35),
+                Some(1.2),
+            );
+            let tows = mine.iter().map(|r| &r.race).collect::<Vec<_>>();
+            tow_checks(&mut checks, &tows, 4.0, 2.0);
+            checks.at_most(
+                "tows in free driving (none)",
+                &per_race(&mine, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+                Some(0.0),
+                None,
+            );
+            println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
+            failures.append(&mut checks.failures);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #19 (GD § 1): the speed classes, 12 Normal bots, 3 laps, on Prairie Pompon in 50cc,
+/// 150cc and 200cc, and on Col des Moufles (its two switchbacks) in 200cc. In every class, every
+/// kart finishes; no bot is towed in free driving in 50cc and 150cc, and in 200cc hardly ever
+/// (the rule of the races of #40): the bots plan their speeds with the class's top speed
+/// (`MaxSpeedScale`), so they lift and brake more before the turns in 200cc. On Prairie Pompon,
+/// the winner is slower in 50cc than in 150cc, faster in 200cc.
+#[test]
+fn bots_race_in_every_class() {
+    let seeds = circuit_seeds();
+    let prairie = crate::track::DEFAULT_CIRCUIT;
+    let col = "tracks/col.track.ron";
+    let configurations = [
+        (prairie, SpeedClass::Cc50),
+        (prairie, SpeedClass::Cc150),
+        (prairie, SpeedClass::Cc200),
+        (col, SpeedClass::Cc200),
+    ];
+    let runs: Vec<(usize, u64)> = (0..configurations.len())
+        .flat_map(|c| seeds.iter().map(move |seed| (c, *seed)))
+        .collect();
+    let results = std::thread::scope(|scope| {
+        let threads: Vec<_> = runs
+            .iter()
+            .map(|(c, seed)| {
+                let (path, class) = configurations[*c];
+                scope.spawn(move || run_on_circuit(path, false, class, *seed))
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect::<Vec<_>>()
+    });
+    let mut winners = Vec::new();
+    let mut failures = Vec::new();
+    for (c, (_, class)) in configurations.iter().enumerate() {
+        let mine: Vec<&CircuitRun> = runs
+            .iter()
+            .zip(&results)
+            .filter(|((run, _), _)| *run == c)
+            .map(|(_, run)| run)
+            .collect();
+        print_reports(&seeds, mine.iter().map(|r| &r.race));
+        let name = mine[0]
+            .race
+            .report
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let title = format!("{name} — 12 karts, Normal, {}", class.label());
+        let mut checks = Checks::new(&title, &seeds);
+        checks.every_race(
+            "every kart finishes",
+            mine.iter().map(|r| r.race.all_finished()),
+        );
+        let tows = mine.iter().map(|r| &r.race).collect::<Vec<_>>();
+        tow_checks(&mut checks, &tows, 4.0, 2.0);
+        // In 200cc, the rule of the races of #40 (never two in a race, 1 % of the kart-laps at
+        // most): a bot fast over the crest of Prairie Pompon's raised turn sometimes leaves it
+        // (once in 20 races measured: seeds 0 to 3, 100 to 107, 200 to 207). Slower, never.
+        if *class != SpeedClass::Cc200 {
+            checks.at_most(
+                "tows in free driving (none)",
+                &per_race(&mine, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+                Some(0.0),
+                None,
+            );
+        }
+        winners.push(mean(&per_race(&mine, |r| lowest(&r.race.finishes()))));
+        println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
+        failures.append(&mut checks.failures);
+    }
+    println!(
+        "winner's time on average, Prairie Pompon 50cc / 150cc / 200cc: {:?}",
+        &winners[..3]
+    );
+    assert!(
+        winners[0] > winners[1] * 1.1 && winners[2] < winners[1] * 0.95,
+        "the winner's time on average, 50cc / 150cc / 200cc: {winners:?}"
+    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

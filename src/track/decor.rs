@@ -63,6 +63,17 @@ impl DecorPlan {
         }
     }
 
+    /// The mirror image of the plan (issue #19, the mirror mode): every piece across the X = 0
+    /// plane (x → -x), turned the other way (its front, `(sin yaw, cos yaw)` on the ground,
+    /// mirrored too). The models themselves are not mirrored.
+    pub fn mirrored(mut self) -> Self {
+        for piece in &mut self.pieces {
+            piece.position.x = -piece.position.x;
+            piece.yaw = -piece.yaw;
+        }
+        self
+    }
+
     /// Whether a footprint at `p` (ground plane) overlaps a piece already placed.
     fn overlaps(&self, p: Vec2, radius: f32) -> bool {
         self.pieces
@@ -344,7 +355,7 @@ mod tests {
         assert!(!hides_a_turn(&turns, Vec2::new(35.0, 0.0), 3.0));
     }
 
-    /// Both circuits turn right: their infield is on the driver's right.
+    /// Both circuits of issue #11 turn right: their infield is on the driver's right.
     #[test]
     fn both_circuits_have_their_infield_on_the_right() {
         for file in ["prairie.track.ron", "anneau.track.ron"] {
@@ -356,6 +367,62 @@ mod tests {
         data.points.reverse();
         let reversed = CenterLine::new(&data.points, data.sample_step);
         assert_eq!(inside_sign(&reversed), -1.0);
+        // Issue #19: the Crique Câline turns right, the Col des Moufles left; their mirror
+        // images the other way.
+        for (file, sign) in [("crique.track.ron", 1.0), ("col.track.ron", -1.0)] {
+            let (data, center) = circuit(file);
+            assert_eq!(inside_sign(&center), sign, "{file}");
+            let mirrored = data.mirrored();
+            let center = CenterLine::new(&mirrored.points, mirrored.sample_step);
+            assert_eq!(inside_sign(&center), -sign, "{file} (mirror)");
+        }
+    }
+
+    /// Issue #19: the decor of the mirror mode is the mirror image of the file's, piece by piece
+    /// (across the X = 0 plane, each one turned the other way: its front mirrored too), on every
+    /// circuit, and it stays clear of the mirrored circuit (every sample and three points between
+    /// two samples).
+    #[test]
+    fn the_mirrored_decor_is_the_mirror_image_and_never_on_the_track() {
+        let flip = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+        for file in [
+            "prairie.track.ron",
+            "anneau.track.ron",
+            "crique.track.ron",
+            "col.track.ron",
+        ] {
+            let (data, _, plan) = plan_of(file);
+            let mirrored = plan.clone().mirrored();
+            assert_eq!(mirrored.models, plan.models);
+            assert_eq!(mirrored.pieces.len(), plan.pieces.len());
+            for (piece, image) in plan.pieces.iter().zip(&mirrored.pieces) {
+                assert_eq!(image.position, flip(piece.position));
+                let front = |yaw: f32| Quat::from_rotation_y(yaw) * Vec3::Z;
+                assert!(front(image.yaw).distance(flip(front(piece.yaw))) < 1e-5);
+                assert_eq!(
+                    (image.model, image.height, image.radius),
+                    (piece.model, piece.height, piece.radius)
+                );
+            }
+            let data = data.mirrored();
+            let center = CenterLine::new(&data.points, data.sample_step);
+            let samples = center.samples();
+            let step = center.length() / samples.len() as f32;
+            let dense: Vec<TrackSample> = (0..samples.len() * 4)
+                .map(|i| center.at(i as f32 * step / 4.0))
+                .collect();
+            for piece in &mirrored.pieces {
+                for s in &dense {
+                    let edge = wall_offset(s) + WALL_THICKNESS;
+                    let distance = s.position.xz().distance(piece.position.xz());
+                    assert!(
+                        distance - piece.radius > edge,
+                        "{file} (mirror): a piece at {} reaches the walls",
+                        piece.position
+                    );
+                }
+            }
+        }
     }
 
     /// Issue #11: the decor of both circuits, from their biome and their props: the same plan on
@@ -368,6 +435,8 @@ mod tests {
         for (file, biome) in [
             ("prairie.track.ron", "Prairie"),
             ("anneau.track.ron", "Guimauve"),
+            ("crique.track.ron", "Plage"),
+            ("col.track.ron", "Neige"),
         ] {
             let (data, center, plan) = plan_of(file);
             assert_eq!(data.biome.as_deref(), Some(biome));

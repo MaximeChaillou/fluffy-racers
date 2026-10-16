@@ -211,7 +211,7 @@ fn selection_window(
             ui.small(format!(
                 "Haut / Bas ({up} / {down}) : la ligne · Gauche / Droite ({left} / {right}) : \
                  le choix · Entrée : course · Échap : annuler · G : revenir ici en jeu · \
-                 O : options (clavier)"
+                 N : circuit, Grand Prix, classe, miroir · O : options (clavier)"
             ));
         });
 }

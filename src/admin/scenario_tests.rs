@@ -529,7 +529,9 @@ fn every_tuning_resource_is_in_the_panel() {
             "InteractionTuning",
             "NetTuning",
             "DriverTuning",
-            "WobbleTuning"
+            "WobbleTuning",
+            "SpeedClassTuning",
+            "GrandPrixTuning"
         ]
     );
     with_tunings(&mut app, |world, tunings| {

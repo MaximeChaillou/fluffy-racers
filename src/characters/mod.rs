@@ -62,6 +62,7 @@ use bevy::prelude::*;
 
 use crate::kart::{DriverLook, KartColor, KeyboardLayout, PlayerInputMuted};
 use crate::level::{LoadLevel, Online};
+use crate::modes::RaceMenu;
 use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::RaceMode;
 
@@ -224,9 +225,11 @@ fn selection_keys(
     screen: Res<SelectionScreen>,
     layout: Option<Res<KeyboardLayout>>,
     options: Option<Res<OptionsMenu>>,
+    race_menu: Option<Res<RaceMenu>>,
     mut actions: MessageWriter<SelectionAction>,
 ) {
-    if options.is_some_and(|menu| menu.open) {
+    // Issue #19: nor while the race menu (N) is open: the keys are its.
+    if options.is_some_and(|menu| menu.open) || race_menu.is_some_and(|menu| menu.open) {
         return;
     }
     let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
@@ -322,19 +325,22 @@ fn apply_selection_actions(
     }
 }
 
-/// The game waits while the player chooses: virtual time is paused while the screen or the
-/// options menu (issue #17) is open (the fixed 60 Hz simulation does not run), and runs again
+/// The game waits while the player chooses: virtual time is paused while the screen, the
+/// options menu (issue #17) or the race menu (issue #19) is open (the fixed 60 Hz simulation does not run), and runs again
 /// once both are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
 /// player's kart coasts while a menu is open (its keys are the menu's).
 fn pause_in_menus(
     screen: Res<SelectionScreen>,
     options: Option<Res<OptionsMenu>>,
+    race_menu: Option<Res<RaceMenu>>,
     online: Option<Res<Online>>,
     muted: Option<ResMut<PlayerInputMuted>>,
     mut was_open: Local<bool>,
     mut time: ResMut<Time<Virtual>>,
 ) {
-    let open = screen.open || options.is_some_and(|menu| menu.open);
+    let open = screen.open
+        || options.is_some_and(|menu| menu.open)
+        || race_menu.is_some_and(|menu| menu.open);
     let pause = open && online.is_none();
     if pause && !time.is_paused() {
         time.pause();
