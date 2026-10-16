@@ -553,6 +553,8 @@ fn the_drivers_sit_in_their_karts_and_play_what_happens() {
         match part {
             AnimalPart::Body => bodies.push((mesh.0.id(), material.0.id())),
             AnimalPart::Tail => tails += 1,
+            // Issue #12: the birds' wings are marked too (the wobble's test counts them).
+            AnimalPart::LeftWing | AnimalPart::RightWing => {}
         }
     }
     assert_eq!(bodies.len(), 12);
@@ -664,6 +666,150 @@ fn the_drivers_sit_in_their_karts_and_play_what_happens() {
         }
     }
     assert!(frames < 300, "the karts never came back");
+}
+
+/// Issue #12: with the animals (headless, their clips playing), every body, tail and wing carries
+/// its wobble's layer, for its own driver, and the driver knows where its tail and wings hang
+/// (the elephant's trunk ahead, the other tails behind; the left wing on the kart's left). A kart
+/// hit by an item: its driver ragdolls, its body leans, and its pose is its clip's with the
+/// wobble laid over it: the clip goes on playing under it (its base moves from frame to frame).
+/// A driver over the line dances under its wobble the same way.
+#[test]
+fn the_wobble_is_laid_over_the_clips() {
+    use crate::characters::{
+        AnimalAnimation, AnimalPart, AnimalRoot, DriverWobble, LayerPivot, Roster, WobbleLayer,
+        WobbleSlot,
+    };
+    use crate::kart::{HitReaction, KartState};
+    let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::default(), 11);
+    load_gltf_headless(&mut app);
+    wait_for_the_drivers(&mut app);
+    for _ in 0..5 {
+        app.update();
+    }
+    let roster = Roster::embedded();
+    let world = app.world_mut();
+    // Each animal: its root, its kart, its driver.
+    let roots: Vec<(AnimalRoot, Entity)> = world
+        .query::<(&AnimalRoot, &ChildOf)>()
+        .iter(world)
+        .map(|(root, child_of)| (*root, child_of.parent()))
+        .collect();
+    assert_eq!(roots.len(), 12);
+    let parts: Vec<(Entity, AnimalPart, WobbleLayer)> = world
+        .query::<(Entity, &AnimalPart, &WobbleLayer)>()
+        .iter(world)
+        .map(|(e, part, layer)| (e, *part, *layer))
+        .collect();
+    let count = |part: AnimalPart| parts.iter().filter(|(_, p, _)| *p == part).count();
+    assert_eq!(count(AnimalPart::Body), 12);
+    assert_eq!(
+        world.query::<&AnimalPart>().iter(world).count(),
+        parts.len(),
+        "a layer on every part"
+    );
+    for (_, part, layer) in &parts {
+        assert_eq!(layer.slot, WobbleSlot::from(*part));
+        assert_eq!(layer.pivot, LayerPivot::Own);
+        assert!(roots.iter().any(|(_, driver)| *driver == layer.driver));
+    }
+    let mut birds = 0;
+    for (root, driver) in &roots {
+        let levers = world.get::<DriverWobble>(*driver).unwrap().0.levers;
+        let has = |part: AnimalPart| {
+            parts
+                .iter()
+                .any(|(_, p, layer)| *p == part && layer.driver == *driver)
+        };
+        let model = roster.characters[root.character].model.clone().unwrap();
+        assert_eq!(levers.tail.is_some(), has(AnimalPart::Tail), "{model}");
+        if let Some(tail) = levers.tail {
+            if model.ends_with("elephant") {
+                assert!(tail.z < -0.3 && tail.y < 0.0, "{model}: {tail}");
+            } else {
+                assert!(tail.z > 0.3, "{model}: {tail}");
+            }
+        }
+        assert_eq!(levers.wings.is_some(), has(AnimalPart::LeftWing), "{model}");
+        assert_eq!(
+            levers.wings.is_some(),
+            has(AnimalPart::RightWing),
+            "{model}"
+        );
+        if let Some([left, right]) = levers.wings {
+            assert!(left.x < -0.5 && right.x > 0.5, "{model}: {left} {right}");
+            birds += 1;
+        }
+    }
+    assert_eq!(count(AnimalPart::LeftWing), birds);
+
+    // A bot hit by an item, another over the line.
+    let player = crate::tests::player(&mut app);
+    let bots: Vec<(AnimalRoot, Entity)> = roots
+        .iter()
+        .filter(|(root, _)| root.kart != player)
+        .take(2)
+        .copied()
+        .collect();
+    let world = app.world_mut();
+    *world.get_mut::<KartState>(bots[0].0.kart).unwrap() = KartState::Hit {
+        reaction: HitReaction::Spin,
+        elapsed: 0,
+        duration: 30,
+    };
+    world
+        .get_mut::<crate::race::RaceProgress>(bots[1].0.kart)
+        .unwrap()
+        .finish = Some(0);
+    let body_of = |app: &mut App, driver: Entity| {
+        let (entity, ..) = *parts
+            .iter()
+            .find(|(_, part, layer)| *part == AnimalPart::Body && layer.driver == driver)
+            .unwrap();
+        let world = app.world();
+        (
+            *world.get::<WobbleLayer>(entity).unwrap(),
+            *world.get::<Transform>(entity).unwrap(),
+        )
+    };
+    let mut bases: Vec<Vec<Quat>> = vec![Vec::new(), Vec::new()];
+    let mut leaned = 0.0f32;
+    for frame in 0..20 {
+        app.update();
+        for (i, (_, driver)) in bots.iter().enumerate() {
+            let state = app.world().get::<DriverWobble>(*driver).unwrap().0;
+            let (layer, transform) = body_of(&mut app, *driver);
+            // The clip's pose with the wobble laid over it, never instead.
+            assert_eq!(transform, layer.over(&state.pose), "frame {frame}");
+            bases[i].push(layer.base.rotation);
+            if i == 0 {
+                assert!(state.ragdoll > 0.0, "frame {frame}");
+                leaned = leaned.max(transform.rotation.angle_between(layer.base.rotation));
+            }
+        }
+    }
+    assert!(leaned > 0.1, "the hit one's body leans: {leaned}");
+    let world = app.world_mut();
+    let playing: Vec<AnimalAnimation> = bots
+        .iter()
+        .map(|(root, _)| {
+            world
+                .query::<&AnimalRoot>()
+                .iter(world)
+                .find(|r| r.kart == root.kart)
+                .unwrap()
+                .playing
+        })
+        .collect();
+    assert_eq!(playing, [AnimalAnimation::Shake, AnimalAnimation::Dance]);
+    // Under the wobble, the clips play: the shake and the dance turn the bodies frame by frame.
+    for rotations in &bases {
+        let moved = rotations
+            .windows(2)
+            .filter(|w| w[0].angle_between(w[1]) > 1e-4)
+            .count();
+        assert!(moved > 10, "{moved} of {}", rotations.len());
+    }
 }
 
 /// Measure (issue #11): entities, entities with a mesh (shown: neither it nor a parent hidden) and

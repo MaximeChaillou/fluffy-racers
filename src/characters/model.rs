@@ -7,8 +7,9 @@
 //! them (the elephant's is its trunk), `leg-*` for the legs and `wing-*` for the birds. Its clips
 //! move the nodes (no skinning): each node becomes an entity, named for the clips by its path
 //! from the file's root (`AnimationTargetId`, as Bevy's glTF loader names them). The legs are
-//! left out: they would stick out under the seat. The `body` and the `tail` keep a marker
-//! ([`AnimalPart`]): the soft wobble (#12) will hang from them.
+//! left out: they would stick out under the seat. The `body`, the `tail` and the birds' wings
+//! keep a marker ([`AnimalPart`]): the soft wobble (#12, `wobble.rs`) hangs from them. The ears
+//! are part of the body's mesh in every Cube Pet (no node of their own): they lean with it.
 //!
 //! In the file the animal stands on the ground, its front toward +Z, its body 1.25 wide. In the
 //! kart it is turned toward -Z (the kart's front), scaled ([`DriverTuning::model_scale`] times its
@@ -21,17 +22,22 @@ use crate::track::mesh::MeshData;
 
 use super::animation::DriverTuning;
 
-/// The node of a Cube Pet's body (with its head) and of its tail.
+/// The node of a Cube Pet's body (with its head), of its tail and of a bird's wings.
 pub const BODY: &str = "body";
 pub const TAIL: &str = "tail";
+pub const LEFT_WING: &str = "wing-left";
+pub const RIGHT_WING: &str = "wing-right";
 /// The legs' nodes start with this: left out.
 const LEG: &str = "leg-";
 
-/// A part of an animal that the wobble (#12) will move.
+/// A part of an animal that the wobble (#12) moves. The wings are the birds' (chick, penguin,
+/// parrot), on the animal's left (+X in the file, where it faces +Z) and right.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AnimalPart {
     Body,
     Tail,
+    LeftWing,
+    RightWing,
 }
 
 /// A node of an animal, ready to spawn.
@@ -47,6 +53,24 @@ pub struct AnimalNode {
     /// The names from the file's root down to it: the clips' name for it.
     pub path: Vec<String>,
     pub part: Option<AnimalPart>,
+}
+
+impl AnimalNode {
+    /// The direction from its origin (its pivot: a tail's or a wing's root, the body's bottom)
+    /// toward the middle of its mesh, in its parent's space: where it hangs, what the wobble
+    /// swings (#12). Up without a mesh.
+    pub fn lever(&self) -> Vec3 {
+        let Some(mesh) = self.mesh.as_ref().filter(|m| !m.positions.is_empty()) else {
+            return Vec3::Y;
+        };
+        let (lo, hi) = mesh
+            .positions
+            .iter()
+            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+                (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p)))
+            });
+        (self.local.rotation * ((lo + hi) / 2.0)).normalize_or(Vec3::Y)
+    }
 }
 
 /// An animal, ready to sit in a kart.
@@ -107,6 +131,8 @@ pub fn animal_model_data(model: &BakedModel) -> Option<AnimalModelData> {
         let part = match node.name.as_str() {
             BODY => Some(AnimalPart::Body),
             TAIL => Some(AnimalPart::Tail),
+            LEFT_WING => Some(AnimalPart::LeftWing),
+            RIGHT_WING => Some(AnimalPart::RightWing),
             _ => None,
         };
         let mesh = node
@@ -240,6 +266,30 @@ mod tests {
             "at rest"
         );
         assert!((animal.seat_point - Vec3::new(0.0, 0.18, 0.05)).length() < 1e-5);
+        // Issue #12: where each part hangs from its pivot, toward the middle of its mesh (up
+        // without one).
+        let tail = animal.nodes[4].lever();
+        assert!((tail - Vec3::new(0.1, 0.5, 0.25).normalize()).length() < 1e-5);
+        assert_eq!(animal.nodes[1].lever(), Vec3::Y);
+        assert!(animal.nodes[2].lever().y > 0.99);
+        // A bird's wings are marked too, left and right.
+        let mut bird = made_up_animal();
+        bird.nodes[5].name = "wing-left".to_string();
+        bird.nodes[6].name = "wing-right".to_string();
+        let bird = animal_model_data(&bird).unwrap();
+        let parts: Vec<Option<AnimalPart>> = bird.nodes.iter().map(|n| n.part).collect();
+        assert_eq!(
+            parts,
+            [
+                None,
+                None,
+                Some(AnimalPart::Body),
+                None,
+                Some(AnimalPart::Tail),
+                Some(AnimalPart::LeftWing),
+                Some(AnimalPart::RightWing)
+            ]
+        );
         // No body (or a body without a mesh): not an animal.
         let mut model = made_up_animal();
         model.nodes[2].part = None;
