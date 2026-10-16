@@ -13,7 +13,9 @@ use bevy_rapier3d::prelude::Velocity;
 use super::socket::memory::Hub;
 use super::*;
 use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_seed};
-use crate::interactions::{InteractionTuning, Paw, PawMotion, PawStats};
+use crate::interactions::{
+    InteractionTuning, Paw, PawArm, PawMotion, PawStats, max_arm_length, shown_arms,
+};
 use crate::kart::{Kart, KartInput, KartSystems, PlayerKart, Shove, SpawnPoint};
 use crate::options::{OptionsAction, OptionsMenu};
 use crate::race::{
@@ -583,8 +585,14 @@ fn online_the_results_close_with_the_hosts_table_for_everyone() {
 
 /// Bob's kart stands 2.4 m to the right of Ana's, and shows there on Ana's screen.
 fn put_bob_beside_ana(room: &mut Room, ana_kart: Entity, bob_kart: Entity) {
+    put_bob_near_ana(room, ana_kart, bob_kart, 2.4, 0.0);
+}
+
+/// Bob's kart stands `right` m to the right of Ana's and `ahead` m ahead, the same way, and shows
+/// there on Ana's screen.
+fn put_bob_near_ana(room: &mut Room, ana_kart: Entity, bob_kart: Entity, right: f32, ahead: f32) {
     let ana_at = *room.view(ANA).world().get::<Transform>(ana_kart).unwrap();
-    let beside = ana_at.translation + *ana_at.right() * 2.4;
+    let beside = ana_at.translation + *ana_at.right() * right + *ana_at.forward() * ahead;
     {
         let world = room.app(BOB).world_mut();
         let mut transform = world.get_mut::<Transform>(bob_kart).unwrap();
@@ -796,6 +804,227 @@ fn a_grab_holds_another_players_kart_until_released() {
         PawMotion::Holding { .. }
     ));
     let _ = InteractionTuning::default();
+}
+
+/// Issue #81: the arms shown on every screen of the room: none longer than the longest tether
+/// (`max_arm_length`), nothing NaN.
+fn check_arms(room: &Room, what: &str) {
+    let longest = max_arm_length(&InteractionTuning::default()) + 0.01;
+    for (key, app) in &room.games {
+        for (body, length) in shown_arms(app.world()) {
+            assert!(
+                length.is_finite() && length <= longest,
+                "{what}: an arm of {length} m on {body:?}, on {key:?}'s screen"
+            );
+        }
+    }
+}
+
+/// The arms shown on `app`'s screen from the kart `body`.
+fn arms_of(app: &App, body: Entity) -> usize {
+    shown_arms(app.world())
+        .iter()
+        .filter(|(kart, _)| *kart == body)
+        .count()
+}
+
+/// `frames` frames of the room, its arms checked after each one.
+fn frames_checking_arms(room: &mut Room, frames: usize, what: &str) {
+    for _ in 0..frames {
+        room.frame();
+        check_arms(room, what);
+    }
+}
+
+/// Issue #81 (Max's bug: on the results of a race online, four long beige bars went from his
+/// driver off the screen: the arms of the host's bots): Ana (the host) grabs Bob's kart (the
+/// client's), and Bob breaks free: he hops, the tether breaks when he lands. Only Bob's game
+/// decides it (the victim decides) and Ana's says nothing back, yet Ana's paw lets go on Bob's
+/// screen too. Ana then drives off: no arm stays stretched from her kart toward Bob's. On both
+/// screens, every frame: no arm longer than the longest tether, nothing NaN.
+#[test]
+fn a_kart_that_breaks_free_keeps_no_arm_stretched_toward_it() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let ana_kart = player(room.app(ANA));
+    let bob_kart = player(room.app(BOB));
+    for (key, kart) in [(ANA, ana_kart), (BOB, bob_kart)] {
+        room.app(key)
+            .world_mut()
+            .entity_mut(kart)
+            .remove::<PlayerKart>();
+    }
+    put_bob_beside_ana(&mut room, ana_kart, bob_kart);
+    let ana_proxy = room
+        .view(BOB)
+        .world()
+        .resource::<KartSync>()
+        .remote(ANA)
+        .unwrap()
+        .proxy
+        .unwrap();
+    let holding = |app: &App, kart: Entity| {
+        matches!(
+            app.world().get::<Paw>(kart).unwrap().motion,
+            PawMotion::Holding { .. }
+        )
+    };
+    // Ana keeps the button down to the end: no other grab.
+    room.app(ANA)
+        .world_mut()
+        .get_mut::<KartInput>(ana_kart)
+        .unwrap()
+        .interact = true;
+    room.until(1.5, "Bob held", |app| {
+        if lobby(app).is_host() {
+            holding(app, ana_kart)
+        } else {
+            app.world().get::<Paw>(bob_kart).unwrap().held.is_some() && holding(app, ana_proxy)
+        }
+    });
+    frames_checking_arms(&mut room, 3, "Bob held");
+    assert_eq!(arms_of(room.view(BOB), ana_proxy), 1, "the elastic band");
+    // Bob hops, and breaks free when he lands.
+    for jump in [true, true, false] {
+        room.app(BOB)
+            .world_mut()
+            .get_mut::<KartInput>(bob_kart)
+            .unwrap()
+            .jump_drift = jump;
+        room.frame();
+        check_arms(&room, "Bob hops");
+    }
+    room.until(1.5, "Bob free", |app| {
+        app.world()
+            .get::<Paw>(player_of(app))
+            .unwrap()
+            .held
+            .is_none()
+    });
+    assert_eq!(
+        room.view(BOB)
+            .world()
+            .get::<PawStats>(bob_kart)
+            .unwrap()
+            .escapes,
+        1
+    );
+    assert!(
+        !holding(room.view(BOB), ana_proxy),
+        "Ana's paw let go on Bob's screen"
+    );
+    // Ana drives off; Bob stays.
+    room.app(ANA)
+        .world_mut()
+        .get_mut::<KartInput>(ana_kart)
+        .unwrap()
+        .throttle = 1.0;
+    frames_checking_arms(&mut room, 3 * 60, "Ana drives off");
+    let bob = room.view(BOB).world();
+    let apart = bob
+        .get::<Transform>(ana_proxy)
+        .unwrap()
+        .translation
+        .distance(bob.get::<Transform>(bob_kart).unwrap().translation);
+    assert!(
+        apart > max_arm_length(&InteractionTuning::default()),
+        "far apart: {apart} m"
+    );
+    for key in [ANA, BOB] {
+        assert!(
+            shown_arms(room.view(key).world()).is_empty(),
+            "{key:?}: no arm left"
+        );
+    }
+    assert!(!holding(room.view(BOB), ana_proxy));
+}
+
+/// Issue #81, the other way: Bob (a client) grabs Ana's kart (the host's), on his left and ahead.
+/// On Bob's screen, his paw reaches Ana's driver where her kart is shown (another peer's kart
+/// has no `PhysicsPose`: the paw went 2 m to the side, into thin air). He lets go: the arm comes
+/// back and goes down.
+#[test]
+fn a_paw_on_another_peers_kart_reaches_where_it_is_shown() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let ana_kart = player(room.app(ANA));
+    let bob_kart = player(room.app(BOB));
+    for (key, kart) in [(ANA, ana_kart), (BOB, bob_kart)] {
+        room.app(key)
+            .world_mut()
+            .entity_mut(kart)
+            .remove::<PlayerKart>();
+    }
+    put_bob_near_ana(&mut room, ana_kart, bob_kart, 2.4, -2.0);
+    let ana_visual = room
+        .view(BOB)
+        .world()
+        .resource::<KartSync>()
+        .remote(ANA)
+        .unwrap()
+        .visual
+        .unwrap();
+    room.app(BOB)
+        .world_mut()
+        .get_mut::<KartInput>(bob_kart)
+        .unwrap()
+        .interact = true;
+    room.until(1.5, "Ana held", |app| {
+        let kart = player_of(app);
+        let paw = app.world().get::<Paw>(kart).unwrap();
+        if lobby(app).is_host() {
+            paw.held.is_some()
+        } else {
+            matches!(paw.motion, PawMotion::Holding { .. })
+        }
+    });
+    frames_checking_arms(&mut room, 10, "Bob holds Ana");
+    let bob = room.view(BOB).world();
+    let driver = bob
+        .get::<GlobalTransform>(ana_visual)
+        .unwrap()
+        .translation()
+        + Vec3::Y * 0.6;
+    let mut paws = bob
+        .try_query::<(&PawArm, &Visibility, &GlobalTransform)>()
+        .unwrap();
+    let paw = paws
+        .iter(bob)
+        .find(|(part, visibility, _)| {
+            part.paw && part.body == bob_kart && **visibility != Visibility::Hidden
+        })
+        .map(|(_, _, global)| global.translation())
+        .expect("Bob's paw shows");
+    assert!(
+        paw.distance(driver) < 0.3,
+        "Bob's paw at {paw}, Ana's driver shown at {driver}"
+    );
+    // On Ana's screen, Bob's arm leaves from his left shoulder: she is on his left.
+    let ana = room.view(ANA).world();
+    let bob_proxy = ana
+        .resource::<KartSync>()
+        .remote(BOB)
+        .unwrap()
+        .proxy
+        .unwrap();
+    assert!(
+        matches!(
+            ana.get::<Paw>(bob_proxy).unwrap().motion,
+            PawMotion::Holding { side, .. } if side < 0.0
+        ),
+        "{:?}",
+        ana.get::<Paw>(bob_proxy).unwrap().motion
+    );
+    room.app(BOB)
+        .world_mut()
+        .get_mut::<KartInput>(bob_kart)
+        .unwrap()
+        .interact = false;
+    frames_checking_arms(&mut room, 30, "Bob lets go");
+    assert_eq!(arms_of(room.view(BOB), bob_kart), 0, "back and down");
+    assert!(shown_arms(room.view(ANA).world()).is_empty());
 }
 
 /// Issue #63 (was « a new host takes the bots over », issue #9): the host leaves in the middle

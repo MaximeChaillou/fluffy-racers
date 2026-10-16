@@ -274,6 +274,80 @@ pub fn max_reach(tuning: &InteractionTuning) -> f32 {
     side.max(ahead)
 }
 
+/// The longest an arm may show (m, issue #81): a tether grabbed at the farthest reach, stretched
+/// up to its break, plus the network's tolerance (about 8 m). Past it, whatever a paw says, its
+/// tether is broken: the arm is not drawn (`visual.rs`).
+pub fn max_arm_length(tuning: &InteractionTuning) -> f32 {
+    max_reach(tuning) + tuning.tether_max_stretch + tuning.reach_tolerance
+}
+
+/// A paw lets go of the kart it held (side `side`), its tether over for `reason`: the arm comes
+/// back with a "boing", or, when the kart held broke free or refused, the driver flails off
+/// balance like after a grab into thin air (GD § 15). `true` in that last case. The rest (the
+/// cooldown, the slide, the stats) is the kart's own (`mod.rs`, `end_tethers`).
+pub fn let_go(
+    paw: &mut Paw,
+    tuning: &InteractionTuning,
+    target: Entity,
+    side: f32,
+    reason: TetherEnd,
+) -> bool {
+    paw.motion = if paw.button {
+        PawMotion::Spent
+    } else {
+        PawMotion::Idle
+    };
+    let off_balance = matches!(reason, TetherEnd::Escaped | TetherEnd::Refused);
+    paw.swing = Some(if off_balance {
+        Swing {
+            kind: SwingKind::GrabMiss,
+            side,
+            target: None,
+            ticks: 0,
+        }
+    } else {
+        Swing {
+            kind: SwingKind::LetGo,
+            side,
+            target: Some(target),
+            ticks: 0,
+        }
+    });
+    if off_balance {
+        paw.lose_balance(ticks(tuning.off_balance_time), side);
+    }
+    off_balance
+}
+
+/// Another peer's kart holding a kart, on our screen (online, issue #81): its paw only shows what
+/// its peer told (`Grab`, `TetherBreak`), and either side of a tether may end it. Should no end
+/// come (lost, or decided by nobody here), its paw lets go by itself once the longest tether is
+/// over, plus the oldest an event may be (`tether_max_time` + `max_event_age`). One tick; `true`
+/// when it let go.
+pub fn step_remote_paw(paw: &mut Paw, tuning: &InteractionTuning) -> bool {
+    let PawMotion::Holding {
+        target,
+        ticks: held,
+        rest,
+        side,
+    } = paw.motion
+    else {
+        return false;
+    };
+    let held = held + 1;
+    if held > ticks(tuning.tether_max_time + tuning.max_event_age) {
+        let_go(paw, tuning, target, side, TetherEnd::TimeUp);
+        return true;
+    }
+    paw.motion = PawMotion::Holding {
+        target,
+        ticks: held,
+        rest,
+        side,
+    };
+    false
+}
+
 /// Whether the kart struck or grabbed accepts, at tick `now`, an event sent at tick `sent` by a
 /// kart that was at `from` (docs/ARCHITECTURE.md): not too old, and in reach of `position` with
 /// some tolerance. `position`: where the kart was at the tick the striker saw (`tick_vu`; online,
@@ -1249,5 +1323,67 @@ mod tests {
         assert!(!accepts(&t, 100, 81, at + Vec3::X * 2.0, at), "too old");
         assert!(!accepts(&t, 100, 100, at + Vec3::X * 5.6, at), "too far");
         assert!(!accepts(&t, 100, 100, at + Vec3::Y * 2.4, at), "too high");
+    }
+
+    /// Issue #81: the longest arm is a tether grabbed at the farthest reach and stretched to its
+    /// break, with the network's tolerance: about 8 m, never the length of a circuit.
+    #[test]
+    fn an_arm_is_never_longer_than_the_longest_tether() {
+        let t = tuning();
+        let longest = max_arm_length(&t);
+        assert!(longest >= max_reach(&t) + t.tether_max_stretch, "{longest}");
+        assert!((7.5..=8.5).contains(&longest), "{longest}");
+    }
+
+    /// Issue #81: a paw lets go with a "boing" toward the kart it held, or off balance when that
+    /// kart broke free or refused; still pressed, the button waits for its release.
+    #[test]
+    fn letting_go_brings_the_arm_back_or_throws_the_driver_off_balance() {
+        let t = tuning();
+        let mut paw = holding(2.0);
+        paw.button = false;
+        assert!(!let_go(&mut paw, &t, entity(2), 1.0, TetherEnd::TimeUp));
+        assert_eq!(paw.motion, PawMotion::Idle);
+        assert_eq!(
+            paw.swing.map(|s| (s.kind, s.target)),
+            Some((SwingKind::LetGo, Some(entity(2))))
+        );
+        assert_eq!(paw.off_balance, 0);
+        for reason in [TetherEnd::Escaped, TetherEnd::Refused] {
+            let mut paw = holding(2.0);
+            assert!(let_go(&mut paw, &t, entity(2), -1.0, reason));
+            assert_eq!(paw.motion, PawMotion::Spent, "the button is still down");
+            assert_eq!(
+                paw.swing.map(|s| (s.kind, s.target, s.side)),
+                Some((SwingKind::GrabMiss, None, -1.0))
+            );
+            assert_eq!(
+                (paw.off_balance, paw.off_balance_side),
+                (ticks(t.off_balance_time), -1.0)
+            );
+        }
+    }
+
+    /// Issue #81: another peer's kart holding one, on our screen: no end ever comes, yet its paw
+    /// lets go by itself once the longest tether (2 s) and the oldest event (0.3 s) are over.
+    #[test]
+    fn a_remote_paw_lets_go_by_itself_after_the_longest_tether() {
+        let t = tuning();
+        let limit = ticks(t.tether_max_time + t.max_event_age);
+        let mut paw = Paw {
+            button: false,
+            ..holding(2.0)
+        };
+        for tick in 1..=limit {
+            assert!(!step_remote_paw(&mut paw, &t), "tick {tick}");
+            assert!(paw.holding());
+        }
+        assert!(step_remote_paw(&mut paw, &t));
+        assert_eq!(paw.motion, PawMotion::Idle);
+        assert_eq!(paw.swing.map(|s| s.kind), Some(SwingKind::LetGo));
+        // Nothing held: nothing to do.
+        let mut idle = Paw::default();
+        assert!(!step_remote_paw(&mut idle, &t));
+        assert_eq!(idle, Paw::default());
     }
 }

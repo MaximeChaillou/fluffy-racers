@@ -702,12 +702,22 @@ fn deliver_interactions(
                 if ours(event.target) {
                     grabs.write(event);
                 }
-                if let Ok((_, mut paw)) = proxies.get_mut(event.grabber) {
+                let held_at = transforms.get(event.target).ok().map(|t| t.translation);
+                if let Ok((transform, mut paw)) = proxies.get_mut(event.grabber) {
+                    // Its arm leaves from the shoulder on the side of the kart held (issue #81).
+                    let right = transform.forward().cross(Vec3::Y);
+                    let side = held_at.map_or(1.0, |at| {
+                        if right.dot(at - transform.translation) < 0.0 {
+                            -1.0
+                        } else {
+                            1.0
+                        }
+                    });
                     paw.motion = PawMotion::Holding {
                         target: event.target,
                         ticks: 0,
                         rest: event.rest,
-                        side: 1.0,
+                        side,
                     };
                 }
             }
@@ -715,13 +725,10 @@ fn deliver_interactions(
                 let Some(event) = end.to_event(entity) else {
                     continue;
                 };
+                // A remote grabber lets go in `interactions::end_tethers`, like ours (issue #81:
+                // also when the end is ours).
                 ends.write(event);
                 counts[1] += 1;
-                if let Ok((_, mut paw)) = proxies.get_mut(event.grabber)
-                    && matches!(paw.motion, PawMotion::Holding { target, .. } if target == event.target)
-                {
-                    paw.motion = PawMotion::Idle;
-                }
                 if let Ok((_, mut paw)) = proxies.get_mut(event.target)
                     && paw.held.is_some_and(|held| held.by == event.grabber)
                 {

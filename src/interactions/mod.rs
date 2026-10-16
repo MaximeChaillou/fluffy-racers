@@ -47,9 +47,12 @@ mod scenario_tests;
 pub use logic::{
     Held, InReach, KartView, Paw, PawContext, PawMotion, PawOutcome, PawStats, Swing, SwingKind,
     TetherEnd, accepts, aimed_side, can_be_grabbed, can_be_struck, can_grab, can_strike,
-    held_accel, held_end, max_reach, pick_target, reach, step_paw, tether_accel, ticks,
+    held_accel, held_end, let_go, max_arm_length, max_reach, pick_target, reach, step_paw,
+    step_remote_paw, tether_accel, ticks,
 };
 pub use tuning::InteractionTuning;
+#[cfg(test)]
+pub(crate) use visual::shown_arms;
 pub use visual::{InteractionVisualPlugin, PawArm, PawGauge, PawPof, PawVisualAssets};
 
 use bevy::prelude::*;
@@ -171,6 +174,7 @@ impl Plugin for InteractionPlugin {
                         receive_interactions,
                         count_landed,
                         end_tethers,
+                        follow_remote_paws,
                         pull_tethers,
                     )
                         .chain()
@@ -695,10 +699,15 @@ fn count_landed(mut answers: MessageReader<StrikeAnswer>, mut stats: Query<&mut 
 
 /// The end of a tether, whoever decided it: the grabber lets go (3 s of cooldown; 1.5 s after a
 /// refusal; off balance when the kart held broke free or refused), the kart held is free.
+///
+/// Online, another peer's kart that held ours lets go on our screen too (issue #81): its paw only
+/// shows what its peer told, and when the end is ours (we broke free, refused, finished...), its
+/// peer says nothing back. Its arm stayed stretched toward our kart for good otherwise.
 fn end_tethers(
     tuning: Res<InteractionTuning>,
     mut ended: MessageReader<TetherEnded>,
     mut karts: Query<(&Transform, &mut Paw, &mut PawStats, &mut Shove), With<Kart>>,
+    mut remotes: Query<&mut Paw, (With<Remote>, Without<Kart>)>,
 ) {
     for end in ended.read() {
         if let Ok((transform, mut paw, mut stats, mut shove)) = karts.get_mut(end.grabber)
@@ -706,37 +715,26 @@ fn end_tethers(
             && target == end.target
         {
             let paw = &mut *paw;
-            paw.motion = if paw.button {
-                PawMotion::Spent
-            } else {
-                PawMotion::Idle
-            };
             paw.cooldown = ticks(if end.reason == TetherEnd::Refused {
                 tuning.strike_cooldown
             } else {
                 tuning.tether_cooldown
             });
-            paw.swing = Some(Swing {
-                kind: SwingKind::LetGo,
-                side,
-                target: Some(target),
-                ticks: 0,
-            });
-            if matches!(end.reason, TetherEnd::Escaped | TetherEnd::Refused) {
+            if let_go(paw, &tuning, target, side, end.reason) {
                 // Off balance, like a grab into thin air (GD § 15).
                 if end.reason == TetherEnd::Refused {
                     stats.grabs = stats.grabs.saturating_sub(1);
                     stats.missed += 1;
                 }
-                paw.swing = Some(Swing {
-                    kind: SwingKind::GrabMiss,
-                    side,
-                    target: None,
-                    ticks: 0,
-                });
                 let right = right_of(heading(transform));
                 whiff(paw, &mut shove, &tuning, right * side, side);
             }
+        }
+        if let Ok(mut paw) = remotes.get_mut(end.grabber)
+            && let PawMotion::Holding { target, side, .. } = paw.motion
+            && target == end.target
+        {
+            let_go(&mut paw, &tuning, target, side, end.reason);
         }
         if let Ok((_, mut paw, mut stats, _)) = karts.get_mut(end.target)
             && paw.held.is_some_and(|held| held.by == end.grabber)
@@ -745,6 +743,19 @@ fn end_tethers(
             if end.reason == TetherEnd::Escaped {
                 stats.escapes += 1;
             }
+        }
+    }
+}
+
+/// Online, the paws of the other peers' karts (issue #81): one holding a kart lets go by itself
+/// once the longest tether is over (`step_remote_paw`), should no end ever come.
+fn follow_remote_paws(
+    tuning: Res<InteractionTuning>,
+    mut remotes: Query<&mut Paw, (With<Remote>, Without<Kart>)>,
+) {
+    for mut paw in &mut remotes {
+        if paw.holding() {
+            step_remote_paw(&mut paw, &tuning);
         }
     }
 }

@@ -877,3 +877,94 @@ fn x_strikes_on_the_keyboard_the_paw_shows_and_the_camera_shakes() {
     }
     assert_eq!(gauge(&mut app), Val::Percent(100.0));
 }
+
+/// Issue #81, solo: the kart alongside (with its visual) grabs the player's, which breaks free
+/// (Space: a hop); that kart then goes 30 m away. Every frame, no arm longer than the longest
+/// tether (`max_arm_length`), nothing NaN; at the end, no arm at all. Online, the arms of the
+/// other peers' karts stayed stretched (`net::race_tests`); solo, both karts end the tether.
+#[test]
+fn solo_a_kart_that_breaks_free_keeps_no_arm_stretched_toward_it() {
+    use crate::tests::{app_on, hold_keys, player};
+    use crate::track::TrackChoice;
+
+    let mut app = app_on(TrackChoice::default());
+    let me = player(&mut app);
+    while app.world().get_resource::<crate::race::Race>().is_none() {
+        app.update();
+    }
+    assert!(crate::admin::skip_countdown_now(app.world_mut()));
+    for _ in 0..3 {
+        app.update();
+    }
+    let at = *app.world().get::<Transform>(me).unwrap();
+    let other = {
+        let world = app.world_mut();
+        let tuning = world.resource::<KartTuning>().clone();
+        let place = Transform::from_translation(at.translation + *at.right() * 2.2)
+            .with_rotation(at.rotation);
+        let kart = world.spawn(crate::kart::kart_body(&tuning, place)).id();
+        let visuals = world.resource::<crate::kart::KartVisualAssets>().clone();
+        let mut commands = world.commands();
+        crate::kart::spawn_kart_visual(
+            &mut commands,
+            &visuals,
+            kart,
+            crate::kart::KartColor::White,
+        );
+        world.flush();
+        kart
+    };
+    let longest = max_arm_length(&InteractionTuning::default()) + 0.01;
+    let frames = |app: &mut App, count: usize, what: &str| {
+        for _ in 0..count {
+            app.update();
+            for (body, length) in shown_arms(app.world()) {
+                assert!(
+                    length.is_finite() && length <= longest,
+                    "{what}: an arm of {length} m on {body:?}"
+                );
+            }
+        }
+    };
+    frames(&mut app, 20, "side by side");
+    // The other kart grabs the player's (its button down to the end).
+    *app.world_mut().get_mut::<KartInput>(other).unwrap() = KartInput {
+        interact: true,
+        ..default()
+    };
+    for _ in 0..60 {
+        frames(&mut app, 1, "the grab");
+        if app.world().get::<Paw>(me).unwrap().held.is_some() {
+            break;
+        }
+    }
+    assert!(app.world().get::<Paw>(me).unwrap().held.is_some(), "held");
+    frames(&mut app, 3, "held");
+    assert_eq!(
+        shown_arms(app.world())
+            .iter()
+            .filter(|(body, _)| *body == other)
+            .count(),
+        1,
+        "the elastic band"
+    );
+    // Space: the player hops, and breaks free when it lands.
+    hold_keys(&mut app, &[KeyCode::Space]);
+    frames(&mut app, 2, "the hop");
+    hold_keys(&mut app, &[]);
+    frames(&mut app, 60, "breaking free");
+    assert!(app.world().get::<Paw>(me).unwrap().held.is_none());
+    assert_eq!(app.world().get::<PawStats>(me).unwrap().escapes, 1);
+    assert!(!app.world().get::<Paw>(other).unwrap().holding());
+    // The other kart far away.
+    {
+        let world = app.world_mut();
+        let mut transform = world.get_mut::<Transform>(other).unwrap();
+        transform.translation += Vec3::Y * 30.0;
+        let placed = *transform;
+        world.get_mut::<PhysicsPose>(other).unwrap().snap(placed);
+        *world.get_mut::<Velocity>(other).unwrap() = Velocity::zero();
+    }
+    frames(&mut app, 60, "far away");
+    assert!(shown_arms(app.world()).is_empty(), "no arm left");
+}

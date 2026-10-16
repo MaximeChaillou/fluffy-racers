@@ -49,7 +49,7 @@ fn transfer(from: &mut App, sender: PeerKey, to: &mut App) {
 
 /// A whole game in a room, Prairie Pompon in free driving from grid slot `slot`, `other` in the
 /// room on `other_slot`; 120 frames per second (the fixed 60 Hz tick every other frame). The
-/// common clock is the local one (both games start together).
+/// common clock is the local one: both games start together ([`on_the_same_clock`]).
 fn online_game(me: PeerKey, slot: usize, other: PeerKey, other_slot: usize) -> App {
     online_game_on(TrackChoice::default(), me, slot, other, other_slot)
 }
@@ -74,6 +74,29 @@ fn online_game_on(
         )));
     crate::tests::wait_for_the_player(&mut app);
     app
+}
+
+/// The two games' virtual clocks on the same time: the common clock is the local one in these
+/// tests (`TickClock::with_offset(0)`), so both must start together. Their tracks load in a
+/// number of frames that depends on the machine (the files load in the background): the one that
+/// loaded faster runs the frames it is behind (1/120 s each), at most a second of them. Without
+/// this, a game that loaded a frame later shifted every state by a frame (issue #81's CI: the
+/// mean delay of `a_kart_driven_in_one_game_drives_smoothly_in_the_other` fell from 108.3 to
+/// 99.99989 ms when Ana's track took a frame longer than Bob's).
+fn on_the_same_clock(a: &mut App, b: &mut App) {
+    let elapsed = |app: &App| app.world().resource::<Time<Virtual>>().elapsed();
+    for _ in 0..120 {
+        match elapsed(a).cmp(&elapsed(b)) {
+            std::cmp::Ordering::Less => a.update(),
+            std::cmp::Ordering::Greater => b.update(),
+            std::cmp::Ordering::Equal => return,
+        }
+    }
+    panic!(
+        "the clocks never met: {:?} and {:?}",
+        elapsed(a),
+        elapsed(b)
+    );
 }
 
 /// What B saw of A's kart, frame by frame.
@@ -116,6 +139,7 @@ struct Drive {
 fn drive(netsim: NetSimTuning, seconds: f32) -> Drive {
     let mut ana = online_game(ANA, 0, BOB, 1);
     let mut bob = online_game(BOB, 1, ANA, 0);
+    on_the_same_clock(&mut ana, &mut bob);
     bob.world_mut().resource_mut::<NetTuning>().simulator = netsim;
     // What was sent while the tracks loaded is forgotten.
     ana.world_mut()
@@ -663,6 +687,7 @@ fn the_glider_and_the_water_are_seen_on_the_other_screens() {
     let lagoon = || TrackChoice::Circuit("tracks/lagon.track.ron".into());
     let mut ana = online_game_on(lagoon(), ANA, 0, BOB, 1);
     let mut bob = online_game_on(lagoon(), BOB, 1, ANA, 0);
+    on_the_same_clock(&mut ana, &mut bob);
     for app in [&mut ana, &mut bob] {
         app.world_mut()
             .resource_mut::<KartSync>()
