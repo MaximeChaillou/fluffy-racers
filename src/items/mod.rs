@@ -44,12 +44,13 @@
 //!   karts (after a hit, in a super câlin, in a fusée), the pelican's and those past the finish.
 //! - **Phase 3** (issue #21, GD § 8):
 //!   - **pie voleuse**: about 3 s invisible (`ItemEffects::ghost`, and invincible meanwhile: the
-//!     items go through it, nothing aims at it, no paw reaches it), and it steals the item of the
-//!     closest kart ahead in the race that holds one, else behind ([`steal_victim`],
+//!     items go through it, nothing aims at it, no paw reaches it), and it steals the item of a
+//!     racer that holds one, drawn with the leader the most likely (issue #88, [`steal_victim`],
 //!     [`ItemSteal`]: the victim gives it up);
 //!   - **piñata**: its eight items ([`PINATA_ITEMS`]) turn around the kart (shields, like an
 //!     "x3"); each press uses the one in front ([`pinata_in_front`]) as itself;
-//!   - **boomerang-os**: thrown ahead (or behind), it curves out, then comes back to its thrower
+//!   - **boomerang-os**: thrown ahead (or behind), it curves out (issue #88: to the side its
+//!     thrower steers, [`boomerang_curve`]), then comes back to its thrower
 //!     ([`Motion::Boomerang`]), who catches it; three throws, the next one once it is back (or
 //!     broken). It breaks on the first kart it touches (a spin out), never on its thrower.
 //! - **Debug** ([`GiveItem`]): the I key cycles through every item into the player's hand, the
@@ -89,7 +90,7 @@ pub use objects::{
 pub use slots::{ItemSlots, PINATA_FULL, Slot, Use};
 pub use table::{
     BOOMERANG_THROWS, DrawRow, ITEMS_RON, InvalidTable, ItemKind, ItemTable, PINATA_ITEMS, Prize,
-    TableFile, TableRow, draw_unit, pillow_allowed,
+    TableFile, TableRow, draw_unit, pillow_allowed, steal_unit,
 };
 pub use tuning::ItemTuning;
 pub use visual::{EffectKind, EffectLook, ItemVisualAssets, ItemVisualPlugin};
@@ -168,14 +169,16 @@ pub enum Motion {
         target: Option<Entity>,
         flight: PillowFlight,
     },
-    /// A boomerang-os (issue #21) on the ground: flying out (curving, `travelled` m so far), then
-    /// `returning` to its thrower; it bounces off `bounces_left` walls more. `fall`: its falling
-    /// speed off an edge.
+    /// A boomerang-os (issue #21) on the ground: flying out (`travelled` m so far), curving at
+    /// `curve` (rad/s, positive to its left: issue #88, the steering of its throw,
+    /// [`boomerang_curve`]), then `returning` to its thrower; it bounces off `bounces_left` walls
+    /// more. `fall`: its falling speed off an edge.
     Boomerang {
         returning: bool,
         travelled: f32,
         bounces_left: u32,
         fall: f32,
+        curve: f32,
     },
 }
 
@@ -304,30 +307,71 @@ pub fn deflate_time(rank: u32, racers: usize, first: f32, last: f32) -> f32 {
     first + (last - first) * t
 }
 
-/// Who a pie voleuse used by `thief` steals from (issue #21, GD § 8: « vole l'objet d'un
-/// adversaire »): the closest kart ahead of it in the race (`standings`, first to last) that
-/// holds an item to take (`holds`), else the closest one behind; off a race (or a kart not in
-/// it), the closest kart (`positions`) that holds one. `None`: nobody holds anything.
+/// Who a pie voleuse used by `thief` steals from (GD § 8: « vole l'objet d'un adversaire »;
+/// issue #88, Max: « un kart au hasard, avec une probabilité d'autant plus forte que ce kart est
+/// devant »): in a race (`standings`, first to last), one of the racers that hold an item to
+/// take (`holds`), ahead of it or behind, drawn with `unit` (in `[0, 1)`: [`steal_unit`]) with
+/// the weight of its place ([`steal_weight`], `power`: `ItemTuning::pie_rank_power`): the leader
+/// the most likely. Off a race (or a kart not in it), the closest kart (`positions`) that holds
+/// one (issue #21). `None`: nobody holds anything.
 pub fn steal_victim(
     thief: Entity,
     at: Vec3,
     standings: &[Entity],
     positions: &[(Entity, Vec3)],
     holds: impl Fn(Entity) -> bool,
+    unit: f32,
+    power: f32,
 ) -> Option<Entity> {
-    if let Some(i) = standings.iter().position(|e| *e == thief) {
-        return standings[..i]
-            .iter()
-            .rev()
-            .chain(&standings[i + 1..])
-            .copied()
-            .find(|e| holds(*e));
+    if standings.contains(&thief) {
+        let racers = standings.len();
+        let candidates = || {
+            standings
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| **e != thief && holds(**e))
+                .map(|(i, e)| (*e, steal_weight(i + 1, racers, power)))
+        };
+        let total: f32 = candidates().map(|(_, weight)| weight).sum();
+        let mut left = unit.clamp(0.0, 1.0) * total;
+        let mut last = None;
+        for (kart, weight) in candidates() {
+            if left < weight {
+                return Some(kart);
+            }
+            left -= weight;
+            last = Some(kart);
+        }
+        // Rounding at the very end of the draw: the last one.
+        return last;
     }
     positions
         .iter()
         .filter(|(e, _)| *e != thief && holds(*e))
         .min_by(|(_, a), (_, b)| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
         .map(|(e, _)| *e)
+}
+
+/// The weight of the racer in `rank` (1 = the leader) of `racers` in a pie voleuse's draw (issue
+/// #88, [`steal_victim`]): `(racers - rank + 1)^power`, from `racers^power` for the leader down to
+/// 1 for the last one (`power` 0: every racer alike).
+pub fn steal_weight(rank: usize, racers: usize, power: f32) -> f32 {
+    ((racers + 1).saturating_sub(rank).max(1) as f32).powf(power)
+}
+
+/// The curve a boomerang-os is thrown with (issue #88, Max: « il tourne avec le kart »): its
+/// turn on its way out (rad/s, positive to its left, as `Quat::from_rotation_y`), from its
+/// thrower's `steer` at the throw (`KartInput::steer`, right positive): to the side it steers,
+/// as much as it steers (`ItemTuning::boomerang_steer_curve` at full lock); thrown straight (the
+/// steering under `boomerang_straight_steer`), `boomerang_curve` (to its left by default). The
+/// same turn thrown backwards: steering left, it turns to its own left (to the left of the
+/// look-back camera's picture).
+pub fn boomerang_curve(steer: f32, tuning: &ItemTuning) -> f32 {
+    if !steer.is_finite() || steer.abs() < tuning.boomerang_straight_steer {
+        tuning.boomerang_curve
+    } else {
+        -steer.clamp(-1.0, 1.0) * tuning.boomerang_steer_curve
+    }
 }
 
 /// A pie voleuse (issue #21): `thief` steals from `victim` ([`steal_victim`]). The victim gives up
@@ -920,6 +964,8 @@ struct Launch<'a> {
     transform: &'a Transform,
     /// The kart's velocity (a bombe flies off with it).
     velocity: Vec3,
+    /// Its steering at the throw (issue #88: a boomerang-os curves with it).
+    steer: f32,
     progress: Option<&'a RaceProgress>,
     course: Option<&'a Course>,
     race: Option<&'a Race>,
@@ -1055,7 +1101,7 @@ impl Launch<'_> {
                 )
             }
             // Issue #21: off the front (or the back) on the ground, flying out; the first wall
-            // sends it back.
+            // sends it back. Issue #88: curving as its thrower steers.
             ItemKind::Boomerang => {
                 let (at, direction) = if aim_back {
                     (back, -forward)
@@ -1070,6 +1116,7 @@ impl Launch<'_> {
                         travelled: 0.0,
                         bounces_left: 1,
                         fall: 0.0,
+                        curve: boomerang_curve(self.steer, tuning),
                     },
                     at,
                     direction * tuning.boomerang_speed,
@@ -1101,7 +1148,7 @@ fn use_items(
     tuning: Res<ItemTuning>,
     croquette_tuning: Option<Res<CroquetteTuning>>,
     online: Option<Res<Online>>,
-    race: Option<Res<Race>>,
+    (race, grid): (Option<Res<Race>>, Option<Res<RaceGrid>>),
     course: Option<Res<Course>>,
     mut commands: Commands,
     (mut positions, mut holders): (Local<Vec<(Entity, Vec3)>>, Local<Vec<Entity>>),
@@ -1118,7 +1165,7 @@ fn use_items(
             &mut Boost,
             (&mut ItemEffects, &mut Invincibility),
             Option<&mut Croquettes>,
-            Option<&RaceProgress>,
+            (Option<&RaceProgress>, Option<&Racer>),
         ),
         With<Kart>,
     >,
@@ -1157,7 +1204,7 @@ fn use_items(
         mut boost,
         (mut effects, mut invincibility),
         croquettes,
-        progress,
+        (progress, racer),
     ) in &mut karts
     {
         // The items this kart holds out, and the one that leaves now: the dragged one, or the
@@ -1213,6 +1260,7 @@ fn use_items(
             kart,
             transform,
             velocity: velocity.linear,
+            steer: input.steer,
             progress,
             course: course.as_deref(),
             race: race.as_deref(),
@@ -1318,15 +1366,26 @@ fn use_items(
             }
             ItemKind::PieVoleuse => {
                 // Issue #21: invisible (and invincible, without blinking) for its time, and a
-                // theft from the closest kart ahead that holds something.
+                // theft. Issue #88: from a racer that holds something, drawn (deterministic: the
+                // race seed, its grid slot, its items used) with the leader the most likely;
+                // online, this peer draws on its ranking and asks the victim's peer.
                 effects.ghost = tuning.pie_time;
                 invincibility.start(tuning.pie_time);
                 let standings = race.as_ref().map_or(&[][..], |r| &r.standings[..]);
-                if let Some(victim) =
-                    steal_victim(kart, transform.translation, standings, &positions, |e| {
-                        holders.contains(&e)
-                    })
-                {
+                let unit = steal_unit(
+                    grid.as_ref().map_or(RaceGrid::GAME_SEED, |g| g.seed),
+                    racer.map_or(0, |r| r.grid_slot as u64),
+                    stats.used,
+                );
+                if let Some(victim) = steal_victim(
+                    kart,
+                    transform.translation,
+                    standings,
+                    &positions,
+                    |e| holders.contains(&e),
+                    unit,
+                    tuning.pie_rank_power,
+                ) {
                     steals.write(ItemSteal {
                         thief: kart,
                         victim,
@@ -1867,13 +1926,14 @@ fn move_items(
                 mut travelled,
                 bounces_left,
                 fall,
+                curve,
             } => {
-                // Issue #21: out, curving to its left; then back to its thrower (where its body
-                // is: online, where this peer shows it).
+                // Issue #21: out, curving (issue #88: as its thrower steered); then back to its
+                // thrower (where its body is: online, where this peer shows it).
                 let heading = item.velocity.with_y(0.0).normalize_or(Vec3::NEG_Z);
                 let owner = karts.get(item.owner).ok().map(|(_, t, ..)| t.translation);
                 let direction = match (returning, owner) {
-                    (false, _) => Quat::from_rotation_y(tuning.boomerang_curve * dt) * heading,
+                    (false, _) => Quat::from_rotation_y(curve * dt) * heading,
                     (true, Some(owner)) => boomerang_heading(
                         heading,
                         owner - item.position,
@@ -1905,6 +1965,7 @@ fn move_items(
                     travelled,
                     bounces_left,
                     fall: rolling.fall,
+                    curve,
                 };
                 // Back in its thrower's hand: gone, the next throw is ready.
                 let caught = returning

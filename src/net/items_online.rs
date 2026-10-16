@@ -42,14 +42,14 @@
 //!   leader changes ([`Retarget`]); each peer judges its karts in its crush. Gone without a throw
 //!   (a dégonflage), its kart's peer says so ([`PillowGone`]).
 //! - **Phase 3** (issue #21): the **boomerang-os** goes out like the others ([`ItemOut`],
-//!   `OutMotion::Boomerang`); on its way back it goes after its thrower's body on each screen,
+//!   `OutMotion::Boomerang`, with its curve: issue #88, the steering of its throw); on its way back it goes after its thrower's body on each screen,
 //!   and its thrower's peer tells when it caught it (an [`ItemBreak`] without a kart: gone on
 //!   every screen). The **piñata** out travels in its kart's states (`KartSnapshot::pinata`):
 //!   every peer draws its items around the kart. The **pie voleuse**: invisible, its kart says so
 //!   in its states (invincible meanwhile, a faint ghost on the others' screens); its theft is
-//!   asked of the victim's peer ([`Steal`]: the victim chosen among the karts whose states say
-//!   they hold an item to take), which gives up what its kart holds then and tells everyone
-//!   ([`Stolen`]): the thief's peer puts it in its slot.
+//!   asked of the victim's peer ([`Steal`]: the victim drawn by the thief's peer, issue #88, on its
+//!   ranking among the karts whose states say they hold an item to take), which gives up what its
+//!   kart holds then and tells everyone ([`Stolen`]): the thief's peer puts it in its slot.
 //! - **The host** (issue #63: the room's creator, from start to end) decides every claim, and
 //!   only its verdicts count. The items thrown by a peer that leaves disappear; the host leaving
 //!   ends the room.
@@ -826,11 +826,13 @@ fn motion_of(motion: OutMotion, karts: &Karts) -> Motion {
             travelled,
             bounces_left,
             fall,
+            curve,
         } => Motion::Boomerang {
             returning,
             travelled,
             bounces_left: u32::from(bounces_left),
             fall,
+            curve,
         },
     }
 }
@@ -1389,11 +1391,13 @@ fn send_items(
                 travelled,
                 bounces_left,
                 fall,
+                curve,
             } => OutMotion::Boomerang {
                 returning,
                 travelled,
                 bounces_left: bounces_left.min(255) as u8,
                 fall,
+                curve,
             },
         };
         let id = ItemId {

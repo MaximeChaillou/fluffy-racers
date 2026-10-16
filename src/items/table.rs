@@ -15,7 +15,9 @@
 //!   oreiller géant's rules, [`pillow_allowed`]).
 //! - **Deterministic draws** ([`draw_unit`]): from the race seed (`RaceGrid::seed`), the kart's
 //!   grid slot and how many items it drew before. Same race, same draws on every machine: the
-//!   tests are reproducible and, on the network, every peer can check what a kart drew.
+//!   tests are reproducible and, on the network, every peer can check what a kart drew. The
+//!   victim of a pie voleuse is drawn the same way, on a stream of its own ([`steal_unit`], issue
+//!   #88).
 
 use serde::Deserialize;
 
@@ -544,8 +546,19 @@ fn mix(mut z: u64) -> u64 {
 /// `race_seed`, for the kart on grid slot `slot`. Deterministic: the same race gives every kart
 /// the same draws, whatever the machine.
 pub fn draw_unit(race_seed: u64, slot: u64, draw: u32) -> f32 {
-    let seed = mix(mix(mix(race_seed ^ 0x17E5_D1CE) ^ slot) ^ draw as u64);
-    // The top 24 bits: exactly representable in an f32.
+    unit(mix(mix(mix(race_seed ^ 0x17E5_D1CE) ^ slot) ^ draw as u64))
+}
+
+/// The uniform draw (in `[0, 1)`) of the victim of a pie voleuse (issue #88,
+/// `items::steal_victim`): like [`draw_unit`], from the race seed, the thief's grid slot and its
+/// `number`-th item used in the race, on a stream of its own (never the same as a box's draw).
+pub fn steal_unit(race_seed: u64, slot: u64, number: u32) -> f32 {
+    unit(mix(mix(mix(race_seed ^ 0x57EA_1F1E) ^ slot) ^ number as u64))
+}
+
+/// A uniform value in `[0, 1)` from a mixed seed: its top 24 bits, exactly representable in an
+/// f32.
+fn unit(seed: u64) -> f32 {
     (seed >> 40) as f32 / (1u64 << 24) as f32
 }
 
@@ -868,6 +881,11 @@ mod tests {
         assert_ne!(draw_unit(3, 5, 7), draw_unit(3, 5, 8));
         assert_ne!(draw_unit(3, 5, 7), draw_unit(3, 6, 7));
         assert_ne!(draw_unit(3, 5, 7), draw_unit(4, 5, 7));
+        // Issue #88: a pie voleuse's draws are their own stream, deterministic too.
+        assert_eq!(steal_unit(3, 5, 7), steal_unit(3, 5, 7));
+        assert_ne!(steal_unit(3, 5, 7), steal_unit(3, 5, 8));
+        assert_ne!(steal_unit(3, 5, 7), steal_unit(3, 6, 7));
+        assert_ne!(steal_unit(3, 5, 7), draw_unit(3, 5, 7));
         let mut buckets = [0u32; 10];
         for draw in 0..10_000 {
             let u = draw_unit(0, 0, draw);

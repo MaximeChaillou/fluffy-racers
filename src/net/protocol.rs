@@ -44,7 +44,9 @@
 //! thrown ([`OutMotion::Boomerang`]), a pie voleuse's theft asked of its victim's peer
 //! ([`Steal`]) and what that peer gave up ([`Stolen`]); in the kart states, two bits of the items
 //! byte (it holds an item a pie voleuse can take; invisible) and one more byte, the piñata's
-//! items left around the kart (`KartSnapshot::pinata`, 50 bytes).
+//! items left around the kart (`KartSnapshot::pinata`, 50 bytes). Version 12 (issue #88): a
+//! boomerang-os thrown carries its curve ([`OutMotion::Boomerang`]: the steering of its throw, 4
+//! bytes more).
 
 use std::fmt;
 
@@ -54,7 +56,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 11;
+pub const PROTOCOL_VERSION: u8 = 12;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -398,12 +400,14 @@ pub enum OutMotion {
         flight: OutPillow,
     },
     /// A boomerang-os (issue #21): flying out (`travelled` m so far) or coming back to its
-    /// thrower, the walls it can still bounce off, its falling speed.
+    /// thrower, the walls it can still bounce off, its falling speed; issue #88: its curve on its
+    /// way out (rad/s, positive to its left), fixed by its thrower's steering at the throw.
     Boomerang {
         returning: bool,
         travelled: f32,
         bounces_left: u8,
         fall: f32,
+        curve: f32,
     },
 }
 
@@ -974,9 +978,10 @@ impl Message {
                         travelled,
                         bounces_left,
                         fall,
+                        curve,
                     } => {
                         out.extend_from_slice(&[6, u8::from(returning), bounces_left]);
-                        put_floats(out, &[travelled, fall]);
+                        put_floats(out, &[travelled, fall, curve]);
                     }
                 }
             }
@@ -1310,12 +1315,13 @@ impl Message {
                     6 => {
                         let returning = reader.bool()?;
                         let bounces_left = reader.u8()?;
-                        let [travelled, fall] = reader.floats()?;
+                        let [travelled, fall, curve] = reader.floats()?;
                         OutMotion::Boomerang {
                             returning,
                             travelled,
                             bounces_left,
                             fall,
+                            curve,
                         }
                     }
                     _ => return Err(DecodeError::Invalid("item motion")),
@@ -2334,6 +2340,7 @@ mod tests {
                     travelled: 12.25,
                     bounces_left: 1,
                     fall: 0.0,
+                    curve: -1.5,
                 },
             }),
             Message::ItemOut(ItemOut {
@@ -2348,6 +2355,7 @@ mod tests {
                     travelled: 40.5,
                     bounces_left: 255,
                     fall: 3.5,
+                    curve: 0.6,
                 },
             }),
             Message::Steal(Steal {
@@ -2593,7 +2601,12 @@ mod tests {
         for message in every_message() {
             let length = message.to_bytes().len();
             match &message {
-                // Issue #61: 46 for an oreiller géant on its way.
+                // Issue #88: 50 for a boomerang-os (46 before: its curve, a float more); issue
+                // #61: 46 for an oreiller géant on its way.
+                Message::ItemOut(ItemOut {
+                    motion: OutMotion::Boomerang { .. },
+                    ..
+                }) => assert_eq!(length, 50, "{message:?}"),
                 Message::ItemOut(_) => assert!((36..=46).contains(&length), "{message:?}"),
                 Message::ItemBreak(_) => assert_eq!(length, 8),
                 Message::Scatter(scatter) => assert_eq!(length, 23 + 12 * scatter.to.len()),
@@ -2966,17 +2979,26 @@ mod tests {
             travelled: 1.0,
             bounces_left: 2,
             fall: 0.0,
+            curve: 0.6,
         };
         // Issue #21: its returning flag is a boolean.
-        let mut bad = Message::ItemOut(ItemOut {
+        let good = Message::ItemOut(ItemOut {
             item: ItemKind::Boomerang,
             motion: boomerang,
             ..out
         })
         .to_bytes();
-        assert!(Message::decode(&bad).is_ok());
+        assert!(Message::decode(&good).is_ok());
+        let mut bad = good.clone();
         bad[36] = 2;
         assert!(invalid(&bad), "boomerang flag");
+        // Issue #88: its curve is a float, the last 4 bytes: not a finite one is refused.
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut bad = good.clone();
+            let at = bad.len() - 4;
+            bad[at..].copy_from_slice(&value.to_le_bytes());
+            assert!(invalid(&bad), "boomerang curve {value}");
+        }
         for (item, motion) in [
             (ItemKind::Pelure, OutMotion::Dive { target: None }),
             (ItemKind::Abeille, OutMotion::Ground),

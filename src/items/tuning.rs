@@ -181,6 +181,12 @@ pub struct ItemTuning {
     /// Invisible this long (s, GD § 8: about 3 s): items go through it, nothing aims at it, no
     /// paw reaches it (it is invincible meanwhile, without blinking).
     pub pie_time: f32,
+    /// Who it steals from (issue #88, Max: « un kart au hasard, avec une probabilité d'autant
+    /// plus forte que ce kart est devant »): a racer that holds an item to take, drawn with a
+    /// weight of `(N - rank + 1)^pie_rank_power` (N racers, the leader's rank 1): 2 by default,
+    /// the leader the most likely (with 12 karts, 144 against 121 for the second and 1 for the
+    /// last); 1 is a gentler slope (12, 11... 1), 0 every racer alike.
+    pub pie_rank_power: f32,
 
     // --- Piñata (GD § 8, issue #21: 8 items around the kart, used one at a time) -----------
     /// Its eight items turn around the kart at this distance from its center (m), wider than an
@@ -196,9 +202,16 @@ pub struct ItemTuning {
     pub boomerang_speed: f32,
     /// It flies out this far (m), curving...
     pub boomerang_range: f32,
-    /// ...this fast to its left (rad/s), then turns back to its thrower...
+    /// ...as its thrower steered when it threw it (issue #88, Max: « il tourne avec le kart »):
+    /// to the side it steered, this fast at full lock (rad/s), less with less steering (a
+    /// radius of 28 m at 42 m/s, about 60° over its 30 m)...
+    pub boomerang_steer_curve: f32,
+    /// ...or, thrown straight (the steering under this, out of 1), this fast to its left (rad/s;
+    /// negative: to its right, 0: straight on; issue #88: our choice, the curve of #21)...
+    pub boomerang_straight_steer: f32,
     pub boomerang_curve: f32,
-    /// ...at most this fast (rad/s), straight at it once this close (m)...
+    /// ...then it turns back to its thrower at most this fast (rad/s), straight at it once this
+    /// close (m)...
     pub boomerang_turn_rate: f32,
     pub boomerang_home_distance: f32,
     /// ...and its thrower catches it this close (m, center to center): the next throw is ready.
@@ -293,6 +306,7 @@ impl Default for ItemTuning {
             klaxon_radius: 9.0,
 
             pie_time: 3.0,
+            pie_rank_power: 2.0,
 
             pinata_orbit_radius: 2.4,
             pinata_orbit_speed: 2.5,
@@ -300,6 +314,8 @@ impl Default for ItemTuning {
             boomerang_radius: 0.45,
             boomerang_speed: 42.0,
             boomerang_range: 30.0,
+            boomerang_steer_curve: 1.5,
+            boomerang_straight_steer: 0.15,
             boomerang_curve: 0.6,
             boomerang_turn_rate: 6.0,
             boomerang_home_distance: 8.0,
@@ -327,6 +343,20 @@ mod tests {
         assert!(t.pinata_orbit_radius > t.orbit_radius);
         assert!(t.pinata_orbit_speed < t.orbit_speed);
         assert!(t.boomerang_lifetime * t.boomerang_speed > 2.0 * t.boomerang_range);
+    }
+
+    /// Issue #88 (Max): the pie voleuse favours the karts ahead (a weight that grows with the
+    /// place); the boomerang-os curves with the steering: at full lock more than thrown straight,
+    /// and a light touch of the stick is not "straight" for long; thrown straight, it curves to
+    /// its left as in #21, and never so tight that it turns back on itself before its range.
+    #[test]
+    fn issue_88_defaults() {
+        let t = ItemTuning::default();
+        assert!(t.pie_rank_power > 0.0);
+        assert!(t.boomerang_steer_curve > t.boomerang_curve && t.boomerang_curve > 0.0);
+        assert!((0.0..0.5).contains(&t.boomerang_straight_steer));
+        let turned = t.boomerang_steer_curve * t.boomerang_range / t.boomerang_speed;
+        assert!(turned < std::f32::consts::FRAC_PI_2, "{turned}");
     }
 
     /// GD § 8: the roulette spins about 1.5 s, a box comes back after about 2 s, a spin out lasts

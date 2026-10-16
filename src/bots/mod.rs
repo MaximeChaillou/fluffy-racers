@@ -43,7 +43,7 @@ mod scenario_tests;
 
 pub use driver::{BotBrain, DriftPlan, Neighbor, Senses, catch_up_scale, charge_per_radian, drive};
 pub use interactions::{BotPawBrain, PawButtons, PawSenses, ReachKart, paw_buttons};
-pub use items::{BotItemBrain, ItemButtons, ItemSenses, item_buttons};
+pub use items::{BotItemBrain, ItemButtons, ItemSenses, boomerang_aim, item_buttons};
 pub use line::{Located, RacingLine, Turn};
 pub use rng::BotRng;
 pub use tuning::{BotDifficulty, BotSkill, BotTuning};
@@ -55,7 +55,7 @@ use crate::TICK_HZ;
 use crate::characters::{DriverLooks, Loadout, PartKind, PlayerColor, Roster, WeightClass};
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::interactions::{InteractionTuning, Paw, PawMotion};
-use crate::items::{ItemBox, ItemObject, ItemSlots, ItemTuning, Motion, Slot};
+use crate::items::{ItemBox, ItemKind, ItemObject, ItemSlots, ItemTuning, Motion, Slot};
 use crate::kart::{
     Boost, ColorSet, ItemEffects, Kart, KartAssists, KartEnvironment, KartInput, KartPaint,
     KartState, KartSystems, KartTuning, KartVisualAssets, MaxSpeedFactors, MaxSpeedScale,
@@ -507,6 +507,16 @@ fn drive_bots(
             let buttons = item_buttons(&mut item_brain, skill, &tuning, &senses);
             new.item = buttons.item;
             new.look_back = buttons.back;
+            // Issue #88: a boomerang-os thrown ahead at a kart curves toward it (the steering of
+            // this tick, the press's).
+            if buttons.item
+                && !buttons.back
+                && hand.is_some_and(|(item, _)| item == ItemKind::Boomerang)
+                && let (Some(ahead), Some(items)) = (ahead, item_tuning.as_deref())
+            {
+                let speed = velocity.linear.dot(*transform.forward());
+                new.steer = boomerang_aim(ahead, speed, items);
+            }
         }
         // Its paw (issue #34): the Interaction button, a jump to break free, a throw's stick.
         if let (Some(interactions), Some(paw), Some(mut paw_brain)) = (interactions, paw, paw_brain)
