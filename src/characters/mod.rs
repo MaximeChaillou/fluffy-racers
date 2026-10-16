@@ -20,8 +20,9 @@
 //!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
 //!   players of the same color: the first seat keeps it (`net`).
 //! - **Selection screen** ([`SelectionScreen`]): character, kart, wheels and wing, with the stat
-//!   bars `(level + 3) / 4`, then the color. It opens when the game starts (with a renderer: not
-//!   in the headless tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
+//!   bars `(level + 3) / 4`, then the color. It opens from the main menu (« Pilote et kart »,
+//!   issue #56), when the game starts with a room in its address (with a renderer: not in the
+//!   headless tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
 //!   Mac). Arrows (or the player's layout's letters: Z/S and Q/D in AZERTY, W/S and A/D in
 //!   QWERTY, issue #17) move through it, **Entrée** races with the choice (the level is rebuilt
 //!   by `LoadLevel`), **Échap** or G closes it unchanged. While it is open the game is paused (as
@@ -62,6 +63,7 @@ use bevy::prelude::*;
 
 use crate::kart::{DriverLook, KartColor, KeyboardLayout, PlayerInputMuted};
 use crate::level::{LoadLevel, Online};
+use crate::menu::MainMenu;
 use crate::modes::RaceMenu;
 use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::RaceMode;
@@ -326,13 +328,16 @@ fn apply_selection_actions(
 }
 
 /// The game waits while the player chooses: virtual time is paused while the screen, the
-/// options menu (issue #17) or the race menu (issue #19) is open (the fixed 60 Hz simulation does not run), and runs again
-/// once both are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
+/// options menu (issue #17), the race menu (issue #19) or the main menu (issue #56, with the
+/// screen it is opening) is open (the fixed 60 Hz simulation does not run), and runs again once
+/// all are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
 /// player's kart coasts while a menu is open (its keys are the menu's).
+#[allow(clippy::too_many_arguments)]
 fn pause_in_menus(
     screen: Res<SelectionScreen>,
     options: Option<Res<OptionsMenu>>,
     race_menu: Option<Res<RaceMenu>>,
+    main_menu: Option<Res<MainMenu>>,
     online: Option<Res<Online>>,
     muted: Option<ResMut<PlayerInputMuted>>,
     mut was_open: Local<bool>,
@@ -340,7 +345,8 @@ fn pause_in_menus(
 ) {
     let open = screen.open
         || options.is_some_and(|menu| menu.open)
-        || race_menu.is_some_and(|menu| menu.open);
+        || race_menu.is_some_and(|menu| menu.open)
+        || main_menu.is_some_and(|menu| menu.holds_the_game());
     let pause = open && online.is_none();
     if pause && !time.is_paused() {
         time.pause();

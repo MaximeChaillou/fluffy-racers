@@ -98,6 +98,27 @@ Quand un champ de texte a le clavier (ceux du panneau d'admin, et depuis #80 le 
 - **Menu de course** (`modes::RaceMenu`, touche N) : la logique (touches, actions) sans rendu, la fenêtre egui (`modes::ui`) avec un rendu ; il met le jeu en pause comme les autres menus et prend le contexte egui comme eux (`admin::ui::attach_egui_context`). Les écrans du Grand Prix (classement général, noms du podium) sont du `bevy_ui` comme le classement de la course (ASCII : la police du HUD n'a pas d'accents).
 - **En ligne** : entrer dans une room termine un Grand Prix, remet 150cc et pas de miroir (`net::online`, valeurs du solo gardées dans `OnlineLevel` et rendues à la sortie).
 
+## Écrans de jeu (#56)
+
+- **Charte** (`docs/UI_CHARTE.md`) : palette, police, boutons, animations, navigation et ton des textes. Son code se trouve dans `src/menu/` :
+  - `style.rs` : la palette, les tailles en pourcentage de la hauteur de la fenêtre, l'apparence d'un bouton selon son état, les fichiers de `assets/ui/` ;
+  - `anim.rs` : les ressorts amortis, en logique pure ;
+  - `nav.rs` : les entrées du menu, le focus et le stick.
+- **`bevy_ui`, pas egui**, pour les écrans de jeu. egui reste pour le panneau d'admin et, jusqu'à #89, pour les fenêtres actuelles (G, O, L, N).
+- **Coût** :
+  - un écran est un arbre de nœuds créé à son ouverture et détruit à sa fermeture : rien n'en reste, observateurs compris ;
+  - ses systèmes d'animation ne tournent que s'il est ouvert ;
+  - il s'anime avec `UiTransform` (échelle, translation), sans refaire la mise en page.
+- **Menu principal** (`menu::MainMenu`, `MainMenuPlugin`) :
+  - la logique : touches, manette, actions de la souris (les observateurs de picking des boutons), retour au menu après un écran ;
+  - la pause : `MainMenu::holds_the_game`, lu par `characters::pause_in_menus` ; en ligne, pas de pause, comme les autres menus ;
+  - **le plugin n'est ajouté qu'avec un rendu** (`GamePlugin`). Le monde headless, celui des courses de bots, n'a ni sa Resource ni ses messages, donc aucun archétype de plus avant la grille. Les tests l'ajoutent eux-mêmes et tout y tourne sans rendu, l'arbre compris ;
+  - ses systèmes passent avant ceux des options (`MainMenuSystems.before(OptionsSystems)`) : l'image qui l'ouvre est déjà en pause.
+- **Les autres fenêtres le connaissent peu** :
+  - il lit leur état (`OptionsMenu`, `SelectionScreen`, `RaceMenu`, `LobbyWindow`) ;
+  - il les ouvre par leurs actions habituelles ;
+  - en fin d'image (`follow_the_screens`), il voit si l'écran qu'il a ouvert s'est refermé sans `LoadLevel`.
+
 ## Modèles 3D et habillage des circuits (#11)
 
 - **Les modèles** sont des packs CC0 de Kenney, dans `assets/models/<pack>/` : seulement les GLB utilisés, la texture `Textures/colormap.png` des packs qui en ont une, la licence du pack, et une ligne par pack dans `assets/CREDITS.md`. Un modèle se nomme « pack/nom » (le fichier `assets/models/pack/nom.glb`). Un test vérifie que chaque modèle nommé par le jeu est là, crédité, et qu'aucun autre fichier n'est dans le dossier.

@@ -103,6 +103,9 @@ impl Plugin for AdminUiPlugin {
                         .or_else(resource_exists_and_changed::<SelectionScreen>)
                         .or_else(resource_exists_and_changed::<OptionsMenu>)
                         .or_else(resource_exists_and_changed::<LobbyWindow>)
+                        // Issue #56: the race menu opened from the main menu (or N in the race)
+                        // with no other window: it needs the context too.
+                        .or_else(resource_exists_and_changed::<crate::modes::RaceMenu>)
                         .or_else(any_match_filter::<Added<ChaseCamera>>),
                 ),
         )
@@ -223,6 +226,7 @@ pub(super) fn attach_egui_context(
     options: Option<Res<OptionsMenu>>,
     lobby: Option<Res<LobbyWindow>>,
     race_menu: Option<Res<crate::modes::RaceMenu>>,
+    main_menu: Option<Res<crate::menu::MainMenu>>,
     mut commands: Commands,
     cameras: Query<(Entity, Has<PrimaryEguiContext>), With<ChaseCamera>>,
     mut textures: Option<ResMut<EguiManagedTextures>>,
@@ -269,7 +273,9 @@ pub(super) fn attach_egui_context(
             if time.relative_speed() != 1.0 {
                 time.set_relative_speed(1.0);
             }
-            if time.is_paused() && !choosing {
+            // Issue #56: the main menu (`bevy_ui`, no egui) pauses the game too.
+            let held = main_menu.is_some_and(|menu| menu.holds_the_game());
+            if time.is_paused() && !choosing && !held {
                 time.unpause();
             }
         }
