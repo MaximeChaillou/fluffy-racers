@@ -4,7 +4,9 @@
 //!
 //! - **The glider**: a puffy pillowcase on two struts above the driver (the wing of GD § 9, the
 //!   « taie d'oreiller »), folded into the kart until it opens: it pops open in
-//!   `KartTuning::environment.wing_open_seconds` and folds back the same way on landing.
+//!   `KartTuning::environment.wing_open_seconds` and folds back the same way on landing. With
+//!   the feather (issue #73, the kart's wing part, `parts.rs`), a long white feather on the same
+//!   struts, once the kart model is baked (headless, the pillowcase stands in: the same entities).
 //! - **Under water**: bubbles rise from the kart and stay behind it; going in or coming out, a
 //!   splash of droplets.
 //!
@@ -20,8 +22,10 @@ use bevy::prelude::*;
 
 use super::KartTuning;
 use super::environment::KartEnvironment;
+use super::parts::WingLook;
 use super::visual::{KartBodyPivot, KartVisualAssets};
 use crate::interpolation::InterpolatedFrom;
+use crate::models::ModelMaterials;
 
 /// Bubbles (and droplets) per kart.
 const BUBBLES: usize = 8;
@@ -100,8 +104,21 @@ impl EnvironmentLook {
         }
     }
 
-    /// The wing (folded) under a kart's pivot.
-    pub fn spawn_wing(&self, pivot: &mut ChildSpawnerCommands) {
+    /// The wing (folded) under a kart's pivot: the pillowcase, or `sail` (issue #73: the
+    /// feather's mesh, in the wing's space, and its material) on the same struts.
+    pub fn spawn_wing(
+        &self,
+        pivot: &mut ChildSpawnerCommands,
+        sail: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
+    ) {
+        let (mesh, material, transform) = match sail {
+            Some((mesh, material)) => (mesh, material, Transform::default()),
+            None => (
+                self.sail.clone(),
+                self.sail_material.clone(),
+                Transform::from_translation(SAIL_CENTER).with_scale(SAIL_HALF),
+            ),
+        };
         pivot
             .spawn((
                 Wing::default(),
@@ -109,11 +126,7 @@ impl EnvironmentLook {
                 Visibility::Hidden,
             ))
             .with_children(|wing| {
-                wing.spawn((
-                    Mesh3d(self.sail.clone()),
-                    MeshMaterial3d(self.sail_material.clone()),
-                    Transform::from_translation(SAIL_CENTER).with_scale(SAIL_HALF),
-                ));
+                wing.spawn((Mesh3d(mesh), MeshMaterial3d(material), transform));
                 for side in [-1.0f32, 1.0] {
                     let foot = STRUT_FOOT * Vec3::new(side, 1.0, 1.0);
                     let top = STRUT_TOP * Vec3::new(side, 1.0, 1.0);
@@ -193,11 +206,16 @@ pub fn splash_pose(index: usize, t: f32) -> Option<(Vec3, f32)> {
 }
 
 /// Each wing opens while its kart glides and folds after (issue #20). A kart's wing is fitted the
-/// first time it glides (folded: it opens from the next frame).
+/// first time it glides (folded: it opens from the next frame): its wing part's (issue #73).
+#[allow(clippy::type_complexity)]
 pub(super) fn show_wings(
     mut commands: Commands,
     time: Res<Time>,
-    (tuning, assets): (Option<Res<KartTuning>>, Option<Res<KartVisualAssets>>),
+    (tuning, assets, shared): (
+        Option<Res<KartTuning>>,
+        Option<Res<KartVisualAssets>>,
+        Option<Res<ModelMaterials>>,
+    ),
     karts: Query<&KartEnvironment>,
     mut pivots: Query<(Entity, &mut KartBodyPivot)>,
     mut wings: Query<(&mut Wing, &ChildOf, &mut Transform, &mut Visibility)>,
@@ -206,9 +224,21 @@ pub(super) fn show_wings(
         for (entity, mut pivot) in &mut pivots {
             if !pivot.wing && karts.get(pivot.body).is_ok_and(|e| e.gliding) {
                 pivot.wing = true;
+                // The feather once the kart model is baked; the pillowcase stands in before.
+                let sail = match pivot.looks.wing {
+                    WingLook::Pillowcase => None,
+                    WingLook::Feather => {
+                        assets
+                            .model()
+                            .zip(shared.as_deref())
+                            .map(|(model, shared)| {
+                                (model.feather().clone(), shared.vertex_colors.clone())
+                            })
+                    }
+                };
                 commands
                     .entity(entity)
-                    .with_children(|pivot| assets.environment.spawn_wing(pivot));
+                    .with_children(|pivot| assets.environment.spawn_wing(pivot, sail));
             }
         }
     }

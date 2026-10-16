@@ -43,11 +43,12 @@ fn animal_models() -> Vec<String> {
         .collect()
 }
 
-/// Every model the game names: the kart's, every biome's, every circuit's props, every
-/// character's (issue #69).
+/// Every model the game names: the kart's, its parts' (issue #73), every biome's, every
+/// circuit's props, every character's (issue #69).
 fn named_models() -> BTreeSet<String> {
     let mut all: BTreeSet<String> = BTreeSet::new();
     all.insert(KART_MODEL.to_string());
+    all.extend(crate::kart::parts::PART_MODELS.map(str::to_string));
     all.extend(animal_models());
     for biome in biomes() {
         all.extend(biome.models().iter().map(|m| m.to_string()));
@@ -239,6 +240,142 @@ fn every_model_loads_and_bakes() {
     );
 }
 
+/// Issue #73, on the real files: every part has its look and its wheels their radius. The soap
+/// box is the Car Kit's kart and the marshmallow tyres its wheels; the tractor tyres load from
+/// the Car Kit, around their hub (from it out toward -X), round, colored, their rim outside, the
+/// front ones the same mesh scaled down; the thread spools are the smallest, the tractor's back
+/// tyres the biggest. With every set of wheels on the road, no home-made body's shell reaches
+/// into a wheel, and every body's driver sits in it.
+#[test]
+fn every_part_has_its_look_from_the_files() {
+    use crate::kart::parts::{BodyLook, PART_MODELS, WheelLook, kart_parts, tractor_wheels};
+    use crate::track::GRID_HEIGHT;
+    let mut app = loading_app();
+    app.add_plugins(ModelPlugin);
+    app.update();
+    let ids: Vec<String> = std::iter::once(KART_MODEL)
+        .chain(PART_MODELS)
+        .map(str::to_string)
+        .collect();
+    {
+        let world = app.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let mut models = world.resource_mut::<Models>();
+        for id in &ids {
+            models.request(id, Keep::Always, Some(&server));
+        }
+    }
+    wait_for_the_models(&mut app, &ids);
+    let models = app.world().resource::<Models>();
+    let kart = kart_model_data(models.get(KART_MODEL).unwrap()).unwrap();
+    let tractor_file = models.get(PART_MODELS[0]).unwrap();
+    let parts = kart_parts(&kart, Some(tractor_file));
+    // The soap box and the marshmallow tyres: the kart of before.
+    let soap_box = parts.body(BodyLook::SoapBox);
+    assert_eq!(soap_box.paint, kart.paint);
+    assert_eq!(soap_box.trim, kart.trim);
+    assert_eq!((soap_box.hubs, soap_box.seat), (kart.hubs, kart.seat));
+    let marshmallow = parts.wheels(WheelLook::Marshmallow);
+    assert_eq!(marshmallow.mesh, kart.wheel);
+    assert_eq!(marshmallow.radii, [kart.wheel_radius; 2]);
+    // The tractor tyres, from their file.
+    let tractor = parts.wheels(WheelLook::Tractor);
+    assert_eq!(Some(tractor), tractor_wheels(tractor_file).as_ref());
+    let (lo, hi) = tractor
+        .mesh
+        .positions
+        .iter()
+        .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+            (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p)))
+        });
+    let back = tractor.radii[1];
+    assert!(hi.x.abs() < 1e-4 && lo.x < -0.3, "{lo} {hi}");
+    assert!((hi.y - back).abs() < 1e-3 && (lo.y + back).abs() < 1e-3);
+    assert!((hi.z - back).abs() < 1e-3 && (lo.z + back).abs() < 1e-3);
+    let colors: BTreeSet<[u32; 3]> = tractor
+        .mesh
+        .colors
+        .iter()
+        .map(|c| [c[0], c[1], c[2]].map(|v| (v * 255.0) as u32))
+        .collect();
+    assert!(colors.len() > 2, "{colors:?}");
+    // Its rim (lighter) on the outside, away from the kart.
+    let shade = |outer: bool| {
+        let (sum, n) = tractor
+            .mesh
+            .positions
+            .iter()
+            .zip(&tractor.mesh.colors)
+            .filter(|(p, _)| (p[0] < lo.x / 2.0) == outer && p[1].abs() < back * 0.5)
+            .fold((0.0, 0), |(sum, n), (_, c)| {
+                (sum + c[0] + c[1] + c[2], n + 1)
+            });
+        sum / n.max(1) as f32
+    };
+    assert!(shade(true) > shade(false), "the rim outside");
+    // The front ones: the same mesh, scaled down to their radius.
+    assert!((tractor.scale(0) * back - tractor.radius(0)).abs() < 1e-6);
+    assert!(tractor.scale(0) < 0.9 && tractor.scale(3) == 1.0);
+    let radius = |look, index| parts.wheels(look).radius(index);
+    assert!(radius(WheelLook::Spools, 2) < radius(WheelLook::Marshmallow, 0));
+    assert!(radius(WheelLook::Marshmallow, 2) < radius(WheelLook::Tractor, 0));
+    assert!(radius(WheelLook::Tractor, 0) < radius(WheelLook::Tractor, 2));
+    // No home-made shell reaching into a wheel, every set of wheels on the road at rest (the
+    // paint is what the camera sees most; the axles and the rims may touch).
+    for body_look in BodyLook::ALL {
+        let body = parts.body(body_look);
+        for wheel_look in WheelLook::ALL {
+            let wheels = parts.wheels(wheel_look);
+            let file_width = -wheels
+                .mesh
+                .positions
+                .iter()
+                .map(|p| p[0])
+                .fold(0.0, f32::min);
+            for (i, hub) in body.hubs.iter().enumerate() {
+                let radius = wheels.radius(i);
+                let width = file_width * wheels.scale(i);
+                let center = Vec3::new(hub.x, radius - GRID_HEIGHT, hub.z);
+                let inside = body
+                    .paint
+                    .positions
+                    .iter()
+                    .map(|p| Vec3::from(*p) - center)
+                    .filter(|d| {
+                        // From the hub outward (a left wheel toward -X).
+                        let out = d.x * hub.x.signum();
+                        (0.02..width - 0.02).contains(&out) && d.yz().length() < radius * 0.9
+                    })
+                    .count();
+                // The Car Kit's kart has its exhausts in line with its own back wheels (9 and 17
+                // points of them in its marshmallow tyres): the home-made bodies, none.
+                if body_look != BodyLook::SoapBox {
+                    assert_eq!(
+                        inside, 0,
+                        "{body_look:?} with {wheel_look:?}: {inside} points of the shell in \
+                         wheel {i}"
+                    );
+                }
+            }
+        }
+        // The seat inside the body's footprint, above its lowest point.
+        let (lo, hi) = body
+            .paint
+            .positions
+            .iter()
+            .chain(&body.trim.positions)
+            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+                (lo.min(Vec3::from(*p)), hi.max(Vec3::from(*p)))
+            });
+        let seat = body.seat;
+        assert!(
+            seat.x.abs() < 1e-4 && seat.z > lo.z && seat.z < hi.z && seat.y > lo.y,
+            "{body_look:?}: {seat}"
+        );
+        assert!((seat.y - kart.seat.y).abs() < 0.1, "{body_look:?}: {seat}");
+    }
+}
+
 /// A missing file is missing, not a panic: what wanted it stands in primitives.
 #[test]
 fn a_missing_model_is_missing() {
@@ -365,6 +502,235 @@ fn the_game_dresses_both_circuits_and_the_karts() {
             assert_eq!(material, visuals.paint(paint.shown));
         }
     }
+}
+
+/// Issue #73: in the whole game with the models (headless, Prairie Pompon, 12 karts), each kart
+/// wears its parts: the looks of its loadout (the player's, each bot's drawn from the race's
+/// seed) on its pivot; its body's meshes (the shell in its color's material, the rest in the
+/// models' material); each wheel the mesh and the radius of its set, put on the road with that
+/// radius; its driver in its body's seat. The meshes are one per part, shared by the karts that
+/// have it, and no kart has a material of its own. Out comes the glider: the feather's karts
+/// show the feather (the models' material), the others the pillowcase.
+#[test]
+fn every_kart_wears_its_parts() {
+    use crate::characters::{PartKind, PlayerLoadout, Roster};
+    use crate::interpolation::InterpolatedFrom;
+    use crate::kart::{
+        BodyPaint, DriverVisual, Kart, KartBodyPivot, KartEnvironment, KartTuning,
+        KartVisualAssets, KartWheels, PlayerKart, WHEEL_ANCHORS, WheelVisual, Wing, WingLook,
+    };
+    let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::default(), 11);
+    // The player in the bathtub, on thread spools, with the feather.
+    let roster = Roster::embedded();
+    let mut mine = roster.default_loadout();
+    for (kind, name) in [
+        (PartKind::Kart, "Baignoire"),
+        (PartKind::Wheels, "Bobines de fil"),
+        (PartKind::Wing, "Plume"),
+    ] {
+        mine.set(kind, roster.find(kind, name).unwrap());
+    }
+    app.insert_resource(PlayerLoadout(mine));
+    load_gltf_headless(&mut app);
+    for _ in 0..3000 {
+        app.update();
+        let world = app.world_mut();
+        let karts = world
+            .query_filtered::<(), With<crate::kart::KartDressed>>()
+            .iter(world)
+            .count();
+        if karts == 12 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    for _ in 0..10 {
+        app.update();
+    }
+    let seed = app.world().resource::<crate::race::RaceGrid>().seed;
+    let tuning = app.world().resource::<KartTuning>().clone();
+    let world = app.world_mut();
+    let visuals = world.resource::<KartVisualAssets>().clone();
+    let model = visuals
+        .model()
+        .expect("the kart model and its parts")
+        .clone();
+    let shared = world.resource::<ModelMaterials>().vertex_colors.clone();
+    assert_eq!(model.material(), &shared);
+    // Each kart's loadout: the player's, a bot's from its name (« Bot N »: its entrant).
+    let karts: Vec<(Entity, crate::characters::Loadout)> = world
+        .query_filtered::<(Entity, Option<&Name>, Has<PlayerKart>), With<Kart>>()
+        .iter(world)
+        .map(|(entity, name, player)| {
+            let loadout = if player {
+                mine
+            } else {
+                let entrant: usize = name.unwrap().as_str()[4..].parse().unwrap();
+                crate::bots::bot_loadout(&roster, seed, entrant - 1)
+            };
+            (entity, loadout)
+        })
+        .collect();
+    assert_eq!(karts.len(), 12);
+    let pivots: Vec<(Entity, KartBodyPivot)> = world
+        .query::<(Entity, &KartBodyPivot)>()
+        .iter(world)
+        .map(|(e, p)| (e, *p))
+        .collect();
+    let children = |world: &World, entity: Entity| -> Vec<Entity> {
+        world
+            .get::<Children>(entity)
+            .map(|c| c.iter().collect())
+            .unwrap_or_default()
+    };
+    let mut paints: BTreeSet<AssetId<Mesh>> = BTreeSet::new();
+    let mut wheel_meshes: BTreeSet<AssetId<Mesh>> = BTreeSet::new();
+    let mut bodies_seen = BTreeSet::new();
+    let mut wheels_seen = BTreeSet::new();
+    for (kart, loadout) in &karts {
+        let looks = roster.looks(loadout);
+        let (pivot, data) = pivots.iter().find(|(_, p)| p.body == *kart).unwrap();
+        assert_eq!(data.looks, looks, "{kart:?}");
+        bodies_seen.insert(looks.body.index());
+        wheels_seen.insert(looks.wheels.index());
+        let (paint, trim) = model.body_meshes(looks.body);
+        let wheels_state = *world.get::<KartWheels>(*kart).unwrap();
+        let mut wheels = 0;
+        for child in children(world, *pivot) {
+            if let Some(body) = world.get::<BodyPaint>(child) {
+                let color = world.get::<crate::kart::KartPaint>(*kart).unwrap().0;
+                assert_eq!(body.shown, color);
+                assert_eq!(world.get::<Mesh3d>(child).unwrap().0, *paint);
+                assert_eq!(
+                    world
+                        .get::<MeshMaterial3d<StandardMaterial>>(child)
+                        .unwrap()
+                        .0,
+                    visuals.paint(color)
+                );
+                paints.insert(paint.id());
+                let rest = children(world, child);
+                assert_eq!(rest.len(), 1);
+                assert_eq!(world.get::<Mesh3d>(rest[0]).unwrap().0, *trim);
+                assert_eq!(
+                    world
+                        .get::<MeshMaterial3d<StandardMaterial>>(rest[0])
+                        .unwrap()
+                        .0,
+                    shared
+                );
+            } else if let Some(wheel) = world.get::<WheelVisual>(child) {
+                let (mesh, radius, scale) = model.wheel(looks.wheels, wheel.index);
+                assert_eq!(world.get::<Mesh3d>(child).unwrap().0, *mesh);
+                assert_eq!(
+                    world.get::<Transform>(child).unwrap().scale,
+                    Vec3::splat(scale)
+                );
+                assert_eq!(
+                    world
+                        .get::<MeshMaterial3d<StandardMaterial>>(child)
+                        .unwrap()
+                        .0,
+                    shared
+                );
+                assert_eq!(wheel.radius, radius);
+                wheel_meshes.insert(mesh.id());
+                // On the road with its radius: its bottom where its suspension ray touches.
+                let y = world.get::<Transform>(child).unwrap().translation.y;
+                let i = wheel.index;
+                assert!(wheels_state.on_ground[i], "{kart:?}: wheel {i} on the grid");
+                let contact = WHEEL_ANCHORS[i].y
+                    - (tuning.suspension_rest_length - wheels_state.compression[i]);
+                assert!(
+                    (y - radius - contact).abs() < 1e-4,
+                    "{y} {radius} {contact}"
+                );
+                wheels += 1;
+            } else if world.get::<DriverVisual>(child).is_some() {
+                let at = world.get::<Transform>(child).unwrap().translation;
+                assert_eq!(at, model.seat(looks.body));
+            }
+        }
+        assert_eq!(wheels, 4);
+    }
+    // A varied grid: the player's bathtub and spools, and the bots' draws.
+    assert!(bodies_seen.len() >= 2 && wheels_seen.len() >= 2);
+    // One mesh per part shown, shared by the karts that have it.
+    assert_eq!(paints.len(), bodies_seen.len());
+    assert_eq!(wheel_meshes.len(), wheels_seen.len());
+    // No material of a kart's own: under each of the 12 visuals, a material is its color's (one
+    // per color of the palette) or one that every visual has (the models', the primitives').
+    let roots: Vec<Entity> = world
+        .query::<(Entity, &InterpolatedFrom)>()
+        .iter(world)
+        .filter(|(_, from)| karts.iter().any(|(kart, _)| *kart == from.0))
+        .map(|(entity, _)| entity)
+        .collect();
+    assert_eq!(roots.len(), 12);
+    let palette: BTreeSet<AssetId<StandardMaterial>> = crate::kart::KartColor::ALL
+        .iter()
+        .map(|c| visuals.paint(*c).id())
+        .collect();
+    let per_visual: Vec<BTreeSet<AssetId<StandardMaterial>>> = roots
+        .iter()
+        .map(|root| {
+            let mut materials = BTreeSet::new();
+            let mut stack = vec![*root];
+            while let Some(entity) = stack.pop() {
+                if let Some(material) = world.get::<MeshMaterial3d<StandardMaterial>>(entity) {
+                    materials.insert(material.0.id());
+                }
+                stack.extend(children(world, entity));
+            }
+            materials
+        })
+        .collect();
+    for materials in &per_visual {
+        assert_eq!(materials.intersection(&palette).count(), 1, "one paint");
+        for material in materials.difference(&palette) {
+            assert!(
+                per_visual.iter().all(|other| other.contains(material)),
+                "a material of one kart's own"
+            );
+        }
+    }
+    assert!(per_visual.iter().all(|m| m.contains(&shared.id())));
+
+    // The glider: every kart opens its wing (time stands still: only the visuals run).
+    world.resource_mut::<Time<Virtual>>().pause();
+    for (kart, _) in &karts {
+        world.get_mut::<KartEnvironment>(*kart).unwrap().gliding = true;
+    }
+    app.update();
+    let world = app.world_mut();
+    let mut wings_seen = BTreeSet::new();
+    for (kart, loadout) in &karts {
+        let looks = roster.looks(loadout);
+        let (pivot, _) = pivots.iter().find(|(_, p)| p.body == *kart).unwrap();
+        let wing = children(world, *pivot)
+            .into_iter()
+            .find(|c| world.get::<Wing>(*c).is_some())
+            .expect("its wing");
+        let parts = children(world, wing);
+        assert_eq!(parts.len(), 3, "a sail on two struts");
+        let sail = parts[0];
+        let mesh = world.get::<Mesh3d>(sail).unwrap().0.clone();
+        let material = world
+            .get::<MeshMaterial3d<StandardMaterial>>(sail)
+            .unwrap()
+            .0
+            .clone();
+        match looks.wing {
+            WingLook::Feather => {
+                assert_eq!((&mesh, &material), (model.feather(), &shared));
+            }
+            WingLook::Pillowcase => {
+                assert!(mesh != *model.feather() && material != shared);
+            }
+        }
+        wings_seen.insert(looks.wing.index());
+    }
+    assert_eq!(wings_seen.len(), 2, "both wings on the grid");
 }
 
 /// Issue #69: each character's animal loads with its clips (the eight of the Cube Pets), is an
@@ -883,4 +1249,138 @@ fn measure_entities_with_the_models() {
             pairs.len()
         );
     }
+}
+
+/// Preview (issue #73): every body with every set of wheels (and the feather over one), the cat
+/// or another animal in its seat, assembled from the real files as the game shows them at rest,
+/// written as JSON for an offline renderer. Not a check.
+/// `FLUFFY_PARTS_DUMP=/path/out.json cargo test --lib dump_kart_parts -- --ignored`
+#[test]
+#[ignore]
+fn dump_kart_parts() {
+    use crate::characters::{DriverTuning, Roster, animal_model_data};
+    use crate::kart::parts::{BodyLook, PART_MODELS, WheelLook, kart_parts};
+    use crate::track::GRID_HEIGHT;
+    use crate::track::mesh::MeshData;
+    let Ok(out) = std::env::var("FLUFFY_PARTS_DUMP") else {
+        return;
+    };
+    let mut app = loading_app();
+    app.add_plugins(ModelPlugin);
+    app.update();
+    let roster = Roster::embedded();
+    let animals = animal_models();
+    let mut ids: Vec<String> = vec![KART_MODEL.to_string()];
+    ids.extend(PART_MODELS.iter().map(|s| s.to_string()));
+    {
+        let world = app.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let mut models = world.resource_mut::<Models>();
+        for id in &ids {
+            models.request(id, Keep::Always, Some(&server));
+        }
+        for id in &animals {
+            models.request_animated(id, Keep::Always, Some(&server));
+        }
+    }
+    let mut all = ids.clone();
+    all.extend(animals.iter().cloned());
+    wait_for_the_models(&mut app, &all);
+    let models = app.world().resource::<Models>();
+    let kart = kart_model_data(models.get(KART_MODEL).unwrap()).unwrap();
+    let parts = kart_parts(&kart, Some(&**models.get(PART_MODELS[0]).unwrap()));
+    for look in BodyLook::ALL {
+        let body = parts.body(look);
+        println!(
+            "{look:?}: {} triangles",
+            body.paint.triangle_count() + body.trim.triangle_count()
+        );
+    }
+    for look in WheelLook::ALL {
+        let wheels = parts.wheels(look);
+        println!("{look:?}: {} triangles", wheels.mesh.triangle_count());
+    }
+    println!("Feather: {} triangles", parts.feather.triangle_count());
+    let tuning = DriverTuning::default();
+    let paint = Color::srgb(0.95, 0.42, 0.62).to_linear();
+    let animal = |name: &str, mesh: &mut MeshData, seat: Vec3| {
+        let index = roster
+            .characters
+            .iter()
+            .position(|c| c.name == name)
+            .unwrap();
+        let character = &roster.characters[index];
+        let data =
+            animal_model_data(models.get(character.model.as_deref().unwrap()).unwrap()).unwrap();
+        let base = Mat4::from_translation(seat)
+            * Mat4::from_scale(Vec3::splat(character.size))
+            * data.placement(&tuning).to_matrix();
+        let mut world: Vec<Mat4> = Vec::new();
+        for node in &data.nodes {
+            let parent = node.parent.map_or(base, |p| world[p]);
+            let at = parent * node.local.to_matrix();
+            world.push(at);
+            if let Some(m) = &node.mesh {
+                bake::append_transformed(mesh, m, at);
+            }
+        }
+    };
+    let mut entries: Vec<(String, MeshData)> = Vec::new();
+    for body_look in BodyLook::ALL {
+        for wheel_look in WheelLook::ALL {
+            for driver in ["Chat", "Éléphant", "Poussin"] {
+                if driver != "Chat" && wheel_look != WheelLook::Marshmallow {
+                    continue;
+                }
+                let body = parts.body(body_look);
+                let wheels = parts.wheels(wheel_look);
+                let mut mesh = MeshData::default();
+                let mut shell = body.paint.clone();
+                for c in &mut shell.colors {
+                    *c = [c[0] * paint.red, c[1] * paint.green, c[2] * paint.blue, 1.0];
+                }
+                mesh.append(&shell);
+                mesh.append(&body.trim);
+                let turns = body.wheel_turns();
+                for (i, (hub, turn)) in body.hubs.iter().zip(turns).enumerate() {
+                    let radius = wheels.radius(i);
+                    let at = Mat4::from_translation(Vec3::new(hub.x, radius - GRID_HEIGHT, hub.z))
+                        * Mat4::from_quat(turn)
+                        * Mat4::from_scale(Vec3::splat(wheels.scale(i)));
+                    bake::append_transformed(&mut mesh, &wheels.mesh, at);
+                }
+                animal(driver, &mut mesh, body.seat);
+                if body_look == BodyLook::SoapBox && wheel_look == WheelLook::Spools {
+                    mesh.append(&parts.feather);
+                }
+                let name = format!("{body_look:?}-{wheel_look:?}-{driver}")
+                    .replace('É', "E")
+                    .to_lowercase();
+                entries.push((name, mesh));
+            }
+        }
+    }
+    let mut json = String::from("{");
+    for (i, (name, mesh)) in entries.iter().enumerate() {
+        if i > 0 {
+            json.push(',');
+        }
+        let floats = |v: &[[f32; 3]]| {
+            v.iter()
+                .map(|p| format!("[{:.4},{:.4},{:.4}]", p[0], p[1], p[2]))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let colors: Vec<[f32; 3]> = mesh.colors.iter().map(|c| [c[0], c[1], c[2]]).collect();
+        let indices: Vec<String> = mesh.indices.iter().map(|i| i.to_string()).collect();
+        json.push_str(&format!(
+            "\"{name}\":{{\"positions\":[{}],\"colors\":[{}],\"indices\":[{}]}}",
+            floats(&mesh.positions),
+            floats(&colors),
+            indices.join(",")
+        ));
+    }
+    json.push('}');
+    std::fs::write(&out, json).unwrap();
+    println!("{} karts written to {out}", entries.len());
 }

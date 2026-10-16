@@ -80,6 +80,8 @@ mod item_tests;
 #[cfg(test)]
 mod paint_tests;
 #[cfg(test)]
+mod parts_tests;
+#[cfg(test)]
 mod pseudo_tests;
 #[cfg(test)]
 mod race_tests;

@@ -37,6 +37,7 @@ mod environment_visual;
 mod input;
 pub mod model;
 mod palette;
+pub mod parts;
 mod physics;
 mod push;
 mod rocket;
@@ -65,6 +66,7 @@ pub use palette::{
     BOT_COLORS, ColorSet, KartColor, KartPaint, OnlinePlayerColors, PALETTE_SIZE, bot_color,
     bot_colors, resolve_players,
 };
+pub use parts::{BodyLook, KartParts, PartLook, PartLooks, WheelLook, WingLook};
 pub use physics::{Boost, HitReaction, KartState, hit_forward_speed, max_speed, target_yaw_rate};
 pub use push::{Shove, TetherPull, towed_forward_speed, towed_top_speed};
 pub use rocket::{

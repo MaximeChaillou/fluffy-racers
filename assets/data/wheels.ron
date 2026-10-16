@@ -1,6 +1,8 @@
 // Roues (GD § 9, issue #15). Même format de stats que `characters.ron` (0 à 10 points chacune,
 // et les variantes de terrain de l'issue #20).
 // Les roues par défaut (« Pneus guimauve ») sont le standard : 2 partout.
+// `look` : leur visuel sur le kart (issue #73, `kart::PartLook`) : `Spools`, `Marshmallow` (les roues du
+// kart du Car Kit) ou `Tractor`.
 (
     default: "Pneus guimauve",
     parts: [
@@ -9,18 +11,21 @@
             name: "Bobines de fil",
             stats: (speed: 1, acceleration: 3, weight: 1, handling: 3, traction: 2, mini_turbo: 3, invincibility: 2,
                    water_speed: 1, water_handling: 2, air_speed: 1, air_handling: 3, anti_gravity_speed: 2, anti_gravity_handling: 3),
+            look: Spools,
         ),
         // Standard.
         (
             name: "Pneus guimauve",
             stats: (speed: 2, acceleration: 2, weight: 2, handling: 2, traction: 2, mini_turbo: 2, invincibility: 2,
                    water_speed: 2, water_handling: 2, air_speed: 2, air_handling: 2, anti_gravity_speed: 2, anti_gravity_handling: 2),
+            look: Marshmallow,
         ),
         // Grosses et lourdes : vitesse, poids et adhérence hors-piste, mais lentes à lancer.
         (
             name: "Pneus de tracteur",
             stats: (speed: 3, acceleration: 1, weight: 3, handling: 1, traction: 4, mini_turbo: 1, invincibility: 2,
                    water_speed: 3, water_handling: 2, air_speed: 2, air_handling: 1, anti_gravity_speed: 3, anti_gravity_handling: 1),
+            look: Tractor,
         ),
     ],
 )

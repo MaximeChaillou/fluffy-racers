@@ -708,12 +708,14 @@ fn spawn_remote_karts(
         }
         if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|looks| looks.get(character));
+            // Issue #73: the parts its peer chose, on our screen too.
             remote.visual = Some(spawn_kart_visual_with_driver(
                 &mut commands,
                 visuals,
                 proxy,
                 remote.color,
                 driver,
+                roster.looks(&loadout),
             ));
         }
     }

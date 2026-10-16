@@ -8,7 +8,9 @@
 use bevy::prelude::Resource;
 use serde::Deserialize;
 
-use crate::kart::{DriverEars, KartStats, MIDDLE_LEVEL, Stat, StatPoints, Terrain};
+use crate::kart::{
+    DriverEars, KartStats, MIDDLE_LEVEL, PartLook, PartLooks, Stat, StatPoints, Terrain,
+};
 use crate::track::biome::is_model_id;
 
 /// The four RON files, compiled into the game.
@@ -69,6 +71,16 @@ fn some_model<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, 
 pub struct PartData {
     pub name: String,
     pub stats: StatPoints,
+    /// What it looks like on the kart (issue #73, `kart::PartLook`): a body in `karts.ron`, a
+    /// set of wheels in `wheels.ron`, a wing in `wings.ron`. Left out: the look of the kart of
+    /// before (the Car Kit's kart, its wheels, the pillowcase).
+    #[serde(default, deserialize_with = "some_look")]
+    pub look: Option<PartLook>,
+}
+
+/// `look: Bathtub` in the file (no `Some(...)` around it); left out: None.
+fn some_look<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<PartLook>, D::Error> {
+    PartLook::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -173,6 +185,7 @@ impl Roster {
         let part = |name: &str, points: u8| PartData {
             name: name.to_string(),
             stats: StatPoints::uniform(points),
+            look: None,
         };
         Self {
             characters: vec![CharacterData {
@@ -243,6 +256,24 @@ impl Roster {
                 list.parts.iter().map(|p| (p.name.as_str(), &p.stats)),
             )?;
             default.set(kind, index);
+            // Issue #73: a look of its kind.
+            for part in &list.parts {
+                let Some(look) = part.look else {
+                    continue;
+                };
+                let fits = match kind {
+                    PartKind::Kart => look.body().is_some(),
+                    PartKind::Wheels => look.wheels().is_some(),
+                    PartKind::Wing => look.wing().is_some(),
+                    PartKind::Character => false,
+                };
+                if !fits {
+                    return Err(format!(
+                        "{file}: {}: look {look:?} is for another kind of part",
+                        part.name
+                    ));
+                }
+            }
         }
         Ok(Self {
             characters: characters.characters,
@@ -297,6 +328,26 @@ impl Roster {
             PartKind::Kart => self.karts[index].stats,
             PartKind::Wheels => self.wheels[index].stats,
             PartKind::Wing => self.wings[index].stats,
+        }
+    }
+
+    /// What a kart with these parts looks like (issue #73): its body, its wheels, its wing (a
+    /// part without a look: the kart of before's).
+    pub fn looks(&self, loadout: &Loadout) -> PartLooks {
+        let part = |list: &[PartData], index: usize| {
+            list.get(index.min(list.len().saturating_sub(1)))
+                .and_then(|p| p.look)
+        };
+        PartLooks {
+            body: part(&self.karts, loadout.kart)
+                .and_then(PartLook::body)
+                .unwrap_or_default(),
+            wheels: part(&self.wheels, loadout.wheels)
+                .and_then(PartLook::wheels)
+                .unwrap_or_default(),
+            wing: part(&self.wings, loadout.wing)
+                .and_then(PartLook::wing)
+                .unwrap_or_default(),
         }
     }
 
@@ -379,7 +430,7 @@ pub fn is_middle(stats: &KartStats) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kart::{KartTuning, StatEffects, StatsTuning};
+    use crate::kart::{BodyLook, KartTuning, StatEffects, StatsTuning, WheelLook, WingLook};
 
     fn roster() -> Roster {
         Roster::parse(CHARACTERS_RON, KARTS_RON, WHEELS_RON, WINGS_RON).unwrap()
@@ -649,6 +700,113 @@ mod tests {
         let error = parse(&terrain("water_handling", 11)).unwrap_err();
         assert!(error.contains("Maniabilité (Eau)"), "{error}");
         assert!(parse(&terrain("air_speeed", 1)).is_err());
+        // Issue #73: a look of its kind, written without `Some(...)`; left out, the kart of
+        // before's.
+        let looking = |look: &str| {
+            list(
+                "A",
+                &[part("A", 1).replace("))", &format!("), look: {look})"))],
+            )
+        };
+        let roster = parse(&looking("Bathtub")).unwrap();
+        assert_eq!(roster.karts[0].look, Some(PartLook::Bathtub));
+        assert_eq!(roster.looks(&Loadout::default()).body, BodyLook::Bathtub);
+        for wrong in ["Tractor", "Feather"] {
+            let error = parse(&looking(wrong)).unwrap_err();
+            assert!(
+                error.starts_with("karts.ron: A: look") && error.contains("another kind"),
+                "{error}"
+            );
+        }
+        assert!(parse(&looking("Baignoire")).is_err());
+        let error = Roster::parse(CHARACTERS_RON, &ok, &looking("SoapBox"), &ok).unwrap_err();
+        assert!(error.starts_with("wheels.ron: A: look SoapBox"), "{error}");
+        let error = Roster::parse(CHARACTERS_RON, &ok, &ok, &looking("Spools")).unwrap_err();
+        assert!(error.starts_with("wings.ron: A: look Spools"), "{error}");
+        assert!(
+            Roster::parse(
+                CHARACTERS_RON,
+                &ok,
+                &looking("Tractor"),
+                &looking("Feather")
+            )
+            .is_ok()
+        );
+        let plain = parse(&ok).unwrap();
+        assert_eq!(plain.karts[0].look, None);
+        assert_eq!(plain.looks(&Loadout::default()), PartLooks::default());
+    }
+
+    /// Issue #73: every part of the files has its own look, of its kind: the three bodies, the
+    /// three sets of wheels and the two wings are all different, each the one its name says; the
+    /// default loadout looks like the kart of before (the Car Kit's kart, its wheels, the
+    /// pillowcase).
+    #[test]
+    fn every_part_has_its_own_look() {
+        let roster = roster();
+        let looks = |list: &[PartData]| -> Vec<PartLook> {
+            list.iter()
+                .map(|p| p.look.unwrap_or_else(|| panic!("{}: no look", p.name)))
+                .collect()
+        };
+        use PartLook::*;
+        assert_eq!(looks(&roster.karts), [WickerBasket, SoapBox, Bathtub]);
+        assert_eq!(looks(&roster.wheels), [Spools, Marshmallow, Tractor]);
+        assert_eq!(looks(&roster.wings), [Pillowcase, Feather]);
+        let named = |kind, name: &str| {
+            let mut loadout = roster.default_loadout();
+            loadout.set(kind, roster.find(kind, name).unwrap());
+            roster.looks(&loadout)
+        };
+        assert_eq!(
+            roster.looks(&roster.default_loadout()),
+            PartLooks::default()
+        );
+        assert_eq!(
+            named(PartKind::Kart, "Panier en osier").body,
+            BodyLook::WickerBasket
+        );
+        assert_eq!(named(PartKind::Kart, "Baignoire").body, BodyLook::Bathtub);
+        assert_eq!(
+            named(PartKind::Wheels, "Bobines de fil").wheels,
+            WheelLook::Spools
+        );
+        assert_eq!(
+            named(PartKind::Wheels, "Pneus de tracteur").wheels,
+            WheelLook::Tractor
+        );
+        assert_eq!(named(PartKind::Wing, "Plume").wing, WingLook::Feather);
+        // Every combination is its own look.
+        let mut all = std::collections::BTreeSet::new();
+        for kart in 0..3 {
+            for wheels in 0..3 {
+                for wing in 0..2 {
+                    let loadout = Loadout {
+                        character: 0,
+                        kart,
+                        wheels,
+                        wing,
+                    };
+                    all.insert(format!("{:?}", roster.looks(&loadout)));
+                }
+            }
+        }
+        assert_eq!(all.len(), 18);
+        // Out of the lists: the last one, like the stats.
+        let far = Loadout {
+            character: 0,
+            kart: 99,
+            wheels: 99,
+            wing: 99,
+        };
+        assert_eq!(
+            roster.looks(&far),
+            PartLooks {
+                body: BodyLook::Bathtub,
+                wheels: WheelLook::Tractor,
+                wing: WingLook::Feather
+            }
+        );
     }
 
     /// Issue #20 (GD § 9): every part of the files gives its Speed and its Handling on each

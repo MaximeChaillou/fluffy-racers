@@ -250,7 +250,7 @@ Roster de départ (original, 3 par gabarit ; validé par Max le 2026-10-15, #69 
 
 Dans chaque gabarit, le compromis reste celui du dessus ; l'éléphant est le plus lourd de tous, le poussin le plus léger. Un pilote est animé (#69) : il s'agite doucement en course et sur la grille, secoue la tête quand il est touché (objet, coup de patte), danse à l'arrivée s'il est sur le podium et hoche la tête de contentement sinon.
 
-Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osier, caisse à savon, baignoire), 3 jeux de roues (bobines de fil, pneus guimauve, pneus de tracteur) et 2 ailes (taie d'oreiller, plume). Le personnage moyen « chat » avec la caisse à savon, les pneus guimauve et la taie d'oreiller fait exactement le niveau du milieu (10) partout.
+Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osier, caisse à savon, baignoire), 3 jeux de roues (bobines de fil, pneus guimauve, pneus de tracteur) et 2 ailes (taie d'oreiller, plume). Chaque pièce se voit sur le kart (#73) : une baignoire est une baignoire, des bobines de fil sont des bobines, l'aile s'ouvre en taie d'oreiller ou en plume. Le personnage moyen « chat » avec la caisse à savon, les pneus guimauve et la taie d'oreiller fait exactement le niveau du milieu (10) partout.
 
 ## 10. Environnements spéciaux (phase 3)
 

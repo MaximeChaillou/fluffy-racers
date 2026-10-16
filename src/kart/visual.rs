@@ -31,6 +31,13 @@
 //! and its paint material, the rest of the body and the wheels the models' shared material), and
 //! moves the wheels, the driver and the sparks where the model has them. The same meshes for
 //! every kart: 12 karts draw the same few meshes.
+//!
+//! The parts (issue #73, `parts.rs`): each visual shows the parts of its kart ([`PartLooks`], on
+//! its pivot): its body (the wicker basket, the soap box: the Car Kit's kart, or the bathtub),
+//! its wheels (thread spools, marshmallow tyres, tractor tyres: each wheel put on the road with
+//! its own radius) and, while it glides, its wing (the pillowcase or the feather). One set of
+//! meshes per part, made once, shared by every kart that has it; the shell still in its color's
+//! material, everything else in the models' shared material.
 
 use std::f32::consts::TAU;
 
@@ -41,8 +48,12 @@ use serde::Deserialize;
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
 use super::effects::ItemEffects;
 use super::environment::{KartEnvironment, glide_pose};
-use super::model::{KART_MODEL, KartModelData, kart_model_data};
+use super::model::{KART_MODEL, kart_model_data};
 use super::palette::{KartColor, KartPaint, PALETTE_SIZE};
+use super::parts::{
+    BodyLook, PART_MODELS, PartLooks, TRACTOR_MODEL, WheelLook, kart_parts, wheel_radius,
+    wheel_scale,
+};
 use super::physics::HitReaction;
 use super::rocket::Stall;
 use super::slipstream::Slipstream;
@@ -177,6 +188,8 @@ pub struct KartBodyPivot {
     gliding: bool,
     /// Issue #20: its glider's wing was fitted (the first time the kart glided).
     pub(super) wing: bool,
+    /// Issue #73: what its kart's parts look like (its body, wheels and wing).
+    pub looks: PartLooks,
 }
 
 /// An exhaust flame, shown during a boost (GD § 4 and 14).
@@ -298,18 +311,69 @@ pub struct KartVisualAssets {
     model: Option<KartModel>,
 }
 
-/// The kart model's meshes (issue #11, `model.rs`), shared by every kart, and where its wheels,
-/// driver and sparks go.
+/// The meshes of the kart model (issue #11, `model.rs`) and of every part (issue #73,
+/// `parts.rs`): one set per part, shared by every kart that has it; where each body's wheels and
+/// driver go.
 #[derive(Clone, Debug)]
 pub struct KartModel {
+    /// By [`BodyLook::index`].
+    bodies: [BodyMeshes; 3],
+    /// By [`WheelLook::index`].
+    wheels: [WheelMeshes; 3],
+    /// The feather's sail (issue #73, the glider's wing).
+    feather: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
+/// A body's meshes: its shell (painted), the rest; its wheels' hubs and turns, its seat.
+#[derive(Clone, Debug)]
+struct BodyMeshes {
     paint: Handle<Mesh>,
     trim: Handle<Mesh>,
-    wheel: Handle<Mesh>,
     hubs: [Vec3; 4],
-    wheel_turns: [Quat; 4],
-    wheel_radius: f32,
+    turns: [Quat; 4],
     seat: Vec3,
-    material: Handle<StandardMaterial>,
+}
+
+/// A set of wheels' mesh (one for the four) and the radius of the front and back ones.
+#[derive(Clone, Debug)]
+struct WheelMeshes {
+    mesh: Handle<Mesh>,
+    radii: [f32; 2],
+}
+
+impl KartModel {
+    /// The shell (painted) and the rest of the body `look`.
+    pub fn body_meshes(&self, look: BodyLook) -> (&Handle<Mesh>, &Handle<Mesh>) {
+        let body = &self.bodies[look.index()];
+        (&body.paint, &body.trim)
+    }
+
+    /// Where the driver of the body `look` sits.
+    pub fn seat(&self, look: BodyLook) -> Vec3 {
+        self.bodies[look.index()].seat
+    }
+
+    /// The mesh, the radius and the scale of the wheel `index` (of `WHEEL_ANCHORS`) of the set
+    /// `look`.
+    pub fn wheel(&self, look: WheelLook, index: usize) -> (&Handle<Mesh>, f32, f32) {
+        let wheels = &self.wheels[look.index()];
+        (
+            &wheels.mesh,
+            wheel_radius(wheels.radii, index),
+            wheel_scale(wheels.radii, index),
+        )
+    }
+
+    /// The feather's sail (issue #73).
+    pub fn feather(&self) -> &Handle<Mesh> {
+        &self.feather
+    }
+
+    /// The material of everything but the shells: the models' shared one.
+    pub fn material(&self) -> &Handle<StandardMaterial> {
+        &self.material
+    }
 }
 
 impl KartVisualAssets {
@@ -368,21 +432,31 @@ impl KartVisualAssets {
     pub fn has_model(&self) -> bool {
         self.model.is_some()
     }
+
+    /// The meshes of the kart model and its parts, once baked (issue #73).
+    pub fn model(&self) -> Option<&KartModel> {
+        self.model.as_ref()
+    }
 }
 
-/// Asks for the kart model at startup, kept for the whole game (issue #11).
+/// Asks for the kart model and the parts' (issue #73: the tractor tyres) at startup, kept for the
+/// whole game (issue #11).
 fn request_kart_model(
     models: Option<ResMut<Models>>,
     server: Res<AssetServer>,
     gltfs: Option<Res<Assets<bevy::gltf::Gltf>>>,
 ) {
     if let Some(mut models) = models {
-        models.request(KART_MODEL, Keep::Always, gltfs.map(|_| &*server));
+        let server = gltfs.map(|_| &*server);
+        for id in std::iter::once(KART_MODEL).chain(PART_MODELS) {
+            models.request(id, Keep::Always, server);
+        }
     }
 }
 
-/// Once the kart model is baked, its meshes (once for every kart). A file that is not the kart
-/// expected leaves the primitives (said once).
+/// Once the kart model is baked (and the parts' files are baked or missing), the meshes of every
+/// part (once for every kart, issue #73). A file that is not the kart expected leaves the
+/// primitives (said once); a tractor tyre missing leaves the marshmallow tyres in its place.
 fn prepare_kart_model(
     models: Option<Res<Models>>,
     shared: Option<Res<ModelMaterials>>,
@@ -399,39 +473,46 @@ fn prepare_kart_model(
     let Some(baked) = models.get(KART_MODEL) else {
         return;
     };
-    let Some(KartModelData {
-        paint,
-        trim,
-        wheel,
-        hubs,
-        wheel_turns,
-        wheel_radius,
-        seat,
-    }) = kart_model_data(baked)
-    else {
+    if !PART_MODELS.iter().all(|id| models.settled(id)) {
+        return;
+    }
+    let Some(kart) = kart_model_data(baked) else {
         warn!("model {KART_MODEL}: not the kart expected (body, four wheels); primitives stay");
         *gave_up = true;
         return;
     };
+    let tractor = models.get(TRACTOR_MODEL);
+    if tractor.is_none() {
+        warn!("model {TRACTOR_MODEL}: missing; the tractor tyres look like marshmallow tyres");
+    }
+    let parts = kart_parts(&kart, tractor.map(|model| &**model));
+    let bodies = parts.bodies.map(|body| BodyMeshes {
+        paint: meshes.add(to_mesh(&body.paint)),
+        trim: meshes.add(to_mesh(&body.trim)),
+        turns: body.wheel_turns(),
+        hubs: body.hubs,
+        seat: body.seat,
+    });
+    let wheels = parts.wheels.map(|set| WheelMeshes {
+        mesh: meshes.add(to_mesh(&set.mesh)),
+        radii: set.radii,
+    });
     assets.model = Some(KartModel {
-        paint: meshes.add(to_mesh(&paint)),
-        trim: meshes.add(to_mesh(&trim)),
-        wheel: meshes.add(to_mesh(&wheel)),
-        hubs,
-        wheel_turns,
-        wheel_radius,
-        seat,
+        bodies,
+        wheels,
+        feather: meshes.add(to_mesh(&parts.feather)),
         material: shared.vertex_colors.clone(),
     });
 }
 
-/// Dresses the kart visuals still in primitives with the kart model (issue #11): the body's
-/// shell (its paint material stays), the rest of the body (a child), the wheels at the model's
-/// hubs, the driver in its seat, the sparks behind its rear wheels. Once per visual.
+/// Dresses the kart visuals still in primitives with the kart model (issue #11), in the parts of
+/// their kart (issue #73): the body's shell (its paint material stays), the rest of the body (a
+/// child), the wheels at the body's hubs with their radius, the driver in its seat, the sparks
+/// behind its rear wheels. Once per visual.
 fn dress_kart_visuals(
     mut commands: Commands,
     assets: Option<Res<KartVisualAssets>>,
-    pivots: Query<(Entity, &Children), (With<KartBodyPivot>, Without<KartDressed>)>,
+    pivots: Query<(Entity, &KartBodyPivot, &Children), Without<KartDressed>>,
     mut bodies: Query<&mut Mesh3d, (With<BodyPaint>, Without<WheelVisual>)>,
     mut wheels: Query<(
         &mut WheelVisual,
@@ -452,30 +533,34 @@ fn dress_kart_visuals(
     let Some(model) = assets.as_ref().and_then(|a| a.model.as_ref()) else {
         return;
     };
-    for (pivot, children) in &pivots {
+    for (pivot, kart, children) in &pivots {
+        let body = &model.bodies[kart.looks.body.index()];
+        let set = &model.wheels[kart.looks.wheels.index()];
         for child in children.iter() {
             if let Ok(mut mesh) = bodies.get_mut(child) {
-                mesh.0 = model.paint.clone();
+                mesh.0 = body.paint.clone();
                 commands.entity(child).with_child((
-                    Mesh3d(model.trim.clone()),
+                    Mesh3d(body.trim.clone()),
                     MeshMaterial3d(model.material.clone()),
                     Transform::default(),
                 ));
             } else if let Ok((mut wheel, mut mesh, mut material, mut transform)) =
                 wheels.get_mut(child)
             {
-                mesh.0 = model.wheel.clone();
+                // One mesh for the set, scaled around the hub for smaller front wheels.
+                mesh.0 = set.mesh.clone();
                 material.0 = model.material.clone();
-                wheel.radius = model.wheel_radius;
-                *transform = Transform::from_translation(model.hubs[wheel.index])
-                    .with_rotation(model.wheel_turns[wheel.index]);
+                wheel.radius = wheel_radius(set.radii, wheel.index);
+                *transform = Transform::from_translation(body.hubs[wheel.index])
+                    .with_rotation(body.turns[wheel.index])
+                    .with_scale(Vec3::splat(wheel_scale(set.radii, wheel.index)));
             } else if let Ok(mut transform) = drivers.get_mut(child) {
-                transform.translation = model.seat;
+                transform.translation = body.seat;
             } else if let Ok(mut transform) = sparks.get_mut(child) {
                 // Behind the rear wheel of its side, near the ground.
-                let rear = model.hubs[if transform.translation.x < 0.0 { 2 } else { 3 }];
+                let rear = body.hubs[if transform.translation.x < 0.0 { 2 } else { 3 }];
                 transform.translation =
-                    Vec3::new(rear.x, SPARK_OFFSET.y, rear.z + model.wheel_radius + 0.1);
+                    Vec3::new(rear.x, SPARK_OFFSET.y, rear.z + set.radii[1] + 0.1);
             }
         }
         commands.entity(pivot).insert(KartDressed);
@@ -493,23 +578,26 @@ fn create_kart_visual_assets(
 /// Spawns the visual of the kart `body` (colored box, fluffy ball driver, 4 wheels, drift
 /// sparks, boost flames, stall puffs, wind lines), all from the shared `assets`. The box wears
 /// `color`, then the color of `body`'s [`KartPaint`] if it has one (and when it changes). The
-/// driver is the default one (medium, cream, round ears).
+/// driver is the default one (medium, cream, round ears), the parts the default ones.
 pub fn spawn_kart_visual(
     commands: &mut Commands,
     assets: &KartVisualAssets,
     body: Entity,
     color: KartColor,
 ) -> Entity {
-    spawn_kart_visual_with_driver(commands, assets, body, color, None)
+    spawn_kart_visual_with_driver(commands, assets, body, color, None, PartLooks::default())
 }
 
-/// Same with the driver of a character (issue #15; `None`: the default one).
+/// Same with the driver of a character (issue #15; `None`: the default one) and the looks of its
+/// kart's parts (issue #73: `characters::Roster::looks` of its loadout), shown once the kart
+/// model is baked.
 pub fn spawn_kart_visual_with_driver(
     commands: &mut Commands,
     assets: &KartVisualAssets,
     body: Entity,
     color: KartColor,
     driver: Option<&DriverLook>,
+    looks: PartLooks,
 ) -> Entity {
     let body_material = assets.paint(color);
     let assets = assets.clone();
@@ -549,6 +637,7 @@ pub fn spawn_kart_visual_with_driver(
                     hit: false,
                     gliding: false,
                     wing: false,
+                    looks,
                 },
                 Transform::default(),
                 Visibility::default(),

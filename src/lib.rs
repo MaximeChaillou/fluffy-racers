@@ -192,7 +192,9 @@ fn spawn_player(
     let driver = looks
         .as_ref()
         .and_then(|looks| looks.get(loadout.character));
-    let visual = spawn_kart_visual_with_driver(&mut commands, &visuals, body, color, driver);
+    // Issue #73: its parts on screen.
+    let looks = roster.looks(&loadout);
+    let visual = spawn_kart_visual_with_driver(&mut commands, &visuals, body, color, driver, looks);
     let projection = Projection::Perspective(PerspectiveProjection {
         fov: camera_tuning.base_fov.to_radians(),
         ..default()
