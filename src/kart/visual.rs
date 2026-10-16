@@ -40,6 +40,7 @@ use serde::Deserialize;
 
 use super::drift::{DriftMotion, MiniTurbo, slip_pose};
 use super::effects::ItemEffects;
+use super::environment::{KartEnvironment, glide_pose};
 use super::model::{KART_MODEL, KartModelData, kart_model_data};
 use super::palette::{KartColor, KartPaint, PALETTE_SIZE};
 use super::physics::HitReaction;
@@ -50,6 +51,7 @@ use super::{Boost, KartAssists, KartState, KartTuning, KartWheels, StatEffects, 
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::models::{Keep, ModelMaterials, ModelSystems, Models};
 use crate::track::circuit::to_mesh;
+use bevy_rapier3d::prelude::Velocity;
 
 const WHEEL_RADIUS: f32 = 0.28;
 const WHEEL_WIDTH: f32 = 0.25;
@@ -171,6 +173,10 @@ pub struct KartBodyPivot {
     tricking: bool,
     /// The body was spinning out or tumbling on the last frame (issue #16).
     hit: bool,
+    /// The body was gliding on the last frame (issue #20): pitched and banked.
+    gliding: bool,
+    /// Issue #20: its glider's wing was fitted (the first time the kart glided).
+    pub(super) wing: bool,
 }
 
 /// An exhaust flame, shown during a boost (GD § 4 and 14).
@@ -249,6 +255,8 @@ impl Plugin for KartVisualPlugin {
                     show_stall_smoke,
                     show_wind_lines,
                     repaint_bodies,
+                    super::environment_visual::show_wings,
+                    super::environment_visual::show_water_effects,
                 )
                     .after(InterpolationSystems)
                     .before(TransformSystems::Propagate),
@@ -284,6 +292,8 @@ pub struct KartVisualAssets {
     wind_material: Handle<StandardMaterial>,
     /// The body's materials, by color ([`KartColor::index`]).
     paints: [Handle<StandardMaterial>; PALETTE_SIZE],
+    /// Issue #20: the glider (a pillowcase on two struts) and the bubbles under water.
+    pub(super) environment: super::environment_visual::EnvironmentLook,
     /// The kart model's meshes, once baked (issue #11).
     model: Option<KartModel>,
 }
@@ -349,6 +359,7 @@ impl KartVisualAssets {
                 ..default()
             }),
             paints: KartColor::ALL.map(|color| materials.add(color.color())),
+            environment: super::environment_visual::EnvironmentLook::new(meshes, materials),
             model: None,
         }
     }
@@ -517,6 +528,7 @@ pub fn spawn_kart_visual_with_driver(
             InterpolatedFrom(body),
             Transform::default(),
             Visibility::default(),
+            super::environment_visual::WaterEffects::default(),
         ))
         .with_children(|kart| {
             for (index, at) in WIND_LINES.iter().enumerate() {
@@ -535,6 +547,8 @@ pub fn spawn_kart_visual_with_driver(
                     spin: TRICK_SPIN_SECONDS,
                     tricking: false,
                     hit: false,
+                    gliding: false,
+                    wing: false,
                 },
                 Transform::default(),
                 Visibility::default(),
@@ -728,12 +742,14 @@ fn pose_bodies(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     deflated_scale: Option<Res<DeflatedScale>>,
+    kart_tuning: Option<Res<KartTuning>>,
     karts: Query<(
         &KartState,
         &DriftMotion,
         &Stall,
         &Invincibility,
         Option<&ItemEffects>,
+        (Option<&KartEnvironment>, Option<&Velocity>),
     )>,
     mut pivots: Query<(&mut KartBodyPivot, &mut Transform, &mut Visibility)>,
 ) {
@@ -742,8 +758,19 @@ fn pose_bodies(
     let now = time.elapsed_secs();
     let small = deflated_scale.map_or(1.0, |s| s.0);
     for (mut pivot, mut transform, mut visibility) in &mut pivots {
-        let Ok((state, motion, stall, invincibility, effects)) = karts.get(pivot.body) else {
+        let Ok((state, motion, stall, invincibility, effects, (environment, velocity))) =
+            karts.get(pivot.body)
+        else {
             continue;
+        };
+        // Issue #20: gliding, the body pitches and banks (shown only).
+        let glide = match (environment, velocity, kart_tuning.as_deref()) {
+            (Some(environment), Some(velocity), Some(tuning)) if environment.gliding => {
+                let (pitch, bank) =
+                    glide_pose(&tuning.environment, velocity.linear, velocity.angular.y);
+                Some(Quat::from_rotation_x(pitch) * Quat::from_rotation_z(-bank))
+            }
+            _ => None,
         };
         visibility.set_if_neq(if shown_with_effects(invincibility, effects, now) {
             Visibility::Inherited
@@ -788,17 +815,21 @@ fn pose_bodies(
             || tricking != pivot.tricking
             || hit.is_some()
             || pivot.hit
+            || glide.is_some()
+            || pivot.gliding
         {
             pivot.slip = slip;
             pivot.spin = spin;
             pivot.tricking = tricking;
             pivot.hit = hit.is_some();
+            pivot.gliding = glide.is_some();
             let t = spin / TRICK_SPIN_SECONDS;
             // Ease in and out; a full turn is the same as none.
             let roll = TAU * t * t * (3.0 - 2.0 * t);
             // The roll turns the body around its center, the slip around the front axle.
             let (yaw, offset) = slip_pose(slip);
-            transform.rotation = hit_rotation * yaw * Quat::from_rotation_z(roll);
+            transform.rotation =
+                glide.unwrap_or(Quat::IDENTITY) * hit_rotation * yaw * Quat::from_rotation_z(roll);
             transform.translation = offset.with_y(height);
         }
         if transform.translation.y != height {

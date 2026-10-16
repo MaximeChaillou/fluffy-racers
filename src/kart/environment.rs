@@ -1,0 +1,620 @@
+//! Special environments (GD § 10, issue #20): under water and the glider. The anti-gravity is
+//! not built yet (its own issue); its terrain stats are ready (`stats.rs`, [`Terrain`]).
+//!
+//! - **Under water**: a kart whose center is under the water of a lake (`crate::track::Lake`,
+//!   with a little hysteresis: [`next_underwater`]) drives with its stats « eau » (the Speed and
+//!   the Handling of [`Terrain::Water`]) and the water's own physics ([`water_tuning`]): slower
+//!   ([`EnvironmentTuning::water_top_speed`], through `MaxSpeedFactors::environment`), floatier
+//!   (less gravity, its jumps and hops slowed by the water, which also brakes harder).
+//! - **The glider**: leaving a glide ramp (`crate::track::GlideRamp`) opens it
+//!   ([`next_gliding`]); the kart then flies with its stats « air » ([`Terrain::Air`]): Up (the
+//!   accelerator) dives, faster and lower; Down (the brake) climbs, slower and higher; Left and
+//!   Right turn it ([`glide_speeds`], [`glide_yaw_target`]). Its descent is slow and smooth,
+//!   whatever the kart did on the ramp. Touching the ground closes it, and so do the water and
+//!   the pelican. Its pitch and bank are only shown ([`glide_pose`]): the simulated body stays
+//!   level (the camera and the collisions do not change).
+//!
+//! The kart only reads its `KartInput`. Everything here is pure and unit-tested, but the two
+//! systems at the end (`KartSystems::Drive`).
+
+use bevy::prelude::*;
+use bevy_rapier3d::prelude::{CollisionGroups, Group};
+
+use super::stats::{StatEffects, Terrain};
+use super::{Kart, KartInput, KartState, KartTuning, MaxSpeedFactors};
+use crate::track::{Lake, water_depth};
+
+/// The knobs of the special environments (GD § 10, issue #20). Our own starting points, à
+/// régler. Speeds in m/s, rates in 1/s, angles in radians. A part of the kart's tuning
+/// ([`KartTuning::environment`], edited with it in the admin panel), not a resource of its own:
+/// the game's world stays exactly what it was before issue #20 on the circuits without a lake
+/// or a glide ramp (a new resource is a new archetype in Bevy, which reorders the colliders in
+/// Rapier, see `STATUS.md`).
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+pub struct EnvironmentTuning {
+    // --- Under water ----------------------------------------------------------------------------
+    /// Top speed multiplier under water (GD § 10: « plus lentes »): 0.9, on top of the kart's
+    /// Speed « eau » (`MaxSpeedFactors::environment`).
+    pub water_top_speed: f32,
+    /// Gravity multiplier under water (GD § 10: « plus flottantes »): 0.5. The hops and jumps last
+    /// longer: the drift's and the hop's times in the air stretch with it.
+    pub water_gravity: f32,
+    /// The water brakes harder: `coast_decel` and `overspeed_decel` multiplied by this under
+    /// water (1.6: entering the water at full speed, the kart slows down to its water top speed
+    /// in about half a second).
+    pub water_drag: f32,
+    /// Off the ground under water, the vertical speed fades at this rate (1/s): floaty jumps.
+    pub water_vertical_drag: f32,
+    /// A kart goes under water once its center is this far below the surface, and out once it is
+    /// this far above it (m): no flicker at the surface.
+    pub water_margin: f32,
+
+    // --- Glider ---------------------------------------------------------------------------------
+    /// The glider opens when the kart flies within this time after a wheel last touched a glide
+    /// ramp (s)...
+    pub glide_open_window: f32,
+    /// ...once no wheel has touched the ground for this many ticks (a bump on the ramp is not a
+    /// takeoff).
+    pub glide_open_ticks: u32,
+    /// Forward speed of a level glide, as a share of the kart's top speed (its Speed « air »,
+    /// its class, its croquettes, a boost): 0.95.
+    pub glide_speed: f32,
+    /// The same diving (Up held): 1.2, faster.
+    pub glide_dive_speed: f32,
+    /// The same climbing (Down held): 0.7, slower.
+    pub glide_climb_speed: f32,
+    /// How fast the forward speed reaches the glide's (m/s²): even a kart that rolled off the
+    /// ramp slowly flies on.
+    pub glide_accel: f32,
+    /// Slope of a level glide: meters down per meter ahead (0.1: a slow descent, the same in
+    /// every class, whatever the speed).
+    pub glide_slope: f32,
+    /// The same diving: steeper.
+    pub glide_dive_slope: f32,
+    /// The same climbing: the glide stays higher, but slower.
+    pub glide_climb_slope: f32,
+    /// A glide always comes down at least this fast (m/s): a slow climb ends too.
+    pub glide_min_sink: f32,
+    /// How fast the vertical speed reaches the glide's slope (1/s): the jump off the ramp fades
+    /// into the glide.
+    pub glide_vertical_response: f32,
+    /// Turn rate at full lock (rad/s), times the Handling « air »'s steering factor.
+    pub glide_turn_rate: f32,
+    /// How fast the turn rate follows the stick (1/s), times the Handling « air »'s
+    /// responsiveness.
+    pub glide_turn_response: f32,
+    /// The wing grips the air: sideways speed fades at this rate (1/s).
+    pub glide_side_grip: f32,
+    /// Shown only: the kart pitches up to this angle (rad), nose down when it sinks faster than a
+    /// level glide, up when slower...
+    pub glide_pitch: f32,
+    /// ...and banks into its turns, up to this angle at full lock (rad).
+    pub glide_bank: f32,
+    /// Shown only: the wing opens (and folds) in this long (s).
+    pub wing_open_seconds: f32,
+}
+
+impl Default for EnvironmentTuning {
+    fn default() -> Self {
+        Self {
+            water_top_speed: 0.9,
+            water_gravity: 0.5,
+            water_drag: 1.6,
+            water_vertical_drag: 1.2,
+            water_margin: 0.15,
+
+            glide_open_window: 0.5,
+            glide_open_ticks: 3,
+            glide_speed: 0.95,
+            glide_dive_speed: 1.2,
+            glide_climb_speed: 0.7,
+            glide_accel: 9.0,
+            glide_slope: 0.1,
+            glide_dive_slope: 0.17,
+            glide_climb_slope: 0.08,
+            glide_min_sink: 1.2,
+            glide_vertical_response: 2.5,
+            glide_turn_rate: 1.1,
+            glide_turn_response: 4.0,
+            glide_side_grip: 6.0,
+            glide_pitch: 0.3,
+            glide_bank: 0.5,
+            wing_open_seconds: 0.3,
+        }
+    }
+}
+
+/// Where a kart is (issue #20): under water, gliding. On every kart; online, on the other peers'
+/// karts too (from their states: `crate::net`), for the visuals.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct KartEnvironment {
+    /// Its center is under the water of a lake.
+    pub underwater: bool,
+    /// Its glider is open.
+    pub gliding: bool,
+    /// Ticks since a wheel last touched a glide ramp (`u32::MAX`: never).
+    pub since_glide_ramp: u32,
+}
+
+impl Default for KartEnvironment {
+    fn default() -> Self {
+        Self {
+            underwater: false,
+            gliding: false,
+            since_glide_ramp: u32::MAX,
+        }
+    }
+}
+
+impl KartEnvironment {
+    /// The terrain its stats use (GD § 9): the air while gliding, the water under water.
+    pub fn terrain(&self) -> Terrain {
+        if self.gliding {
+            Terrain::Air
+        } else if self.underwater {
+            Terrain::Water
+        } else {
+            Terrain::Ground
+        }
+    }
+}
+
+/// Whether a kart is under water now: `depth` is how deep its center is under the surface of the
+/// lake it is over (negative above it; `None`: over no lake). It goes under once `margin` below
+/// the surface and out once `margin` above it.
+pub fn next_underwater(was: bool, depth: Option<f32>, margin: f32) -> bool {
+    match depth {
+        None => false,
+        Some(depth) if was => depth > -margin,
+        Some(depth) => depth > margin,
+    }
+}
+
+/// The kart's tuning under water (`base`: its own, its stats applied): gravity, drag, and the
+/// times allowed in the air stretched as much as the gravity is weaker (a hop lasts longer: it
+/// must still become a drift, and a drift must survive it).
+pub fn water_tuning(base: &KartTuning, env: &EnvironmentTuning) -> KartTuning {
+    let gravity = env.water_gravity.clamp(0.05, 1.0);
+    let stretch = |ticks: u32| (ticks as f32 / gravity).round() as u32;
+    let drag = env.water_drag.max(0.0);
+    KartTuning {
+        gravity_scale: base.gravity_scale * gravity,
+        coast_decel: base.coast_decel * drag,
+        overspeed_decel: base.overspeed_decel * drag,
+        hop_max_ticks: stretch(base.hop_max_ticks),
+        drift_max_air_ticks: stretch(base.drift_max_air_ticks),
+        airborne_grace_ticks: stretch(base.airborne_grace_ticks),
+        ..base.clone()
+    }
+}
+
+/// The collision group of the karts under their glider (issue #20).
+pub const GLIDERS: Group = Group::GROUP_32;
+
+/// A kart's collision groups: under its glider, it meets everything but the other gliders (the
+/// wings are 4 m wide, the flight lasts 2 to 3 s; two gliders side by side used to lock on each
+/// other's corners and spiral together, over the walls or into the lagoon); otherwise, everything.
+pub fn glider_groups(gliding: bool) -> CollisionGroups {
+    if gliding {
+        CollisionGroups::new(GLIDERS, Group::ALL.difference(GLIDERS))
+    } else {
+        CollisionGroups::new(Group::ALL, Group::ALL)
+    }
+}
+
+/// Whether two colliders with these groups meet (Rapier's rule, test mode « and »).
+pub fn groups_meet(a: CollisionGroups, b: CollisionGroups) -> bool {
+    a.memberships.intersects(b.filters) && b.memberships.intersects(a.filters)
+}
+
+/// Whether the glider is open after this tick. It opens once no wheel has touched the ground for
+/// `glide_open_ticks`, within `glide_open_window` of the last glide ramp; it closes as soon as a
+/// wheel touches the ground, under water, or with the pelican (`towed`).
+pub fn next_gliding(
+    tuning: &EnvironmentTuning,
+    environment: &KartEnvironment,
+    wheels_on_ground: usize,
+    ticks_without_ground: u32,
+    towed: bool,
+    dt: f32,
+) -> bool {
+    if towed || environment.underwater || wheels_on_ground > 0 {
+        return false;
+    }
+    if environment.gliding {
+        return true;
+    }
+    let window = (tuning.glide_open_window / dt.max(1e-4)).round() as u32;
+    ticks_without_ground >= tuning.glide_open_ticks && environment.since_glide_ramp <= window
+}
+
+/// The glider's pitch from the stick (GD § 10): Up (the accelerator) dives (+1), Down (the brake)
+/// climbs (-1); both or neither: a level glide.
+pub fn glide_pitch(input: &KartInput) -> f32 {
+    input.throttle.clamp(0.0, 1.0) - input.brake.clamp(0.0, 1.0)
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+/// The glide's forward speed (a share of the kart's top speed) and slope (meters down per meter
+/// ahead) at `pitch`.
+pub fn glide_targets(tuning: &EnvironmentTuning, pitch: f32) -> (f32, f32) {
+    let pitch = pitch.clamp(-1.0, 1.0);
+    if pitch >= 0.0 {
+        (
+            lerp(tuning.glide_speed, tuning.glide_dive_speed, pitch),
+            lerp(tuning.glide_slope, tuning.glide_dive_slope, pitch),
+        )
+    } else {
+        (
+            lerp(tuning.glide_speed, tuning.glide_climb_speed, -pitch),
+            lerp(tuning.glide_slope, tuning.glide_climb_slope, -pitch),
+        )
+    }
+}
+
+/// One tick of `dt` of the glide: the new forward (level) and vertical speeds (m/s). The forward
+/// speed moves toward its share of `top_speed` at `glide_accel`; the vertical speed fades toward
+/// the glide's slope times the forward speed, `glide_min_sink` at least (the jump off the ramp
+/// turns into the glide's slow descent, at the same angle in every class).
+pub fn glide_speeds(
+    tuning: &EnvironmentTuning,
+    top_speed: f32,
+    forward: f32,
+    vertical: f32,
+    pitch: f32,
+    dt: f32,
+) -> (f32, f32) {
+    let (share, slope) = glide_targets(tuning, pitch);
+    let target = top_speed.max(0.0) * share;
+    let step = tuning.glide_accel.max(0.0) * dt;
+    let forward = forward + (target - forward).clamp(-step, step);
+    let sink = (slope.max(0.0) * forward.max(0.0)).max(tuning.glide_min_sink);
+    let fade = (-tuning.glide_vertical_response.max(0.0) * dt).exp();
+    let vertical = -sink + (vertical + sink) * fade;
+    (forward, vertical)
+}
+
+/// The glide's target yaw rate (rad/s, right turns negative like the ground's): the stick times
+/// the turn rate, times `steer_rate`, the Handling « air »'s factor (`StatEffects::steer_rate` on
+/// [`Terrain::Air`]).
+pub fn glide_yaw_target(tuning: &EnvironmentTuning, steer: f32, steer_rate: f32) -> f32 {
+    -steer.clamp(-1.0, 1.0) * tuning.glide_turn_rate * steer_rate
+}
+
+/// How a gliding kart is shown (rad): its pitch (positive: nose up) and its bank (positive:
+/// rolled to the right), from its velocity and its yaw rate only (what the other peers know too):
+/// nose down when it comes down steeper than a level glide (diving), up when flatter (climbing,
+/// or still rising off the ramp); banked into its turns.
+pub fn glide_pose(tuning: &EnvironmentTuning, velocity: Vec3, yaw_rate: f32) -> (f32, f32) {
+    let slope = -velocity.y / velocity.xz().length().max(1.0);
+    let span = (tuning.glide_dive_slope - tuning.glide_slope)
+        .abs()
+        .max(0.01);
+    let pitch = ((tuning.glide_slope - slope) / span).clamp(-1.0, 1.0) * tuning.glide_pitch;
+    let turn = tuning.glide_turn_rate.abs().max(0.1);
+    // A right turn is a negative yaw rate: roll to the right.
+    let bank = (-yaw_rate / turn).clamp(-1.0, 1.0) * tuning.glide_bank;
+    (pitch, bank)
+}
+
+/// Every kart over a lake goes under water or out of it (`next_underwater`); under water, its
+/// glider closes. Carried by the pelican, never under water.
+pub(super) fn detect_water(
+    tuning: Res<KartTuning>,
+    lakes: Query<&Lake>,
+    mut karts: Query<(&Transform, &KartState, &mut KartEnvironment), With<Kart>>,
+) {
+    let tuning = &tuning.environment;
+    for (transform, state, mut environment) in &mut karts {
+        let depth = water_depth(lakes.iter(), transform.translation);
+        let under = *state != KartState::Respawning
+            && next_underwater(environment.underwater, depth, tuning.water_margin);
+        if under != environment.underwater {
+            environment.underwater = under;
+            if under {
+                environment.gliding = false;
+            }
+        }
+    }
+}
+
+/// The top speed factors of the kart's terrain: its Speed there (`MaxSpeedFactors::stats`) and
+/// the water's slowness (`MaxSpeedFactors::environment`). Written only when they change: on the
+/// ground, exactly what the kart was spawned with. Under its glider, the kart's collision groups
+/// ([`glider_groups`]), given the first time it glides: a kart that never glides keeps none (the
+/// default, everything), as before issue #20.
+pub(super) fn apply_environments(
+    mut commands: Commands,
+    tuning: Res<KartTuning>,
+    mut karts: Query<
+        (
+            Entity,
+            &KartEnvironment,
+            &StatEffects,
+            &mut MaxSpeedFactors,
+            Option<&mut CollisionGroups>,
+        ),
+        With<Kart>,
+    >,
+) {
+    let tuning = &tuning.environment;
+    for (entity, environment, effects, mut factors, groups) in &mut karts {
+        let wanted = glider_groups(environment.gliding);
+        match groups {
+            Some(mut groups) => {
+                groups.set_if_neq(wanted);
+            }
+            None if environment.gliding => {
+                commands.entity(entity).insert(wanted);
+            }
+            None => {}
+        }
+        let stats = effects.on(environment.terrain()).top_speed;
+        let water = if environment.underwater {
+            tuning.water_top_speed
+        } else {
+            1.0
+        };
+        if factors.stats != stats || factors.environment != water {
+            factors.stats = stats;
+            factors.environment = water;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DT: f32 = 1.0 / 60.0;
+
+    /// Under the surface by more than the margin to go in, above it by more than the margin to
+    /// come out: a kart bobbing at the surface does not flicker.
+    #[test]
+    fn a_kart_goes_under_water_and_out_with_a_margin() {
+        let m = 0.15;
+        assert!(!next_underwater(false, None, m));
+        assert!(!next_underwater(true, None, m), "out of the lake: out");
+        assert!(!next_underwater(false, Some(0.1), m));
+        assert!(next_underwater(false, Some(0.2), m));
+        assert!(next_underwater(true, Some(-0.1), m), "still under");
+        assert!(!next_underwater(true, Some(-0.2), m));
+        assert!(!next_underwater(false, Some(-3.0), m));
+    }
+
+    /// Under their glider, karts meet the track, the karts on the ground and everything else, but
+    /// not the other gliders; back on the ground, everything again.
+    #[test]
+    fn gliders_fly_through_each_other_and_nothing_else() {
+        let (glider, kart) = (glider_groups(true), glider_groups(false));
+        let anything = CollisionGroups::new(Group::ALL, Group::ALL);
+        assert!(!groups_meet(glider, glider), "two gliders");
+        assert!(groups_meet(glider, kart) && groups_meet(kart, glider));
+        assert!(groups_meet(glider, anything), "the track, an item");
+        assert!(groups_meet(kart, kart) && groups_meet(kart, anything));
+        assert_eq!(
+            kart, anything,
+            "on the ground: everything, like a collider without groups"
+        );
+    }
+
+    /// The knobs are in the admin panel, which edits `KartTuning` by reflection: every one of
+    /// them is a reflected field of `KartTuning::environment`, at its default.
+    #[test]
+    fn the_knobs_are_reflected_in_the_kart_tuning() {
+        use bevy::reflect::ReflectRef;
+        let tuning = KartTuning::default();
+        let ReflectRef::Struct(kart) = tuning.reflect_ref() else {
+            panic!("KartTuning is a struct");
+        };
+        let environment = kart.field("environment").expect("KartTuning::environment");
+        let ReflectRef::Struct(environment) = environment.reflect_ref() else {
+            panic!("EnvironmentTuning is a struct");
+        };
+        let defaults = EnvironmentTuning::default();
+        let ReflectRef::Struct(expected) = defaults.reflect_ref() else {
+            unreachable!()
+        };
+        assert_eq!(environment.field_len(), expected.field_len());
+        assert!(environment.field_len() >= 20, "{}", environment.field_len());
+        for name in [
+            "water_top_speed",
+            "water_gravity",
+            "glide_slope",
+            "glide_turn_rate",
+        ] {
+            assert!(environment.field(name).is_some(), "{name}");
+        }
+        assert_eq!(tuning.environment, defaults);
+    }
+
+    /// GD § 10: slower and floatier under water. The gravity is weaker and the times allowed in
+    /// the air stretch with it; the water brakes harder; the rest is the kart's.
+    #[test]
+    fn the_water_is_floaty_and_brakes() {
+        let base = KartTuning::default();
+        let env = EnvironmentTuning::default();
+        let water = water_tuning(&base, &env);
+        assert!((water.gravity_scale - base.gravity_scale * 0.5).abs() < 1e-6);
+        assert_eq!(water.hop_max_ticks, 60);
+        assert_eq!(water.drift_max_air_ticks, 60);
+        assert_eq!(water.airborne_grace_ticks, 8);
+        assert!(water.coast_decel > base.coast_decel);
+        assert!(water.overspeed_decel > base.overspeed_decel);
+        let unchanged = KartTuning {
+            gravity_scale: base.gravity_scale,
+            coast_decel: base.coast_decel,
+            overspeed_decel: base.overspeed_decel,
+            hop_max_ticks: base.hop_max_ticks,
+            drift_max_air_ticks: base.drift_max_air_ticks,
+            airborne_grace_ticks: base.airborne_grace_ticks,
+            ..water.clone()
+        };
+        assert_eq!(unchanged, base);
+        assert!(env.water_top_speed < 1.0);
+        // A hop under water (no drag on the way up): about twice as long, still a hop.
+        let g = 9.81 * water.gravity_scale;
+        let hop_ticks = 2.0 * base.hop_speed / g / DT;
+        assert!(hop_ticks < water.hop_max_ticks as f32, "{hop_ticks}");
+        // Silly values do not break it.
+        let silly = water_tuning(
+            &base,
+            &EnvironmentTuning {
+                water_gravity: 0.0,
+                water_drag: -1.0,
+                ..env
+            },
+        );
+        assert!(silly.gravity_scale > 0.0 && silly.coast_decel == 0.0);
+    }
+
+    /// The glider opens off a glide ramp only, once in the air for a few ticks, and closes on the
+    /// ground, under water or with the pelican.
+    #[test]
+    fn the_glider_opens_off_a_glide_ramp_and_closes_on_the_ground() {
+        let t = EnvironmentTuning::default();
+        let off_ramp = KartEnvironment {
+            since_glide_ramp: 2,
+            ..default()
+        };
+        assert!(!next_gliding(&t, &off_ramp, 0, 2, false, DT), "a bump");
+        assert!(next_gliding(&t, &off_ramp, 0, 3, false, DT));
+        assert!(!next_gliding(&t, &off_ramp, 1, 3, false, DT));
+        let long_ago = KartEnvironment {
+            since_glide_ramp: 31,
+            ..default()
+        };
+        assert!(!next_gliding(&t, &long_ago, 0, 40, false, DT));
+        assert!(!next_gliding(
+            &t,
+            &KartEnvironment::default(),
+            0,
+            40,
+            false,
+            DT
+        ));
+        let gliding = KartEnvironment {
+            gliding: true,
+            since_glide_ramp: 400,
+            ..default()
+        };
+        assert!(
+            next_gliding(&t, &gliding, 0, 400, false, DT),
+            "it stays open"
+        );
+        assert!(!next_gliding(&t, &gliding, 2, 0, false, DT), "landed");
+        assert!(!next_gliding(&t, &gliding, 0, 400, true, DT), "the pelican");
+        let wet = KartEnvironment {
+            underwater: true,
+            ..gliding
+        };
+        assert!(!next_gliding(&t, &wet, 0, 400, false, DT));
+        let wet = KartEnvironment {
+            underwater: true,
+            ..default()
+        };
+        assert_eq!(gliding.terrain(), Terrain::Air);
+        assert_eq!(wet.terrain(), Terrain::Water);
+        assert_eq!(KartEnvironment::default().terrain(), Terrain::Ground);
+    }
+
+    /// Up dives (faster, lower), Down climbs (slower, higher), neither glides level; the jump off
+    /// the ramp fades into a slow descent, at the speed of the glide whatever the kart's speed
+    /// on the ramp; diving lands sooner than gliding level, which lands sooner than climbing.
+    #[test]
+    fn the_glide_dives_climbs_and_sinks_slowly() {
+        let t = EnvironmentTuning::default();
+        let up = KartInput {
+            throttle: 1.0,
+            ..default()
+        };
+        let down = KartInput {
+            brake: 1.0,
+            ..default()
+        };
+        assert_eq!(glide_pitch(&up), 1.0);
+        assert_eq!(glide_pitch(&down), -1.0);
+        assert_eq!(glide_pitch(&KartInput::default()), 0.0);
+        let (dive, dive_slope) = glide_targets(&t, 1.0);
+        let (level, level_slope) = glide_targets(&t, 0.0);
+        let (climb, climb_slope) = glide_targets(&t, -1.0);
+        assert!(dive > level && level > climb);
+        assert!(dive_slope > level_slope && level_slope > climb_slope && climb_slope > 0.0);
+        // A flight from a lip 11.7 m above the landing, off a 12° ramp at `speed`, with a top
+        // speed of `top` (the class): how far, at what speeds, and how high after 61 m.
+        let flight = |pitch: f32, speed: f32, top: f32| {
+            let (mut forward, mut vertical) = (speed, speed * 12f32.to_radians().sin());
+            let (mut height, mut distance, mut ticks) = (11.7f32, 0.0f32, 0u32);
+            let mut over_the_gap = f32::MAX;
+            while height > 0.0 {
+                (forward, vertical) = glide_speeds(&t, top, forward, vertical, pitch, DT);
+                height += vertical * DT;
+                distance += forward * DT;
+                if distance <= 61.0 {
+                    over_the_gap = height;
+                }
+                ticks += 1;
+                assert!(ticks < 60 * 30, "never lands");
+            }
+            (distance, forward, vertical, over_the_gap)
+        };
+        for top in [21.4, 28.5, 35.6] {
+            let (dive_distance, dive_speed, dive_vertical, cleared) = flight(1.0, 20.0, top);
+            let (level_distance, level_speed, level_vertical, _) = flight(0.0, top, top);
+            let (climb_distance, ..) = flight(-1.0, top, top);
+            assert!(
+                dive_distance < level_distance && level_distance < climb_distance,
+                "{top}"
+            );
+            assert!((dive_speed - top * dive).abs() < 0.5, "{dive_speed}");
+            assert!((level_speed - top * level).abs() < 0.5, "{level_speed}");
+            assert!((dive_vertical + dive_slope * dive_speed).abs() < 0.3);
+            let level_sink = (level_slope * level_speed).max(t.glide_min_sink);
+            assert!((level_vertical + level_sink).abs() < 0.3);
+            // Even a full dive off the ramp at 20 m/s, in any class, is still 3 m up after the
+            // 61 m of the lagoon's gap; a level glide lands within 200 m, a climb within 280 m.
+            assert!(cleared > 3.0, "{top}: {cleared}");
+            assert!(level_distance < 200.0, "{top}: {level_distance}");
+            assert!(climb_distance < 280.0, "{top}: {climb_distance}");
+            // A kart that rolled off the ramp slowly still flies on.
+            let (slow_distance, slow_speed, ..) = flight(0.0, 6.0, top);
+            assert!(slow_distance > 61.0 && (slow_speed - top * level).abs() < 0.5);
+        }
+        // However slow, a glide comes down.
+        let (_, vertical) = glide_speeds(&t, 5.0, 2.0, -0.1, -1.0, 10.0);
+        assert!((vertical + t.glide_min_sink).abs() < 1e-3, "{vertical}");
+        // The stick turns it, the Handling « air » more or less.
+        assert!(
+            glide_yaw_target(&t, 1.0, 1.0) < 0.0,
+            "right: a negative yaw"
+        );
+        assert!(glide_yaw_target(&t, -1.0, 1.1) > glide_yaw_target(&t, -1.0, 1.0));
+        assert_eq!(
+            glide_yaw_target(&t, 3.0, 1.0),
+            glide_yaw_target(&t, 1.0, 1.0)
+        );
+    }
+
+    /// Shown only: nose down diving, up climbing or rising off the ramp, level in a level glide;
+    /// banked into the turns.
+    #[test]
+    fn the_glider_pitches_and_banks_on_screen() {
+        let t = EnvironmentTuning::default();
+        let (level, _) = glide_pose(&t, Vec3::new(0.0, -t.glide_slope * 27.0, -27.0), 0.0);
+        assert!(level.abs() < 1e-5);
+        let (dive, _) = glide_pose(&t, Vec3::new(0.0, -t.glide_dive_slope * 34.0, -34.0), 0.0);
+        assert!((dive + t.glide_pitch).abs() < 1e-5, "{dive}");
+        let (rise, _) = glide_pose(&t, Vec3::new(0.0, 6.0, -28.0), 0.0);
+        assert_eq!(rise, t.glide_pitch);
+        let (climb, _) = glide_pose(&t, Vec3::new(0.0, -t.glide_climb_slope * 20.0, -20.0), 0.0);
+        assert!(climb > 0.0 && climb < t.glide_pitch);
+        let (_, right) = glide_pose(&t, Vec3::NEG_Z, -t.glide_turn_rate);
+        assert_eq!(right, t.glide_bank);
+        let (_, left) = glide_pose(&t, Vec3::NEG_Z, 5.0);
+        assert_eq!(left, -t.glide_bank);
+    }
+}

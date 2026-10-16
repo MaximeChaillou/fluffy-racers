@@ -188,4 +188,50 @@
              count: 70, height: (0.5, 1.0), radius: 0.7, distance: (0.2, 14.0), shadows: false),
         ],
     ),
+    (
+        // A tropical lagoon at the foot of a cliff (issue #20): palm trees, grey rocks, tall
+        // rocks and old statues (Nature Kit), rowing boats pulled up on the shore and beach
+        // grass (Pirate Kit). The water itself is the circuit's (its lakes).
+        name: "Lagon",
+        palette: (
+            sky: (0.40, 0.76, 0.96),
+            ambient: (0.94, 1.0, 0.98),
+            ambient_brightness: 730.0,
+            ground: (0.80, 0.84, 0.52),
+            asphalt: (0.46, 0.44, 0.52),
+            curbs: ((0.10, 0.70, 0.66), (0.97, 0.97, 0.97)),
+            shoulder: (0.52, 0.76, 0.40),
+            sand: (0.96, 0.88, 0.66),
+            walls: ((0.97, 0.96, 0.92), (0.96, 0.46, 0.40)),
+            wall_top: (0.99, 0.98, 0.95),
+            skirt: (0.58, 0.50, 0.44),
+        ),
+        rows: [
+            // Short palm trees along the outside of the loop, two kinds in turn.
+            (models: ["nature-kit/tree_palmShort", "nature-kit/tree_palmDetailedShort"],
+             spacing: 30.0, offset: 12.0, height: 4.5, radius: 1.6, gap: 0.8, side: Outside),
+        ],
+        scatter: [
+            // Tall palm trees, both sides.
+            (models: ["nature-kit/tree_palm", "nature-kit/tree_palmBend", "nature-kit/tree_palmTall",
+                      "nature-kit/tree_palmDetailedTall"],
+             count: 44, height: (6.5, 10.0), radius: 2.4, distance: (2.0, 30.0)),
+            // Grey rocks and tall rocks.
+            (models: ["pirate-kit/rocks-a", "pirate-kit/rocks-b", "pirate-kit/rocks-c"],
+             count: 16, height: (1.2, 2.6), radius: 2.2, distance: (1.0, 24.0)),
+            (models: ["nature-kit/rock_tallB", "nature-kit/rock_tallC"],
+             count: 10, height: (3.0, 5.5), radius: 2.2, distance: (4.0, 30.0)),
+            // Old statues, here and there.
+            (models: ["nature-kit/statue_head", "nature-kit/statue_obelisk", "nature-kit/statue_column"],
+             count: 7, height: (2.5, 4.5), radius: 1.6, distance: (2.0, 20.0)),
+            // Rowing boats on the shore.
+            (models: ["pirate-kit/boat-row-small"],
+             count: 5, height: (0.8, 1.1), radius: 2.0, distance: (1.0, 14.0)),
+            // Small plants and flowers: no shadows.
+            (models: ["nature-kit/plant_bushSmall", "nature-kit/grass_leafs", "pirate-kit/grass-plant"],
+             count: 60, height: (0.5, 1.0), radius: 0.7, distance: (0.2, 14.0), shadows: false),
+            (models: ["nature-kit/flower_redB", "nature-kit/flower_yellowB"],
+             count: 70, height: (0.4, 0.7), radius: 0.35, distance: (0.2, 12.0), shadows: false),
+        ],
+    ),
 ]

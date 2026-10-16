@@ -32,6 +32,8 @@ mod bump;
 mod class;
 mod drift;
 mod effects;
+mod environment;
+mod environment_visual;
 mod input;
 pub mod model;
 mod palette;
@@ -48,6 +50,12 @@ pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
 pub use class::{RaceClass, SpeedClass, SpeedClassTuning, drift_brake_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
+pub use environment::{
+    EnvironmentTuning, GLIDERS, KartEnvironment, glide_pitch, glide_pose, glide_speeds,
+    glide_targets, glide_yaw_target, glider_groups, groups_meet, next_gliding, next_underwater,
+    water_tuning,
+};
+pub use environment_visual::{Bubble, WaterEffects, Wing};
 pub use input::{
     DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
     JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
@@ -65,7 +73,8 @@ pub use rocket::{
 pub use slipstream::{BOOST_PAD_REACH, Slipstream, fast_enough_for_slipstream, in_wake, over_pad};
 pub use stats::{
     Invincibility, KartStats, MAX_LEVEL, MAX_PART_POINTS, MIDDLE_LEVEL, Stat, StatEffects,
-    StatPoints, StatRange, StatsTuning, display_level, strike_push_factor, tether_force_scale,
+    StatPoints, StatRange, StatsTuning, Terrain, TerrainEffects, TerrainRanges, display_level,
+    strike_push_factor, tether_force_scale,
 };
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
@@ -81,7 +90,7 @@ use bevy_rapier3d::prelude::*;
 use bevy_rapier3d::rapier::geometry::Collider as RapierCollider;
 
 use crate::interpolation::PhysicsPose;
-use crate::track::{BoostPad, Surface, TrickRamp};
+use crate::track::{BoostPad, GlideRamp, Surface, TrickRamp};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
     approach_yaw_rate, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
@@ -132,7 +141,8 @@ pub struct KartInput {
     Shove,
     TetherPull,
     ItemEffects,
-    Autopilot
+    Autopilot,
+    KartEnvironment
 )]
 pub struct Kart;
 
@@ -199,6 +209,9 @@ pub struct MaxSpeedFactors {
     /// The speed class of the race (GD § 1, issue #19, [`SpeedClassTuning::speed`]): exactly 1
     /// at 150cc.
     pub class: f32,
+    /// The environment (GD § 10, issue #20, [`EnvironmentTuning::water_top_speed`]): slower under
+    /// water; exactly 1 elsewhere.
+    pub environment: f32,
 }
 
 impl Default for MaxSpeedFactors {
@@ -210,14 +223,22 @@ impl Default for MaxSpeedFactors {
             tether: 1.0,
             items: 1.0,
             class: 1.0,
+            environment: 1.0,
         }
     }
 }
 
 impl MaxSpeedFactors {
     pub fn product(&self) -> f32 {
-        // The class last: at 150cc (1), exactly the product before the classes.
-        self.catch_up * self.croquettes * self.stats * self.tether * self.items * self.class
+        // The class, then the environment last: at 150cc and on the ground (1 and 1), exactly
+        // the product before them.
+        self.catch_up
+            * self.croquettes
+            * self.stats
+            * self.tether
+            * self.items
+            * self.class
+            * self.environment
     }
 }
 
@@ -313,6 +334,8 @@ impl Plugin for KartPlugin {
                 FixedUpdate,
                 (
                     apply_speed_class,
+                    environment::detect_water,
+                    environment::apply_environments,
                     combine_max_speed_factors,
                     boost_pads,
                     charge_slipstreams,
@@ -631,7 +654,7 @@ fn drive_karts(
     time: Res<Time>,
     rapier: ReadRapierContext,
     surfaces: Query<&Surface>,
-    ramps: Query<(), With<TrickRamp>>,
+    (ramps, glide_ramps): (Query<(), With<TrickRamp>>, Query<(), With<GlideRamp>>),
     mut karts: Query<
         (
             &Transform,
@@ -646,7 +669,13 @@ fn drive_karts(
             &mut DriftMotion,
             &mut KartWheels,
             &mut Velocity,
-            (&mut Shove, &TetherPull, &ItemEffects, &Autopilot),
+            (
+                &mut Shove,
+                &TetherPull,
+                &ItemEffects,
+                &Autopilot,
+                &mut KartEnvironment,
+            ),
             &mut ExternalForce,
             &mut GravityScale,
         ),
@@ -661,6 +690,8 @@ fn drive_karts(
         return;
     };
     let base = &*tuning;
+    // Issue #20: the special environments' knobs.
+    let environment_tuning = &base.environment;
     // Issue #19 (GD § 3 point 7): in 200cc, braking in a drift tightens it.
     let brake_drift = class_tuning.brake_drift(class.0);
     // The trick window in ticks (GD § 5: about 0.2 s).
@@ -691,16 +722,28 @@ fn drive_karts(
         mut motion,
         mut wheels,
         mut velocity,
-        (mut shove, pull, item_effects, autopilot),
+        (mut shove, pull, item_effects, autopilot, mut environment),
         mut force,
         mut gravity,
     ) in &mut karts
     {
         // This kart's tuning: `KartTuning` with its stats applied (exactly `KartTuning` at the
-        // middle level).
-        let kart_tuning = effects.tuning(base);
+        // middle level), those of its terrain (issue #20: in the air, under water), and under
+        // water the water's physics.
+        let effects = effects.on(environment.terrain());
+        let mut kart_tuning = effects.tuning(base);
+        if environment.underwater {
+            kart_tuning = std::borrow::Cow::Owned(water_tuning(&kart_tuning, environment_tuning));
+        }
         let tuning = &*kart_tuning;
         if *state == KartState::Respawning {
+            // Issue #20: the pelican folds the glider.
+            if environment.gliding || environment.since_glide_ramp != u32::MAX {
+                *environment = KartEnvironment {
+                    underwater: environment.underwater,
+                    ..default()
+                };
+            }
             if *motion != DriftMotion::default() {
                 *motion = DriftMotion::default();
             }
@@ -757,6 +800,7 @@ fn drive_karts(
         let mut grounded = 0;
         let mut offroad = 0;
         let mut on_trick_ramp = false;
+        let mut on_glide_ramp = false;
         for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
             let origin = transform.transform_point(*anchor);
             let hit = context.cast_ray_and_get_normal(
@@ -786,6 +830,7 @@ fn drive_karts(
                 offroad += 1;
             }
             on_trick_ramp |= ramps.contains(hit_entity);
+            on_glide_ramp |= glide_ramps.contains(hit_entity);
             wheels.compression[i] = compression;
             wheels.on_ground[i] = true;
         }
@@ -800,6 +845,23 @@ fn drive_karts(
         } else {
             wheels.ticks_without_ground = wheels.ticks_without_ground.saturating_add(1);
         }
+        // Issue #20: the glider opens off a glide ramp and folds on the ground.
+        let mut env = *environment;
+        env.since_glide_ramp = if on_glide_ramp {
+            0
+        } else {
+            env.since_glide_ramp.saturating_add(1)
+        };
+        env.gliding = next_gliding(
+            environment_tuning,
+            &env,
+            grounded,
+            wheels.ticks_without_ground,
+            false,
+            dt,
+        );
+        environment.set_if_neq(env);
+        let gliding = env.gliding;
         let normal = wheels.ground_normal;
         let ahead = (forward - normal * forward.dot(normal)).normalize_or(forward);
         let right = ahead.cross(normal);
@@ -849,8 +911,10 @@ fn drive_karts(
             // Hop: at least `hop_speed` along the ground normal (never stacks on a bump).
             linvel += normal * (tuning.hop_speed - linvel.dot(normal)).max(0.0);
         }
-        if gravity.0 != tuning.gravity_scale {
-            gravity.0 = tuning.gravity_scale;
+        // Gliding, the glide sets the vertical speed itself (issue #20).
+        let gravity_scale = if gliding { 0.0 } else { tuning.gravity_scale };
+        if gravity.0 != gravity_scale {
+            gravity.0 = gravity_scale;
         }
         // The drift's curve and slip set in and fade out progressively (issue #30), from the
         // rotation the kart has now.
@@ -893,13 +957,55 @@ fn drive_karts(
             if grounded == 0 {
                 up_speed = up_speed.min(0.0);
             }
+            if gliding {
+                // Over a gap (issue #20), it flies along its line: toward the height of its
+                // point, never steeper down than a dive.
+                let sink = environment_tuning.glide_dive_slope * autopilot.speed.max(0.0);
+                up_speed = ((autopilot.target.y - transform.translation.y) * 2.0).clamp(-sink, 2.0);
+            }
             velocity.linear = travel * new_forward + normal * up_speed;
             let tilt = angvel - normal * angvel.dot(normal);
             velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
             shove.set_if_neq(Shove::default());
             continue;
         }
-        if ground_handling {
+        if gliding {
+            // The glider (GD § 10, issue #20): Up dives, Down climbs, Left and Right turn, with
+            // the stats « air » (`effects`, this tick's terrain). The body stays level and turns
+            // back upright; its pitch and bank are only shown.
+            let env_tuning = environment_tuning;
+            let level = Vec3::new(forward.x, 0.0, forward.z).normalize_or(Vec3::NEG_Z);
+            let forward_speed = linvel.dot(level);
+            let top = max_speed(tuning, 0.0, &boost) * speed_scale.0.max(0.0);
+            let (new_forward, new_up) = glide_speeds(
+                env_tuning,
+                top,
+                forward_speed,
+                linvel.y,
+                glide_pitch(input),
+                dt,
+            );
+            let side = linvel - level * forward_speed - Vec3::Y * linvel.y;
+            let side = side * (-env_tuning.glide_side_grip.max(0.0) * dt).exp();
+            // A glider does not spin: a bump in the air (another glider, at the takeoff) turns
+            // it no faster than its own full turn (the wing), or the bump would throw it off its
+            // line, over the walls or into the lagoon.
+            let full_turn = glide_yaw_target(env_tuning, 1.0, effects.steer_rate).abs();
+            let yaw = angvel.y.clamp(-full_turn, full_turn);
+            let target = glide_yaw_target(env_tuning, input.steer, effects.steer_rate);
+            let new_yaw = approach_yaw_rate(
+                yaw,
+                target,
+                env_tuning.glide_turn_response * effects.steer_response,
+                dt,
+            );
+            let travel = Quat::from_rotation_y(new_yaw * dt) * level;
+            velocity.linear = travel * new_forward + side + Vec3::Y * new_up + pull.accel * dt;
+            let tilt = angvel - Vec3::Y * angvel.y;
+            let righting = righting_angular_velocity(up, Vec3::Y, tuning.righting_rate);
+            let blend = 1.0 - (-tuning.air_rotation_response * dt).exp();
+            velocity.angular = Vec3::Y * new_yaw + tilt + (righting - tilt) * blend;
+        } else if ground_handling {
             let forward_speed = linvel.dot(ahead);
             // Towed by a tether (GD § 15), the kart neither accelerates by itself nor slows down
             // between its own top speed and its partner's: the tether pulls it there.
@@ -983,6 +1089,12 @@ fn drive_karts(
             velocity.angular =
                 Vec3::Y * next_yaw_rate(tuning, yaw, target, dt) + tilt + (righting - tilt) * blend;
         }
+        // Under water, off the ground, the water slows the jumps and the falls (issue #20).
+        if env.underwater && grounded == 0 {
+            let up_speed = velocity.linear.y;
+            let fade = (-environment_tuning.water_vertical_drag.max(0.0) * dt).exp();
+            velocity.linear.y = up_speed * fade;
+        }
         // The push, fading by itself (`push.rs`).
         if shove.is_active() {
             let push = shove.step(carried, dt);
@@ -991,5 +1103,7 @@ fn drive_karts(
     }
 }
 
+#[cfg(test)]
+mod environment_tests;
 #[cfg(test)]
 mod scenario_tests;

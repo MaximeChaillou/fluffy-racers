@@ -50,8 +50,8 @@ use bevy_rapier3d::prelude::{PhysicsSet, Velocity};
 use crate::TICK_HZ;
 use crate::interpolation::PhysicsPose;
 use crate::kart::{
-    Boost, Invincibility, Kart, KartInput, KartState, KartSystems, KartTuning, PlayerKart, Stall,
-    StartOutcome, StartPress, start_outcome,
+    Boost, Invincibility, Kart, KartEnvironment, KartInput, KartState, KartSystems, KartTuning,
+    PlayerKart, Stall, StartOutcome, StartPress, start_outcome,
 };
 use crate::track::TrackLayout;
 
@@ -504,7 +504,8 @@ fn gate_inputs(
     }
 }
 
-/// Checkpoints, laps and finish; the tow pelican's watch and carry.
+/// Checkpoints, laps and finish; the tow pelican's watch and carry. Issue #20: a kart under its
+/// glider is not out of the track while it flies over the walls (it is if it lands beyond them).
 fn update_progress(
     race: Res<Race>,
     course: Res<Course>,
@@ -519,14 +520,24 @@ fn update_progress(
             &mut Velocity,
             &mut KartState,
             &mut Boost,
+            &KartEnvironment,
         ),
         With<Kart>,
     >,
 ) {
     let started = race.started();
     let race_ticks = started.then_some(race.race_ticks());
-    for (racer, mut progress, mut tow, input, mut transform, mut velocity, mut state, mut boost) in
-        &mut racers
+    for (
+        racer,
+        mut progress,
+        mut tow,
+        input,
+        mut transform,
+        mut velocity,
+        mut state,
+        mut boost,
+        environment,
+    ) in &mut racers
     {
         let projection = course.project(progress.passed, transform.translation);
         progress.update(&course, &projection, race_ticks, !tow.is_carrying());
@@ -553,7 +564,8 @@ fn update_progress(
             let observation = TowObservation {
                 position: transform.translation,
                 trying_to_move: input.throttle > 0.5 || input.brake > 0.5,
-                outside: course.outside_walls(&watched, tuning.outside_margin),
+                outside: !environment.gliding
+                    && course.outside_walls(&watched, tuning.outside_margin),
                 height: watched.height,
             };
             if let Some(reason) = tow.observe(&tuning, &observation) {

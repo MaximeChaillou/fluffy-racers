@@ -12,6 +12,7 @@ use super::biome::{BiomeData, Side};
 use super::data::PropData;
 use super::layout::{CenterLine, TrackSample};
 use super::mesh::{GROUND_HEIGHT, WALL_THICKNESS, wall_offset};
+use super::water::Lake;
 use crate::bots::BotRng;
 
 /// Room kept between a piece's footprint and the walls' outer face, on top of what the file asks
@@ -203,14 +204,23 @@ fn on_the_ground(p: Vec2) -> Vec3 {
 
 /// Places the decor of a circuit: first its file's `props` (where it says, left out where there
 /// is no room), then its biome's rows along the walls, then the biome's scattered pieces
-/// (`seed`), each one where it does not touch the circuit nor a piece already there, and never a
-/// high one inside a tight turn.
+/// (`seed`), each one where it does not touch the circuit nor a piece already there, never a
+/// high one inside a tight turn, and never in a lake (issue #20: on the water, or in its basin).
 pub fn place_decor(
     center: &CenterLine,
     biome: Option<&BiomeData>,
     props: &[PropData],
     seed: u64,
+    lakes: &[Lake],
 ) -> DecorPlan {
+    let wet = |p: Vec2, radius: f32| {
+        lakes.iter().any(|lake| {
+            p.x + radius >= lake.min.x
+                && p.x - radius <= lake.max.x
+                && p.y + radius >= lake.min.y
+                && p.y - radius <= lake.max.y
+        })
+    };
     let samples = center.samples();
     let inside = inside_sign(center);
     let turns = tight_turns(center);
@@ -226,6 +236,7 @@ pub fn place_decor(
             if !clear_of_the_circuit(samples, p, prop.radius)
                 || plan.overlaps(p, prop.radius)
                 || hides_a_turn(&turns, p, prop.height)
+                || wet(p, prop.radius)
             {
                 plan.left_out
                     .push(format!("{} at {} (side {side})", prop.model, prop.at));
@@ -256,6 +267,7 @@ pub fn place_decor(
                 if clear_of_the_circuit(samples, p, row.radius)
                     && !plan.overlaps(p, row.radius)
                     && !hides_a_turn(&turns, p, row.height)
+                    && !wet(p, row.radius)
                 {
                     let model = plan.model(&row.models[turn % row.models.len()]);
                     turn += 1;
@@ -286,6 +298,7 @@ pub fn place_decor(
                 if !clear_of_the_circuit(samples, p, group.radius)
                     || plan.overlaps(p, group.radius)
                     || hides_a_turn(&turns, p, height)
+                    || wet(p, group.radius)
                 {
                     continue;
                 }
@@ -323,9 +336,19 @@ mod tests {
         (data, center)
     }
 
+    fn lakes_of(data: &TrackData) -> Vec<Lake> {
+        data.lakes.iter().map(Lake::new).collect()
+    }
+
     fn plan_of(file: &str) -> (TrackData, CenterLine, DecorPlan) {
         let (data, center) = circuit(file);
-        let plan = place_decor(&center, data.biome(), &data.props, data.decor_seed);
+        let plan = place_decor(
+            &center,
+            data.biome(),
+            &data.props,
+            data.decor_seed,
+            &lakes_of(&data),
+        );
         (data, center, plan)
     }
 
@@ -368,8 +391,12 @@ mod tests {
         let reversed = CenterLine::new(&data.points, data.sample_step);
         assert_eq!(inside_sign(&reversed), -1.0);
         // Issue #19: the Crique Câline turns right, the Col des Moufles left; their mirror
-        // images the other way.
-        for (file, sign) in [("crique.track.ron", 1.0), ("col.track.ron", -1.0)] {
+        // images the other way. Issue #20: the Lagon Duvet turns right.
+        for (file, sign) in [
+            ("crique.track.ron", 1.0),
+            ("col.track.ron", -1.0),
+            ("lagon.track.ron", 1.0),
+        ] {
             let (data, center) = circuit(file);
             assert_eq!(inside_sign(&center), sign, "{file}");
             let mirrored = data.mirrored();
@@ -390,6 +417,7 @@ mod tests {
             "anneau.track.ron",
             "crique.track.ron",
             "col.track.ron",
+            "lagon.track.ron",
         ] {
             let (data, _, plan) = plan_of(file);
             let mirrored = plan.clone().mirrored();
@@ -437,12 +465,40 @@ mod tests {
             ("anneau.track.ron", "Guimauve"),
             ("crique.track.ron", "Plage"),
             ("col.track.ron", "Neige"),
+            ("lagon.track.ron", "Lagon"),
         ] {
             let (data, center, plan) = plan_of(file);
             assert_eq!(data.biome.as_deref(), Some(biome));
-            let again = place_decor(&center, data.biome(), &data.props, data.decor_seed);
+            // Issue #20: nothing in a lake (on its water, or in its basin).
+            for lake in lakes_of(&data) {
+                for piece in &plan.pieces {
+                    let p = piece.position.xz();
+                    let r = piece.radius;
+                    assert!(
+                        p.x + r < lake.min.x
+                            || p.x - r > lake.max.x
+                            || p.y + r < lake.min.y
+                            || p.y - r > lake.max.y,
+                        "{file}: {} at {p} in the lake",
+                        plan.models[piece.model as usize]
+                    );
+                }
+            }
+            let again = place_decor(
+                &center,
+                data.biome(),
+                &data.props,
+                data.decor_seed,
+                &lakes_of(&data),
+            );
             assert_eq!(plan, again, "{file}: the same plan every time");
-            let other = place_decor(&center, data.biome(), &data.props, data.decor_seed + 1);
+            let other = place_decor(
+                &center,
+                data.biome(),
+                &data.props,
+                data.decor_seed + 1,
+                &lakes_of(&data),
+            );
             assert_ne!(
                 plan.pieces, other.pieces,
                 "{file}: another seed, other places"
@@ -561,7 +617,7 @@ mod tests {
     #[test]
     fn without_a_biome_only_the_props_and_a_prop_without_room_is_left_out() {
         let (data, center) = circuit("prairie.track.ron");
-        let plan = place_decor(&center, None, &data.props, 0);
+        let plan = place_decor(&center, None, &data.props, 0, &[]);
         assert_eq!(plan.pieces.len(), {
             data.props
                 .iter()
@@ -579,7 +635,7 @@ mod tests {
             yaw: 0.0,
             shadows: true,
         };
-        let plan = place_decor(&center, None, std::slice::from_ref(&tight), 0);
+        let plan = place_decor(&center, None, std::slice::from_ref(&tight), 0, &[]);
         assert!(plan.pieces.is_empty());
         assert_eq!(plan.left_out.len(), 1);
         assert!(plan.left_out[0].contains("racing-kit/tentClosed"));

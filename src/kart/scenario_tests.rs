@@ -2135,11 +2135,12 @@ fn the_classes_scale_the_top_speed_and_150cc_is_the_game() {
         tether: 0.9,
         items: 1.2,
         class: 1.0,
+        environment: 1.0,
     };
     assert_eq!(
         factors.product(),
         product(&factors),
-        "150cc: the product as before"
+        "150cc on the ground (issue #20): the product as before"
     );
 }
 

@@ -30,6 +30,21 @@ pub struct TrackData {
     /// Trick ramps: jumps where a trick gives a boost (GD § 5, issue #13).
     #[serde(default)]
     pub trick_ramps: Vec<TrickRampData>,
+    /// Glide ramps (GD § 10, issue #20): leaving one opens the glider. A trick works off them
+    /// too. Put one just before a [`gaps`](Self::gaps) entry, its top at the gap's start.
+    #[serde(default)]
+    pub glide_ramps: Vec<TrickRampData>,
+    /// Stretches of the centerline with no road at all (issue #20): the karts glide over them,
+    /// from the lip of a glide ramp to the landing. Nothing is built there (road, walls); the
+    /// centerline still runs through, as the corridor of the flight (checkpoints, the bots'
+    /// line).
+    #[serde(default)]
+    pub gaps: Vec<GapData>,
+    /// Lakes (GD § 10, issue #20): a basin dug in the ground, full of water up to `level`. A kart
+    /// whose center is under the water is under water (the stats « eau »). The road may dip
+    /// below the ground into a lake only.
+    #[serde(default)]
+    pub lakes: Vec<LakeData>,
     /// Boost pads on the ground (GD § 2, issue #13).
     #[serde(default)]
     pub boost_pads: Vec<Spot>,
@@ -137,6 +152,34 @@ pub struct TrickRampData {
     /// Slope (degrees).
     #[serde(default = "default_ramp_angle")]
     pub angle: f32,
+}
+
+/// A stretch with no road (issue #20), between two spline parameters.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GapData {
+    pub from: f32,
+    pub to: f32,
+}
+
+/// A lake (issue #20): a rectangle of the ground plane, dug down to `floor` and full of water up
+/// to `level` (m). `level` is below the ground (`mesh::GROUND_HEIGHT`): the water stays in its
+/// basin.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LakeData {
+    /// Center (x, z) and size (along x, along z) of the rectangle (m).
+    pub center: (f32, f32),
+    pub size: (f32, f32),
+    /// Height of the water's surface (m).
+    #[serde(default = "default_lake_level")]
+    pub level: f32,
+    /// Height of the basin's floor (m).
+    pub floor: f32,
+}
+
+fn default_lake_level() -> f32 {
+    -0.4
 }
 
 /// A single thing on the road.
@@ -257,6 +300,58 @@ impl TrackData {
                 known.join(", ")
             ));
         }
+        let n = self.points.len() as f32;
+        for gap in &self.gaps {
+            let length = (gap.to - gap.from).rem_euclid(n);
+            if !(gap.from.is_finite() && gap.to.is_finite()) || length < 0.05 || length > n / 4.0 {
+                return fail(format!(
+                    "gap {}..{}: empty, or more than a quarter of the circuit",
+                    gap.from, gap.to
+                ));
+            }
+        }
+        for (i, a) in self.gaps.iter().enumerate() {
+            for b in &self.gaps[i + 1..] {
+                let starts_in = |g: &GapData, p: f32| {
+                    (p - g.from).rem_euclid(n) < (g.to - g.from).rem_euclid(n)
+                };
+                if starts_in(a, b.from) || starts_in(b, a.from) {
+                    return fail(format!(
+                        "gaps {}..{} and {}..{} overlap",
+                        a.from, a.to, b.from, b.to
+                    ));
+                }
+            }
+        }
+        for lake in &self.lakes {
+            let ground = super::mesh::GROUND_HEIGHT;
+            if !(lake.size.0 >= 10.0 && lake.size.1 >= 10.0)
+                || !lake.center.0.is_finite()
+                || !lake.center.1.is_finite()
+                || lake.level.is_nan()
+                || lake.level >= ground
+                || !(lake.floor <= lake.level - 2.0 && lake.floor >= -60.0)
+            {
+                return fail(format!(
+                    "lake at {:?}: size {:?} (10 m at least), level {} (below the ground, {ground}), \
+                     floor {} (2 m below the level at least, down to -60 m)",
+                    lake.center, lake.size, lake.level, lake.floor
+                ));
+            }
+        }
+        for (i, a) in self.lakes.iter().enumerate() {
+            for b in &self.lakes[i + 1..] {
+                let apart = |c: f32, d: f32, s: f32, t: f32| (c - d).abs() >= (s + t) / 2.0;
+                if !apart(a.center.0, b.center.0, a.size.0, b.size.0)
+                    && !apart(a.center.1, b.center.1, a.size.1, b.size.1)
+                {
+                    return fail(format!(
+                        "lakes at {:?} and {:?} overlap",
+                        a.center, b.center
+                    ));
+                }
+            }
+        }
         for prop in &self.props {
             if !biome::is_model_id(&prop.model)
                 || !(0.1..=30.0).contains(&prop.height)
@@ -282,7 +377,8 @@ impl TrackData {
     /// The mirror image of the circuit (issue #19, GD § 1: the mirror mode), left and right
     /// swapped: every control point mirrored across the X = 0 plane (x → -x), its banking turned
     /// the other way, everything placed across the road on the other side (offsets, sand patches),
-    /// the props on the other side. The centerline of the mirror is exactly the mirror image of
+    /// the props on the other side, the lakes across the X = 0 plane (issue #20; the gaps are
+    /// along the track: they do not move). The centerline of the mirror is exactly the mirror image of
     /// the original (Catmull-Rom is linear in its points), the same length: a point `offset`
     /// across the road at the same spline parameter is the mirror image of the original's at
     /// `-offset`. Mirrored twice, the file comes back.
@@ -297,8 +393,11 @@ impl TrackData {
         for zone in &mut data.offroad {
             (zone.left, zone.right) = (flip(zone.right), flip(zone.left));
         }
-        for ramp in &mut data.trick_ramps {
+        for ramp in data.trick_ramps.iter_mut().chain(&mut data.glide_ramps) {
             ramp.offset = flip(ramp.offset);
+        }
+        for lake in &mut data.lakes {
+            lake.center.0 = -lake.center.0;
         }
         for pad in &mut data.boost_pads {
             pad.offset = flip(pad.offset);
@@ -355,6 +454,49 @@ mod tests {
         let mut data = TrackData::from_ron(MINIMAL).unwrap();
         data.points[1] = data.points[0];
         assert!(data.validate().is_err());
+    }
+
+    /// Issue #20: the gaps and the lakes are checked: a gap is not empty, nor more than a quarter
+    /// of the circuit, nor on another one; a lake is big enough, its water below the ground, its
+    /// floor below its water, and not on another lake. Mirrored, a lake moves across, a gap does
+    /// not, a glide ramp goes to the other side of the road.
+    #[test]
+    fn gaps_and_lakes_that_make_no_sense_are_rejected() {
+        let base = TrackData::from_ron(&MINIMAL.replace(
+            "(name:",
+            "(gaps: [(from: 1.2, to: 1.6)], glide_ramps: [(at: 1.0, offset: 0.2)], \
+             lakes: [(center: (25.0, -25.0), size: (30.0, 20.0), floor: -8.0)], name:",
+        ))
+        .unwrap();
+        assert_eq!(base.validate(), Ok(()));
+        assert_eq!(base.lakes[0].level, -0.4, "the default level");
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = base.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.gaps[0].to = 1.2));
+        assert!(broken(&|d| d.gaps[0].to = 2.5));
+        assert!(broken(&|d| d.gaps.push(GapData { from: 1.4, to: 1.9 })));
+        assert!(!broken(&|d| d.gaps.push(GapData { from: 3.0, to: 3.5 })));
+        assert!(broken(&|d| d.gaps[0].from = f32::NAN));
+        assert!(broken(&|d| d.lakes[0].size.0 = 5.0));
+        assert!(broken(&|d| d.lakes[0].level = 0.5));
+        assert!(broken(&|d| d.lakes[0].level = f32::NAN));
+        assert!(broken(&|d| d.lakes[0].floor = -1.0));
+        assert!(broken(&|d| d.lakes[0].floor = -100.0));
+        assert!(broken(&|d| d.lakes.push(d.lakes[0])));
+        assert!(!broken(&|d| {
+            let mut other = d.lakes[0];
+            other.center.0 += 31.0;
+            d.lakes.push(other)
+        }));
+        let mirrored = base.mirrored();
+        assert_eq!(mirrored.lakes[0].center, (-25.0, -25.0));
+        assert_eq!(mirrored.gaps, base.gaps);
+        assert_eq!(mirrored.glide_ramps[0].offset, -0.2);
+        assert_eq!(mirrored.validate(), Ok(()));
+        assert_eq!(mirrored.mirrored(), base);
     }
 
     /// Issue #11: a circuit names its biome; without one, it has none. A biome the game does not

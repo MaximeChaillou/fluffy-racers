@@ -49,9 +49,10 @@ use crate::interactions::Paw;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::items::{EffectLook, ItemSlots};
 use crate::kart::{
-    Boost, DriftMotion, Invincibility, ItemEffects, Kart, KartAssists, KartColor, KartPaint,
-    KartState, KartSystems, KartTuning, KartVisualAssets, KartWheels, PlayerKart, Remote,
-    Slipstream, Stall, StatEffects, StatsTuning, kart_collider, spawn_kart_visual_with_driver,
+    Boost, DriftMotion, Invincibility, ItemEffects, Kart, KartAssists, KartColor, KartEnvironment,
+    KartPaint, KartState, KartSystems, KartTuning, KartVisualAssets, KartWheels, PlayerKart,
+    Remote, Slipstream, Stall, StatEffects, StatsTuning, kart_collider,
+    spawn_kart_visual_with_driver,
 };
 use crate::level::LevelScoped;
 use crate::race::{RaceMode, Racer, RacerName};
@@ -667,6 +668,8 @@ fn spawn_remote_karts(
                 effects,
                 // Issue #61: a super câlin, a fusée, a dégonflage, as its states say.
                 ItemEffects::default(),
+                // Issue #20: its glider and the water, as its states say.
+                KartEnvironment::default(),
             ),
             // Issue #9: what the slipstream, the bots and the paws see of it; its paw, for the
             // visuals of what its peer tells. Issue #53: what it holds out, as its states say.
@@ -821,7 +824,12 @@ fn record_our_kart(
             (&KartState, &KartAssists, &StatEffects, &DriftMotion),
             (&Boost, &Stall, &Invincibility, &Slipstream, &KartWheels),
             Option<&mut KartHistory>,
-            (Option<&NetKart>, Option<&ItemSlots>, &ItemEffects),
+            (
+                Option<&NetKart>,
+                Option<&ItemSlots>,
+                &ItemEffects,
+                &KartEnvironment,
+            ),
         ),
         (With<Kart>, Or<(With<PlayerKart>, With<NetKart>)>),
     >,
@@ -836,7 +844,7 @@ fn record_our_kart(
         (state, assists, effects, motion),
         (boost, stall, invincibility, slipstream, wheels),
         history,
-        (net, slots, item_effects),
+        (net, slots, item_effects, environment),
     ) in &mut karts
     {
         match history {
@@ -862,6 +870,7 @@ fn record_our_kart(
             slipstream_fill: slipstream.fill(&own),
             wheels,
             effects: item_effects,
+            environment,
         });
         // Issue #53: its shields, drawn by the others.
         look.held = slots.and_then(HeldLook::of);
@@ -931,7 +940,7 @@ fn show_remote_karts(
             ),
             &StatEffects,
             Option<&mut ItemSlots>,
-            Option<&mut ItemEffects>,
+            (Option<&mut ItemEffects>, Option<&mut KartEnvironment>),
         ),
         With<RemoteKartProxy>,
     >,
@@ -968,7 +977,7 @@ fn show_remote_karts(
             (mut stall, mut invincibility, mut slipstream, mut wheels),
             effects,
             slots,
-            item_effects,
+            (item_effects, environment),
         )) = bodies.get_mut(proxy)
         else {
             continue;
@@ -976,6 +985,15 @@ fn show_remote_karts(
         let look = pose.look;
         if let Some(mut item_effects) = item_effects {
             show_effects(&mut item_effects, &look);
+        }
+        // Issue #20: its wing and its bubbles.
+        if let Some(mut environment) = environment {
+            let shown = KartEnvironment {
+                gliding: look.gliding,
+                underwater: look.underwater,
+                ..*environment
+            };
+            environment.set_if_neq(shown);
         }
         // Issue #53: what it holds out, its shields on our screen (`items::move_items`).
         if let Some(mut slots) = slots {

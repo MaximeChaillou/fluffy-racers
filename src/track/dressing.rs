@@ -16,6 +16,7 @@ use super::data::TrackData;
 use super::decor::{decor_models, place_decor};
 use super::layout::{CenterLine, TrackLayout};
 use super::mesh::MeshData;
+use super::water::Lake;
 use crate::level::LevelScoped;
 use crate::models::bake::{BakedModel, BakedPart, Primitive, bake_primitive};
 use crate::models::{Keep, ModelMaterials, Models};
@@ -66,11 +67,19 @@ pub fn dress_circuit(
     }
 
     // The mirror mode (issue #19): the mirror image of the file's decor, piece by piece.
+    // Issue #20: never in a lake (the file's).
+    let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
     let plan = if layout.mirrored {
         let center = CenterLine::new(&data.points, data.sample_step);
-        place_decor(&center, data.biome(), &data.props, data.decor_seed).mirrored()
+        place_decor(&center, data.biome(), &data.props, data.decor_seed, &lakes).mirrored()
     } else {
-        place_decor(&layout.center, data.biome(), &data.props, data.decor_seed)
+        place_decor(
+            &layout.center,
+            data.biome(),
+            &data.props,
+            data.decor_seed,
+            &lakes,
+        )
     };
     for piece in &plan.left_out {
         warn!("decor of {}: no room for {piece}", layout.name);

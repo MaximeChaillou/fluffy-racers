@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use super::biome::{Palette, Rgb};
 use super::data::{OffroadZone, TrackData};
 use super::layout::{CenterLine, TrackSample};
+use super::water::{Gap, Lake, ground_height};
 
 /// Width of the red and white curbs (m).
 pub const CURB_WIDTH: f32 = 1.0;
@@ -142,9 +143,12 @@ pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
 }
 
-/// The circuit's meshes, in the colors of `palette` (its biome's, issue #11).
+/// The circuit's meshes, in the colors of `palette` (its biome's, issue #11). Issue #20: nothing
+/// in its gaps (the ends of the road there closed by a face down to the ground), and the skirts
+/// down to the floor of a lake.
 pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> TrackMeshes {
-    let samples = center.samples();
+    let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(center, g)).collect();
+    let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
     let mut meshes = TrackMeshes::default();
     let (asphalt, grass, sand, skirt) = (
         rgba(palette.asphalt),
@@ -154,79 +158,154 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
     );
     let curbs = [rgba(palette.curbs.0), rgba(palette.curbs.1)];
     let stripe = |i: usize| curbs[(i / CURB_STRIPE) % 2];
+    let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
+    let ground = |p: Vec3| Vec3::new(p.x, ground_height(&lakes, p.xz()), p.z);
 
-    // Road and curbs.
-    let road = &mut meshes.road;
-    road.strip(
-        samples,
-        true,
-        |s| s.point(-s.half_width, 0.0),
-        |s| s.point(s.half_width, 0.0),
-        |_| asphalt,
-    );
-    road.strip(
-        samples,
-        true,
-        |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
-        |s| s.point(-s.half_width, 0.0),
-        stripe,
-    );
-    road.strip(
-        samples,
-        true,
-        |s| s.point(s.half_width, 0.0),
-        |s| s.point(s.half_width + CURB_WIDTH, 0.0),
-        stripe,
-    );
+    for (samples, closed) in runs(center, &gaps) {
+        let (samples, closed) = (&samples[..], closed);
+        // Road and curbs.
+        let road = &mut meshes.road;
+        road.strip(
+            samples,
+            closed,
+            |s| s.point(-s.half_width, 0.0),
+            |s| s.point(s.half_width, 0.0),
+            |_| asphalt,
+        );
+        road.strip(
+            samples,
+            closed,
+            |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+            |s| s.point(-s.half_width, 0.0),
+            stripe,
+        );
+        road.strip(
+            samples,
+            closed,
+            |s| s.point(s.half_width, 0.0),
+            |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+            stripe,
+        );
 
-    // Grass shoulders.
-    let offroad = &mut meshes.offroad;
-    offroad.strip(
-        samples,
-        true,
-        |s| s.point(-wall_offset(s), 0.0),
-        |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
-        |_| grass,
-    );
-    offroad.strip(
-        samples,
-        true,
-        |s| s.point(s.half_width + CURB_WIDTH, 0.0),
-        |s| s.point(wall_offset(s), 0.0),
-        |_| grass,
-    );
+        // Grass shoulders.
+        let offroad = &mut meshes.offroad;
+        offroad.strip(
+            samples,
+            closed,
+            |s| s.point(-wall_offset(s), 0.0),
+            |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+            |_| grass,
+        );
+        offroad.strip(
+            samples,
+            closed,
+            |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+            |s| s.point(wall_offset(s), 0.0),
+            |_| grass,
+        );
+
+        // Low walls: inner face, top, outer face on each side.
+        wall_strips(&mut meshes.walls, samples, closed, palette);
+
+        // Skirts from the wall bottoms down to the ground (or the floor of a lake), so raised
+        // parts do not float.
+        let decor = &mut meshes.decor;
+        decor.strip(
+            samples,
+            closed,
+            |s| s.point(outer(s), 0.0),
+            |s| ground(s.point(outer(s), 0.0)),
+            |_| skirt,
+        );
+        decor.strip(
+            samples,
+            closed,
+            |s| ground(s.point(-outer(s), 0.0)),
+            |s| s.point(-outer(s), 0.0),
+            |_| skirt,
+        );
+    }
     for zone in &data.offroad {
-        offroad_patch(offroad, center, zone, sand);
+        offroad_patch(&mut meshes.offroad, center, zone, sand);
     }
 
-    // Low walls: inner face, top, outer face on each side.
-    wall_strips(&mut meshes.walls, samples, palette);
-
-    // Skirts from the wall bottoms down to the ground, so raised parts do not float.
-    let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
-    let ground = |p: Vec3| Vec3::new(p.x, GROUND_HEIGHT, p.z);
-    let decor = &mut meshes.decor;
-    decor.strip(
-        samples,
-        true,
-        |s| s.point(outer(s), 0.0),
-        |s| ground(s.point(outer(s), 0.0)),
-        |_| skirt,
-    );
-    decor.strip(
-        samples,
-        true,
-        |s| ground(s.point(-outer(s), 0.0)),
-        |s| s.point(-outer(s), 0.0),
-        |_| skirt,
-    );
+    // Issue #20: each end of the road at a gap is closed, from the top of its walls down to the
+    // ground: a cliff at the lip, a ledge at the landing.
+    let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
+    for gap in &gaps {
+        for (distance, facing) in [(gap.from, 1.0f32), (gap.to, -1.0)] {
+            let s = center.at(distance);
+            let o = outer(&s);
+            let (left, right) = if facing > 0.0 { (-o, o) } else { (o, -o) };
+            meshes.decor.quad(
+                [
+                    s.point(right, 0.0),
+                    ground(s.point(right, 0.0)),
+                    ground(s.point(left, 0.0)),
+                    s.point(left, 0.0),
+                ],
+                skirt,
+            );
+            // The ends of both walls.
+            for side in [-1.0f32, 1.0] {
+                let (a, b) = (side * wall_offset(&s), side * o);
+                let (a, b) = if side * facing > 0.0 { (b, a) } else { (a, b) };
+                meshes.walls.quad(
+                    [
+                        s.point(a, WALL_HEIGHT),
+                        s.point(a, 0.0),
+                        s.point(b, 0.0),
+                        s.point(b, WALL_HEIGHT),
+                    ],
+                    panels[0],
+                );
+            }
+        }
+    }
 
     meshes
 }
 
+/// The stretches of the centerline the road is built on (issue #20): between the gaps, each
+/// from the end of a gap exactly to the start of the next one (open). Without a gap, the whole
+/// loop (closed), sample by sample.
+fn runs(center: &CenterLine, gaps: &[Gap]) -> Vec<(Vec<TrackSample>, bool)> {
+    let samples = center.samples();
+    if gaps.is_empty() {
+        return vec![(samples.to_vec(), true)];
+    }
+    let mut gaps = gaps.to_vec();
+    gaps.sort_by(|a, b| a.from.total_cmp(&b.from));
+    let step = center.length() / samples.len() as f32;
+    let mut runs = Vec::with_capacity(gaps.len());
+    for (i, gap) in gaps.iter().enumerate() {
+        let start = gap.to;
+        let end = gaps[(i + 1) % gaps.len()].from;
+        let length = center.wrap(end - start);
+        if length < 2.0 * step {
+            continue;
+        }
+        let mut run = vec![center.at(start)];
+        let first = (start / step).floor() as usize + 1;
+        for k in 0.. {
+            let s = samples[(first + k) % samples.len()];
+            let along = center.wrap(s.distance - start);
+            if along >= length - 0.25 * step {
+                break;
+            }
+            if along > 0.25 * step {
+                run.push(s);
+            }
+        }
+        run.push(center.at(end));
+        runs.push((run, false));
+    }
+    runs
+}
+
 /// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face. The faces
 /// alternate the palette's two wall colors in panels (the barriers' look, issue #11).
-fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], palette: &Palette) {
+fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], closed: bool, palette: &Palette) {
     let height = WALL_HEIGHT;
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
@@ -234,42 +313,42 @@ fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], palette: &Palette) 
     let top = rgba(palette.wall_top);
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(wall_offset(s), 0.0),
         |s| s.point(wall_offset(s), height),
         panel,
     );
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(wall_offset(s), height),
         |s| s.point(outer(s), height),
         |_| top,
     );
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(outer(s), height),
         |s| s.point(outer(s), 0.0),
         panel,
     );
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(-wall_offset(s), height),
         |s| s.point(-wall_offset(s), 0.0),
         panel,
     );
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(-outer(s), height),
         |s| s.point(-wall_offset(s), height),
         |_| top,
     );
     mesh.strip(
         samples,
-        true,
+        closed,
         |s| s.point(-outer(s), 0.0),
         |s| s.point(-outer(s), height),
         panel,
@@ -422,6 +501,63 @@ mod tests {
                 walls.positions[..]
             );
         }
+    }
+
+    /// Issue #20, on the Lagon Duvet: no road, no shoulder and no wall in its gap (each one's
+    /// vertices on samples out of it, or on its two ends), both ends closed by a face down to the
+    /// ground; and under the water, the skirts reach the floor of the lake.
+    #[test]
+    fn the_road_stops_at_the_gaps_and_the_skirts_reach_the_lake_floor() {
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/lagon.track.ron")).unwrap();
+        let center = CenterLine::new(&data.points, data.sample_step);
+        let gap = Gap::new(&center, &data.gaps[0]);
+        let lake = Lake::new(&data.lakes[0]);
+        let meshes = generate(&center, &data, &Palette::default());
+        let inside = |p: Vec3| {
+            let s = &center.samples()[center.nearest_index(p)];
+            let along = center.wrap(s.distance - gap.from);
+            along > 1.5 && along < gap.length(&center) - 1.5
+        };
+        for (name, mesh) in [
+            ("road", &meshes.road),
+            ("offroad", &meshes.offroad),
+            ("walls", &meshes.walls),
+        ] {
+            assert!(!mesh.positions.is_empty());
+            for p in &mesh.positions {
+                assert!(!inside(Vec3::from_array(*p)), "{name} in the gap at {p:?}");
+            }
+        }
+        // The cliff at the lip: a face from the road's height down to the floor of the lake
+        // under it, facing the gap.
+        let lip = center.at(gap.from);
+        let cliff = meshes
+            .decor
+            .normals
+            .iter()
+            .zip(&meshes.decor.positions)
+            .filter(|(n, p)| {
+                Vec3::from_array(**n).dot(lip.forward) > 0.99
+                    && Vec3::from_array(**p).xz().distance(lip.position.xz()) < 20.0
+            })
+            .map(|(_, p)| p[1])
+            .collect::<Vec<f32>>();
+        assert!(!cliff.is_empty(), "the lip is closed");
+        let floor = lake.floor;
+        assert!(cliff.iter().any(|y| (y - floor).abs() < 1e-4), "{cliff:?}");
+        assert!(
+            cliff.iter().any(|y| (y - lip.position.y).abs() < 0.5),
+            "{cliff:?}"
+        );
+        // The skirts under the water reach the floor.
+        assert!(
+            meshes
+                .decor
+                .positions
+                .iter()
+                .any(|p| (p[1] - floor).abs() < 1e-4 && lake.covers(Vec2::new(p[0], p[2])))
+        );
     }
 
     #[test]

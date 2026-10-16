@@ -7,7 +7,10 @@
 // et l'aile par défaut fait 10 partout : garde-le ainsi (un test le vérifie).
 //
 // - stats : speed (Vitesse), acceleration (Accélération), weight (Poids), handling (Maniabilité),
-//   traction (Adhérence), mini_turbo (Mini-turbo), invincibility (Invincibilité) ;
+//   traction (Adhérence), mini_turbo (Mini-turbo), invincibility (Invincibilité) ; puis la Vitesse
+//   et la Maniabilité sur les autres terrains (GD § 9, issue #20) : water_speed et water_handling
+//   (sous l'eau), air_speed et air_handling (en planeur), anti_gravity_speed et
+//   anti_gravity_handling (anti-gravité). Une valeur omise reprend celle du sol ;
 // - class : Light (léger), Medium (moyen), Heavy (lourd) ;
 // - size : taille du pilote à l'écran (1 = moyen, de 0,5 à 1,6) ;
 // - model : son modèle 3D, « pack/nom » (le fichier `assets/models/pack/nom.glb`, issue #69) ;
@@ -21,50 +24,59 @@
         (
             name: "Poussin", class: Light, size: 0.75, model: "cube-pets/animal-chick",
             color: (1.00, 0.86, 0.25), ears: None,
-            stats: (speed: 2, acceleration: 6, weight: 1, handling: 6, traction: 5, mini_turbo: 6, invincibility: 6),
+            stats: (speed: 2, acceleration: 6, weight: 1, handling: 6, traction: 5, mini_turbo: 6, invincibility: 6,
+                   water_speed: 1, water_handling: 5, air_speed: 3, air_handling: 7, anti_gravity_speed: 2, anti_gravity_handling: 6),
         ),
         (
             name: "Pingouin", class: Light, size: 0.82, model: "cube-pets/animal-penguin",
             color: (0.20, 0.22, 0.30), ears: None,
-            stats: (speed: 2, acceleration: 7, weight: 2, handling: 5, traction: 5, mini_turbo: 5, invincibility: 6),
+            stats: (speed: 2, acceleration: 7, weight: 2, handling: 5, traction: 5, mini_turbo: 5, invincibility: 6,
+                   water_speed: 4, water_handling: 7, air_speed: 1, air_handling: 4, anti_gravity_speed: 2, anti_gravity_handling: 5),
         ),
         (
             name: "Perroquet", class: Light, size: 0.78, model: "cube-pets/animal-parrot",
             color: (0.90, 0.22, 0.18), ears: None,
-            stats: (speed: 3, acceleration: 5, weight: 2, handling: 5, traction: 6, mini_turbo: 6, invincibility: 5),
+            stats: (speed: 3, acceleration: 5, weight: 2, handling: 5, traction: 6, mini_turbo: 6, invincibility: 5,
+                   water_speed: 2, water_handling: 4, air_speed: 4, air_handling: 7, anti_gravity_speed: 3, anti_gravity_handling: 5),
         ),
         // Moyens : équilibrés. Le chat est le milieu exact.
         (
             name: "Chat", class: Medium, size: 1.0, model: "cube-pets/animal-cat",
             color: (0.98, 0.62, 0.30), ears: Pointy,
-            stats: (speed: 4, acceleration: 4, weight: 4, handling: 4, traction: 4, mini_turbo: 4, invincibility: 4),
+            stats: (speed: 4, acceleration: 4, weight: 4, handling: 4, traction: 4, mini_turbo: 4, invincibility: 4,
+                   water_speed: 4, water_handling: 4, air_speed: 4, air_handling: 4, anti_gravity_speed: 4, anti_gravity_handling: 4),
         ),
         (
             name: "Lapin", class: Medium, size: 0.96, model: "cube-pets/animal-bunny",
             color: (0.96, 0.84, 0.88), ears: Long,
-            stats: (speed: 4, acceleration: 5, weight: 3, handling: 4, traction: 3, mini_turbo: 5, invincibility: 4),
+            stats: (speed: 4, acceleration: 5, weight: 3, handling: 4, traction: 3, mini_turbo: 5, invincibility: 4,
+                   water_speed: 3, water_handling: 4, air_speed: 4, air_handling: 5, anti_gravity_speed: 4, anti_gravity_handling: 4),
         ),
         (
             name: "Renard", class: Medium, size: 1.0, model: "cube-pets/animal-fox",
             color: (0.88, 0.36, 0.12), ears: Pointy,
-            stats: (speed: 5, acceleration: 3, weight: 4, handling: 5, traction: 4, mini_turbo: 3, invincibility: 4),
+            stats: (speed: 5, acceleration: 3, weight: 4, handling: 5, traction: 4, mini_turbo: 3, invincibility: 4,
+                   water_speed: 4, water_handling: 4, air_speed: 5, air_handling: 5, anti_gravity_speed: 5, anti_gravity_handling: 6),
         ),
         // Lourds : vitesse et poids ; moins d'accélération, de maniabilité et de mini-turbo.
         (
             name: "Cochon", class: Heavy, size: 1.22, model: "cube-pets/animal-pig",
             color: (0.98, 0.66, 0.72), ears: Pointy,
-            stats: (speed: 6, acceleration: 2, weight: 7, handling: 2, traction: 3, mini_turbo: 2, invincibility: 2),
+            stats: (speed: 6, acceleration: 2, weight: 7, handling: 2, traction: 3, mini_turbo: 2, invincibility: 2,
+                   water_speed: 6, water_handling: 3, air_speed: 5, air_handling: 2, anti_gravity_speed: 6, anti_gravity_handling: 2),
         ),
         (
             name: "Vache", class: Heavy, size: 1.25, model: "cube-pets/animal-cow",
             color: (0.97, 0.97, 0.97), ears: Round,
-            stats: (speed: 5, acceleration: 3, weight: 7, handling: 3, traction: 4, mini_turbo: 2, invincibility: 2),
+            stats: (speed: 5, acceleration: 3, weight: 7, handling: 3, traction: 4, mini_turbo: 2, invincibility: 2,
+                   water_speed: 5, water_handling: 3, air_speed: 4, air_handling: 3, anti_gravity_speed: 5, anti_gravity_handling: 3),
         ),
         // L'éléphant est le plus lourd.
         (
             name: "Éléphant", class: Heavy, size: 1.3, model: "cube-pets/animal-elephant",
             color: (0.62, 0.64, 0.72), ears: Round,
-            stats: (speed: 6, acceleration: 2, weight: 8, handling: 2, traction: 2, mini_turbo: 2, invincibility: 3),
+            stats: (speed: 6, acceleration: 2, weight: 8, handling: 2, traction: 2, mini_turbo: 2, invincibility: 3,
+                   water_speed: 7, water_handling: 3, air_speed: 5, air_handling: 1, anti_gravity_speed: 6, anti_gravity_handling: 2),
         ),
     ],
 )

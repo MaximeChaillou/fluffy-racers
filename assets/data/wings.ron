@@ -1,18 +1,20 @@
-// Ailes (GD § 9, issue #15) : elles serviront au planeur (phase 3) ; leurs stats comptent déjà.
-// Même format de stats que `characters.ron` (0 à 10 points chacune). L'aile par défaut
-// (« Taie d'oreiller ») est le standard : 1 partout.
+// Ailes (GD § 9, issue #15) : le planeur (issue #20) ; leurs stats comptent partout. Même format
+// de stats que `characters.ron` (0 à 10 points chacune, et les variantes de terrain). L'aile par
+// défaut (« Taie d'oreiller ») est le standard : 1 partout. La plume plane mieux (air).
 (
     default: "Taie d'oreiller",
     parts: [
         // Standard.
         (
             name: "Taie d'oreiller",
-            stats: (speed: 1, acceleration: 1, weight: 1, handling: 1, traction: 1, mini_turbo: 1, invincibility: 1),
+            stats: (speed: 1, acceleration: 1, weight: 1, handling: 1, traction: 1, mini_turbo: 1, invincibility: 1,
+                   water_speed: 1, water_handling: 1, air_speed: 1, air_handling: 1, anti_gravity_speed: 1, anti_gravity_handling: 1),
         ),
         // Légère : accélération, maniabilité et mini-turbo, au prix de la vitesse et du poids.
         (
             name: "Plume",
-            stats: (speed: 0, acceleration: 2, weight: 0, handling: 2, traction: 1, mini_turbo: 2, invincibility: 1),
+            stats: (speed: 0, acceleration: 2, weight: 0, handling: 2, traction: 1, mini_turbo: 2, invincibility: 1,
+                   water_speed: 0, water_handling: 2, air_speed: 2, air_handling: 4, anti_gravity_speed: 0, anti_gravity_handling: 2),
         ),
     ],
 )
