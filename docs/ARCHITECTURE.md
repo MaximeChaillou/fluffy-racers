@@ -277,6 +277,7 @@ Un coup de patte ou une attrape (`docs/GAME_DESIGN.md` § 15) agit sur le kart d
   - la victime juge l'âge depuis le tick d'envoi (`tick` : au plus 0,3 s) et la portée depuis **sa propre position au tick vu** (`net::KartHistory`, 30 ticks ; un tick vu plus ancien est refusé) ; les ticks sont ceux de l'horloge commune (`interactions::InteractionClock`, posée par le réseau ; le tick local en solo, où le tick d'envoi et le tick vu sont le même). Compter l'âge depuis le tick vu aurait refusé presque tous les coups à 120 ms de latence (100 ms d'interpolation et deux trajets : 0,34 s) ;
   - sa réponse (`StrikeReply`) et la fin d'un lien (`TetherBreak`) décidée par l'un de nos karts partent vers tous ; ce qui vient du réseau n'est jamais renvoyé ;
   - chez les autres pairs, ces événements ne font que les visuels du kart distant (la patte qui frappe, le « pof », le bras tendu), par son `Paw` ;
+  - **un kart distant qui tient le nôtre lâche aussi quand la fin vient de nous** (#81) : nous dégager, refuser, être touché ou passer la ligne fait partir un `TetherBreak` que son pair ne renvoie pas ; `end_tethers` fait donc lâcher l'attrapeur distant comme les nôtres. Sinon, son bras restait tendu vers notre kart jusqu'à la course suivante. Par sécurité, sa patte lâche seule après 2 s + 0,3 s (`step_remote_paw`), et aucun bras n'est dessiné au-delà du lien le plus long (environ 8 m, `max_arm_length`) ;
   - la déconnexion du partenaire rompt le lien (`TetherEnd::Gone`) : son corps disparaît.
 
 ### Mise en relation (signalisation)

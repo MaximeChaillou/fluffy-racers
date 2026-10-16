@@ -13,18 +13,23 @@
 //! the paw's recharge: a gauge under the item slots that fills up (GD § 14).
 //!
 //! One mesh and one material per part, shared by every kart; nothing is spawned or despawned
-//! while racing. Everything is read from the simulation (`Paw`, interpolated poses): nothing
-//! here touches it.
+//! while racing. Everything is read from the simulation (`Paw`) and from where the karts are
+//! shown (their visuals: interpolated, or placed by the network for another peer's kart):
+//! nothing here touches the simulation.
+//!
+//! Issue #81: an arm is never drawn longer than the longest tether (`logic::max_arm_length`,
+//! about 8 m), nor toward a kart that is not shown, nor with a NaN: whatever a paw says, it is
+//! hidden then.
 
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-use super::logic::{Paw, PawMotion, SwingKind};
+use super::logic::{Paw, PawMotion, SwingKind, max_arm_length};
 use super::tuning::InteractionTuning;
 use crate::camera::CameraShake;
-use crate::interpolation::{InterpolatedFrom, InterpolationSystems, PhysicsPose};
+use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{DriverVisual, KartBodyPivot, PlayerKart};
 use crate::ui::HudRoot;
 
@@ -172,8 +177,20 @@ fn attach_arms(
 
 /// Where a kart's paw is, in its pivot's frame (the shoulder is [`SHOULDER`] on the side): `None`
 /// when the arm is down (hidden). `other`: where the kart it goes for is (its driver), in the
-/// same frame; `t`: time since the swing (s); `now`: the clock, for the wobbles.
-pub fn paw_tip(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> {
+/// same frame; `now`: the clock, for the wobbles; `max_length`: the longest arm
+/// (`logic::max_arm_length`).
+///
+/// Issue #81: the arm is hidden when it would be longer than `max_length` (whatever the paw
+/// says, that tether is broken), when the kart held is not shown (`other` is `None`), or when
+/// anything is not finite.
+pub fn paw_tip(paw: &Paw, other: Option<Vec3>, now: f32, max_length: f32) -> Option<(f32, Vec3)> {
+    let (side, tip) = paw_tip_unchecked(paw, other, now)?;
+    let reach = tip.distance(SHOULDER * Vec3::new(side, 1.0, 1.0));
+    (tip.is_finite() && side.is_finite() && reach <= max_length).then_some((side, tip))
+}
+
+/// [`paw_tip`], before its checks.
+fn paw_tip_unchecked(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> {
     let shoulder = |side: f32| SHOULDER * Vec3::new(side, 1.0, 1.0);
     let seconds = |ticks: u32| ticks as f32 / crate::TICK_HZ as f32;
     match paw.motion {
@@ -189,10 +206,9 @@ pub fn paw_tip(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> 
             let out = Vec3::new(side * (1.1 + 0.3 * grope), 0.05, -0.3);
             return Some((side, shoulder(side) + out));
         }
-        // The tether: stretched to the kart held.
+        // The tether: stretched to the kart held (not shown: no arm).
         PawMotion::Holding { side, .. } => {
-            let tip = other.unwrap_or(shoulder(side) + Vec3::X * side * 2.0);
-            return Some((side, tip));
+            return other.map(|tip| (side, tip));
         }
         _ => {}
     }
@@ -246,7 +262,10 @@ pub fn arm_transform(shoulder: Vec3, tip: Vec3) -> Transform {
     let along = tip - shoulder;
     let length = along.length().max(0.05);
     Transform::from_translation((shoulder + tip) * 0.5)
-        .with_rotation(Quat::from_rotation_arc(Vec3::Y, along / length))
+        .with_rotation(Quat::from_rotation_arc(
+            Vec3::Y,
+            along.normalize_or(Vec3::Y),
+        ))
         .with_scale(Vec3::new(1.0, length, 1.0))
 }
 
@@ -262,15 +281,21 @@ pub fn pof_size(t: f32) -> f32 {
 /// Every kart's arm and paw.
 fn pose_arms(
     time: Res<Time>,
-    fixed_time: Res<Time<Fixed>>,
+    tuning: Res<InteractionTuning>,
     paws: Query<&Paw>,
-    poses: Query<&PhysicsPose>,
     roots: Query<&Transform, (With<InterpolatedFrom>, Without<PawArm>)>,
-    pivots: Query<(&Transform, &ChildOf), (With<KartBodyPivot>, Without<PawArm>)>,
+    pivots: Query<(&KartBodyPivot, &Transform, &ChildOf), Without<PawArm>>,
     mut arms: Query<(&PawArm, &ChildOf, &mut Transform, &mut Visibility)>,
 ) {
     let now = time.elapsed_secs();
-    let alpha = fixed_time.overstep_fraction();
+    let max_length = max_arm_length(&tuning);
+    // Where a kart's driver is shown (issue #81): above its visual, interpolated for our karts,
+    // placed by the network for another peer's (which has no `PhysicsPose`).
+    let shown = |kart: Entity| {
+        let (_, _, pivot_of) = pivots.iter().find(|(pivot, ..)| pivot.body == kart)?;
+        let root = roots.get(pivot_of.parent()).ok()?;
+        Some(root.translation + Vec3::Y * DRIVER_HEIGHT)
+    };
     for (arm, child_of, mut transform, mut visibility) in &mut arms {
         let Ok(paw) = paws.get(arm.body) else {
             continue;
@@ -281,15 +306,14 @@ fn pose_arms(
             _ => paw.swing.and_then(|s| s.target),
         };
         let other = target
-            .and_then(|t| poses.get(t).ok())
+            .and_then(shown)
             .zip(pivots.get(child_of.parent()).ok())
-            .and_then(|(pose, (pivot, pivot_of))| {
+            .and_then(|(world, (_, pivot, pivot_of))| {
                 let root = roots.get(pivot_of.parent()).ok()?;
-                let world = pose.interpolate(alpha).translation + Vec3::Y * DRIVER_HEIGHT;
                 let frame = root.mul_transform(*pivot);
                 Some(frame.compute_affine().inverse().transform_point3(world))
             });
-        let Some((side, tip)) = paw_tip(paw, other, now) else {
+        let Some((side, tip)) = paw_tip(paw, other, now, max_length) else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
@@ -488,6 +512,33 @@ fn fill_gauge(
     }
 }
 
+/// The arms shown, for the tests (issue #81): each one's kart and its length in the world (m),
+/// NaN when its transform or its paw's is not finite.
+#[cfg(test)]
+pub(crate) fn shown_arms(world: &World) -> Vec<(Entity, f32)> {
+    let Some(mut parts) = world.try_query::<(&PawArm, &Visibility, &GlobalTransform)>() else {
+        return Vec::new();
+    };
+    let parts: Vec<(PawArm, GlobalTransform)> = parts
+        .iter(world)
+        .filter(|(_, visibility, _)| **visibility != Visibility::Hidden)
+        .map(|(part, _, global)| (*part, *global))
+        .collect();
+    parts
+        .iter()
+        .filter(|(part, _)| !part.paw)
+        .map(|(arm, global)| {
+            let length = global.affine().transform_vector3(Vec3::Y).length();
+            let finite = global.translation().is_finite()
+                && parts
+                    .iter()
+                    .filter(|(paw, _)| paw.paw && paw.body == arm.body)
+                    .all(|(_, paw)| paw.translation().is_finite());
+            (arm.body, if finite { length } else { f32::NAN })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,14 +548,24 @@ mod tests {
         (seconds * crate::TICK_HZ as f32).round() as u32
     }
 
+    /// [`paw_tip`] with the default longest arm.
+    fn tip(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> {
+        paw_tip(
+            paw,
+            other,
+            now,
+            max_arm_length(&InteractionTuning::default()),
+        )
+    }
+
     /// GD § 15: the paw shows as soon as the button is down; it swings out to the kart struck,
     /// comes back and goes down; it stretches to the kart held; it windmills off balance.
     #[test]
     fn the_paw_rises_at_once_swings_and_comes_back() {
         let mut paw = Paw::default();
-        assert_eq!(paw_tip(&paw, None, 0.0), None, "down at rest");
+        assert_eq!(tip(&paw, None, 0.0), None, "down at rest");
         paw.motion = PawMotion::Raised { ticks: 1 };
-        let (_, raised) = paw_tip(&paw, None, 0.0).unwrap();
+        let (_, raised) = tip(&paw, None, 0.0).unwrap();
         assert!(raised.y > SHOULDER.y + 0.3, "raised: {raised}");
 
         let target = Vec3::new(2.5, 0.6, 0.0);
@@ -515,14 +576,14 @@ mod tests {
             target: None,
             ticks: tick_seconds(SWING_TIME),
         });
-        let (side, out) = paw_tip(&paw, Some(target), 0.0).unwrap();
+        let (side, out) = tip(&paw, Some(target), 0.0).unwrap();
         assert_eq!(side, 1.0);
         assert!(out.distance(target) < 0.05, "out at the target: {out}");
         paw.swing = Some(Swing {
             ticks: tick_seconds(SWING_TIME + RETURN_TIME + 0.02),
             ..paw.swing.unwrap()
         });
-        assert_eq!(paw_tip(&paw, Some(target), 0.0), None, "back and down");
+        assert_eq!(tip(&paw, Some(target), 0.0), None, "back and down");
 
         paw.swing = None;
         paw.motion = PawMotion::Holding {
@@ -532,18 +593,60 @@ mod tests {
             side: -1.0,
         };
         let held = Vec3::new(-3.0, 0.6, 1.0);
-        assert_eq!(paw_tip(&paw, Some(held), 0.0), Some((-1.0, held)));
+        assert_eq!(tip(&paw, Some(held), 0.0), Some((-1.0, held)));
 
         paw.motion = PawMotion::Idle;
         paw.lose_balance(30, -1.0);
         let spots: Vec<Vec3> = (0..10)
-            .map(|i| paw_tip(&paw, None, i as f32 * 0.03).unwrap().1)
+            .map(|i| tip(&paw, None, i as f32 * 0.03).unwrap().1)
             .collect();
         assert!(spots.iter().all(|p| p.x < 0.0), "on the left");
         assert!(
             spots.windows(2).any(|w| w[0].distance(w[1]) > 0.1),
             "windmilling"
         );
+    }
+
+    /// Issue #81: no arm toward a kart that is not shown, none longer than the longest tether
+    /// (about 8 m: what Max saw went off the screen), none with a NaN. A tether stretched to its
+    /// break still shows.
+    #[test]
+    fn an_arm_without_a_target_in_reach_is_hidden() {
+        let longest = max_arm_length(&InteractionTuning::default());
+        let holding = Paw {
+            motion: PawMotion::Holding {
+                target: Entity::PLACEHOLDER,
+                ticks: 10,
+                rest: 4.0,
+                side: 1.0,
+            },
+            ..default()
+        };
+        assert_eq!(tip(&holding, None, 0.0), None, "the kart held is not shown");
+        let stretched = SHOULDER + Vec3::X * 6.5;
+        assert_eq!(tip(&holding, Some(stretched), 0.0), Some((1.0, stretched)));
+        let far = SHOULDER + Vec3::new(30.0, 0.0, -40.0);
+        assert_eq!(tip(&holding, Some(far), 0.0), None, "a broken tether");
+        let along = |length: f32| SHOULDER + Vec3::Z * length;
+        assert!(tip(&holding, Some(along(longest * 0.999)), 0.0).is_some());
+        assert_eq!(tip(&holding, Some(along(longest * 1.01)), 0.0), None);
+        assert_eq!(tip(&holding, Some(Vec3::NAN), 0.0), None, "NaN");
+        assert_eq!(tip(&holding, Some(Vec3::INFINITY), 0.0), None);
+        // A strike or a throw at a kart far away: no arm either.
+        let striking = Paw {
+            swing: Some(Swing {
+                kind: SwingKind::Throw,
+                side: -1.0,
+                target: None,
+                ticks: tick_seconds(SWING_TIME * 0.5),
+            }),
+            ..default()
+        };
+        assert!(tip(&striking, Some(Vec3::new(-2.5, 0.6, 0.0)), 0.0).is_some());
+        assert_eq!(tip(&striking, Some(Vec3::new(-200.0, 0.6, 0.0)), 0.0), None);
+        // The arm itself: finite, even with its paw on the shoulder.
+        let arm = arm_transform(SHOULDER, SHOULDER);
+        assert!(arm.translation.is_finite() && arm.rotation.is_finite() && arm.scale.is_finite());
     }
 
     #[test]
