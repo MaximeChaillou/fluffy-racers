@@ -14,6 +14,15 @@ Modèles 3D (#11) : une ligne par pack, avec chacun de ses fichiers. Seuls les G
 | `models/cube-pets/` (9 modèles + `Textures/colormap.png`, licence dans `License.txt`) : animal-chick.glb, animal-penguin.glb, animal-parrot.glb, animal-cat.glb, animal-bunny.glb, animal-fox.glb, animal-pig.glb, animal-cow.glb, animal-elephant.glb (les pilotes, #69) | [Cube Pets](https://kenney.nl/assets/cube-pets) 1.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 | `models/pirate-kit/` (22 modèles + `Textures/colormap.png`, licence dans `License.txt`) : barrel.glb, boat-row-small.glb, cannon.glb, chest.glb, crate-bottles.glb, crate.glb, flag-pirate.glb, flag.glb, grass-plant.glb, palm-bend.glb, palm-detailed-bend.glb, palm-detailed-straight.glb, palm-straight.glb, rocks-a.glb, rocks-b.glb, rocks-c.glb, rocks-sand-a.glb, rocks-sand-b.glb, rocks-sand-c.glb, ship-pirate-small.glb, ship-wreck.glb, tower-complete-small.glb (la Crique Câline, #19 ; le Lagon Duvet, #20) | [Pirate Kit](https://kenney.nl/assets/pirate-kit) 2.1 | Kenney (www.kenney.nl) | CC0 1.0 |
 
+## Interface (#56)
+
+Les écrans de jeu (le menu principal, puis ceux de l'étape 2) : une police libre et des icônes CC0, dans `assets/ui/`. Seuls les fichiers utilisés sont dans le dépôt, la licence de chaque pack à côté d'eux. Un test (`menu::style::tests`) vérifie que chaque fichier nommé par le jeu est là, avec sa ligne ici, et qu'aucun autre fichier n'est dans `assets/ui/`.
+
+| Fichier(s) | Source | Auteur | Licence |
+|---|---|---|---|
+| `ui/fonts/` (2 polices, licence dans `OFL.txt`) : Fredoka-Medium.ttf, Fredoka-SemiBold.ttf (les graisses 500 et 600, instances statiques servies par Google Fonts) | [Fredoka](https://fonts.google.com/specimen/Fredoka) 2.001 | The Fredoka Project Authors (Milena Brandão, Hafontia) | SIL OFL 1.1 |
+| `ui/icons/` (5 icônes blanches de 100 px, licence dans `License.txt`) : right.png, singleplayer.png, multiplayer.png, gear.png, wrench.png (le menu principal) | [Game Icons](https://kenney.nl/assets/game-icons) (2014) | Kenney (www.kenney.nl) | CC0 1.0 |
+
 ## Polices embarquées par une crate (pas des fichiers du dépôt)
 
 Le panneau d'admin (#36) s'affiche avec les polices par défaut d'egui, compilées dans le jeu par la crate `epaint_default_fonts` (feature `default_fonts` de `bevy_egui`). Elles ne servent qu'au panneau.

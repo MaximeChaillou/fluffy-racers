@@ -31,18 +31,12 @@ impl Plugin for CharacterUiPlugin {
             ..default()
         })
         .add_systems(PreStartup, load_stored_color)
-        .add_systems(Startup, open_at_launch)
         .add_systems(Update, store_color)
         .add_systems(
             EguiPrimaryContextPass,
             selection_window.run_if(|screen: Res<SelectionScreen>| screen.open),
         );
     }
-}
-
-/// The game starts on the selection screen: Entrée races with the default loadout.
-fn open_at_launch(mut actions: MessageWriter<SelectionAction>) {
-    actions.write(SelectionAction::Open);
 }
 
 /// The color kept from the previous sessions, before anything is built (the karts, the `Hello`

@@ -265,7 +265,7 @@ fn apply_player_options(options: Res<PlayerOptions>, mut layout: ResMut<Keyboard
 }
 
 /// The controls (GD § 13) with the letters of `layout`: (action, keys), for the menu.
-pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 12] {
+pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
     let [up, left, down, right] = layout.letters();
     [
         ("Accélérer", format!("Haut ou {up}")),
@@ -281,6 +281,11 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 12] {
             "X ou F".to_string(),
         ),
         ("Regarder derrière", "C (tenir)".to_string()),
+        // Issue #56.
+        (
+            "Menu principal (pause en solo)",
+            "Échap ; manette : Start".to_string(),
+        ),
         ("Pilote et kart", "G".to_string()),
         (
             "Nouvelle course (circuit, Grand Prix, classe, miroir)",
@@ -394,7 +399,8 @@ mod tests {
 
     /// Issue #17: in both layouts, no key does two things: the driving keys, the item, look
     /// behind, the Interaction keys of GD § 15 (X, F, issue #34), and the keys of the menus and
-    /// of debugging. The menu keys are the same letter at the same place in AZERTY and QWERTY.
+    /// of debugging (issue #56: Échap, the main menu's). The menu keys are the same letter at the
+    /// same place in AZERTY and QWERTY.
     #[test]
     fn no_key_does_two_things_in_either_layout() {
         // Issue #34: the keys the game reads for the Interaction button, X and F (GD § 13).
@@ -412,9 +418,11 @@ mod tests {
             DEBUG_RESET_KEY,
             // Issue #18: an item in the hand.
             crate::items::DEBUG_ITEM_KEY,
-            KeyCode::Escape,
+            // Issue #56: Échap opens the main menu (and closes the other screens, as before).
+            crate::menu::MAIN_MENU_KEY,
             KeyCode::Enter,
         ];
+        assert_eq!(crate::menu::MAIN_MENU_KEY, KeyCode::Escape);
         for layout in KeyboardLayout::ALL {
             let actions: [&[KeyCode]; 9] = [
                 layout.up_keys(),
@@ -446,12 +454,18 @@ mod tests {
             controls(KeyboardLayout::Qwerty)[2].1,
             "Gauche / Droite, ou A / D"
         );
-        // Issue #34: the menu shows the Interaction keys.
+        // Issue #34: the menu shows the Interaction keys; issue #56, the main menu's.
         for layout in KeyboardLayout::ALL {
             assert!(
                 controls(layout)
                     .iter()
                     .any(|(action, keys)| action.starts_with("Interaction") && keys == "X ou F")
+            );
+            assert!(
+                controls(layout)
+                    .iter()
+                    .any(|(action, keys)| action.starts_with("Menu principal")
+                        && keys.starts_with("Échap"))
             );
         }
     }
