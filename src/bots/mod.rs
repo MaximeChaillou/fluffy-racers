@@ -212,7 +212,16 @@ fn spawn_bots(
         let body = body.id();
         if let Some(visuals) = &visuals {
             let driver = looks.as_ref().and_then(|l| l.get(loadout.character));
-            spawn_kart_visual_with_driver(&mut commands, visuals, body, colors[entrant], driver);
+            // Issue #73: its parts on screen.
+            let parts = roster.looks(&loadout);
+            spawn_kart_visual_with_driver(
+                &mut commands,
+                visuals,
+                body,
+                colors[entrant],
+                driver,
+                parts,
+            );
         }
     }
 }

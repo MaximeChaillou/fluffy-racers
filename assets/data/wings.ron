@@ -1,6 +1,7 @@
 // Ailes (GD § 9, issue #15) : le planeur (issue #20) ; leurs stats comptent partout. Même format
 // de stats que `characters.ron` (0 à 10 points chacune, et les variantes de terrain). L'aile par
 // défaut (« Taie d'oreiller ») est le standard : 1 partout. La plume plane mieux (air).
+// `look` : son visuel quand le planeur s'ouvre (issue #73, `kart::PartLook`) : `Pillowcase` ou `Feather`.
 (
     default: "Taie d'oreiller",
     parts: [
@@ -9,12 +10,14 @@
             name: "Taie d'oreiller",
             stats: (speed: 1, acceleration: 1, weight: 1, handling: 1, traction: 1, mini_turbo: 1, invincibility: 1,
                    water_speed: 1, water_handling: 1, air_speed: 1, air_handling: 1, anti_gravity_speed: 1, anti_gravity_handling: 1),
+            look: Pillowcase,
         ),
         // Légère : accélération, maniabilité et mini-turbo, au prix de la vitesse et du poids.
         (
             name: "Plume",
             stats: (speed: 0, acceleration: 2, weight: 0, handling: 2, traction: 1, mini_turbo: 2, invincibility: 1,
                    water_speed: 0, water_handling: 2, air_speed: 2, air_handling: 4, anti_gravity_speed: 0, anti_gravity_handling: 2),
+            look: Feather,
         ),
     ],
 )

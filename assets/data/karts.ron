@@ -1,6 +1,8 @@
 // Karts (GD § 9, issue #15). Même format de stats que `characters.ron` (0 à 10 points chacune,
 // et les variantes de terrain de l'issue #20). Le kart par défaut (« Caisse à savon ») est le
 // standard : 3 partout. La baignoire nage (eau), le panier en osier prend l'eau mais plane.
+// `look` : son visuel sur le kart (issue #73, `kart::PartLook`) : `WickerBasket`, `SoapBox` (le kart du
+// Car Kit) ou `Bathtub`.
 (
     default: "Caisse à savon",
     parts: [
@@ -10,18 +12,21 @@
             name: "Panier en osier",
             stats: (speed: 1, acceleration: 5, weight: 1, handling: 5, traction: 3, mini_turbo: 5, invincibility: 3,
                    water_speed: 0, water_handling: 4, air_speed: 2, air_handling: 6, anti_gravity_speed: 1, anti_gravity_handling: 5),
+            look: WickerBasket,
         ),
         // Standard.
         (
             name: "Caisse à savon",
             stats: (speed: 3, acceleration: 3, weight: 3, handling: 3, traction: 3, mini_turbo: 3, invincibility: 3,
                    water_speed: 3, water_handling: 3, air_speed: 3, air_handling: 3, anti_gravity_speed: 3, anti_gravity_handling: 3),
+            look: SoapBox,
         ),
         // Lourd : vitesse et poids, mais lent à lancer et pataud en virage.
         (
             name: "Baignoire",
             stats: (speed: 5, acceleration: 1, weight: 5, handling: 1, traction: 3, mini_turbo: 1, invincibility: 3,
                    water_speed: 7, water_handling: 3, air_speed: 4, air_handling: 1, anti_gravity_speed: 5, anti_gravity_handling: 1),
+            look: Bathtub,
         ),
     ],
 )
