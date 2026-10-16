@@ -3,6 +3,8 @@
 
 use bevy::prelude::*;
 
+use super::environment::EnvironmentTuning;
+
 /// All the knobs of the arcade kart model, for the 150cc class and an average kart.
 ///
 /// Speeds are in m/s, accelerations in m/s², rates in 1/s, angles in radians.
@@ -246,6 +248,10 @@ pub struct KartTuning {
     pub hit_spin_decel: f32,
     /// Same for a tumble (heavy items: pelote), which stops the kart (m/s², à régler).
     pub hit_tumble_decel: f32,
+
+    // --- Special environments (GD § 10, issue #20) ----------------------------------------------
+    /// Under water and the glider: their own knobs.
+    pub environment: EnvironmentTuning,
 }
 
 impl Default for KartTuning {
@@ -339,6 +345,7 @@ impl Default for KartTuning {
 
             hit_spin_decel: 21.0,
             hit_tumble_decel: 26.0,
+            environment: EnvironmentTuning::default(),
         }
     }
 }

@@ -2,8 +2,10 @@
 //! is unit-tested.
 //!
 //! - **Seven stats**: Speed, Acceleration, Weight, Handling, Traction (off-road and slippery
-//!   surfaces), Mini-turbo and Invincibility (the last two are hidden in MK8DX). Ground only for
-//!   now (GD § 9: water, air and anti-gravity variants later).
+//!   surfaces), Mini-turbo and Invincibility (the last two are hidden in MK8DX). The Speed and the
+//!   Handling have a variant per terrain (GD § 9, issue #20, [`Terrain`]): ground, water, air
+//!   (the glider) and anti-gravity; the other stats are the same everywhere. A part that does not
+//!   give a terrain's points gives its ground ones there.
 //! - **Four parts** make a kart: the character, the kart, the wheels and the wing. Each part
 //!   gives 0 to 10 points per stat ([`StatPoints`]); their sum, bounded to 0..=20, is the kart's
 //!   **level** in that stat ([`KartStats`]). Menus show `(level + 3) / 4`, 0.75 to 5.75.
@@ -90,10 +92,64 @@ pub struct StatPoints {
     pub traction: u8,
     pub mini_turbo: u8,
     pub invincibility: u8,
+    /// Issue #20 (GD § 9): the Speed and the Handling on the other terrains, written
+    /// `water_speed: 4` in the files. Left out: the ground's (`speed`, `handling`).
+    #[serde(default, deserialize_with = "some_points")]
+    pub water_speed: Option<u8>,
+    #[serde(default, deserialize_with = "some_points")]
+    pub air_speed: Option<u8>,
+    #[serde(default, deserialize_with = "some_points")]
+    pub anti_gravity_speed: Option<u8>,
+    #[serde(default, deserialize_with = "some_points")]
+    pub water_handling: Option<u8>,
+    #[serde(default, deserialize_with = "some_points")]
+    pub air_handling: Option<u8>,
+    #[serde(default, deserialize_with = "some_points")]
+    pub anti_gravity_handling: Option<u8>,
+}
+
+/// `water_speed: 4` in a file (no `Some(...)` around it); left out: None.
+fn some_points<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u8>, D::Error> {
+    u8::deserialize(d).map(Some)
+}
+
+/// The terrains of GD § 9 (issue #20): the Speed and the Handling have a variant for each. The
+/// kart is on the ground, under water (a lake, GD § 10), in the air with its glider open, or on
+/// an anti-gravity stretch (not built yet: issue of the anti-gravity).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Terrain {
+    #[default]
+    Ground,
+    Water,
+    Air,
+    AntiGravity,
+}
+
+impl Terrain {
+    pub const ALL: [Self; 4] = [
+        Terrain::Ground,
+        Terrain::Water,
+        Terrain::Air,
+        Terrain::AntiGravity,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Its name in the game (French, with accents: egui has them).
+    pub fn label(self) -> &'static str {
+        match self {
+            Terrain::Ground => "Sol",
+            Terrain::Water => "Eau",
+            Terrain::Air => "Air",
+            Terrain::AntiGravity => "Anti-gravité",
+        }
+    }
 }
 
 impl StatPoints {
-    /// The same points in every stat.
+    /// The same points in every stat (and on every terrain).
     pub const fn uniform(points: u8) -> Self {
         Self {
             speed: points,
@@ -103,7 +159,63 @@ impl StatPoints {
             traction: points,
             mini_turbo: points,
             invincibility: points,
+            water_speed: None,
+            air_speed: None,
+            anti_gravity_speed: None,
+            water_handling: None,
+            air_handling: None,
+            anti_gravity_handling: None,
         }
+    }
+
+    /// The same points with these of the Speed and the Handling on `terrain` (issue #20).
+    pub fn on_terrain(mut self, terrain: Terrain, speed: u8, handling: u8) -> Self {
+        let (s, h) = match terrain {
+            Terrain::Ground => {
+                self.speed = speed;
+                self.handling = handling;
+                return self;
+            }
+            Terrain::Water => (&mut self.water_speed, &mut self.water_handling),
+            Terrain::Air => (&mut self.air_speed, &mut self.air_handling),
+            Terrain::AntiGravity => (
+                &mut self.anti_gravity_speed,
+                &mut self.anti_gravity_handling,
+            ),
+        };
+        *s = Some(speed);
+        *h = Some(handling);
+        self
+    }
+
+    /// Its points of Speed and Handling on `terrain` (issue #20): the ground's where the part
+    /// gives none.
+    pub fn terrain(&self, terrain: Terrain) -> (u8, u8) {
+        let (speed, handling) = match terrain {
+            Terrain::Ground => (None, None),
+            Terrain::Water => (self.water_speed, self.water_handling),
+            Terrain::Air => (self.air_speed, self.air_handling),
+            Terrain::AntiGravity => (self.anti_gravity_speed, self.anti_gravity_handling),
+        };
+        (
+            speed.unwrap_or(self.speed),
+            handling.unwrap_or(self.handling),
+        )
+    }
+
+    /// The first terrain variant above [`MAX_PART_POINTS`], if any (a broken data file): the stat
+    /// (Speed or Handling), its terrain and its points.
+    pub fn terrain_out_of_range(&self) -> Option<(Stat, Terrain, u8)> {
+        Terrain::ALL.into_iter().find_map(|terrain| {
+            let (speed, handling) = self.terrain(terrain);
+            if speed > MAX_PART_POINTS {
+                Some((Stat::Speed, terrain, speed))
+            } else if handling > MAX_PART_POINTS {
+                Some((Stat::Handling, terrain, handling))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn get(&self, stat: Stat) -> u8 {
@@ -131,45 +243,90 @@ impl StatPoints {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KartStats {
     levels: [u8; 7],
+    /// Issue #20: the Speed and the Handling on water, in the air and in anti-gravity
+    /// (`Terrain::index() - 1`): `[speed, handling]`. On the ground, `levels`.
+    terrains: [[u8; 2]; 3],
 }
 
 impl Default for KartStats {
     fn default() -> Self {
-        Self {
-            levels: [MIDDLE_LEVEL; 7],
-        }
+        Self::uniform(MIDDLE_LEVEL)
     }
 }
 
 impl KartStats {
-    /// The sum of the parts' points, each part bounded to 10 per stat and the total to 20.
+    /// The sum of the parts' points, each part bounded to 10 per stat and the total to 20; on
+    /// each terrain, the parts' points there (their ground ones where they give none).
     pub fn from_parts(parts: &[StatPoints]) -> Self {
-        let mut levels = [0u8; 7];
-        for stat in Stat::ALL {
+        let sum = |points: &dyn Fn(&StatPoints) -> u8| {
             let sum: u32 = parts
                 .iter()
-                .map(|part| part.get(stat).min(MAX_PART_POINTS) as u32)
+                .map(|part| points(part).min(MAX_PART_POINTS) as u32)
                 .sum();
-            levels[stat.index()] = sum.min(MAX_LEVEL as u32) as u8;
+            sum.min(MAX_LEVEL as u32) as u8
+        };
+        let mut levels = [0u8; 7];
+        for stat in Stat::ALL {
+            levels[stat.index()] = sum(&|part| part.get(stat));
         }
-        Self { levels }
+        let mut terrains = [[0u8; 2]; 3];
+        for terrain in [Terrain::Water, Terrain::Air, Terrain::AntiGravity] {
+            terrains[terrain.index() - 1] = [
+                sum(&|part| part.terrain(terrain).0),
+                sum(&|part| part.terrain(terrain).1),
+            ];
+        }
+        Self { levels, terrains }
     }
 
-    /// The same level in every stat (tests, scenarios).
+    /// The same level in every stat, on every terrain (tests, scenarios).
     pub fn uniform(level: u8) -> Self {
+        let level = level.min(MAX_LEVEL);
         Self {
-            levels: [level.min(MAX_LEVEL); 7],
+            levels: [level; 7],
+            terrains: [[level; 2]; 3],
         }
     }
 
-    /// The same stats with `stat` at `level` (bounded to 20).
+    /// The same stats with `stat` at `level` (bounded to 20): on the ground for the Speed and the
+    /// Handling (their other terrains do not move).
     pub fn with(mut self, stat: Stat, level: u8) -> Self {
         self.levels[stat.index()] = level.min(MAX_LEVEL);
         self
     }
 
+    /// The same stats with the Speed and the Handling at these levels on `terrain` (issue #20).
+    pub fn with_terrain(mut self, terrain: Terrain, speed: u8, handling: u8) -> Self {
+        let (speed, handling) = (speed.min(MAX_LEVEL), handling.min(MAX_LEVEL));
+        match terrain {
+            Terrain::Ground => {
+                self.levels[Stat::Speed.index()] = speed;
+                self.levels[Stat::Handling.index()] = handling;
+            }
+            _ => self.terrains[terrain.index() - 1] = [speed, handling],
+        }
+        self
+    }
+
+    /// The level of `stat`, on the ground for the Speed and the Handling.
     pub fn level(&self, stat: Stat) -> u8 {
         self.levels[stat.index()]
+    }
+
+    /// The Speed level on `terrain` (issue #20).
+    pub fn speed_on(&self, terrain: Terrain) -> u8 {
+        match terrain {
+            Terrain::Ground => self.level(Stat::Speed),
+            _ => self.terrains[terrain.index() - 1][0],
+        }
+    }
+
+    /// The Handling level on `terrain` (issue #20).
+    pub fn handling_on(&self, terrain: Terrain) -> u8 {
+        match terrain {
+            Terrain::Ground => self.level(Stat::Handling),
+            _ => self.terrains[terrain.index() - 1][1],
+        }
     }
 
     /// The Weight level: what the interactions between karts read (GD § 15, issue #34).
@@ -289,25 +446,89 @@ pub struct StatsTuning {
     /// multiplier (1.5 s in the middle). Starts on an item hit (`LossCause::ItemHit`, the entry
     /// point of issue #16): a second item hit meanwhile costs no croquette.
     pub invincibility_seconds: StatRange,
+
+    // --- Terrains (GD § 9, issue #20) -----------------------------------------------------------
+    /// The Speed and the Handling under water (GD § 10: the stats « eau »), from the kart's
+    /// levels there. The same bounds as on the ground by default. The water's own slowness and
+    /// floatiness are the environment's (`EnvironmentTuning`), whatever the stats.
+    pub water: TerrainRanges,
+    /// The same in the air, glider open (GD § 10: the stats « air »): the glide's speed and
+    /// turns.
+    pub air: TerrainRanges,
+    /// The same in anti-gravity (not built yet: ready for its issue).
+    pub anti_gravity: TerrainRanges,
+}
+
+/// The bounds of the Speed and the Handling's effects on one terrain other than the ground
+/// (issue #20): the same effects as [`StatsTuning`]'s `speed_top_speed` and `handling_*`, from
+/// the kart's levels on that terrain. Exactly 1 at the middle level, like every range.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq)]
+pub struct TerrainRanges {
+    /// Top speed multiplier (the glide's speed in the air).
+    pub speed_top_speed: StatRange,
+    /// Yaw rates (the glide's turn rate in the air).
+    pub handling_steer_rate: StatRange,
+    /// Steering responsiveness.
+    pub handling_steer_response: StatRange,
+    /// Drift radii.
+    pub handling_drift_radius: StatRange,
+}
+
+impl TerrainRanges {
+    /// The ground's bounds of `tuning`.
+    pub fn ground(tuning: &StatsTuning) -> Self {
+        Self {
+            speed_top_speed: tuning.speed_top_speed,
+            handling_steer_rate: tuning.handling_steer_rate,
+            handling_steer_response: tuning.handling_steer_response,
+            handling_drift_radius: tuning.handling_drift_radius,
+        }
+    }
+}
+
+impl StatsTuning {
+    /// The bounds of `terrain`'s Speed and Handling.
+    pub fn terrain(&self, terrain: Terrain) -> TerrainRanges {
+        match terrain {
+            Terrain::Ground => TerrainRanges::ground(self),
+            Terrain::Water => self.water,
+            Terrain::Air => self.air,
+            Terrain::AntiGravity => self.anti_gravity,
+        }
+    }
 }
 
 impl Default for StatsTuning {
     fn default() -> Self {
+        let speed_top_speed = StatRange::new(0.92, 1.08);
+        let handling_steer_rate = StatRange::new(0.9, 1.1);
+        let handling_steer_response = StatRange::new(0.8, 1.2);
+        let handling_drift_radius = StatRange::new(1.1, 0.9);
+        // Issue #20: every terrain starts with the ground's bounds.
+        let terrain = TerrainRanges {
+            speed_top_speed,
+            handling_steer_rate,
+            handling_steer_response,
+            handling_drift_radius,
+        };
         Self {
-            speed_top_speed: StatRange::new(0.92, 1.08),
+            speed_top_speed,
             acceleration_engine: StatRange::new(0.8, 1.25),
             weight_mass: StatRange::new(0.7, 1.3),
             weight_strike_push: StatRange::new(0.7, 1.3),
             weight_tether_divisor: StatRange::new(0.8, 1.2),
-            handling_steer_rate: StatRange::new(0.9, 1.1),
-            handling_steer_response: StatRange::new(0.8, 1.2),
-            handling_drift_radius: StatRange::new(1.1, 0.9),
+            handling_steer_rate,
+            handling_steer_response,
+            handling_drift_radius,
             traction_offroad: StatRange::new(0.85, 1.15),
             mini_turbo_thresholds: StatRange::new(1.1, 0.9),
             mini_turbo_durations: StatRange::new(0.85, 1.15),
             mini_turbo_strengths: StatRange::new(0.9, 1.1),
             mini_turbo_trick_duration: StatRange::new(0.77, 1.23),
             invincibility_seconds: StatRange::new(1.0, 2.0),
+            water: terrain,
+            air: terrain,
+            anti_gravity: terrain,
         }
     }
 }
@@ -343,6 +564,33 @@ pub struct StatEffects {
     pub invincibility: f32,
     /// The Weight level (0 to 20), for the interactions between karts (GD § 15).
     pub weight: u8,
+    /// Issue #20: the effects of the Speed and the Handling on each terrain
+    /// (`Terrain::index()`; the ground's are the fields above). [`StatEffects::on`] puts them in
+    /// place.
+    pub terrains: [TerrainEffects; 4],
+}
+
+/// What the Speed and the Handling do on one terrain (issue #20): the fields of [`StatEffects`]
+/// they move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerrainEffects {
+    pub top_speed: f32,
+    pub steer_rate: f32,
+    pub steer_response: f32,
+    pub drift_radius: f32,
+}
+
+impl TerrainEffects {
+    fn new(stats: &KartStats, tuning: &StatsTuning, terrain: Terrain) -> Self {
+        let ranges = tuning.terrain(terrain);
+        let (speed, handling) = (stats.speed_on(terrain), stats.handling_on(terrain));
+        Self {
+            top_speed: ranges.speed_top_speed.factor(speed),
+            steer_rate: ranges.handling_steer_rate.factor(handling),
+            steer_response: ranges.handling_steer_response.factor(handling),
+            drift_radius: ranges.handling_drift_radius.factor(handling),
+        }
+    }
 }
 
 impl Default for StatEffects {
@@ -355,13 +603,15 @@ impl StatEffects {
     /// Converts `stats` with the bounds of `tuning`.
     pub fn new(stats: &KartStats, tuning: &StatsTuning) -> Self {
         let level = |stat| stats.level(stat);
+        let terrains = Terrain::ALL.map(|terrain| TerrainEffects::new(stats, tuning, terrain));
+        let ground = terrains[Terrain::Ground.index()];
         Self {
-            top_speed: tuning.speed_top_speed.factor(level(Stat::Speed)),
+            top_speed: ground.top_speed,
             acceleration: tuning.acceleration_engine.factor(level(Stat::Acceleration)),
             mass: tuning.weight_mass.factor(level(Stat::Weight)),
-            steer_rate: tuning.handling_steer_rate.factor(level(Stat::Handling)),
-            steer_response: tuning.handling_steer_response.factor(level(Stat::Handling)),
-            drift_radius: tuning.handling_drift_radius.factor(level(Stat::Handling)),
+            steer_rate: ground.steer_rate,
+            steer_response: ground.steer_response,
+            drift_radius: ground.drift_radius,
             offroad: tuning.traction_offroad.factor(level(Stat::Traction)),
             mini_turbo_thresholds: tuning.mini_turbo_thresholds.factor(level(Stat::MiniTurbo)),
             mini_turbo_durations: tuning.mini_turbo_durations.factor(level(Stat::MiniTurbo)),
@@ -373,6 +623,23 @@ impl StatEffects {
                 .invincibility_seconds
                 .lerp(level(Stat::Invincibility)),
             weight: stats.weight(),
+            terrains,
+        }
+    }
+
+    /// The effects on `terrain` (issue #20): the Speed and the Handling of that terrain in place
+    /// of the ground's. On the ground, exactly `self`.
+    pub fn on(&self, terrain: Terrain) -> Self {
+        if terrain == Terrain::Ground {
+            return *self;
+        }
+        let t = self.terrains[terrain.index()];
+        Self {
+            top_speed: t.top_speed,
+            steer_rate: t.steer_rate,
+            steer_response: t.steer_response,
+            drift_radius: t.drift_radius,
+            ..*self
         }
     }
 
@@ -666,6 +933,85 @@ mod tests {
         invincible.tick(0.6);
         assert!(!invincible.is_active());
         assert_eq!(invincible.remaining, 0.0);
+    }
+
+    /// Issue #20 (GD § 9): the Speed and the Handling have a variant per terrain. A part that
+    /// gives none there counts its ground points; the parts' points add up on each terrain; the
+    /// middle level is exactly 1 on every terrain, so the default loadout drives the same
+    /// everywhere; on the ground, `on` changes nothing at all.
+    #[test]
+    fn the_speed_and_the_handling_have_a_variant_per_terrain() {
+        let tuning = StatsTuning::default();
+        // The ranges of every terrain start as the ground's.
+        for terrain in Terrain::ALL {
+            assert_eq!(tuning.terrain(terrain), TerrainRanges::ground(&tuning));
+        }
+        let middle = StatEffects::new(&KartStats::default(), &tuning);
+        for terrain in Terrain::ALL {
+            assert_eq!(middle.on(terrain), middle, "{terrain:?}");
+            assert_eq!(KartStats::default().speed_on(terrain), MIDDLE_LEVEL);
+            assert_eq!(KartStats::default().handling_on(terrain), MIDDLE_LEVEL);
+        }
+        // A part without terrain points: its ground points everywhere.
+        let plain = StatPoints {
+            speed: 3,
+            handling: 7,
+            ..StatPoints::uniform(2)
+        };
+        for terrain in Terrain::ALL {
+            assert_eq!(plain.terrain(terrain), (3, 7));
+        }
+        // With them: its own, and they add up.
+        let swimmer = plain.on_terrain(Terrain::Water, 6, 5);
+        assert_eq!(swimmer.terrain(Terrain::Water), (6, 5));
+        assert_eq!(swimmer.terrain(Terrain::Air), (3, 7));
+        let stats = KartStats::from_parts(&[swimmer, plain.on_terrain(Terrain::Air, 1, 9), plain]);
+        assert_eq!(stats.level(Stat::Speed), 9);
+        assert_eq!(stats.speed_on(Terrain::Ground), 9);
+        assert_eq!(stats.handling_on(Terrain::Ground), 20);
+        assert_eq!(stats.speed_on(Terrain::Water), 12);
+        assert_eq!(stats.handling_on(Terrain::Water), 19);
+        assert_eq!(stats.speed_on(Terrain::Air), 7);
+        assert_eq!(stats.handling_on(Terrain::Air), 20, "bounded to 20");
+        assert_eq!(stats.speed_on(Terrain::AntiGravity), 9);
+        // A broken terrain value is seen.
+        assert_eq!(plain.terrain_out_of_range(), None);
+        assert_eq!(
+            plain
+                .on_terrain(Terrain::AntiGravity, 4, 11)
+                .terrain_out_of_range(),
+            Some((Stat::Handling, Terrain::AntiGravity, 11))
+        );
+        // The effects: the water's Speed at 20, its Handling at 0; the ground does not move.
+        let stats = KartStats::default().with_terrain(Terrain::Water, 20, 0);
+        let effects = StatEffects::new(&stats, &tuning);
+        assert_eq!(effects.top_speed, 1.0);
+        assert!(effects.is_neutral());
+        let water = effects.on(Terrain::Water);
+        assert!((water.top_speed - 1.08).abs() < 1e-6);
+        assert!((water.steer_rate - 0.9).abs() < 1e-6);
+        assert!((water.steer_response - 0.8).abs() < 1e-6);
+        assert!((water.drift_radius - 1.1).abs() < 1e-6);
+        // Only those four: the rest is the kart's.
+        assert_eq!(water.acceleration, effects.acceleration);
+        assert_eq!(water.mini_turbo_thresholds, effects.mini_turbo_thresholds);
+        assert_eq!(effects.on(Terrain::Air), effects);
+        assert_eq!(effects.on(Terrain::Ground), effects);
+        // Each terrain's own bounds.
+        let tuned = StatsTuning {
+            air: TerrainRanges {
+                speed_top_speed: StatRange::new(0.5, 1.5),
+                ..TerrainRanges::ground(&tuning)
+            },
+            ..tuning.clone()
+        };
+        let fast_air = StatEffects::new(
+            &KartStats::default().with_terrain(Terrain::Air, 20, 10),
+            &tuned,
+        );
+        assert!((fast_air.on(Terrain::Air).top_speed - 1.5).abs() < 1e-6);
+        let labels: Vec<&str> = Terrain::ALL.iter().map(|t| t.label()).collect();
+        assert_eq!(labels, ["Sol", "Eau", "Air", "Anti-gravité"]);
     }
 
     #[test]

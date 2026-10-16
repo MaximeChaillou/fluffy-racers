@@ -13,8 +13,10 @@ use super::biome::{Palette, Rgb};
 use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, GROUND_HEIGHT, MeshData};
+use super::water;
 use super::{MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
 use crate::level::LevelScoped;
+use bevy::light::NotShadowCaster;
 
 /// Loads `*.track.ron` files as [`TrackData`].
 #[derive(Default, TypePath)]
@@ -51,6 +53,11 @@ pub struct TrackHandle(pub Handle<TrackData>);
 /// it starts a trick (`crate::kart`, `trick.rs`).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct TrickRamp;
+
+/// On the collider of a glide ramp (GD § 10, issue #20), with [`TrickRamp`] (a trick works off
+/// it too): leaving it opens the kart's glider (`crate::kart::KartEnvironment`).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct GlideRamp;
 
 /// A boost pad on the road (GD § 2, issue #13): a wheel touching the ground over it gets the
 /// pad's boost (`KartTuning::boost_pad_*`). The entity's `Transform` is the pad itself, local
@@ -176,9 +183,10 @@ pub fn build_circuit_when_loaded(
         &mut meshes,
         &mut materials,
         &layout,
-        palette.ground,
+        &palette,
     );
     spawn_trick_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
+    spawn_glide_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
     spawn_spots(&mut commands, &mut meshes, &mut materials, &layout, data);
 
     commands.insert_resource(PlayerStart(layout.grid[0]));
@@ -238,13 +246,14 @@ fn spawn_trimesh(
     }
 }
 
-/// Grass (or the biome's ground) all around, just below the road.
+/// Grass (or the biome's ground) all around, just below the road. Issue #20: around the lakes,
+/// whose basins it leaves open, each with its floor and its water.
 fn spawn_ground(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     layout: &TrackLayout,
-    (r, g, b): Rgb,
+    palette: &Palette,
 ) {
     let (min, max) = layout.center.samples().iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
@@ -256,21 +265,153 @@ fn spawn_ground(
     let margin = 80.0;
     let half = (max - min) / 2.0 + Vec2::splat(margin);
     let center = (min + max) / 2.0;
-    let entity = super::spawn_static_box(
-        commands,
-        Transform::from_xyz(center.x, GROUND_HEIGHT - 0.5, center.y),
-        Vec3::new(half.x, 0.5, half.y),
-        Surface::Offroad,
-        0.0,
-    );
-    commands.entity(entity).insert((
-        Mesh3d(meshes.add(Cuboid::new(half.x * 2.0, 1.0, half.y * 2.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(r, g, b),
-            perceptual_roughness: 1.0,
-            ..default()
-        })),
-    ));
+    let srgb = |(r, g, b): Rgb| Color::srgb(r, g, b);
+    let ground_material = materials.add(StandardMaterial {
+        base_color: srgb(palette.ground),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    // With lakes, the ground goes down to the deepest floor: its sides are the basins' walls.
+    // Without one, a single box, exactly the ground before issue #20 (to the bit: the physics
+    // of the circuits without a lake does not change at all).
+    let bottom = layout
+        .lakes
+        .iter()
+        .map(|lake| lake.floor)
+        .fold(GROUND_HEIGHT - 1.0, f32::min);
+    let thickness = GROUND_HEIGHT - bottom;
+    let cells = if layout.lakes.is_empty() {
+        vec![(center, half)]
+    } else {
+        water::ground_cells(center - half, center + half, &layout.lakes)
+            .into_iter()
+            .map(|(lo, hi)| ((lo + hi) / 2.0, (hi - lo) / 2.0))
+            .collect()
+    };
+    for (center, half) in cells {
+        let entity = super::spawn_static_box(
+            commands,
+            Transform::from_xyz(center.x, GROUND_HEIGHT - thickness / 2.0, center.y),
+            Vec3::new(half.x, thickness / 2.0, half.y),
+            Surface::Offroad,
+            0.0,
+        );
+        commands.entity(entity).insert((
+            Mesh3d(meshes.add(Cuboid::new(half.x * 2.0, thickness, half.y * 2.0))),
+            MeshMaterial3d(ground_material.clone()),
+        ));
+    }
+    if layout.lakes.is_empty() {
+        return;
+    }
+    // The basin's floor in the skirts' color (rock), darker than the sand: the water looks
+    // deep.
+    let floor_material = materials.add(StandardMaterial {
+        base_color: srgb(palette.skirt),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    // The water: one translucent sheet per lake, seen from above and from below (a kart under
+    // water sees it overhead). It casts no shadow and has no collider.
+    let water_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.10, 0.48, 0.72, 0.62),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.15,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
+    for lake in &layout.lakes {
+        let (center, size) = (lake.center(), lake.size());
+        let entity = super::spawn_static_box(
+            commands,
+            Transform::from_xyz(center.x, lake.floor - 0.5, center.y),
+            Vec3::new(size.x / 2.0, 0.5, size.y / 2.0),
+            Surface::Offroad,
+            0.0,
+        );
+        commands.entity(entity).insert((
+            Mesh3d(meshes.add(Cuboid::new(size.x, 1.0, size.y))),
+            MeshMaterial3d(floor_material.clone()),
+        ));
+        commands.spawn((
+            LevelScoped,
+            Name::new("Lake"),
+            *lake,
+            Mesh3d(meshes.add(Plane3d::new(Vec3::Y, size / 2.0))),
+            MeshMaterial3d(water_material.clone()),
+            Transform::from_xyz(center.x, lake.level, center.y),
+            NotShadowCaster,
+        ));
+    }
+}
+
+/// The glide ramps of the file (issue #20): boxes like the trick ramps (a trick works off them
+/// too), sky blue with white chevrons, whose top leads into a gap.
+fn spawn_glide_ramps(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    layout: &TrackLayout,
+    data: &TrackData,
+) {
+    if data.glide_ramps.is_empty() {
+        return;
+    }
+    let material = materials.add(Color::srgb(0.35, 0.72, 0.98));
+    let stripe_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::rgb(0.5, 0.5, 0.5),
+        ..default()
+    });
+    let stripe_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let half_thickness = 0.5;
+    for ramp in &data.glide_ramps {
+        let sample = layout.center.at(layout.center.param_to_distance(ramp.at));
+        let start = sample.point(ramp.offset * sample.half_width, 0.0);
+        let base = sample.transform(0.0, 0.0).rotation;
+        let transform = ramp_transform_on(
+            start,
+            base,
+            ramp.length,
+            ramp.angle.to_radians(),
+            half_thickness,
+        );
+        let half = Vec3::new(ramp.width / 2.0, half_thickness, ramp.length / 2.0);
+        let entity = super::spawn_static_box(commands, transform, half, Surface::Road, 0.0);
+        commands
+            .entity(entity)
+            .insert((
+                GlideRamp,
+                TrickRamp,
+                Name::new("Glide ramp"),
+                Mesh3d(meshes.add(Cuboid::from_size(half * 2.0))),
+                MeshMaterial3d(material.clone()),
+            ))
+            .with_children(|ramp| {
+                // Three chevrons pointing up the ramp, and the lip.
+                let top = half_thickness + 0.02;
+                let mut stripes = vec![(
+                    Vec3::new(0.0, top, -half.z + 0.35),
+                    0.0,
+                    Vec3::new(half.x * 2.0, 0.04, 0.7),
+                )];
+                for z in [-0.35, 0.3, 0.95] {
+                    let z = z * half.z;
+                    stripes.push((Vec3::new(-0.9, top, z), -0.7, Vec3::new(0.4, 0.04, 2.6)));
+                    stripes.push((Vec3::new(0.9, top, z), 0.7, Vec3::new(0.4, 0.04, 2.6)));
+                }
+                for (at, yaw, size) in stripes {
+                    ramp.spawn((
+                        Mesh3d(stripe_mesh.clone()),
+                        MeshMaterial3d(stripe_material.clone()),
+                        Transform::from_translation(at)
+                            .with_rotation(Quat::from_rotation_y(yaw))
+                            .with_scale(size),
+                    ));
+                }
+            });
+    }
 }
 
 fn spawn_trick_ramps(

@@ -12,10 +12,15 @@
 //! The chase rig keeps running underneath: on release the camera is back exactly where the
 //! chase camera is, its springs never interrupted. The kart itself ignores the button (only an
 //! item thrown at that moment goes backwards, issue #16): the view stays out of the simulation.
+//!
+//! **Under water** (GD § 10, issue #20): a blue tint covers the screen while the camera is under
+//! the water of a lake (`underwater.rs`).
 
 mod rig;
+mod underwater;
 
 pub use rig::{CameraRig, RigInput};
+pub use underwater::{UNDERWATER_TINT, UnderwaterTint};
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -194,7 +199,8 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, lean_into_drifts)
             .add_systems(
                 PostUpdate,
-                chase
+                (chase, underwater::tint_under_water)
+                    .chain()
                     .after(InterpolationSystems)
                     .before(TransformSystems::Propagate),
             );

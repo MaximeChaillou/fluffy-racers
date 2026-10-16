@@ -57,10 +57,10 @@ use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::interactions::{InteractionTuning, Paw, PawMotion};
 use crate::items::{ItemBox, ItemObject, ItemSlots, ItemTuning, Motion, Slot};
 use crate::kart::{
-    Boost, ColorSet, ItemEffects, Kart, KartAssists, KartInput, KartPaint, KartState, KartSystems,
-    KartTuning, KartVisualAssets, MaxSpeedFactors, MaxSpeedScale, OnlinePlayerColors, PlayerKart,
-    Remote, StatEffects, StatsTuning, TrickTracker, bot_colors, kart_body_with_stats,
-    spawn_kart_visual_with_driver,
+    Boost, ColorSet, ItemEffects, Kart, KartAssists, KartEnvironment, KartInput, KartPaint,
+    KartState, KartSystems, KartTuning, KartVisualAssets, MaxSpeedFactors, MaxSpeedScale,
+    OnlinePlayerColors, PlayerKart, Remote, StatEffects, StatsTuning, TrickTracker, bot_colors,
+    kart_body_with_stats, spawn_kart_visual_with_driver, water_tuning,
 };
 use crate::race::{DrivesOnAfterFinish, Race, RaceGrid, RaceMode, RaceProgress, Racer, RacerName};
 use crate::track::TrackLayout;
@@ -341,6 +341,7 @@ fn drive_bots(
             Option<&Croquettes>,
             Option<&Paw>,
             Option<&ItemEffects>,
+            Option<&KartEnvironment>,
         ),
         &mut KartInput,
     )>,
@@ -392,10 +393,16 @@ fn drive_bots(
         effects,
         tricks,
         boost,
-        (slots, progress, croquettes, paw, item_effects),
+        (slots, progress, croquettes, paw, item_effects, environment),
         mut input,
     ) in &mut bots
     {
+        // Issue #20: its terrain's stats (the water's, the air's), as its kart drives.
+        let environment = environment.copied().unwrap_or_default();
+        let effects = &effects.on(environment.terrain());
+        let glide_turn_rate = environment
+            .gliding
+            .then(|| kart_tuning.environment.glide_turn_rate * effects.steer_rate);
         let creamed = item_effects.is_some_and(|e| e.creamed > 0.0);
         let rocket = item_effects.is_some_and(|e| e.rocket > 0.0);
         let has_room = slots.is_some_and(|s| s.has_room());
@@ -427,17 +434,16 @@ fn drive_bots(
             } else {
                 None
             },
+            glide_turn_rate,
         };
-        // The bot knows its own kart: its stats applied (drift radii, tiers, steering).
+        // The bot knows its own kart: its stats applied (drift radii, tiers, steering), under
+        // water the water's physics too.
         let skill = tuning.skill(bot.difficulty);
-        let mut new = drive(
-            &mut brain,
-            skill,
-            &tuning,
-            &effects.tuning(&kart_tuning),
-            &line,
-            &senses,
-        );
+        let mut own = effects.tuning(&kart_tuning);
+        if environment.underwater {
+            own = std::borrow::Cow::Owned(water_tuning(&own, &kart_tuning.environment));
+        }
+        let mut new = drive(&mut brain, skill, &tuning, &own, &line, &senses);
         // Its items (issue #16): its item button, after its driving.
         if let Some(slots) = slots.filter(|_| items_on) {
             let (ahead, behind) = karts_around(

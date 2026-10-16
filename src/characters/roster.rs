@@ -8,7 +8,7 @@
 use bevy::prelude::Resource;
 use serde::Deserialize;
 
-use crate::kart::{DriverEars, KartStats, MIDDLE_LEVEL, Stat, StatPoints};
+use crate::kart::{DriverEars, KartStats, MIDDLE_LEVEL, Stat, StatPoints, Terrain};
 use crate::track::biome::is_model_id;
 
 /// The four RON files, compiled into the game.
@@ -350,6 +350,14 @@ fn check_list<'a>(
                 stat.label()
             ));
         }
+        // Issue #20: the Speed and the Handling on the other terrains too.
+        if let Some((stat, terrain, value)) = points.terrain_out_of_range() {
+            return Err(format!(
+                "{file}: {name}: {value} points of {} ({}) (10 at most)",
+                stat.label(),
+                terrain.label()
+            ));
+        }
     }
     entries
         .iter()
@@ -357,11 +365,15 @@ fn check_list<'a>(
         .ok_or_else(|| format!("{file}: default {default:?} is not in the list"))
 }
 
-/// Whether `stats` is the middle level everywhere (what the default loadout must give).
+/// Whether `stats` is the middle level everywhere (what the default loadout must give), on every
+/// terrain too (issue #20).
 pub fn is_middle(stats: &KartStats) -> bool {
     Stat::ALL
         .iter()
         .all(|stat| stats.level(*stat) == MIDDLE_LEVEL)
+        && Terrain::ALL.iter().all(|terrain| {
+            stats.speed_on(*terrain) == MIDDLE_LEVEL && stats.handling_on(*terrain) == MIDDLE_LEVEL
+        })
 }
 
 #[cfg(test)]
@@ -623,5 +635,64 @@ mod tests {
         let without = CHARACTERS_RON.replacen("model: \"cube-pets/animal-cat\",", "", 1);
         let roster = Roster::parse(&without, &ok, &ok, &ok).unwrap();
         assert_eq!(roster.characters[3].model, None);
+        // Issue #20: a terrain's points are checked too, and written without `Some(...)`.
+        let terrain = |field: &str, points: u8| {
+            list(
+                "A",
+                &[part("A", 1).replace(
+                    "invincibility: 1)",
+                    &format!("invincibility: 1, {field}: {points})"),
+                )],
+            )
+        };
+        assert!(parse(&terrain("air_speed", 10)).is_ok());
+        let error = parse(&terrain("water_handling", 11)).unwrap_err();
+        assert!(error.contains("Maniabilité (Eau)"), "{error}");
+        assert!(parse(&terrain("air_speeed", 1)).is_err());
+    }
+
+    /// Issue #20 (GD § 9): every part of the files gives its Speed and its Handling on each
+    /// terrain (none left to the ground's by default); the default loadout is the middle level on
+    /// every terrain (checked by `is_middle` above); some parts are made for a terrain: the
+    /// bathtub and the penguin swim, the feather and the parrot glide.
+    #[test]
+    fn every_part_has_its_terrains() {
+        let roster = roster();
+        for kind in PartKind::ALL {
+            for i in 0..roster.count(kind) {
+                let p = roster.points(kind, i);
+                let name = roster.name(kind, i);
+                for value in [
+                    p.water_speed,
+                    p.water_handling,
+                    p.air_speed,
+                    p.air_handling,
+                    p.anti_gravity_speed,
+                    p.anti_gravity_handling,
+                ] {
+                    assert!(value.is_some(), "{name}: {p:?}");
+                }
+            }
+        }
+        let with = |kind, name: &str| {
+            let mut loadout = roster.default_loadout();
+            loadout.set(kind, roster.find(kind, name).unwrap());
+            roster.stats(&loadout)
+        };
+        let middle = roster.stats(&roster.default_loadout());
+        for terrain in Terrain::ALL {
+            assert_eq!(middle.speed_on(terrain), MIDDLE_LEVEL);
+            assert_eq!(middle.handling_on(terrain), MIDDLE_LEVEL);
+        }
+        let bathtub = with(PartKind::Kart, "Baignoire");
+        assert!(bathtub.speed_on(Terrain::Water) > bathtub.speed_on(Terrain::Ground));
+        let penguin = with(PartKind::Character, "Pingouin");
+        assert!(penguin.speed_on(Terrain::Water) > penguin.speed_on(Terrain::Ground));
+        assert!(penguin.speed_on(Terrain::Air) < penguin.speed_on(Terrain::Ground));
+        let feather = with(PartKind::Wing, "Plume");
+        assert!(feather.speed_on(Terrain::Air) > feather.speed_on(Terrain::Ground));
+        assert!(feather.handling_on(Terrain::Air) > feather.handling_on(Terrain::Ground));
+        let parrot = with(PartKind::Character, "Perroquet");
+        assert!(parrot.handling_on(Terrain::Air) > parrot.handling_on(Terrain::Ground));
     }
 }

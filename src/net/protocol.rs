@@ -39,7 +39,8 @@
 //! origin ([`Message::Relayed`]), and the host sends each client one packet with every kart's
 //! newest state ([`Message::KartStates`], grouped by the peer that drives them). Version 9 (issue
 //! #70): the host's closed results ([`RaceResults`]: every racer's time, estimated for those
-//! still on track).
+//! still on track). Version 10 (issue #20): two more bits of a kart's flags, its glider open and
+//! under water ([`KART_FLAGS`]).
 
 use std::fmt;
 
@@ -49,7 +50,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 9;
+pub const PROTOCOL_VERSION: u8 = 10;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -300,8 +301,9 @@ pub const OUT_ITEMS: [ItemKind; 5] = [
     ItemKind::OreillerGeant,
 ];
 
-/// The highest flags of a kart state (`KartSnapshot::flags`): bits 5 to 7 are 0.
-pub const KART_FLAGS: u8 = 0b1_1111;
+/// The highest flags of a kart state (`KartSnapshot::flags`): bit 7 is 0. Issue #20: bit 5 is the
+/// glider open, bit 6 under water.
+pub const KART_FLAGS: u8 = 0b111_1111;
 
 /// The items whose user tells the others what they do to them (issue #61, [`EffectOut`]), in
 /// their wire order.
@@ -2530,12 +2532,12 @@ mod tests {
             2 + 4 + 2 + 12 + 6 + 12 + 1,
         );
         // Issue #61: bits 2 to 4 of the flags are the super câlin, the fusée and the dégonflage;
-        // 5 to 7 stay free.
+        // issue #20: 5 and 6 the glider and the water; 7 stays free.
         for (at, value) in [
             (state, 0x07),
             (state, 0x80),
-            (flags, 0b10_0000),
-            (flags, 0b10_0100),
+            (flags, 0b1010_0000),
+            (flags, 0b1000_0100),
             (flags, 0x80),
             (rotation, 0x80),
         ] {
@@ -2544,7 +2546,7 @@ mod tests {
             assert!(invalid(&bad), "byte {at} = {value:#x}");
         }
         assert!(Message::decode(&kart).is_ok());
-        for value in [0b100, 0b1000, 0b1_0000, KART_FLAGS] {
+        for value in [0b100, 0b1000, 0b1_0000, 0b10_0000, 0b100_0000, KART_FLAGS] {
             let mut good = kart.clone();
             good[flags] = value;
             assert!(Message::decode(&good).is_ok(), "flags {value:#b}");

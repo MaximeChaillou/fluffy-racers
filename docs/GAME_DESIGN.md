@@ -211,7 +211,7 @@ La table est une donnée de configuration (RON), pas du code. Tant qu'un objet n
 
 Modèle MK8DX :
 
-- **Stats** : Vitesse, Accélération, Poids, Maniabilité, Adhérence (hors-piste et surfaces glissantes), **Mini-turbo** et **Invincibilité** (stats cachées). La vitesse et la maniabilité existent en 4 variantes de terrain (sol, eau, air, anti-gravité). On commence avec le sol uniquement.
+- **Stats** : Vitesse, Accélération, Poids, Maniabilité, Adhérence (hors-piste et surfaces glissantes), **Mini-turbo** et **Invincibilité** (stats cachées). La vitesse et la maniabilité existent en 4 variantes de terrain (sol, eau, air, anti-gravité) : chaque pièce donne ses points sur chaque terrain (#20 ; une valeur omise reprend celle du sol), le kart prend les niveaux du terrain où il est (sous l'eau : « eau » ; planeur ouvert : « air » ; l'anti-gravité viendra avec #78). Les bornes de leurs effets sont celles du sol par défaut (`StatsTuning::water`, `air`, `anti_gravity`), exactement 1 au niveau 10. La combinaison par défaut fait 10 sur chaque terrain. Quelques pièces ont un terrain de prédilection : la baignoire et le pingouin nagent, l'éléphant aussi (sa trompe) ; la plume et le perroquet planent ; le panier en osier prend l'eau.
 - **Somme de 4 éléments** : personnage + kart + roues + aile. Chaque élément vaut de 0 à 10 points par stat. Le total est borné à un **niveau de 0 à 20**. Le menu affiche `(niveau + 3) / 4`, soit de 0,75 à 5,75.
 - **Effets** : chaque niveau est converti en paramètres par interpolation linéaire. Exemple : vitesse max = base × lerp(0,92 ; 1,08 ; niveau / 20) (à régler).
   - **Poids** : qui pousse qui dans les collisions, et la force des interactions entre karts (§ 15) : un lourd frappe et jette plus fort, et freine davantage le kart qu'il attrape ; un léger se fait remorquer sans presque freiner sa cible.
@@ -237,6 +237,25 @@ Pièces de départ (#15, données dans `assets/data/`) : 3 karts (panier en osie
 - **Anti-gravité** : zones marquées où les roues pivotent et où l'on roule sur les murs et les plafonds. **Se percuter donne un boost aux deux karts** (spin boost, MK8DX). Des plots dédiés donnent aussi un boost.
 - **Planeur** : un tremplin spécial ouvre une aile ; on dirige alors haut, bas, gauche et droite avec les stats « air ».
 - **Sous l'eau** : on passe aux stats « eau », plus lentes et plus flottantes.
+
+### Notre implémentation (#20 : le planeur et l'eau ; l'anti-gravité : #78)
+
+Toutes les valeurs sont dans `KartTuning::environment` (`EnvironmentTuning` : panneau d'admin, à régler).
+
+- **Planeur** :
+  - un **tremplin de planeur** (bleu ciel, chevrons blancs), marqué dans le RON du circuit (`glide_ramps`), large d'un muret à l'autre, mène à un **vide** (`gaps` : un tronçon sans route ni murets, que la ligne centrale traverse toujours). Une figure y marche aussi (c'est un tremplin à figures) ;
+  - l'aile s'ouvre quand le kart quitte le tremplin : aucune roue au sol depuis 3 ticks, moins de 0,5 s après la dernière roue sur le tremplin. Elle se replie dès qu'une roue touche le sol, sous l'eau, ou avec le pélican ;
+  - en vol, **Haut (l'accélérateur) pique** : plus vite (1,2 × la vitesse max du kart), plus raide (pente 0,17) ; **Bas (le frein) cabre** : plus lent (0,7 ×), plus à plat (pente 0,08) ; ni l'un ni l'autre : un vol plané (0,95 ×, pente 0,1). La descente est donc la même dans toutes les classes (une pente, pas une vitesse de chute), 1,2 m/s au moins. **Gauche et Droite** font virer (1,1 rad/s à fond). La vitesse visée suit la vitesse max du kart, donc ses stats « air », sa classe, ses croquettes et un boost en cours ; la maniabilité « air » règle le virage. Le saut du tremplin se fond dans la glisse (en 0,4 s environ) ; même un kart qui quitte le tremplin au ralenti s'envole ;
+  - pas de gravité en vol : la glisse décide de la descente. Le kart reste droit (la caméra et les collisions ne changent pas) ; il ne s'incline qu'à l'écran : le nez plonge en piqué, se lève en cabré, le kart se penche dans les virages ;
+  - **en vol, les planeurs ne se touchent pas entre eux** (les ailes font 4 m de large et le vol dure 2 à 3 s ; ils touchent tout le reste : la piste, les karts au sol, les objets), et un choc ne les fait jamais pivoter plus vite que leur propre virage à fond ;
+  - **hors-piste** : un planeur au-dessus des murets n'est pas hors de la piste tant qu'il vole ; posé au-delà, il l'est (le pélican vient 1 s plus tard, comme toujours). Au-dessus du vide, il « tombe » sous le bas du vide moins 5 m (dans l'eau du lagon) ;
+  - **les bots** visent leur ligne comme au sol (avec le virage du planeur) et piquent tant qu'ils sont à plus de 2 m au-dessus d'elle.
+- **Sous l'eau** :
+  - un **lac** (`lakes` : un rectangle creusé dans le sol jusqu'à son fond, plein d'eau jusqu'à son niveau, juste sous le sol) ; la route peut y plonger, et seulement là. Le kart est sous l'eau quand son centre est sous la surface de plus de 0,15 m ; il en sort quand il est au-dessus de plus de 0,15 m ;
+  - sous l'eau : les stats « eau », la vitesse max × 0,9, la gravité × 0,5 (les sauts et les petits sauts flottent : leur durée maximale en l'air s'allonge d'autant, un petit saut finit toujours en drift), l'eau freine plus (décélérations × 1,6) et ralentit les sauts (la vitesse verticale s'éteint à 1,2 /s hors du sol) ;
+  - à l'écran : des bulles montent derrière le kart, une gerbe de gouttes à l'entrée et à la sortie ; sous l'eau, la caméra voit tout en bleu (un voile sur l'écran, sous le HUD).
+- **En ligne** : deux bits de l'état du kart (planeur, sous l'eau) ; les autres voient l'aile, l'inclinaison et les bulles.
+- **Le Lagon Duvet** (#20, le circuit de démonstration) : départ en haut d'une falaise, envol au-dessus du lagon, atterrissage sur la plage, puis la route plonge sous l'eau du lagon avant de remonter la falaise.
 
 ## 11. Aides et accessibilité (MK8DX)
 
@@ -279,6 +298,7 @@ Le confort qui existe déjà (#17) :
 - **Disposition du clavier** (#17, menu Options) : **AZERTY** (par défaut, le jeu est en français) ou **QWERTY**. Les touches restent les mêmes sous les doigts dans les deux cas. Le choix change :
   - les **lettres affichées** (menu Options, écran de sélection) : Z/Q/S/D ou W/A/S/D ;
   - en AZERTY, le jeu lit **en plus** les positions Z (accélérer, haut) et Q (gauche). C'est ce que certains navigateurs envoient quand ils donnent les lettres au lieu des positions (Firefox qui résiste au pistage, bureaux à distance, machines virtuelles). Sur un vrai clavier AZERTY, ces positions sont les touches W et A, que le jeu n'utilise pas : aucun conflit. En QWERTY, Z (à côté de X) et Q ne font rien.
+- **En planeur** (#20, § 10) : les mêmes touches. Haut (l'accélérateur) pique, Bas (le frein) cabre, Gauche et Droite virent ; à la manette, A pique, B cabre et le stick vire.
 - **Regarder derrière** (#17) : la caméra passe devant le kart et regarde en arrière **tant que** C (ou X / Y à la manette) est maintenu, d'un coup, comme dans MK8DX ; au relâchement, elle revient exactement à la caméra de poursuite. Ça marche aussi sur la grille et après l'arrivée. Avec le bouton Objet, C lance aussi l'objet derrière (§ 8) : on voit où il part.
 - **Options** (#17) : **O** ouvre et ferme le menu (même lettre et même place en AZERTY et en QWERTY, sans Fn sur Mac), en course comme depuis l'écran de sélection, par-dessus lequel il s'ouvre. Haut / Bas : la ligne ; Gauche / Droite (ou Entrée, Espace) : changer ; **Échap** ou O : fermer. Le jeu est en pause tant qu'il est ouvert (en ligne, non : voir plus bas), et un changement s'applique tout de suite. Le menu liste aussi les commandes, avec les lettres du clavier choisi.
 - **Interaction** : X se tient de la main gauche à côté de Shift et d'Espace quand on conduit aux flèches ; F est l'équivalent de E pour qui conduit avec W/A/S/D (Z/Q/S/D). À la manette, RB se tient à l'index pendant que le pouce garde A (accélérer) : RB quitte donc le saut/drift, qui reste sur RT.

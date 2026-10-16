@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 
 use super::data::{ControlPoint, OffroadZone, TrackData};
+use super::water::{Gap, Lake};
 
 /// One point of the sampled centerline.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -285,6 +286,9 @@ pub struct TrackLayout {
     pub offroad: Vec<OffroadZone>,
     /// Issue #19: built from the mirror image of its file (`TrackData::mirrored`).
     pub mirrored: bool,
+    /// Issue #20: the stretches with no road (the karts glide over them) and the lakes.
+    pub gaps: Vec<Gap>,
+    pub lakes: Vec<Lake>,
 }
 
 /// Racers on the grid (GD § 1).
@@ -295,11 +299,18 @@ impl TrackLayout {
         let center = CenterLine::new(&data.points, data.sample_step);
         let checkpoints = center.checkpoints(data.checkpoint_spacing);
         let respawns = if data.respawns.is_empty() {
-            // One per checkpoint, except where a kart must not be dropped: on a ramp or in sand.
+            // One per checkpoint, except where a kart must not be dropped: on a ramp, in sand, in
+            // a gap (issue #20: no road there) or just before one.
             let blocked: Vec<(f32, f32)> = data
                 .trick_ramps
                 .iter()
+                .chain(&data.glide_ramps)
                 .map(|r| (r.at, r.length + 3.0))
+                .chain(data.gaps.iter().map(|g| {
+                    let from = center.param_to_distance(g.from);
+                    let to = center.param_to_distance(g.to);
+                    (g.from, center.wrap(to - from) + 3.0)
+                }))
                 .chain(data.offroad.iter().map(|z| {
                     let from = center.param_to_distance(z.from);
                     let to = center.param_to_distance(z.to);
@@ -330,6 +341,8 @@ impl TrackLayout {
             respawns,
             offroad: data.offroad.clone(),
             mirrored: data.mirrored,
+            gaps: data.gaps.iter().map(|g| Gap::new(&center, g)).collect(),
+            lakes: data.lakes.iter().map(Lake::new).collect(),
             center,
         }
     }
@@ -342,6 +355,71 @@ mod tests {
 
     fn prairie() -> TrackData {
         TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
+    }
+
+    /// Issue #20 (GD § 10): the Lagon Duvet has a glide ramp at the start of its gap (the lip
+    /// 10 m above the landing), its gap is over its lake, its road dips under the water of the
+    /// lake (deep enough for the camera too) and only there; no kart is dropped by the pelican in
+    /// the gap or on the ramp. Mirrored, the lake follows.
+    #[test]
+    fn the_lagoon_has_its_glide_ramp_its_gap_and_its_water() {
+        let data = every_circuit()
+            .into_iter()
+            .find(|d| d.name == "Lagon Duvet")
+            .expect("the circuit of issue #20");
+        for data in [data.clone(), data.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            assert_eq!(layout.gaps.len(), 1);
+            assert_eq!(layout.lakes.len(), 1);
+            let (gap, lake) = (layout.gaps[0], layout.lakes[0]);
+            let ramp = data.glide_ramps[0];
+            let top =
+                center.param_to_distance(ramp.at) + ramp.length * ramp.angle.to_radians().cos();
+            assert!(
+                (top - gap.from).abs() < 0.2,
+                "the ramp's top {top} at the gap {gap:?}"
+            );
+            assert!(
+                ramp.width >= 2.0 * wall_offset(&center.at(top)) - 0.01,
+                "wall to wall"
+            );
+            let lip = center.at(gap.from).position.y;
+            let landing = center.at(gap.to).position.y;
+            assert!(
+                lip - landing > 9.0 && gap.low == landing.min(lip),
+                "{lip} {landing}"
+            );
+            let length = gap.length(center);
+            assert!((50.0..70.0).contains(&length), "{length}");
+            // Under the flight, the lagoon.
+            for k in 1..10 {
+                let p = center.at(gap.from + length * k as f32 / 10.0).position;
+                assert!(lake.covers(p.xz()), "{p}");
+            }
+            // The road under the water: the kart's center more than 3 m under the surface
+            // (the chase camera, 2.4 m above it, under the water too).
+            let deepest = center
+                .samples()
+                .iter()
+                .filter(|s| gap_at_distance(&layout, s.distance).is_none())
+                .map(|s| s.position.y)
+                .fold(f32::MAX, f32::min);
+            assert!(lake.level - (deepest + GRID_HEIGHT) > 3.0, "{deepest}");
+            for d in &layout.respawns {
+                assert!(
+                    gap_at_distance(&layout, *d).is_none(),
+                    "a respawn in the gap"
+                );
+                let from = center.param_to_distance(ramp.at) - 3.0;
+                assert!(center.wrap(*d - from) > ramp.length + 3.0, "on the ramp");
+            }
+            assert_eq!(lake.center().x < 0.0, data.mirrored, "the lake mirrored");
+        }
+    }
+
+    fn gap_at_distance(layout: &TrackLayout, distance: f32) -> Option<Gap> {
+        crate::track::gap_at(&layout.gaps, &layout.center, distance).copied()
     }
 
     #[test]
@@ -508,17 +586,19 @@ mod tests {
     /// Issue #19: on every circuit of the game and its mirror image, the walls never fold (no
     /// turn tighter than the inner wall's offset), the road and the walls stay above the ground,
     /// and no two parts of the track far apart along it (60 m and more) come so close that their
-    /// walls would touch: a meter at least between their outer faces.
+    /// walls would touch: a meter at least between their outer faces. Issue #20: in a lake, above
+    /// its floor (and under its water where the road dips); a gap has neither road nor walls.
     #[test]
     fn every_circuit_and_its_mirror_keep_their_parts_apart() {
         let circuits = every_circuit();
-        assert!(circuits.len() >= 4, "issue #19: at least 4 circuits");
+        assert!(circuits.len() >= 5, "issue #20: at least 5 circuits");
         for data in circuits.iter().flat_map(|d| [d.clone(), d.mirrored()]) {
             let name = format!(
                 "{}{}",
                 data.name,
                 if data.mirrored { " (miroir)" } else { "" }
             );
+            let layout = TrackLayout::new(&data);
             let center = CenterLine::new(&data.points, data.sample_step);
             let samples = center.samples();
             for (i, s) in samples.iter().enumerate() {
@@ -529,13 +609,24 @@ mod tests {
                     "{name}: radius {radius} < wall {wall} at {}",
                     s.distance
                 );
+                if crate::track::gap_at(&layout.gaps, &center, s.distance).is_some() {
+                    continue;
+                }
                 for side in [-1.0, 1.0] {
                     let base = s.point(side * wall, 0.0);
+                    let ground = crate::track::water::ground_height(&layout.lakes, base.xz());
                     assert!(
-                        base.y > GROUND_HEIGHT,
+                        base.y > ground,
                         "{name}: under the ground at {}",
                         s.distance
                     );
+                    if base.y < GROUND_HEIGHT {
+                        assert!(
+                            layout.lakes.iter().any(|lake| lake.covers(base.xz())),
+                            "{name}: under the ground out of a lake at {}",
+                            s.distance
+                        );
+                    }
                 }
             }
             let length = center.length();

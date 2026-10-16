@@ -51,7 +51,18 @@ fn transfer(from: &mut App, sender: PeerKey, to: &mut App) {
 /// room on `other_slot`; 120 frames per second (the fixed 60 Hz tick every other frame). The
 /// common clock is the local one (both games start together).
 fn online_game(me: PeerKey, slot: usize, other: PeerKey, other_slot: usize) -> App {
-    let mut app = crate::tests::game_app_unloaded(TrackChoice::default(), 0);
+    online_game_on(TrackChoice::default(), me, slot, other, other_slot)
+}
+
+/// The same on `track`.
+fn online_game_on(
+    track: TrackChoice,
+    me: PeerKey,
+    slot: usize,
+    other: PeerKey,
+    other_slot: usize,
+) -> App {
+    let mut app = crate::tests::game_app_unloaded(track, 0);
     let mut sync = KartSync::new(me, slot as KartId, 1);
     sync.clock = TickClock::with_offset(0);
     sync.set_players([(other, [3, 1, 2, 1], other_slot, bot_color(other_slot))]);
@@ -639,4 +650,116 @@ fn the_roster_keeps_the_karts_by_id_and_authority() {
     // A new session: every remote kart goes.
     sync.set_session(0);
     assert!(sync.remotes().is_empty());
+}
+
+/// Issue #20: what the special environments do to a kart is seen on the other screens, from its
+/// states (two bits of `KartState`): Ana's kart takes off the Lagon Duvet's glide ramp and lands
+/// on the beach; on Bob's screen, its body glides and its wing opens, then folds. Put at the
+/// bottom of the lagoon, it is under water on Bob's screen too, its bubbles rising.
+#[test]
+fn the_glider_and_the_water_are_seen_on_the_other_screens() {
+    use crate::interpolation::{InterpolatedFrom, PhysicsPose};
+    use crate::kart::{Bubble, KartBodyPivot, KartEnvironment, Wing};
+    let lagoon = || TrackChoice::Circuit("tracks/lagon.track.ron".into());
+    let mut ana = online_game_on(lagoon(), ANA, 0, BOB, 1);
+    let mut bob = online_game_on(lagoon(), BOB, 1, ANA, 0);
+    for app in [&mut ana, &mut bob] {
+        app.world_mut()
+            .resource_mut::<KartSync>()
+            .drain_outgoing()
+            .for_each(drop);
+    }
+    let kart = crate::tests::player(&mut ana);
+    let layout = ana.world().resource::<crate::track::TrackLayout>().clone();
+    let put = |ana: &mut App, distance: f32, speed: f32| {
+        let sample = layout.center.at(distance);
+        let transform = sample.transform(0.0, crate::track::GRID_HEIGHT);
+        let world = ana.world_mut();
+        *world.get_mut::<Transform>(kart).unwrap() = transform;
+        world.get_mut::<PhysicsPose>(kart).unwrap().snap(transform);
+        world.get_mut::<Velocity>(kart).unwrap().linear = sample.forward * speed;
+    };
+    let frame = |ana: &mut App, bob: &mut App| {
+        ana.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp);
+        ana.update();
+        bob.update();
+        transfer(ana, ANA, bob);
+        transfer(bob, BOB, ana);
+    };
+    let shown = |bob: &mut App| -> Option<(KartEnvironment, f32, usize)> {
+        let sync = bob.world().resource::<KartSync>();
+        let proxy = sync.remote(ANA)?.proxy?;
+        let world = bob.world_mut();
+        let environment = *world.get::<KartEnvironment>(proxy)?;
+        let wing = world
+            .query::<(&Wing, &ChildOf)>()
+            .iter(world)
+            .filter(|(_, child_of)| {
+                world
+                    .get::<KartBodyPivot>(child_of.parent())
+                    .is_some_and(|pivot| pivot.body == proxy)
+            })
+            .map(|(wing, _)| wing.open)
+            .fold(0.0, f32::max);
+        let bubbles = world
+            .query::<(&Bubble, &ChildOf, &Visibility)>()
+            .iter(world)
+            .filter(|(_, child_of, visibility)| {
+                **visibility != Visibility::Hidden
+                    && world
+                        .get::<InterpolatedFrom>(child_of.parent())
+                        .is_some_and(|from| from.0 == proxy)
+            })
+            .count();
+        Some((environment, wing, bubbles))
+    };
+    let lip = layout.gaps[0].from;
+    put(&mut ana, lip - 50.0, 26.0);
+    let (mut glided, mut opened, mut folded) = (false, false, false);
+    for _ in 0..(10 * 120) {
+        frame(&mut ana, &mut bob);
+        let Some((environment, wing, _)) = shown(&mut bob) else {
+            continue;
+        };
+        glided |= environment.gliding;
+        opened |= wing > 0.99;
+        folded = opened && !environment.gliding && wing == 0.0;
+        if folded {
+            break;
+        }
+    }
+    assert!(glided, "Ana's kart never glided on Bob's screen");
+    assert!(
+        opened && folded,
+        "its wing on Bob's screen: opened {opened}, folded {folded}"
+    );
+    // The bottom of the lagoon.
+    let bottom = layout
+        .center
+        .samples()
+        .iter()
+        .filter(|s| crate::track::gap_at(&layout.gaps, &layout.center, s.distance).is_none())
+        .min_by(|a, b| a.position.y.total_cmp(&b.position.y))
+        .unwrap()
+        .distance;
+    put(&mut ana, bottom - 10.0, 15.0);
+    let mut wet = None;
+    for _ in 0..(3 * 120) {
+        frame(&mut ana, &mut bob);
+        if let Some((environment, _, bubbles)) = shown(&mut bob)
+            && environment.underwater
+            && bubbles > 0
+        {
+            wet = Some(bubbles);
+            break;
+        }
+    }
+    assert!(
+        wet.is_some(),
+        "Ana's kart never under water on Bob's screen"
+    );
+    let own = *ana.world().get::<KartEnvironment>(kart).unwrap();
+    assert!(own.underwater, "and on hers");
 }

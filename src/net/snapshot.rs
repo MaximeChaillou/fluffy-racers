@@ -20,8 +20,8 @@ use bevy::math::{Quat, Vec3};
 use super::protocol::{HELD_ITEMS, KartId, KartSnapshot};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{
-    Boost, DriftMotion, DriftSide, HitReaction, Invincibility, ItemEffects, KartState, KartTuning,
-    KartWheels, MiniTurbo, Slipstream, Stall,
+    Boost, DriftMotion, DriftSide, HitReaction, Invincibility, ItemEffects, KartEnvironment,
+    KartState, KartTuning, KartWheels, MiniTurbo, Slipstream, Stall,
 };
 
 /// Position step on the wire (m).
@@ -104,6 +104,10 @@ pub struct KartLook {
     pub calin: bool,
     pub rocket: bool,
     pub deflated: bool,
+    /// Issue #20: its glider open (the wing), under water (the bubbles): two more bits of the
+    /// flags.
+    pub gliding: bool,
+    pub underwater: bool,
 }
 
 /// What a kart holds out around it (issue #53, `ItemSlots::held_out`): a single pelure or pelote
@@ -188,6 +192,8 @@ pub struct LookParts<'a> {
     pub wheels: &'a KartWheels,
     /// What the items of phase 2 do to it (issue #61).
     pub effects: &'a ItemEffects,
+    /// Where it is (issue #20): gliding, under water.
+    pub environment: &'a KartEnvironment,
 }
 
 impl KartLook {
@@ -211,6 +217,8 @@ impl KartLook {
             calin: parts.effects.calin > 0.0,
             rocket: parts.effects.rocket > 0.0,
             deflated: parts.effects.deflated > 0.0,
+            gliding: parts.environment.gliding,
+            underwater: parts.environment.underwater,
             ..Default::default()
         };
         look.phase = match *parts.state {
@@ -336,7 +344,9 @@ impl KartSnapshot {
                 | u8::from(look.invincible) << 1
                 | u8::from(look.calin) << 2
                 | u8::from(look.rocket) << 3
-                | u8::from(look.deflated) << 4,
+                | u8::from(look.deflated) << 4
+                | u8::from(look.gliding) << 5
+                | u8::from(look.underwater) << 6,
             hit: [
                 look.hit_elapsed.min(255) as u8,
                 look.hit_duration.min(255) as u8,
@@ -385,6 +395,8 @@ impl KartSnapshot {
             calin: self.flags & 0b100 != 0,
             rocket: self.flags & 0b1000 != 0,
             deflated: self.flags & 0b1_0000 != 0,
+            gliding: self.flags & 0b10_0000 != 0,
+            underwater: self.flags & 0b100_0000 != 0,
         };
         KartPose {
             tick: self.tick,
@@ -520,6 +532,8 @@ pub(crate) mod tests {
             calin: true,
             rocket: false,
             deflated: true,
+            gliding: true,
+            underwater: false,
         }
     }
 
@@ -744,9 +758,14 @@ pub(crate) mod tests {
                 deflated: 1.0,
                 ..Default::default()
             },
+            environment: &KartEnvironment {
+                underwater: true,
+                ..Default::default()
+            },
         });
         assert_eq!(look.phase, Phase::Drifting);
         assert!(!look.calin && look.rocket && look.deflated);
+        assert!(look.underwater && !look.gliding);
         assert_eq!(look.sparks, Some(MiniTurbo::Orange));
         assert!(!look.drift_right && look.invincible && !look.stalled);
         assert_eq!(look.slipstream, Some(0.5));
@@ -781,8 +800,13 @@ pub(crate) mod tests {
             slipstream_fill: 0.0,
             wheels: &wheels,
             effects: &ItemEffects::default(),
+            environment: &KartEnvironment {
+                gliding: true,
+                ..Default::default()
+            },
         });
         assert_eq!(look.kart_state(&tuning), hit);
+        assert!(look.gliding && !look.underwater);
         assert!(!look.calin && !look.rocket && !look.deflated);
         assert!(look.stalled && look.slipstream.is_none());
         assert_eq!(look.boost(), Boost::default());
@@ -797,6 +821,7 @@ pub(crate) mod tests {
             slipstream_fill: 0.0,
             wheels: &wheels,
             effects: &ItemEffects::default(),
+            environment: &KartEnvironment::default(),
         };
         assert_eq!(
             KartLook::of(&towed).kart_state(&tuning),

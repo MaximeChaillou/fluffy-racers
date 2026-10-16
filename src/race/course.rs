@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::tuning::RaceTuning;
 use crate::track::mesh::{WALL_THICKNESS, wall_offset};
-use crate::track::{CenterLine, GRID_HEIGHT, TrackLayout};
+use crate::track::{CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at};
 
 /// Where a kart is, relative to the stretch of track its progress allows (see
 /// [`Course::project`]).
@@ -26,6 +26,9 @@ pub struct Projection {
     pub height: f32,
     /// Distance from the centerline to the inner face of the walls there (m).
     pub wall: f32,
+    /// Issue #20: over a gap (no road: the karts glide over it). `height` is then above the lower
+    /// end of the gap (where a falling kart falls below), and the walls are not there.
+    pub gap: bool,
 }
 
 /// The circuit as the race rules see it. Built once per track from the [`TrackLayout`].
@@ -44,6 +47,8 @@ pub struct Course {
     pub backward_window: f32,
     pub gate_margin: f32,
     pub gate_height: f32,
+    /// Issue #20: the stretches with no road (`TrackLayout::gaps`).
+    pub gaps: Vec<Gap>,
 }
 
 impl Course {
@@ -67,6 +72,24 @@ impl Course {
             backward_window: tuning.backward_window,
             gate_margin: tuning.gate_margin,
             gate_height: tuning.gate_height,
+            gaps: layout.gaps.clone(),
+        }
+    }
+
+    /// Where `position` is relative to the sample `s` of the centerline, at race distance
+    /// `distance`; over a gap (issue #20), its height above the gap's lower end.
+    fn projection(&self, s: &TrackSample, distance: f32, position: Vec3) -> Projection {
+        let offset = position - s.position;
+        let gap = gap_at(&self.gaps, &self.center, s.distance);
+        Projection {
+            distance,
+            lateral: offset.dot(s.right),
+            height: match gap {
+                Some(gap) => position.y - gap.low,
+                None => offset.dot(s.up),
+            },
+            wall: wall_offset(s),
+            gap: gap.is_some(),
         }
     }
 
@@ -137,13 +160,8 @@ impl Course {
             }
         }
         let s = sample(best.1);
-        let offset = position - s.position;
-        Projection {
-            distance: best.1 as f32 * step + offset.dot(s.forward),
-            lateral: offset.dot(s.right),
-            height: offset.dot(s.up),
-            wall: wall_offset(s),
-        }
+        let along = (position - s.position).dot(s.forward);
+        self.projection(s, best.1 as f32 * step + along, position)
     }
 
     /// Projects `position` on the nearest point of the whole centerline, without a progress
@@ -152,25 +170,21 @@ impl Course {
     pub fn project_anywhere(&self, position: Vec3) -> Projection {
         let samples = self.center.samples();
         let s = &samples[self.center.nearest_index(position)];
-        let offset = position - s.position;
-        Projection {
-            distance: s.distance + offset.dot(s.forward),
-            lateral: offset.dot(s.right),
-            height: offset.dot(s.up),
-            wall: wall_offset(s),
-        }
+        let along = (position - s.position).dot(s.forward);
+        self.projection(s, s.distance + along, position)
     }
 
-    /// Whether a kart there is inside the gate of its next checkpoint (laterally and in height).
+    /// Whether a kart there is inside the gate of its next checkpoint (laterally and in height;
+    /// over a gap, issue #20, at any height: a glider flies high or low).
     pub fn inside_gate(&self, projection: &Projection) -> bool {
         projection.lateral.abs() <= projection.wall + self.gate_margin
-            && projection.height.abs() <= self.gate_height
+            && (projection.gap || projection.height.abs() <= self.gate_height)
     }
 
     /// Whether a kart there is out of the track: beyond the outer face of the walls by more than
-    /// `margin`.
+    /// `margin`. Never over a gap (issue #20): there are no walls; a kart that falls there falls.
     pub fn outside_walls(&self, projection: &Projection, margin: f32) -> bool {
-        projection.lateral.abs() > projection.wall + WALL_THICKNESS + margin
+        !projection.gap && projection.lateral.abs() > projection.wall + WALL_THICKNESS + margin
     }
 
     /// Where the tow pelican drops a kart whose last validated checkpoint is `g`: on the road at

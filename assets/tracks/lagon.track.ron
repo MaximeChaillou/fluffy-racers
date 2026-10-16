@@ -1,0 +1,104 @@
+// "Lagon Duvet": a tropical lagoon at the foot of a cliff (issue #20), the special environments'
+// circuit. Original layout, about 770 m a lap, turning right: the start straight on the cliff
+// top, 10 m up, ends on a glide ramp; the glider flies over the lagoon (a gap with no road) and
+// lands on the north beach; a long straight, a wide turn to the right, then the road dives into
+// the lagoon and runs under the water (about 4 m deep) before climbing out of it, up the cliff,
+// and around the south turn back onto the cliff top.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Lagon Duvet",
+    // Dressing (issue #11): the lagoon (`assets/data/biomes.ron`), the same every time (seed),
+    // and pieces placed by hand: a wreck on the north beach and a lookout tower at the landing.
+    biome: "Lagon",
+    decor_seed: 20,
+    props: [
+        (model: "pirate-kit/ship-wreck", at: 8.2, side: Left, height: 8.0, radius: 6.0, gap: 6.0, yaw: -20.0),
+        (model: "pirate-kit/tower-complete-small", at: 6.8, side: Right, height: 8.0, radius: 2.4, gap: 1.5),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-2: the start straight on the cliff top, heading north.
+        (pos: (0.0, 10.0, 30.0)),
+        (pos: (0.0, 10.0, 4.0)),
+        (pos: (0.0, 10.0, -22.0)),
+        // 3: the edge of the cliff, at the top of the glide ramp: the gap starts.
+        (pos: (0.0, 10.0, -48.0)),
+        // 4-5: the flight over the lagoon (no road): the line of the glide, wider.
+        (pos: (0.0, 7.5, -68.0), width: 20.0),
+        (pos: (0.0, 3.0, -88.0), width: 20.0),
+        // 6: the landing on the north beach: the road again, wide for the karts landing together.
+        (pos: (0.0, 0.0, -108.0), width: 18.0),
+        // 7-8: the landing straight, narrowing.
+        (pos: (0.0, 0.0, -140.0), width: 16.0),
+        (pos: (1.0, 0.0, -172.0)),
+        // 9-13: the north turn, to the right (radius about 35 m), flat on the beach.
+        (pos: (0.0, 0.0, -200.0)),
+        (pos: (10.25, 0.0, -224.75)),
+        (pos: (35.0, 0.0, -235.0)),
+        (pos: (59.75, 0.0, -224.75)),
+        (pos: (70.0, 0.0, -200.0)),
+        // 14-15: south, toward the lagoon.
+        (pos: (70.0, 0.0, -160.0)),
+        (pos: (70.0, 0.0, -124.0)),
+        // 16-21: into the lagoon, under the water (the road 3.8 m down, the water's surface at
+        // -0.4 m), and out again.
+        (pos: (70.0, 0.0, -104.0)),
+        (pos: (70.0, -1.9, -84.0)),
+        (pos: (70.0, -3.8, -62.0)),
+        (pos: (70.0, -3.8, -40.0)),
+        (pos: (70.0, -1.9, -18.0)),
+        (pos: (70.0, 0.0, 2.0)),
+        // 22-24: the climb up the cliff.
+        (pos: (70.0, 1.4, 24.0)),
+        (pos: (70.0, 3.2, 46.0)),
+        (pos: (70.0, 5.0, 74.0)),
+        // 25-27: the south turn, to the right, still climbing, a little banked.
+        (pos: (59.75, 6.6, 98.75), bank: 6.0),
+        (pos: (35.0, 8.0, 109.0), bank: 8.0),
+        (pos: (10.25, 9.2, 98.75), bank: 6.0),
+        // 28-29: back on the cliff top, heading north (the grid sits between 29 and 0).
+        (pos: (0.0, 10.0, 74.0)),
+        (pos: (0.0, 10.0, 52.0)),
+    ],
+    // The glide ramp (issue #20): as wide as the road between the walls, its top at the edge of
+    // the cliff (point 3, the start of the gap).
+    glide_ramps: [
+        (at: 2.7, offset: 0.0, width: 24.0, length: 8.0, angle: 12.0),
+    ],
+    gaps: [
+        (from: 3.0, to: 6.0),
+    ],
+    // The lagoon (issue #20): under the flight, under the road of points 16 to 21, and around
+    // the end of the cliff. Its water is just below the ground.
+    lakes: [
+        (center: (35.0, -54.0), size: (130.0, 124.0), level: -0.4, floor: -12.0),
+    ],
+    offroad: [
+        // Sand inside both turns: cutting the apex costs speed.
+        (from: 9.6, to: 12.4, left: 0.55, right: 1.0),
+        (from: 24.6, to: 27.4, left: 0.55, right: 1.0),
+    ],
+    // Boost pads (issue #13): out of the north turn, and out of the water.
+    boost_pads: [
+        (at: 13.6, offset: 0.3),
+        (at: 21.3, offset: -0.3),
+    ],
+    item_boxes: [
+        (at: 1.3, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 7.5, offsets: [-0.5, 0.0, 0.5]),
+        // Under the water.
+        (at: 18.5, offsets: [-0.4, 0.4]),
+        (at: 23.5, offsets: [0.6], double: true),
+    ],
+    // Croquettes (issue #14): a line in the air along the flight (for the divers), lines along
+    // the straights, under the water too, never on the grid.
+    croquettes: [
+        (from: 4.0, count: 6, spacing: 5.0, offset: 0.0),
+        (from: 7.2, count: 5, spacing: 3.0, offset: -0.4),
+        (from: 14.2, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 18.2, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 22.3, count: 5, spacing: 3.0, offset: 0.4),
+    ],
+)

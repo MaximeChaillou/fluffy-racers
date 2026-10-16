@@ -98,6 +98,11 @@ const WIDE_MIN_SPEED: f32 = 12.0;
 const NEIGHBOUR_HEIGHT: f32 = 3.0;
 /// Mixed into a bot's seed for its technique draws (rocket start, tricks).
 const TECHNIQUE_SEED: u64 = 0x7EC4_1C0E_5EED_0013;
+/// Gliding (issue #20), the bot keeps this high above its line (m): it dives when higher, glides
+/// level or climbs when lower...
+const GLIDE_HEIGHT: f32 = 2.0;
+/// ...pushing the stick fully past this much more or less (m).
+const GLIDE_PITCH_SPAN: f32 = 3.0;
 
 /// Another kart, as the bot sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -144,6 +149,9 @@ pub struct Senses<'a> {
     /// An item box worth going for (issue #16: a slot free, the box there): how far ahead and
     /// how far to the right of the kart (m). `None` without items.
     pub item_box: Option<(f32, f32)>,
+    /// Issue #20: its glider is open; the turn rate of its glide at full lock (rad/s, its
+    /// Handling « air » included).
+    pub glide_turn_rate: Option<f32>,
 }
 
 /// What the bot is doing with the jump/drift button.
@@ -533,6 +541,9 @@ pub fn drive(
     let dt = senses.dt.max(1e-4);
     let speed = senses.velocity.dot(senses.forward);
     let ticks_per_second = 1.0 / dt;
+    if let Some(turn_rate) = senses.glide_turn_rate {
+        return glide(brain, skill, line, senses, &here, turn_rate, speed);
+    }
 
     // --- Personal lane and precision wobble, slowly changing (variety).
     brain.lane_timer -= dt;
@@ -960,6 +971,42 @@ pub fn drive(
     }
 }
 
+/// One tick of a bot under its glider (GD § 10, issue #20): it steers to its lane ahead like on
+/// the ground (with the glide's turn rate), and dives (Up) while it is high above its line,
+/// climbs (Down) when below: it follows the line down to the landing.
+fn glide(
+    brain: &mut BotBrain,
+    skill: &BotSkill,
+    line: &RacingLine,
+    senses: &Senses,
+    here: &super::line::Located,
+    turn_rate: f32,
+    speed: f32,
+) -> KartInput {
+    brain.drift = DriftPlan::Idle;
+    brain.last_jump = false;
+    brain.slow_ticks = 0;
+    brain.reverse_ticks = 0;
+    let aim_distance = here.distance + skill.aim_base + skill.aim_per_speed * speed.max(0.0);
+    let limits = line.limits_at(aim_distance);
+    let lane = (line.offset_at(aim_distance) * skill.line_fidelity + brain.lane)
+        .clamp(limits[0], limits[1]);
+    let target = line.center().at(aim_distance).point(lane, 0.0);
+    let (angle, yaw_right) = pursuit(senses.position, senses.forward, senses.right, target, speed);
+    let steer = if angle.abs() > 1.4 {
+        angle.signum()
+    } else {
+        (yaw_right / turn_rate.max(0.05)).clamp(-1.0, 1.0)
+    };
+    let pitch = ((senses.position.y - target.y - GLIDE_HEIGHT) / GLIDE_PITCH_SPAN).clamp(-1.0, 1.0);
+    KartInput {
+        throttle: pitch.max(0.0),
+        brake: (-pitch).max(0.0),
+        steer,
+        ..default()
+    }
+}
+
 /// The speed to drive at now (m/s): the slowest of what each turn ahead allows once the kart
 /// has slowed down for it at `planned_decel`, within `anticipation`; capped by the cruise
 /// speed. The turn `drifting_turn` is planned as a drift: inside it the bot only lifts off
@@ -1264,6 +1311,7 @@ mod tests {
             neighbors,
             creamed: false,
             item_box: None,
+            glide_turn_rate: None,
         }
     }
 
