@@ -20,7 +20,7 @@ use crate::interpolation::InterpolatedFrom;
 use crate::kart::Kart;
 use crate::race::{Course, Race, RaceMode};
 use crate::track::{PlayerStart, TrackChoice, TrackHandle, TrackLayout, test_ground};
-use crate::ui::{CroquetteCounterAnimation, HudRoot, ResultsScreen};
+use crate::ui::{CounterAnimation, HudRoot, ResultsScreen};
 
 /// The level is played online (issue #9, `crate::net`: inserted while we drive in a room, free
 /// driving or a race). What follows from it, outside the network:
@@ -108,7 +108,7 @@ fn load_level(
     commands.remove_resource::<Course>();
     commands.remove_resource::<Race>();
     commands.remove_resource::<RacingLine>();
-    commands.insert_resource(CroquetteCounterAnimation::default());
+    commands.insert_resource(CounterAnimation::default());
     mode.set_if_neq(request.mode);
 
     let Some(track) = request.track else {

@@ -1,7 +1,8 @@
 //! Where the decor of a circuit stands (issue #11): its biome's rows and scattered pieces, and
 //! the props of its file. Pure and deterministic (the circuit's `decor_seed`): the same pieces at
 //! the same places on every load, on every peer. No piece stands on the road, the curbs, the
-//! shoulders or the walls of any part of the circuit, nor on another piece. The models are only
+//! shoulders or the walls of any part of the circuit, nor on another piece, nor on a post of the
+//! start line's arch (issue #79). The models are only
 //! drawn by `crate::models` (`dressing.rs`): this file knows nothing of them but their names.
 
 use std::f32::consts::TAU;
@@ -12,6 +13,7 @@ use super::biome::{BiomeData, Side};
 use super::data::PropData;
 use super::layout::{CenterLine, TrackSample};
 use super::mesh::{GROUND_HEIGHT, WALL_THICKNESS, wall_offset};
+use super::start_line::StartLine;
 use super::water::Lake;
 use crate::bots::BotRng;
 
@@ -202,10 +204,19 @@ fn on_the_ground(p: Vec2) -> Vec3 {
     Vec3::new(p.x, GROUND_HEIGHT, p.y)
 }
 
+/// Whether a footprint of `radius` at `p` (ground plane) is clear of the posts of the start line's
+/// arch (issue #79), by [`CLEARANCE`].
+pub fn clear_of_the_arch(line: &StartLine, p: Vec2, radius: f32) -> bool {
+    line.footprints()
+        .iter()
+        .all(|(post, reach)| post.distance(p) >= reach + radius + CLEARANCE)
+}
+
 /// Places the decor of a circuit: first its file's `props` (where it says, left out where there
 /// is no room), then its biome's rows along the walls, then the biome's scattered pieces
-/// (`seed`), each one where it does not touch the circuit nor a piece already there, never a
-/// high one inside a tight turn, and never in a lake (issue #20: on the water, or in its basin).
+/// (`seed`), each one where it does not touch the circuit, the posts of its start line's arch
+/// (issue #79) nor a piece already there, never a high one inside a tight turn, and never in a
+/// lake (issue #20: on the water, or in its basin).
 pub fn place_decor(
     center: &CenterLine,
     biome: Option<&BiomeData>,
@@ -224,6 +235,7 @@ pub fn place_decor(
     let samples = center.samples();
     let inside = inside_sign(center);
     let turns = tight_turns(center);
+    let line = StartLine::of(center);
     let mut plan = DecorPlan {
         models: decor_models(biome, props),
         ..default()
@@ -234,6 +246,7 @@ pub fn place_decor(
         for &side in sides(prop.side, inside) {
             let p = beside(&sample, side, prop.gap, prop.radius);
             if !clear_of_the_circuit(samples, p, prop.radius)
+                || !clear_of_the_arch(&line, p, prop.radius)
                 || plan.overlaps(p, prop.radius)
                 || hides_a_turn(&turns, p, prop.height)
                 || wet(p, prop.radius)
@@ -265,6 +278,7 @@ pub fn place_decor(
             for &side in sides(row.side, inside) {
                 let p = beside(&sample, side, row.gap, row.radius);
                 if clear_of_the_circuit(samples, p, row.radius)
+                    && clear_of_the_arch(&line, p, row.radius)
                     && !plan.overlaps(p, row.radius)
                     && !hides_a_turn(&turns, p, row.height)
                     && !wet(p, row.radius)
@@ -296,6 +310,7 @@ pub fn place_decor(
                 let height = rng.range(group.height.0, group.height.1);
                 let p = beside(&sample, side, gap, group.radius);
                 if !clear_of_the_circuit(samples, p, group.radius)
+                    || !clear_of_the_arch(&line, p, group.radius)
                     || plan.overlaps(p, group.radius)
                     || hides_a_turn(&turns, p, height)
                     || wet(p, group.radius)
@@ -448,6 +463,42 @@ mod tests {
                         "{file} (mirror): a piece at {} reaches the walls",
                         piece.position
                     );
+                }
+            }
+        }
+    }
+
+    /// Issue #79: on every circuit and its mirror, no piece of the decor stands on a post of the
+    /// start line's arch (their footprints [`CLEARANCE`] apart at least), and every prop of the
+    /// file still finds room (the flags at the line stand beyond the posts).
+    #[test]
+    fn the_decor_keeps_clear_of_the_arch() {
+        for file in [
+            "prairie.track.ron",
+            "anneau.track.ron",
+            "crique.track.ron",
+            "col.track.ron",
+            "lagon.track.ron",
+        ] {
+            let (data, center, plan) = plan_of(file);
+            assert!(plan.left_out.is_empty(), "{file}: {:?}", plan.left_out);
+            let mirrored = data.mirrored();
+            let mirrored_center = CenterLine::new(&mirrored.points, mirrored.sample_step);
+            for (center, plan, side) in [
+                (&center, plan.clone(), ""),
+                (&mirrored_center, plan.clone().mirrored(), " (mirror)"),
+            ] {
+                let line = StartLine::of(center);
+                for piece in &plan.pieces {
+                    for (post, reach) in line.footprints() {
+                        let apart = post.distance(piece.position.xz()) - reach - piece.radius;
+                        assert!(
+                            apart >= CLEARANCE - 1e-4,
+                            "{file}{side}: {} at {} is {apart:.2} m from a post of the arch",
+                            plan.models[piece.model as usize],
+                            piece.position
+                        );
+                    }
                 }
             }
         }

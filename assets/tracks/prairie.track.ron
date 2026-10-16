@@ -11,10 +11,11 @@
     biome: "Prairie",
     decor_seed: 11,
     props: [
-        // Two grandstands along the grid, outside, and the checkered flags at the start line.
+        // Two grandstands along the grid, outside, and the checkered flags at the start line,
+        // beyond the posts of its arch (issue #79).
         (model: "racing-kit/grandStandCovered", at: 23.3, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
         (model: "racing-kit/grandStandCovered", at: 23.75, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
-        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.5, radius: 0.8, gap: 0.3),
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.5, radius: 0.8, gap: 1.8),
         // Banner towers before the hairpin and at the trick ramp, outside.
         (model: "racing-kit/bannerTowerRed", at: 3.6, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
         (model: "racing-kit/bannerTowerGreen", at: 9.8, side: Left, height: 6.0, radius: 1.6, gap: 0.5),

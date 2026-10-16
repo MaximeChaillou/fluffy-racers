@@ -8,12 +8,13 @@
 (
     name: "Col des Moufles",
     // Dressing (issue #11): the snow (`assets/data/biomes.ron`), the same every time (seed), and
-    // pieces placed by hand: nutcrackers at the start line, a giant decorated fir by the grid, a
-    // giant snowman on the plateau and a reindeer at the ramp.
+    // pieces placed by hand: nutcrackers at the start line (beyond the posts of its arch, issue
+    // #79), a giant decorated fir by the grid, a giant snowman on the plateau and a reindeer at
+    // the ramp.
     biome: "Neige",
     decor_seed: 19,
     props: [
-        (model: "holiday-kit/nutcracker", at: 0.0, side: Both, height: 3.5, radius: 0.9, gap: 0.3),
+        (model: "holiday-kit/nutcracker", at: 0.0, side: Both, height: 3.5, radius: 0.9, gap: 1.8),
         (model: "holiday-kit/tree-decorated-snow", at: 29.4, side: Right, height: 9.0, radius: 3.4, gap: 1.0),
         (model: "holiday-kit/snowman-hat", at: 8.5, side: Right, height: 5.0, radius: 2.4, gap: 1.0),
         (model: "holiday-kit/reindeer", at: 26.4, side: Right, height: 3.0, radius: 1.6, gap: 0.8),
