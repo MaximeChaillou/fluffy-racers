@@ -32,7 +32,7 @@ fn spawn_tint(commands: &mut Commands) {
 }
 
 /// Shows the tint while the camera is under the water (made the first time).
-pub(super) fn tint_under_water(
+pub(crate) fn tint_under_water(
     mut commands: Commands,
     cameras: Query<&Transform, With<ChaseCamera>>,
     lakes: Query<&Lake>,

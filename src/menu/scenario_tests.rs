@@ -1,7 +1,8 @@
 //! Headless scenarios of the main menu (issue #56): the whole game (`GamePlugin`) with
 //! `MinimalPlugins`, one fixed tick per update, and [`MainMenuPlugin`] added by hand (the game
 //! only adds it with a renderer). No picking headless: the mouse's [`MainMenuAction`]s are
-//! written as its buttons' observers write them.
+//! written as its buttons' observers write them. Since issue #89, the menu at launch is the home
+//! screen, with its background (`home_tests.rs`: its own scenarios).
 
 use bevy::input::ButtonState as KeyState;
 use bevy::input::gamepad::{
@@ -57,6 +58,22 @@ fn choose(app: &mut App) {
     run(app, (ACTIVATE_DELAY * 60.0).ceil() as usize + 3);
 }
 
+/// Issue #89: runs updates until the home's background races (its circuit loads first).
+fn wait_for_the_background(app: &mut App) {
+    for _ in 0..3000 {
+        app.update();
+        if app
+            .world()
+            .get_resource::<Showcase>()
+            .is_some_and(|showcase| showcase.running())
+        {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!("the home's background never raced");
+}
+
 fn menu(app: &App) -> MainMenu {
     *app.world().resource::<MainMenu>()
 }
@@ -97,7 +114,9 @@ fn count<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> usize {
 
 /// Issue #56: up and down go around the menu (the arrows, and the layout's letters: Z or W, S),
 /// and each entry opens its screen; closing that screen with Échap comes back to the menu, the
-/// focus on its entry. The game waits all along, but behind the lobby (it never waited there).
+/// focus on its entry. Issue #89: the menu at launch is the home screen, whose background (the
+/// game) runs all along, behind every screen it opens: the game never waits there (it did before
+/// the home screen, whose background is the game); Échap on it races at once.
 #[test]
 fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     let mut app = menu_app(TrackChoice::TestGround, false);
@@ -106,7 +125,8 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     assert!(menu(&app).open && !menu(&app).in_game);
     assert_eq!(menu(&app).entries(), &LAUNCH_ENTRIES);
     assert_eq!(focused(&app), Entry::Solo);
-    assert!(paused(&app), "the game waits in solo");
+    wait_for_the_background(&mut app);
+    assert!(!paused(&app), "the home's background runs");
 
     // Down, around, and up; AZERTY: S down, Z (the key printed Z: W's place) up.
     for (key, entry) in [
@@ -140,12 +160,12 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     assert_eq!(focused(&app), Entry::Options);
     choose(&mut app);
     assert!(options_open(&app) && !menu(&app).open);
-    assert!(paused(&app));
+    assert!(!paused(&app), "the background runs behind the options");
     tap(&mut app, KeyCode::Escape);
     assert!(!options_open(&app));
     assert!(menu(&app).open, "back to the menu");
     assert_eq!(focused(&app), Entry::Options);
-    assert!(paused(&app), "still waiting");
+    assert!(!paused(&app), "still running");
 
     // « Pilote et kart ».
     tap(&mut app, KeyCode::ArrowDown);
@@ -155,17 +175,17 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     assert!(!selection_open(&app) && menu(&app).open);
     assert_eq!(focused(&app), Entry::Garage);
 
-    // « Course solo »: the race menu (N).
+    // « Jouer solo »: the race menu (N).
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(focused(&app), Entry::Solo);
     choose(&mut app);
     assert!(race_menu_open(&app) && !menu(&app).open);
-    assert!(paused(&app));
+    assert!(!paused(&app));
     tap(&mut app, KeyCode::Escape);
     assert!(!race_menu_open(&app) && menu(&app).open);
     assert_eq!(focused(&app), Entry::Solo);
 
-    // « En ligne »: the lobby (L), which never paused the game; closing it without a room
+    // « Multijoueur »: the lobby (L), which never paused the game; closing it without a room
     // comes back.
     tap(&mut app, KeyCode::ArrowDown);
     choose(&mut app);
@@ -175,13 +195,15 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     tap(&mut app, crate::net::LOBBY_KEY);
     assert!(!lobby_open(&app) && menu(&app).open);
     assert_eq!(focused(&app), Entry::Online);
-    assert!(paused(&app));
+    assert!(!paused(&app));
 
-    // Échap closes the menu: the game goes on.
+    // Échap closes the home: a race at once, the game goes on.
     tap(&mut app, KeyCode::Escape);
     assert!(!menu(&app).open);
+    wait_for_the_player(&mut app);
     run(&mut app, 2);
     assert!(!paused(&app));
+    assert!(app.world().get_resource::<Showcase>().is_none());
 }
 
 /// Issue #56: a screen opened from the menu that starts a race (« Course ! », « Entrée » in the
@@ -190,6 +212,7 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
 fn a_race_started_from_a_screen_of_the_menu_goes_on_without_it() {
     let mut app = menu_app(TrackChoice::TestGround, false);
     act(&mut app, MainMenuAction::OpenAtLaunch);
+    wait_for_the_background(&mut app);
     choose(&mut app);
     assert!(race_menu_open(&app));
     tap(&mut app, KeyCode::Enter);
@@ -205,7 +228,7 @@ fn a_race_started_from_a_screen_of_the_menu_goes_on_without_it() {
             .is_some()
     );
 
-    // « Pilote et kart » then « Course ! » (Entrée): the race starts over, no menu.
+    // « Pilote » then « Course ! » (Entrée): the race starts over, no menu.
     tap(&mut app, KeyCode::Escape);
     assert!(menu(&app).open && menu(&app).in_game);
     for _ in 0..4 {
@@ -377,7 +400,8 @@ fn the_gamepad_goes_through_the_menu() {
     button(&mut app, GamepadButton::DPadUp);
     assert_eq!(focused(&app), Entry::Resume);
     button(&mut app, GamepadButton::DPadUp);
-    assert_eq!(focused(&app), Entry::Garage, "around");
+    // Issue #89: « Quitter » is the last entry now.
+    assert_eq!(focused(&app), Entry::Quit, "around");
     // B goes back.
     button(&mut app, GamepadButton::East);
     assert!(!menu(&app).open);
@@ -409,6 +433,7 @@ fn the_gamepad_goes_through_the_menu() {
 fn the_pointer_focuses_presses_and_chooses() {
     let mut app = menu_app(TrackChoice::TestGround, false);
     act(&mut app, MainMenuAction::OpenAtLaunch);
+    wait_for_the_background(&mut app);
     act(&mut app, MainMenuAction::Hover(2));
     assert_eq!(focused(&app), Entry::Options);
     act(&mut app, MainMenuAction::Press(2));
@@ -431,16 +456,18 @@ fn the_pointer_focuses_presses_and_chooses() {
     assert!(selection_open(&app) && !menu(&app).open);
 }
 
-/// Issue #56: the game opens on the main menu (with a renderer: the plugin's `at_launch`), and
-/// waits there; with a room in the address (`?room=`: a `Join` written at startup), it goes
-/// straight to the lobby without the menu, the selection screen open as before.
+/// Issue #56: the game opens on the main menu (with a renderer: the plugin's `at_launch`); with a
+/// room in the address (`?room=`: a `Join` written at startup), it goes straight to the lobby
+/// without the menu, the selection screen open as before. Issue #89: the menu at launch is the
+/// home screen, and its background runs (the game no longer waits there).
 #[test]
 fn the_menu_opens_at_launch_but_a_room_in_the_address_goes_to_the_lobby() {
-    let app = menu_app(TrackChoice::TestGround, true);
+    let mut app = menu_app(TrackChoice::TestGround, true);
     assert!(menu(&app).open && !menu(&app).in_game);
     assert_eq!(focused(&app), Entry::Solo);
     assert!(!selection_open(&app) && !lobby_open(&app));
-    assert!(paused(&app));
+    wait_for_the_background(&mut app);
+    assert!(menu(&app).open && !paused(&app));
 
     let mut app = game_app_unloaded(TrackChoice::TestGround, 0);
     app.add_plugins(MainMenuPlugin { at_launch: true });
@@ -457,6 +484,10 @@ fn the_menu_opens_at_launch_but_a_room_in_the_address_goes_to_the_lobby() {
     assert!(!menu(&app).open, "no menu");
     assert!(lobby_open(&app), "straight to the lobby");
     assert!(selection_open(&app), "with the selection screen, as before");
+    assert!(
+        app.world().get_resource::<Showcase>().is_none(),
+        "no home, no background: the level as before"
+    );
     app.world_mut().write_message(NetAction::Leave);
     app.update();
 }

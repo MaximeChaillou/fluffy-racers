@@ -1,6 +1,9 @@
-//! The main menu drawn with `bevy_ui`, after the charter (issue #56, `style.rs`, `anim.rs`):
-//! a veil over the game, the title, a cream panel of pill buttons (an icon on a round badge, a
-//! label, a small line), the keys at the bottom.
+//! The menus drawn with `bevy_ui`, after the charter (issue #56, `style.rs`, `anim.rs`): a veil
+//! over the game, the title, a cream panel of pill buttons (an icon on a round badge, a label, a
+//! small line), the keys at the bottom. Opened from the game, all of it in the middle of the
+//! screen, over a veil. The home screen (issue #89): the column on the left, its title big and
+//! alive (its two words bob), over a veil that fades out toward the right, where the background's
+//! karts race.
 //!
 //! **Closed, nothing is left**: the tree is spawned when the menu opens and despawned (with its
 //! observers) when it closes; the systems that animate it only run while it is open. Opened, one
@@ -15,7 +18,7 @@ use bevy::picking::Pickable;
 use bevy::picking::events::{PointerOut, PointerOver, PointerPress, PointerRelease};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
-use bevy::text::{FontSource, Justify};
+use bevy::text::{FontSource, Justify, LineHeight};
 
 use super::anim;
 use super::nav::{self, Entry};
@@ -49,6 +52,11 @@ pub struct TreeKey {
 #[require(MenuNode)]
 pub struct MenuColumn;
 
+/// Issue #89: a word of the home screen's big title (0: « Fluffy », 1: « Racers »): it bobs.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[require(MenuNode)]
+pub struct TitleWord(pub usize);
+
 /// A button of the menu: its entry, by its index in the menu.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[require(MenuNode)]
@@ -78,7 +86,7 @@ pub struct MenuText {
 pub struct MenuAssets {
     pub medium: Handle<Font>,
     pub semibold: Handle<Font>,
-    pub icons: [Handle<Image>; 5],
+    pub icons: [Handle<Image>; 6],
 }
 
 impl MenuAssets {
@@ -94,6 +102,7 @@ fn icon_index(entry: Entry) -> usize {
         Entry::Online => 2,
         Entry::Options => 3,
         Entry::Garage => 4,
+        Entry::Quit => 5,
     }
 }
 
@@ -105,6 +114,8 @@ pub fn accent(entry: Entry) -> Color {
         Entry::Online => palette::FRAISE,
         Entry::Options => palette::PRUNE,
         Entry::Garage => palette::CAROTTE,
+        // Issue #89: the ink, home.
+        Entry::Quit => palette::MYRTILLE,
     }
 }
 
@@ -127,6 +138,7 @@ pub(super) fn load_menu_assets(
             style::ICON_ONLINE,
             style::ICON_OPTIONS,
             style::ICON_GARAGE,
+            style::ICON_QUIT,
         ]
         .map(|path| server.load(path)),
     });
@@ -192,8 +204,68 @@ fn text(content: impl Into<String>, face: &Handle<Font>, px: f32, color: Color) 
 }
 
 fn spawn_tree(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
-    let entries = nav::entries(key.in_game);
-    let hints = nav::hint(key.layout, key.in_game);
+    if key.in_game {
+        spawn_game_menu(commands, key, assets);
+    } else {
+        spawn_home(commands, key, assets);
+    }
+}
+
+/// The panel of buttons of a menu.
+fn spawn_panel(column: &mut ChildSpawnerCommands, key: TreeKey, assets: &MenuAssets) {
+    column
+        .spawn((
+            MenuNode,
+            Node {
+                flex_direction: FlexDirection::Column,
+                width: u(size::PANEL_WIDTH),
+                padding: UiRect::all(u(size::PANEL_PADDING)),
+                row_gap: u(size::PANEL_GAP),
+                border_radius: BorderRadius::all(u(size::PANEL_RADIUS)),
+                ..default()
+            },
+            BackgroundColor(palette::GUIMAUVE),
+            BoxShadow::new(
+                palette::OMBRE,
+                Val::ZERO,
+                u(size::PANEL_SHADOW),
+                Val::ZERO,
+                Val::ZERO,
+            ),
+            Pickable::IGNORE,
+        ))
+        .with_children(|panel| {
+            for (index, entry) in nav::entries(key.in_game).iter().copied().enumerate() {
+                spawn_button(panel, index, entry, key.online, assets);
+            }
+        });
+}
+
+/// The keys at the bottom of a menu, `justify`-ed.
+fn spawn_hints(
+    column: &mut ChildSpawnerCommands,
+    key: TreeKey,
+    assets: &MenuAssets,
+    justify: Justify,
+) {
+    for (line, hint) in nav::hint(key.layout, key.in_game).into_iter().enumerate() {
+        column.spawn((
+            text(hint, &assets.medium, size::HINT, palette::NEIGE),
+            TextLayout::justify(justify),
+            TextShadow {
+                offset: Vec2::new(0.0, 2.0),
+                color: palette::OMBRE,
+            },
+            Node {
+                margin: UiRect::top(u(if line == 0 { 6.0 } else { 0.0 })),
+                ..default()
+            },
+        ));
+    }
+}
+
+/// The menu opened from the game: in the middle, over the veil.
+fn spawn_game_menu(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
     commands
         .spawn((
             Name::new("Main menu"),
@@ -234,6 +306,85 @@ fn spawn_tree(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
                         color: palette::FRAISE,
                     },
                 ));
+                spawn_panel(column, key, assets);
+                spawn_hints(column, key, assets, Justify::Center);
+            });
+        });
+}
+
+/// The home's veil: full behind the column, fading out toward the right (`opacity`: a share of
+/// its own, for its fade in).
+pub fn home_veil(opacity: f32) -> BackgroundGradient {
+    let color = palette::VOILE.with_alpha(palette::VOILE.alpha() * opacity.clamp(0.0, 1.0));
+    BackgroundGradient::from(LinearGradient::to_right(vec![
+        ColorStop::new(color, Val::ZERO),
+        ColorStop::new(color, u(size::HOME_VEIL_FULL)),
+        ColorStop::new(color.with_alpha(0.0), u(size::HOME_VEIL_END)),
+    ]))
+}
+
+/// Issue #89: the home screen: on the left, the title big and alive, its phrase, the panel and
+/// the keys; the veil fading out toward the right, where its background races.
+fn spawn_home(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
+    commands
+        .spawn((
+            Name::new("Home"),
+            MainMenuRoot { key },
+            GlobalZIndex(20),
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::FlexStart,
+                align_items: AlignItems::Center,
+                padding: UiRect::left(u(size::HOME_MARGIN)),
+                ..default()
+            },
+            home_veil(0.0),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                MenuColumn,
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: u(10.0),
+                    ..default()
+                },
+                UiTransform::from_scale(Vec2::splat(anim::POP_FROM)),
+                Pickable::IGNORE,
+            ))
+            .with_children(|column| {
+                column
+                    .spawn((
+                        MenuNode,
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexStart,
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|title| {
+                        for (word, (name, indent)) in
+                            [("Fluffy", 0.0), ("Racers", 36.0)].into_iter().enumerate()
+                        {
+                            title.spawn((
+                                TitleWord(word),
+                                text(name, &assets.semibold, size::HOME_TITLE, palette::NEIGE),
+                                LineHeight::RelativeToFont(size::HOME_TITLE_LINE),
+                                TextShadow {
+                                    offset: Vec2::new(0.0, 7.0),
+                                    color: palette::FRAISE,
+                                },
+                                Node {
+                                    margin: UiRect::left(u(indent)),
+                                    ..default()
+                                },
+                                UiTransform::IDENTITY,
+                            ));
+                        }
+                    });
                 column.spawn((
                     text(
                         "Des karts tout doux, des virages tout fous.",
@@ -250,46 +401,8 @@ fn spawn_tree(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
                         ..default()
                     },
                 ));
-                column
-                    .spawn((
-                        MenuNode,
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            width: u(size::PANEL_WIDTH),
-                            padding: UiRect::all(u(size::PANEL_PADDING)),
-                            row_gap: u(size::PANEL_GAP),
-                            border_radius: BorderRadius::all(u(size::PANEL_RADIUS)),
-                            ..default()
-                        },
-                        BackgroundColor(palette::GUIMAUVE),
-                        BoxShadow::new(
-                            palette::OMBRE,
-                            Val::ZERO,
-                            u(size::PANEL_SHADOW),
-                            Val::ZERO,
-                            Val::ZERO,
-                        ),
-                        Pickable::IGNORE,
-                    ))
-                    .with_children(|panel| {
-                        for (index, entry) in entries.iter().copied().enumerate() {
-                            spawn_button(panel, index, entry, key.online, assets);
-                        }
-                    });
-                for (line, hint) in hints.into_iter().enumerate() {
-                    column.spawn((
-                        text(hint, &assets.medium, size::HINT, palette::NEIGE),
-                        TextLayout::justify(Justify::Center),
-                        TextShadow {
-                            offset: Vec2::new(0.0, 2.0),
-                            color: palette::OMBRE,
-                        },
-                        Node {
-                            margin: UiRect::top(u(if line == 0 { 6.0 } else { 0.0 })),
-                            ..default()
-                        },
-                    ));
-                }
+                spawn_panel(column, key, assets);
+                spawn_hints(column, key, assets, Justify::Left);
             });
         });
 }
@@ -308,10 +421,12 @@ fn spawn_button(
         ButtonState::Disabled
     };
     let look = style::button_look(state, accent(entry));
-    let caption = if usable {
-        entry.caption()
-    } else {
+    let caption = if !usable {
         entry.why_disabled()
+    } else if online {
+        entry.caption_online()
+    } else {
+        entry.caption()
     };
     panel
         .spawn((
@@ -460,13 +575,17 @@ pub fn button_pose(menu: &MainMenu, index: usize, now: f64) -> UiTransform {
 }
 
 /// The menu open: the veil fades in, the column pops in, each button takes its state's look and
-/// its pose. Only what changed is written.
-#[allow(clippy::type_complexity)]
+/// its pose; on the home screen, the title's words bob. Only what changed is written.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn animate_tree(
     menu: Res<MainMenu>,
     time: Res<Time<Real>>,
     online: Option<Res<Online>>,
-    mut veils: Query<&mut BackgroundColor, With<MainMenuRoot>>,
+    (mut veils, mut home_veils): (
+        Query<&mut BackgroundColor, With<MainMenuRoot>>,
+        Query<&mut BackgroundGradient, With<MainMenuRoot>>,
+    ),
+    mut words: Query<(&TitleWord, &mut UiTransform), (Without<MenuColumn>, Without<MenuButton>)>,
     mut columns: Query<&mut UiTransform, (With<MenuColumn>, Without<MenuButton>)>,
     mut buttons: Query<
         (
@@ -491,6 +610,36 @@ pub(super) fn animate_tree(
         veil.set_if_neq(BackgroundColor(
             palette::VOILE.with_alpha(palette::VOILE.alpha() * anim::veil(opened)),
         ));
+    }
+    // The home's veil: its stops' colors, in place (no new gradient each frame).
+    let alpha = palette::VOILE.alpha() * anim::veil(opened);
+    for mut veil in &mut home_veils {
+        let stale = veil.0.iter().any(|gradient| match gradient {
+            Gradient::Linear(linear) => linear
+                .stops
+                .first()
+                .is_some_and(|stop| (stop.color.alpha() - alpha).abs() > 1e-4),
+            _ => false,
+        });
+        if !stale {
+            continue;
+        }
+        for gradient in veil.0.iter_mut() {
+            if let Gradient::Linear(linear) = gradient {
+                let last = linear.stops.len().saturating_sub(1);
+                for (i, stop) in linear.stops.iter_mut().enumerate() {
+                    stop.color = stop.color.with_alpha(if i == last { 0.0 } else { alpha });
+                }
+            }
+        }
+    }
+    for (word, mut transform) in &mut words {
+        let (down, turn) = anim::title_word(opened, word.0);
+        transform.set_if_neq(UiTransform {
+            translation: Val2::new(Val::ZERO, u(down)),
+            scale: Vec2::ONE,
+            rotation: Rot2::radians(turn),
+        });
     }
     for mut transform in &mut columns {
         transform.set_if_neq(UiTransform::from_scale(Vec2::splat(anim::panel_pop(
@@ -574,6 +723,28 @@ mod tests {
             button_pose(&menu, 1, 14.0),
             "then still"
         );
+    }
+
+    /// The home's veil: full behind the column, nothing on the right; its fade in only changes
+    /// its strength.
+    #[test]
+    fn the_home_veil_fades_out_toward_the_right() {
+        let BackgroundGradient(gradients) = home_veil(1.0);
+        let Some(Gradient::Linear(linear)) = gradients.first() else {
+            panic!("{gradients:?}")
+        };
+        assert_eq!(linear.angle, LinearGradient::TO_RIGHT);
+        let alphas: Vec<f32> = linear.stops.iter().map(|s| s.color.alpha()).collect();
+        assert_eq!(
+            alphas,
+            [palette::VOILE.alpha(), palette::VOILE.alpha(), 0.0]
+        );
+        assert_eq!(linear.stops[1].point, u(size::HOME_VEIL_FULL));
+        let BackgroundGradient(faded) = home_veil(0.0);
+        let Some(Gradient::Linear(faded)) = faded.first() else {
+            panic!()
+        };
+        assert!(faded.stops.iter().all(|s| s.color.alpha() == 0.0));
     }
 
     #[test]

@@ -107,26 +107,33 @@ Quand un champ de texte a le clavier (ceux du panneau d'admin, et depuis #80 le 
   - **ce que le fantôme est** : un corps sans physique (`GhostKart` : ni `Kart`, ni `kart::Remote`, ni collider, ni corps rigide, ni emplacement d'objet) qui porte les composants que lisent les visuels du kart (état, drift, boost, roues, planeur), et le visuel de n'importe quel kart (`spawn_kart_visual_with_driver`, avec l'animal, les pièces et la couleur de la course enregistrée). La physique, les objets, les bots, les pattes et l'aspiration ne le voient pas. Ses matériaux sont des copies translucides de ceux du kart (`GhostMaterials` : une par matériau, faite la première fois, partagée ensuite), sans ombre portée ;
   - **le stockage** (`admin::storage`, clé `fluffy-racers/time-trial`) : un texte RON (`TrialRecords::to_ron`) avec le format, et pour chaque circuit, classe et miroir le temps (en ticks), les tours, la version du jeu et le fantôme (ses pièces, sa couleur, ses images en base64 et leur somme de contrôle). Chaque image ne dit que ce qui a changé depuis la précédente, en entiers de longueur variable (`encode_frames` : environ 16 octets par tick au lieu de 48). Un texte illisible est ignoré, avec un avertissement.
 
-## Écrans de jeu (#56)
+## Écrans de jeu (#56, #89)
 
-- **Charte** (`docs/UI_CHARTE.md`) : palette, police, boutons, animations, navigation et ton des textes. Son code se trouve dans `src/menu/` :
+- **Charte** (`docs/UI_CHARTE.md`, validée par Max) : palette, police, boutons, animations, navigation et ton des textes. Son code se trouve dans `src/menu/` :
   - `style.rs` : la palette, les tailles en pourcentage de la hauteur de la fenêtre, l'apparence d'un bouton selon son état, les fichiers de `assets/ui/` ;
   - `anim.rs` : les ressorts amortis, en logique pure ;
-  - `nav.rs` : les entrées du menu, le focus et le stick.
-- **`bevy_ui`, pas egui**, pour les écrans de jeu. egui reste pour le panneau d'admin et, jusqu'à #89, pour les fenêtres actuelles (G, O, L, N).
+  - `nav.rs` : les entrées de l'accueil et du menu en course, le focus et le stick ;
+  - `trailer.rs` (#89) : la caméra de bande-annonce de l'accueil, en logique pure ; `showcase.rs` : le fond de l'accueil.
+- **`bevy_ui`, pas egui**, pour les écrans de jeu. egui reste pour le panneau d'admin et, en attendant leurs issues (#98 à #101), pour les fenêtres actuelles (G, O, L, N).
 - **Coût** :
   - un écran est un arbre de nœuds créé à son ouverture et détruit à sa fermeture : rien n'en reste, observateurs compris ;
   - ses systèmes d'animation ne tournent que s'il est ouvert ;
   - il s'anime avec `UiTransform` (échelle, translation), sans refaire la mise en page.
-- **Menu principal** (`menu::MainMenu`, `MainMenuPlugin`) :
+- **L'accueil et le menu en course** (`menu::MainMenu`, `MainMenuPlugin`) :
   - la logique : touches, manette, actions de la souris (les observateurs de picking des boutons), retour au menu après un écran ;
-  - la pause : `MainMenu::holds_the_game`, lu par `characters::pause_in_menus` ; en ligne, pas de pause, comme les autres menus ;
+  - la pause : `MainMenu::holds_the_game` (le menu en course), lu par `characters::pause_in_menus` ; en ligne, pas de pause, comme les autres menus ; **jamais sur l'accueil** (`MainMenu::on_home`), ni sur les écrans qu'il ouvre : son fond continue ;
   - **le plugin n'est ajouté qu'avec un rendu** (`GamePlugin`). Le monde headless, celui des courses de bots, n'a ni sa Resource ni ses messages, donc aucun archétype de plus avant la grille. Les tests l'ajoutent eux-mêmes et tout y tourne sans rendu, l'arbre compris ;
   - ses systèmes passent avant ceux des options (`MainMenuSystems.before(OptionsSystems)`) : l'image qui l'ouvre est déjà en pause.
 - **Les autres fenêtres le connaissent peu** :
   - il lit leur état (`OptionsMenu`, `SelectionScreen`, `RaceMenu`, `LobbyWindow`) ;
   - il les ouvre par leurs actions habituelles ;
-  - en fin d'image (`follow_the_screens`), il voit si l'écran qu'il a ouvert s'est refermé sans `LoadLevel`.
+  - en fin d'image (`follow_the_screens`), il voit si l'écran qu'il a ouvert s'est refermé sans `LoadLevel` ; et si l'on vient de quitter une room (l'accueil revient).
+- **Le fond de l'accueil** (#89, `menu::showcase`) est **la vraie simulation** : un niveau comme un autre, une course de bots sur le circuit du moment. Ce qui le distingue d'une course, tout dans le plugin du menu (donc rien dans le monde headless des courses de bots) :
+  - il est demandé par un `LoadLevel` dont il garde l'id (`MessageId`) : avant la construction du niveau (`PreUpdate`, avant `LevelSystems`), si le dernier `LoadLevel` de l'image est le sien, son niveau se construit ; sinon, il s'en va avec l'ancien niveau. Tout autre niveau (une course lancée depuis l'accueil, « Relancer », une room) le remplace donc, sans rien laisser ;
+  - **peu de karts** : `RaceGrid::bots` vaut les siens le temps qu'ils apparaissent, puis la grille du joueur est rendue (le menu de course, le Grand Prix et le réseau la lisent ensuite comme avant). Le kart du joueur devient un bot (`bots::bot`), comme dans les courses de bots des tests ;
+  - **des pattes plus actives** : `bots::OwnSkill`, un `BotSkill` propre au kart, que `drive_bots` prend à la place de celui de son niveau (le seul ajout au code headless : une `Option<&OwnSkill>` dans sa requête ; aucun kart d'une course ne l'a, et les courses de bots sont identiques à celles d'avant). Et **un peloton** : après l'entrée des bots et leur rattrapage, `keep_the_pack_together` remplace leur `MaxSpeedFactors::catch_up` par celui du peloton (`pack_scale`) ;
+  - **une course sans fin** (`Course::laps` = 1 000, comme le réseau écrit les siens) partie de GO (`RaceFlow::skip_countdown`) ; le HUD n'est ni mis en page ni dessiné (`Display::None`) ; les sons de course sont ceux du kart du joueur : il n'y en a pas ;
+  - **la caméra** : `film_the_background` déplace la caméra du jeu après la poursuite (`camera::chase`) et avant la teinte sous l'eau. La poursuite continue dessous, sur l'ancien kart du joueur ; la course suivante lui donne son nouveau kart (`spawn_player`).
 
 ## Modèles 3D et habillage des circuits (#11)
 

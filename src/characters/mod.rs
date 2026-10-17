@@ -331,7 +331,8 @@ fn apply_selection_actions(
 /// options menu (issue #17), the race menu (issue #19) or the main menu (issue #56, with the
 /// screen it is opening) is open (the fixed 60 Hz simulation does not run), and runs again once
 /// all are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
-/// player's kart coasts while a menu is open (its keys are the menu's).
+/// player's kart coasts while a menu is open (its keys are the menu's). Issue #89: never on the
+/// home screen, nor over it: its background is the game, running.
 #[allow(clippy::too_many_arguments)]
 fn pause_in_menus(
     screen: Res<SelectionScreen>,
@@ -343,10 +344,14 @@ fn pause_in_menus(
     mut was_open: Local<bool>,
     mut time: ResMut<Time<Virtual>>,
 ) {
-    let open = screen.open
-        || options.is_some_and(|menu| menu.open)
-        || race_menu.is_some_and(|menu| menu.open)
-        || main_menu.is_some_and(|menu| menu.holds_the_game());
+    // Issue #89: the home screen's background (its karts) runs behind it, and behind the screens
+    // it opens.
+    let home = main_menu.as_ref().is_some_and(|menu| menu.on_home());
+    let open = !home
+        && (screen.open
+            || options.is_some_and(|menu| menu.open)
+            || race_menu.is_some_and(|menu| menu.open)
+            || main_menu.is_some_and(|menu| menu.holds_the_game()));
     let pause = open && online.is_none();
     if pause && !time.is_paused() {
         time.pause();

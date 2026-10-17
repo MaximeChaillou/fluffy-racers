@@ -71,6 +71,12 @@ pub struct Bot {
     pub difficulty: BotDifficulty,
 }
 
+/// A bot that drives with this skill instead of its difficulty's (issue #89: the karts behind the
+/// home screen, whose paws are busier than in a race, `menu::HomeTuning`). No kart of a race has
+/// it.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct OwnSkill(pub BotSkill);
+
 /// Seed of the bot on grid slot `slot` in a race of seed `race_seed` (issue #40,
 /// `RaceGrid::seed`): all its random draws come from it (its driving, its rocket starts and
 /// tricks, its kart parts). With the game's seed (`RaceGrid::GAME_SEED` = 0), the seeds the
@@ -358,6 +364,7 @@ fn drive_bots(
             Option<&Paw>,
             Option<&ItemEffects>,
             Option<&KartEnvironment>,
+            Option<&OwnSkill>,
         ),
         &mut KartInput,
     )>,
@@ -421,7 +428,7 @@ fn drive_bots(
         effects,
         tricks,
         boost,
-        (slots, progress, croquettes, paw, item_effects, environment),
+        (slots, progress, croquettes, paw, item_effects, environment, own_skill),
         mut input,
     ) in &mut bots
     {
@@ -467,7 +474,7 @@ fn drive_bots(
         };
         // The bot knows its own kart: its stats applied (drift radii, tiers, steering), under
         // water the water's physics too.
-        let skill = tuning.skill(bot.difficulty);
+        let skill = own_skill.map_or_else(|| tuning.skill(bot.difficulty), |own| &own.0);
         let mut own = effects.tuning(&kart_tuning);
         if environment.underwater {
             own = std::borrow::Cow::Owned(water_tuning(&own, &kart_tuning.environment));
