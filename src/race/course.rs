@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 
 use super::tuning::RaceTuning;
-use crate::track::mesh::{FACING_UP_TOLERANCE, WALL_THICKNESS, wall_offset};
+use crate::track::mesh::{FACING_UP_TOLERANCE, WALL_HEIGHT, WALL_THICKNESS, wall_offset};
 use crate::track::{
     AntiGravityZone, CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at,
 };
@@ -90,6 +90,32 @@ impl Course {
     /// world's up anywhere else.
     pub fn up_at(&self, position: Vec3) -> Vec3 {
         crate::track::anti_gravity::up_at(&self.anti_gravity, &self.center, position)
+    }
+
+    /// Issue #96: where the tow pelican takes a kart picked up at `position` before lifting it:
+    /// from under the road of an anti-gravity zone that faces down (a ceiling: [`Course::up_at`]
+    /// below the horizontal), out beside it, `clearance` beyond its edge and below the walls
+    /// hanging from it, so that the kart is never lifted up through the road; `position` itself
+    /// anywhere else (it is lifted straight up from there, as before #96).
+    pub fn tow_clearance(&self, position: Vec3, clearance: f32) -> Vec3 {
+        if self.up_at(position).y >= -FACING_UP_TOLERANCE {
+            return position;
+        }
+        let s = &self.center.samples()[self.center.nearest_index(position)];
+        let flat_right = s.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+        let side = if (position - s.position).dot(flat_right) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        // The lowest point of the road's cross-section there: its edges, its walls.
+        let edge = wall_offset(s) + WALL_THICKNESS;
+        let lowest = [-edge, edge]
+            .into_iter()
+            .flat_map(|lateral| [s.point(lateral, 0.0).y, s.point(lateral, WALL_HEIGHT).y])
+            .fold(position.y, f32::min);
+        let beside = s.position + flat_right * side * (edge + clearance.max(0.0));
+        beside.with_y(lowest - clearance.max(0.0))
     }
 
     /// Where `position` is relative to the sample `s` of the centerline, at race distance

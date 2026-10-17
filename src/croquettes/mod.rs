@@ -33,7 +33,8 @@ mod scenario_tests;
 
 pub use logic::{
     Croquettes, LooseCroquette, LossCause, PICKUP_BUCKETS, PICKUP_CELL, PickupEntry, PickupGrid,
-    TrackCroquette, flight_position, scatter_direction, touches,
+    TrackCroquette, flight_position, flight_position_along, scatter_direction,
+    scatter_direction_along, touches,
 };
 pub use tuning::CroquetteTuning;
 pub use visual::{CroquetteBurst, CroquetteLook, CroquetteVisualAssets, CroquetteVisualPlugin};
@@ -42,7 +43,8 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::{QueryFilter, ReadRapierContext};
 
 use crate::kart::{
-    Boost, KART_HALF_EXTENTS, Kart, KartBump, KartState, KartSystems, MaxSpeedFactors,
+    Boost, KART_HALF_EXTENTS, Kart, KartBump, KartEnvironment, KartState, KartSystems,
+    MaxSpeedFactors,
 };
 use crate::race::{Race, RaceSystems};
 use crate::track::CroquetteSpot;
@@ -187,7 +189,7 @@ fn lose_croquettes(
     mut bumps: MessageReader<KartBump>,
     mut hits: MessageReader<LoseCroquettes>,
     mut lost_messages: MessageWriter<CroquettesLost>,
-    mut karts: Query<(&Transform, &mut Croquettes), With<Kart>>,
+    mut karts: Query<(&Transform, &mut Croquettes, Option<&KartEnvironment>), With<Kart>>,
 ) {
     let context = rapier.single().ok();
     // Only the track and the static obstacles stop a flying croquette, never a kart.
@@ -201,7 +203,7 @@ fn lose_croquettes(
     let bumped = bumps.read().map(|bump| (bump.kart, LossCause::Bump));
     let hit = hits.read().map(|hit| (hit.kart, hit.cause));
     for (kart, cause) in bumped.chain(hit) {
-        let Ok((transform, mut held)) = karts.get_mut(kart) else {
+        let Ok((transform, mut held, environment)) = karts.get_mut(kart) else {
             continue;
         };
         if cause.has_grace() {
@@ -223,6 +225,35 @@ fn lose_croquettes(
         // They fly out of the kart, over the road behind it: stopped short of the walls, they
         // land on whatever ground is there.
         let center = transform.translation;
+        // Issue #96: in anti-gravity, in the frame of the road under the kart (its up): on a
+        // wall, under a ceiling, they land back on the road.
+        let up = environment.map_or(Vec3::Y, |environment| environment.up);
+        if up != Vec3::Y {
+            let from = center + up * 0.3;
+            for i in 0..lost {
+                let direction = scatter_direction_along(
+                    *transform.forward(),
+                    up,
+                    i,
+                    lost,
+                    tuning.scatter_angle,
+                );
+                let wall_margin = 0.5;
+                let reach = cast(center, direction, tuning.scatter_distance + wall_margin)
+                    .map_or(tuning.scatter_distance, |toi| (toi - wall_margin).max(0.0));
+                let over = center + direction * reach;
+                let (above, below) = (2.0, 20.0);
+                let ground = cast(over + up * above, -up, above + below)
+                    .map_or(-KART_HALF_EXTENTS.y, |toi| above - toi);
+                let to = over + up * (ground + tuning.loose_rest_height);
+                commands.spawn((
+                    Name::new("Scattered croquette"),
+                    LooseCroquette::new(from, to, kart).along(up),
+                    Transform::from_translation(from),
+                ));
+            }
+            continue;
+        }
         let from = center + Vec3::Y * 0.3;
         for i in 0..lost {
             let direction = scatter_direction(*transform.forward(), i, lost, tuning.scatter_angle);

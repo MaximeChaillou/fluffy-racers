@@ -713,8 +713,8 @@ mod tests {
     /// meshes of their own (the colliders that put a kart in anti-gravity), exactly the quads of
     /// the zones: with the rest of the road, the whole ribbon, closed, as on any circuit; its curbs
     /// blue and white, two blue stripes along it and a band at each end (drawn only), all of them
-    /// facing the road's normal (up to the wall, 90°, and issue #94 the ceiling, 180°). On a
-    /// circuit without a zone, none of them: the meshes of before #78.
+    /// facing the road's normal (up to the wall, 90°, issue #94 the ceiling, 180°, and issue #96
+    /// a turn banked to 90°). On a circuit without a zone, none of them: the meshes of before #78.
     #[test]
     fn the_anti_gravity_zone_has_its_own_road_and_its_blue_stripes() {
         let empty = generate(
@@ -732,7 +732,8 @@ mod tests {
             .iter()
             .map(|z| AntiGravityZone::new(&center, z))
             .collect();
-        assert_eq!(zones.len(), 2);
+        // The wall, the ceiling (issue #94) and the banked turn (issue #96).
+        assert_eq!(zones.len(), 3);
         let meshes = generate(&center, &data, &Palette::default());
         let samples = center.samples();
         let zone_of = |p: [f32; 3]| {

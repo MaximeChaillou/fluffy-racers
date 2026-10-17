@@ -104,6 +104,63 @@ impl AntiGravityZone {
     }
 }
 
+/// Issue #96: how the road of an anti-gravity zone bends along it: where it runs (its forward and
+/// its right there) and how fast its normal turns about its right as one drives along it (rad/m:
+/// positive where it curves up toward its normal, a turn banked like a wall; zero on a straight,
+/// however it twists).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bend {
+    pub forward: Vec3,
+    pub right: Vec3,
+    pub rate: f32,
+}
+
+impl AntiGravityZone {
+    /// The bend of the zone's road near `position` ([`Bend`]), if it is over it (as
+    /// [`AntiGravityZone::up_near`]): measured on its centerline, between the samples on either
+    /// side of the nearest one.
+    pub fn bend_near(&self, center: &CenterLine, position: Vec3) -> Option<Bend> {
+        if position.cmplt(self.min).any() || position.cmpgt(self.max).any() {
+            return None;
+        }
+        let samples = center.samples();
+        let count = samples.len() as i64;
+        let step = center.length() / count as f32;
+        let first = (self.from / step).floor() as i64;
+        let last = first + (self.length(center) / step).ceil() as i64;
+        let mut best = (f32::MAX, first);
+        for k in first..=last {
+            let d = samples[k.rem_euclid(count) as usize]
+                .position
+                .distance_squared(position);
+            if d < best.0 {
+                best = (d, k);
+            }
+        }
+        let at = |k: i64| &samples[k.rem_euclid(count) as usize];
+        let s = at(best.1);
+        let reach = wall_offset(s) + WALL_THICKNESS + BOX_MARGIN;
+        if best.0 > reach * reach || !self.contains(center, s.distance) {
+            return None;
+        }
+        let (a, b) = (at(best.1 - 1), at(best.1 + 1));
+        let turn = a.up.cross(b.up).dot(s.right).atan2(a.up.dot(b.up));
+        let length = a.position.distance(b.position).max(1e-3);
+        Some(Bend {
+            forward: s.forward,
+            right: s.right,
+            rate: turn / length,
+        })
+    }
+}
+
+/// Issue #96: the bend of the road of the zone of `zones` that `position` is over, if any.
+pub fn bend_at(zones: &[AntiGravityZone], center: &CenterLine, position: Vec3) -> Option<Bend> {
+    zones
+        .iter()
+        .find_map(|zone| zone.bend_near(center, position))
+}
+
 /// The zone of `zones` that `distance` is in, if any.
 pub fn anti_gravity_at<'a>(
     zones: &'a [AntiGravityZone],
@@ -312,29 +369,79 @@ mod tests {
         assert_eq!(mirrored.validate(), Ok(()));
     }
 
-    /// Issue #94: a zone runs straight (seen from above, its heading turns by
-    /// `MAX_ANTI_GRAVITY_TURN` at most: the bots' line is drawn on the ground plane). The same
-    /// wall bent into a turn is refused with its reason, mirrored too; a turn out of the zone, or
-    /// a climb in it, is not a turn of the zone.
+    /// Issue #96: a level straight zone, however it twists (up to a wall), does not bend along its
+    /// road (`Bend::rate` zero: its normal only rolls about its heading); a turn banked like a
+    /// wall bends up toward its normal at about 1 / its radius.
     #[test]
-    fn a_zone_runs_straight() {
-        use crate::track::data::{MAX_ANTI_GRAVITY_TURN, anti_gravity_turn};
+    fn a_straight_zone_twists_and_a_banked_turn_bends() {
         let data = wall_straight();
         let center = CenterLine::of(&data);
-        // (Its first sample is still on the curve of the square's corner before the zone.)
+        let zone = AntiGravityZone::new(&center, &data.anti_gravity[0]);
+        // The wall itself, level (the zone climbs onto it: there the road bends over its crest).
+        let (from, to) = (center.param_to_distance(3.0), center.param_to_distance(4.0));
+        for k in 0..=10 {
+            let s = center.at(from + (to - from) * k as f32 / 10.0);
+            let bend = zone
+                .bend_near(&center, s.point(1.0, 0.5))
+                .expect("over the zone");
+            assert!(bend.rate.abs() < 1e-4, "{bend:?}");
+        }
+        assert_eq!(zone.bend_near(&center, Vec3::new(500.0, 0.0, 0.0)), None);
+        // A turn of radius 40 m around (40, 0, 0), banked to 90° all the way (its normal toward
+        // its center): the road curves toward its normal at 1/40 per meter.
+        let point = |angle: f32, bank: f32| {
+            let (sin, cos) = angle.to_radians().sin_cos();
+            ControlPoint {
+                pos: (40.0 - 40.0 * cos, 9.0, -40.0 * sin),
+                width: 12.0,
+                bank,
+                shoulder: 1.0,
+            }
+        };
+        let mut turn = data.clone();
+        turn.points = (0..16)
+            .map(|k| {
+                let bank = if (4..=12).contains(&k) { 90.0 } else { 0.0 };
+                point(k as f32 * 22.5, bank)
+            })
+            .collect();
+        turn.anti_gravity = vec![AntiGravityData {
+            from: 2.0,
+            to: 14.0,
+        }];
+        let center = CenterLine::of(&turn);
+        let zone = AntiGravityZone::new(&center, &turn.anti_gravity[0]);
+        let middle = center.at(center.param_to_distance(8.0));
+        assert!(middle.up.y.abs() < 0.01, "{middle:?}");
+        let bend = bend_at(&[zone], &center, middle.point(-2.0, 0.5)).expect("over the zone");
+        // (The spline through 16 points of the circle bends a little more between them.)
+        assert!((bend.rate - 1.0 / 40.0).abs() < 0.004, "{bend:?}");
+        assert!(bend.right.dot(middle.right) > 0.999);
+    }
+
+    /// Issue #94: the turning of a zone, seen from above, is measured (`anti_gravity_turn`): a
+    /// straight wall barely turns (its first sample is still on the curve of the square's corner
+    /// before the zone), the same wall bent sideways does; a turn out of the zone, or a climb in
+    /// it, is not a turn of the zone. Issue #96: a zone may turn (the bots' line follows it in the
+    /// track's own coordinates): the bent wall is a circuit now, mirrored too (it was refused,
+    /// `MAX_ANTI_GRAVITY_TURN`, 3° at most).
+    #[test]
+    fn a_zone_may_turn() {
+        use crate::track::data::anti_gravity_turn;
+        let data = wall_straight();
+        let center = CenterLine::of(&data);
         let straight = anti_gravity_turn(&center, &data.anti_gravity[0]);
         assert!(straight < 2.0, "{straight}");
         let mut bent = data.clone();
         bent.points[4].pos.0 = 8.0;
         let turn = anti_gravity_turn(&CenterLine::of(&bent), &bent.anti_gravity[0]);
-        assert!(turn > MAX_ANTI_GRAVITY_TURN, "{turn}");
-        let error = bent.validate().unwrap_err();
-        assert!(error.0.contains("turns by"), "{error}");
-        assert!(bent.mirrored().validate().is_err());
-        // The square's corners, out of the zone, turn: not the zone.
+        assert!(turn > 20.0, "{turn}");
+        assert_eq!(bent.validate(), Ok(()));
+        assert_eq!(bent.mirrored().validate(), Ok(()));
         let mut climbing = data.clone();
         climbing.points[4].pos.1 = 14.0;
         assert_eq!(climbing.validate(), Ok(()));
+        assert!(anti_gravity_turn(&CenterLine::of(&climbing), &climbing.anti_gravity[0]) < 2.0);
         assert_eq!(data.mirrored().validate(), Ok(()));
     }
 }

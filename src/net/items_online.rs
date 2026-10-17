@@ -79,7 +79,7 @@ use crate::items::{
     SharedStandings, blast_radius, draw_unit, held_offset, item_radius,
 };
 use crate::kart::{Kart, KartSystems};
-use crate::race::{Race, RaceGrid, seconds_to_ticks};
+use crate::race::{Course, Race, RaceGrid, seconds_to_ticks};
 use crate::track::{GRID_SLOTS, SpotIndex};
 
 /// An item from another peer catches up this many ticks at most (2 s): older, it is late anyway.
@@ -421,7 +421,11 @@ fn receive_items(
         Res<OnlineItemTable>,
         Res<RaceGrid>,
     ),
-    (online_race, race): (Option<Res<OnlineRace>>, Option<Res<Race>>),
+    (online_race, race, course): (
+        Option<Res<OnlineRace>>,
+        Option<Res<Race>>,
+        Option<Res<Course>>,
+    ),
     local: Query<(Entity, &'static NetKart), With<Kart>>,
     mut ours: Query<(&mut ItemSlots, &mut ItemStats, Option<&mut Croquettes>), With<Kart>>,
     mut spots: (
@@ -724,13 +728,14 @@ fn receive_items(
                 // more in this tick's croquette rules).
                 let age = now.saturating_sub(scatter.tick).saturating_sub(1) as f32 * dt;
                 for (index, to) in scatter.to.iter().enumerate() {
+                    // Issue #96: in an anti-gravity zone, its hop along the road's normal where it
+                    // lands (as on the victim's screen, along its kart's up).
+                    let to = Vec3::from_array(*to);
+                    let up = course.as_deref().map_or(Vec3::Y, |course| course.up_at(to));
                     let loose = LooseCroquette {
                         age,
-                        ..LooseCroquette::new(
-                            Vec3::from_array(scatter.from),
-                            Vec3::from_array(*to),
-                            dropped_by,
-                        )
+                        ..LooseCroquette::new(Vec3::from_array(scatter.from), to, dropped_by)
+                            .along(up)
                     };
                     let entity = commands
                         .spawn((

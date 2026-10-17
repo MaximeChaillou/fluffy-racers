@@ -52,9 +52,9 @@ pub use class::{RaceClass, SpeedClass, SpeedClassTuning, drift_brake_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use environment::{
-    EnvironmentTuning, GLIDERS, GRAVITY, KartEnvironment, anti_gravity_force, glide_pitch,
-    glide_pose, glide_speeds, glide_targets, glide_yaw_target, glider_groups, groups_meet,
-    next_anti_gravity, next_gliding, next_underwater, water_tuning,
+    EnvironmentTuning, GLIDERS, GRAVITY, KartEnvironment, anti_gravity_force, anti_gravity_guide,
+    glide_pitch, glide_pose, glide_speeds, glide_targets, glide_yaw_target, glider_groups,
+    groups_meet, next_anti_gravity, next_gliding, next_underwater, water_tuning,
 };
 pub use environment_visual::{Bubble, WaterEffects, Wing};
 pub use input::{
@@ -92,7 +92,7 @@ use bevy_rapier3d::prelude::*;
 use bevy_rapier3d::rapier::geometry::Collider as RapierCollider;
 
 use crate::interpolation::PhysicsPose;
-use crate::track::{AntiGravity, BoostPad, GlideRamp, Surface, TrickRamp};
+use crate::track::{AntiGravity, BoostPad, GlideRamp, Surface, TrackLayout, TrickRamp, bend_at};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
     approach_yaw_rate, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
@@ -702,7 +702,11 @@ fn charge_slipstreams(
 
 fn drive_karts(
     tuning: Res<KartTuning>,
-    (class, class_tuning): (Res<RaceClass>, Res<SpeedClassTuning>),
+    (class, class_tuning, layout): (
+        Res<RaceClass>,
+        Res<SpeedClassTuning>,
+        Option<Res<TrackLayout>>,
+    ),
     time: Res<Time>,
     rapier: ReadRapierContext,
     surfaces: Query<&Surface>,
@@ -974,6 +978,8 @@ fn drive_karts(
         } else {
             Vec3::Y
         };
+        // Issue #96: in anti-gravity since last tick.
+        let was_anti_gravity = environment.anti_gravity;
         environment.set_if_neq(env);
         let gliding = env.gliding;
         let anti_gravity = env.anti_gravity;
@@ -985,6 +991,17 @@ fn drive_karts(
         // without it, and adds it back at the end. A wall that stopped it ended it.
         let carried = shove.carried(velocity.linear);
         let mut linvel = velocity.linear - shove.direction * carried;
+        // Issue #96: on the road of a zone that bends (a wall round a turn), the velocity turns
+        // with the road (it guides the kart like a rail). Everywhere else, nothing.
+        if anti_gravity
+            && was_anti_gravity
+            && grounded > 0
+            && environment_tuning.anti_gravity_guide
+            && let Some(layout) = layout.as_deref()
+            && let Some(bend) = bend_at(&layout.anti_gravity, &layout.center, transform.translation)
+        {
+            linvel = anti_gravity_guide(linvel, &bend, dt);
+        }
         let angvel = velocity.angular;
 
         // Tricks (GD § 5): takeoff from a trick ramp, and the button pressed around it.

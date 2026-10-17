@@ -445,7 +445,11 @@ mod tests {
         for data in [data.clone(), data.mirrored()] {
             let layout = TrackLayout::new(&data);
             let center = &layout.center;
-            assert_eq!(layout.anti_gravity.len(), 2, "the wall and the ceiling");
+            assert_eq!(
+                layout.anti_gravity.len(),
+                3,
+                "the wall, the ceiling and the banked turn"
+            );
             let zone = layout.anti_gravity[0];
             let flat = |s: &TrackSample| s.up.y > 0.97;
             assert!(flat(&center.at(zone.from)) && flat(&center.at(zone.to)));
@@ -551,6 +555,88 @@ mod tests {
             assert!(course.up_at(ceiling.point(-2.0, 0.4)).dot(Vec3::NEG_Y) > 0.999);
             let under = course.project_anywhere(ceiling.point(1.0, GRID_HEIGHT));
             assert!(under.upside_down && (under.height - GRID_HEIGHT).abs() < 0.05);
+        }
+    }
+
+    /// Issue #96 (GD § 10): the Ruban Réglisse's third anti-gravity zone is a turn banked like a
+    /// wall: flat at both ends, it turns left by about 90° seen from above (a radius of 60 m: its
+    /// ends still on the curves of the turns to the right before and after it), banked 80° and
+    /// more around it for 40 m at least, 90° at its middle (its lower edge above the ground: the
+    /// wall's test), its road's normal toward the inside of the turn wherever it curves (the road
+    /// hardly ever curves away from the karts on it: they are pressed onto it); the items find
+    /// its normal over it. Its mirror image too (a right turn).
+    #[test]
+    fn the_ribbon_has_its_banked_turn_in_its_third_zone() {
+        let data = every_circuit()
+            .into_iter()
+            .find(|d| d.name == "Ruban Réglisse")
+            .expect("the circuit of issue #78");
+        for data in [data.clone(), data.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            let zone = layout.anti_gravity[2];
+            let flat = |s: &TrackSample| s.up.y > 0.97;
+            assert!(flat(&center.at(zone.from)) && flat(&center.at(zone.to)));
+            let length = zone.length(center);
+            assert!((150.0..250.0).contains(&length), "{length}");
+            // 90° to the left, and the ends of the turns before and after it (to the right).
+            let turn = crate::track::data::anti_gravity_turn(center, &data.anti_gravity[2]);
+            assert!((90.0..140.0).contains(&turn), "{turn}°");
+            let (into, out) = (center.at(zone.from).forward, center.at(zone.to).forward);
+            let heading = into.xz().angle_to(out.xz()).to_degrees();
+            let left = if data.mirrored { 1.0 } else { -1.0 };
+            assert!((heading * left - 90.0).abs() < 25.0, "{heading}°");
+            let (mut banked, mut tightest) = (0, f32::MAX);
+            let n = center.samples().len();
+            for (i, s) in center.samples().iter().enumerate() {
+                if !zone.contains(center, s.distance) {
+                    continue;
+                }
+                // Its curvature (3D): toward the road, or away from it only as a crest of 200 m
+                // at least (at 50 m/s, half a kart's gravity: its ends on the tails of the turns
+                // to the right, the bank only just setting in).
+                let (before, after) = (
+                    center.samples()[(i + n - 1) % n],
+                    center.samples()[(i + 1) % n],
+                );
+                let curvature =
+                    (after.forward - before.forward) / after.position.distance(before.position);
+                assert!(
+                    curvature.dot(s.up) > -1.0 / 200.0,
+                    "{:.0} m: {curvature}",
+                    s.distance
+                );
+                // Banked 80° and more.
+                if s.up.y.abs() < 10f32.to_radians().sin() {
+                    banked += 1;
+                    tightest = tightest.min(center.turn_radius(i));
+                }
+            }
+            assert!(banked >= 40, "{banked} m banked 80° and more");
+            assert!((50.0..70.0).contains(&tightest), "radius {tightest} m");
+            let course = crate::race::Course::new(&layout, &crate::race::RaceTuning::default());
+            let apex = center.at(zone.from + length / 2.0);
+            assert!(apex.up.y.abs() < 0.02, "{apex:?}");
+            assert!(course.up_at(apex.point(2.0, 0.4)).dot(apex.up) > 0.999);
+            // Its road bends up toward its normal round the turn (the karts' guide, issue #96);
+            // the wall and the ceiling, level straights, do not bend, however they twist: nothing
+            // changes there (but at their ends, where the road finishes climbing onto them or
+            // starts coming down: a crest).
+            let bend = crate::track::bend_at(&layout.anti_gravity, center, apex.point(2.0, 0.5))
+                .expect("over the banked turn");
+            assert!((bend.rate - 1.0 / 60.0).abs() < 0.003, "{bend:?}");
+            // (Between the points whose spline segments only see level points.)
+            let level = [(7.0, 14.0), (33.0, 46.0)];
+            for (straight, (from, to)) in layout.anti_gravity[..2].iter().zip(level) {
+                let (from, to) = (center.param_to_distance(from), center.param_to_distance(to));
+                for k in 0..=50 {
+                    let s = center.at(from + (to - from) * k as f32 / 50.0);
+                    let bend = straight
+                        .bend_near(center, s.point(0.0, 0.5))
+                        .expect("over it");
+                    assert!(bend.rate.abs() < 1e-3, "{:.0} m: {bend:?}", s.distance);
+                }
+            }
         }
     }
 

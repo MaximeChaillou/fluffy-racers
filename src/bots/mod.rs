@@ -658,6 +658,66 @@ mod tests {
         assert_ne!(brain(0, 4).pace, brain(1, 4).pace);
     }
 
+    /// Issue #96 (the bots' aim in anti-gravity): a bot sees the karts around it in the frame of
+    /// the road under it (issue #78), on a wall and under a ceiling as on flat ground: a kart
+    /// ahead to its right is ahead at a positive angle, one behind to its right behind at a
+    /// negative one (seen looking back, it is on the left), at their distance along the road; one
+    /// on another level (3 m and more along its up) is not seen. The same scene turned onto a
+    /// wall or upside down gives the same answers.
+    #[test]
+    fn the_bots_see_the_karts_around_them_on_a_wall_and_under_a_ceiling() {
+        let me = Entity::from_raw_u32(1).unwrap();
+        let (ahead, behind, above) = (
+            Entity::from_raw_u32(2).unwrap(),
+            Entity::from_raw_u32(3).unwrap(),
+            Entity::from_raw_u32(4).unwrap(),
+        );
+        // Flat ground: the kart looks down -Z, its right +X, its up +Y.
+        let scene = [
+            (me, Vec3::ZERO),
+            (ahead, Vec3::new(2.0, 0.0, -10.0)),
+            (behind, Vec3::new(1.0, 0.0, 6.0)),
+            (above, Vec3::new(0.0, 4.0, -5.0)),
+        ];
+        let flat = Quat::IDENTITY;
+        let wall = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let ceiling = Quat::from_rotation_z(std::f32::consts::PI);
+        let mut seen = Vec::new();
+        for turn in [flat, wall, ceiling] {
+            let neighbors: Vec<Neighbor> = scene
+                .iter()
+                .map(|(entity, at)| Neighbor {
+                    entity: *entity,
+                    position: Vec3::new(5.0, 9.0, 3.0) + turn * *at,
+                    velocity: Vec3::ZERO,
+                })
+                .collect();
+            let around = karts_around(
+                me,
+                Vec3::new(5.0, 9.0, 3.0),
+                (turn * Vec3::NEG_Z, turn * Vec3::Y),
+                &neighbors,
+                &[],
+                (40.0, 20.0),
+            );
+            let (Some((ahead_at, ahead_angle)), Some((behind_at, behind_angle))) = around else {
+                panic!("{turn}: {around:?}");
+            };
+            assert!((ahead_at - 104f32.sqrt()).abs() < 1e-3, "{ahead_at}");
+            assert!(ahead_angle > 0.15 && ahead_angle < 0.25, "{ahead_angle}");
+            assert!((behind_at - 37f32.sqrt()).abs() < 1e-3, "{behind_at}");
+            assert!(behind_angle < -0.1, "{behind_angle}");
+            seen.push(around);
+        }
+        for around in &seen[1..] {
+            let (a, b) = (around.0.unwrap(), seen[0].0.unwrap());
+            assert!(
+                (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3,
+                "{a:?} {b:?}"
+            );
+        }
+    }
+
     /// Issue #15: the bots' characters and parts vary along the grid, always the same for a
     /// slot: the nine animals on the first nine slots, the three weight classes in any three
     /// neighbouring slots and in the slots taken one in three, several karts, wheels and wings.
