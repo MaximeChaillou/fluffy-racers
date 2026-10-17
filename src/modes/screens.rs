@@ -1,13 +1,22 @@
-//! The screens of a Grand Prix (issue #19; issue #99: a championship), with the HUD's `bevy_ui` (its font is ASCII only): the
-//! overall standings after each race (place, racer, the points of the race, the total), then the
-//! podium's names over the 3D podium. Spawned once per stage (a handful of texts, no change while
-//! shown), over the results screen; part of the level (`LevelScoped`).
+//! The screens of a Grand Prix (issue #19; issue #99: a championship): the overall standings
+//! after each race (place, racer, the points of the race, the total), then the podium's names
+//! over the 3D podium. Spawned once per stage (a handful of texts, no change while shown), over
+//! the results screen; part of the level (`LevelScoped`).
+//!
+//! Issue #100: after the charter (`menu::kit`), in Fredoka with the accents (« Coupe Doudou 3/4 ·
+//! Crique Câline », « classement général »): the standings over the veil, their title in white, a
+//! cream panel of lines (the player's in Mangue, each place on its badge: gold, silver, bronze,
+//! then blue), the keys under it; the podium's names in a small cream panel at the top, the 3D
+//! podium in sight under it (no veil).
 
 use bevy::prelude::*;
 
 use crate::level::LevelScoped;
+use crate::menu::MenuAssets;
+use crate::menu::kit;
+use crate::menu::style::{palette, size, u};
 use crate::race::{GrandPrix, GrandPrixStage, Race, RacePhase};
-use crate::ui::format::{PLAYER_NAME, ascii_letter, write_ordinal};
+use crate::ui::format::{PLAYER_NAME, write_ordinal};
 
 /// The root of a Grand Prix screen, and the stage it shows.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,21 +65,16 @@ pub fn standings_lines(grand_prix: &GrandPrix) -> Vec<StandingsLine> {
         .collect()
 }
 
-/// A text the HUD's font can write (accents dropped).
-fn ascii(text: &str) -> String {
-    text.chars().map(ascii_letter).collect()
-}
-
-/// The title of the standings: « COUPE DOUDOU 2/4 - Anneau Guimauve » (issue #99: the cup's
-/// name, or « CHAMPIONNAT » for a custom one).
+/// The title of the standings: « Coupe Doudou 2/4 · Anneau Guimauve » (issue #99: the cup's name,
+/// or « Championnat » for a custom one; issue #100: as written, accents included).
 pub fn standings_title(grand_prix: &GrandPrix) -> String {
     let name = grand_prix
         .cup
         .get(grand_prix.race)
-        .map_or_else(String::new, |race| ascii(&race.name));
+        .map_or("", |race| race.name.as_str());
     format!(
-        "{} {}/{} - {name}",
-        ascii(&grand_prix.title).to_uppercase(),
+        "{} {}/{} · {name}",
+        grand_prix.title,
         grand_prix.race + 1,
         grand_prix.cup.len()
     )
@@ -80,32 +84,16 @@ pub fn standings_title(grand_prix: &GrandPrix) -> String {
 pub fn standings_footer(grand_prix: &GrandPrix) -> String {
     match grand_prix.cup.get(grand_prix.race + 1) {
         Some(next) => format!(
-            "ESPACE ou ENTREE (manette : A) : course suivante ({})",
-            ascii(&next.name)
+            "Espace ou Entrée (manette : A) : course suivante ({})",
+            next.name
         ),
-        None => "ESPACE ou ENTREE (manette : A) : le podium".to_string(),
+        None => "Espace ou Entrée (manette : A) : le podium".to_string(),
     }
 }
 
-pub const PODIUM_TITLE: &str = "PODIUM";
-pub const PODIUM_FOOTER: &str = "ENTREE : on recommence - N : changer de mode";
-
-const TEXT_COLOR: Color = Color::WHITE;
-const GOLD: Color = Color::srgb(1.0, 0.85, 0.25);
-/// Column widths of the standings (px): rank, name, points of the race, total.
-const COLUMNS: [f32; 4] = [60.0, 120.0, 70.0, 100.0];
-
-fn text(content: impl Into<String>, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(content),
-        TextFont::from_font_size(size),
-        TextColor(color),
-        TextShadow {
-            offset: Vec2::splat(2.0),
-            ..default()
-        },
-    )
-}
+pub const STANDINGS_HEADER: &str = "Classement général";
+pub const PODIUM_TITLE: &str = "Podium";
+pub const PODIUM_FOOTER: &str = "Entrée : on recommence  ·  N : changer de mode";
 
 /// Shows the screen of the Grand Prix's stage (none while racing), over the results screen (only
 /// there: not on a level being rebuilt).
@@ -113,6 +101,7 @@ pub(super) fn show_grand_prix_screen(
     mut commands: Commands,
     grand_prix: Option<Res<GrandPrix>>,
     race: Option<Res<Race>>,
+    assets: Option<Res<MenuAssets>>,
     screens: Query<(Entity, &GrandPrixScreen)>,
 ) {
     let results = race.is_some_and(|race| race.phase() == RacePhase::Results);
@@ -131,15 +120,54 @@ pub(super) fn show_grand_prix_screen(
     let (Some(grand_prix), Some(stage), false) = (grand_prix, wanted, shown) else {
         return;
     };
+    let faces = kit::faces(assets.as_deref());
     match stage {
-        GrandPrixStage::Standings => spawn_standings(&mut commands, &grand_prix),
-        GrandPrixStage::Podium => spawn_podium_names(&mut commands, &grand_prix),
+        GrandPrixStage::Standings => spawn_standings(&mut commands, &grand_prix, &faces),
+        GrandPrixStage::Podium => spawn_podium_names(&mut commands, &grand_prix, &faces),
         GrandPrixStage::Racing => {}
     }
 }
 
-fn spawn_standings(commands: &mut Commands, grand_prix: &GrandPrix) {
+/// A line of a table: its place on its badge, then its cells (text, width, semi-bold).
+fn spawn_line(
+    panel: &mut ChildSpawnerCommands,
+    place: usize,
+    line: &StandingsLine,
+    cells: &[(&str, f32)],
+    (_, semibold): &(Handle<Font>, Handle<Font>),
+) {
+    panel
+        .spawn(kit::row(size::ROW_HEIGHT, size::CELL_GAP, line.player))
+        .with_children(|row| {
+            row.spawn(kit::place_badge(place, size::PLACE_BADGE))
+                .with_children(|badge| {
+                    badge.spawn(kit::text(
+                        line.rank.as_str(),
+                        semibold,
+                        size::PLACE_TEXT,
+                        palette::MYRTILLE,
+                    ));
+                });
+            for (text, width) in cells {
+                row.spawn((
+                    kit::text(*text, semibold, size::ROW_TEXT, palette::MYRTILLE),
+                    Node {
+                        width: u(*width),
+                        ..default()
+                    },
+                ));
+            }
+        });
+}
+
+fn spawn_standings(
+    commands: &mut Commands,
+    grand_prix: &GrandPrix,
+    faces: &(Handle<Font>, Handle<Font>),
+) {
     let lines = standings_lines(grand_prix);
+    let (medium, semibold) = faces;
+    let [_, name, won, total] = size::STANDINGS_COLUMNS;
     commands
         .spawn((
             Name::new("Grand Prix standings"),
@@ -154,63 +182,60 @@ fn spawn_standings(commands: &mut Commands, grand_prix: &GrandPrix) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+            BackgroundColor(palette::VOILE),
         ))
         .with_children(|screen| {
             screen
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::all(px(24)),
-                        row_gap: px(6),
-                        border_radius: BorderRadius::all(px(18)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.10, 0.06, 0.20, 0.95)),
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        text(standings_title(grand_prix), 34.0, GOLD),
-                        Node {
-                            margin: UiRect::bottom(px(8)),
-                            ..default()
-                        },
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: u(10.0),
+                    ..default()
+                })
+                .with_children(|column| {
+                    column.spawn(kit::title(
+                        standings_title(grand_prix),
+                        semibold,
+                        size::SCREEN_TITLE,
                     ));
-                    for line in &lines {
-                        let color = if line.player { GOLD } else { TEXT_COLOR };
-                        panel
-                            .spawn(Node {
-                                column_gap: px(18),
-                                ..default()
-                            })
-                            .with_children(|row| {
-                                let cells = [&line.rank, &line.name, &line.won, &line.total];
-                                for (cell, width) in cells.into_iter().zip(COLUMNS) {
-                                    row.spawn((
-                                        text(cell.as_str(), 24.0, color),
-                                        Node {
-                                            width: px(width),
-                                            ..default()
-                                        },
-                                    ));
-                                }
-                            });
-                    }
-                    panel.spawn((
-                        text(standings_footer(grand_prix), 20.0, TEXT_COLOR),
-                        Node {
-                            margin: UiRect::top(px(12)),
-                            ..default()
-                        },
-                    ));
+                    column
+                        .spawn(kit::panel(size::STANDINGS_WIDTH, size::ROW_GAP))
+                        .with_children(|panel| {
+                            panel.spawn((
+                                kit::text(
+                                    STANDINGS_HEADER,
+                                    semibold,
+                                    size::SOLO_HEADER,
+                                    palette::MYRTILLE,
+                                ),
+                                Node {
+                                    margin: UiRect::left(u(6.0)),
+                                    ..default()
+                                },
+                            ));
+                            for (place, line) in lines.iter().enumerate() {
+                                let cells = [
+                                    (line.name.as_str(), name),
+                                    (line.won.as_str(), won),
+                                    (line.total.as_str(), total),
+                                ];
+                                spawn_line(panel, place, line, &cells, faces);
+                            }
+                        });
+                    column.spawn(kit::keys_line(standings_footer(grand_prix), medium));
                 });
         });
 }
 
 /// The names of the podium, at the top of the screen: the 3D podium stays in sight.
-fn spawn_podium_names(commands: &mut Commands, grand_prix: &GrandPrix) {
+fn spawn_podium_names(
+    commands: &mut Commands,
+    grand_prix: &GrandPrix,
+    faces: &(Handle<Font>, Handle<Font>),
+) {
     let lines = standings_lines(grand_prix);
+    let (medium, semibold) = faces;
+    let [_, name, _, total] = size::STANDINGS_COLUMNS;
     commands
         .spawn((
             Name::new("Grand Prix podium"),
@@ -220,38 +245,45 @@ fn spawn_podium_names(commands: &mut Commands, grand_prix: &GrandPrix) {
             Node {
                 position_type: PositionType::Absolute,
                 width: percent(100),
-                top: px(16),
+                top: u(16.0),
                 justify_content: JustifyContent::Center,
                 ..default()
             },
         ))
         .with_children(|screen| {
             screen
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::all(px(16)),
-                        row_gap: px(4),
-                        border_radius: BorderRadius::all(px(16)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.10, 0.06, 0.20, 0.8)),
-                ))
+                .spawn(kit::panel(size::PODIUM_WIDTH, size::ROW_GAP))
                 .with_children(|panel| {
-                    panel.spawn(text(PODIUM_TITLE, 40.0, GOLD));
-                    for line in lines.iter().take(3) {
-                        let color = if line.player { GOLD } else { TEXT_COLOR };
-                        panel.spawn(text(
-                            format!("{}  {}  {}", line.rank, line.name, line.total),
-                            26.0,
-                            color,
-                        ));
+                    panel.spawn((
+                        kit::text(
+                            PODIUM_TITLE,
+                            semibold,
+                            size::PILOT_TITLE * 0.75,
+                            palette::MYRTILLE,
+                        ),
+                        TextShadow {
+                            offset: Vec2::new(0.0, 3.0),
+                            color: palette::FRAISE.with_alpha(0.6),
+                        },
+                        Node {
+                            align_self: AlignSelf::Center,
+                            ..default()
+                        },
+                    ));
+                    for (place, line) in lines.iter().enumerate().take(3) {
+                        let cells = [(line.name.as_str(), name), (line.total.as_str(), total)];
+                        spawn_line(panel, place, line, &cells, faces);
                     }
                     panel.spawn((
-                        text(PODIUM_FOOTER, 18.0, TEXT_COLOR),
+                        kit::text(
+                            PODIUM_FOOTER,
+                            medium,
+                            size::HINT,
+                            palette::MYRTILLE.with_alpha(0.75),
+                        ),
                         Node {
-                            margin: UiRect::top(px(8)),
+                            align_self: AlignSelf::Center,
+                            margin: UiRect::top(u(4.0)),
                             ..default()
                         },
                     ));

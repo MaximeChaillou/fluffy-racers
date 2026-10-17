@@ -1,6 +1,9 @@
 //! The player's options (issue #17, GD § 13): the keyboard layout and (issue #80) the names over
 //! the karts online, in a small menu kept in the browser between sessions. Made to take more
-//! options later: a field of [`PlayerOptions`] (with its default) and a line of [`OptionRow`].
+//! options later (issue #100: the volumes of the sounds and of the music, #103 and #104): a field
+//! of [`PlayerOptions`] (with its default), a line of [`OptionRow`] (its label, its help, its
+//! value, how it changes); the screen (`menu::options_screen`) draws every line of
+//! [`OptionRow::ALL`].
 //!
 //! - **What**: [`PlayerOptions`]: the keyboard layout (AZERTY by default: the game is in
 //!   French), applied to the keyboard input (`KeyboardLayout`: the letters shown, and Z and Q
@@ -17,8 +20,9 @@
 //!   RON text ([`PlayerOptions::to_ron`]).
 //!
 //! This plugin is the logic, headless (the tests drive it with keys and [`OptionsAction`]s). The
-//! egui window and the storage (`ui.rs`) only come with a renderer; like the admin panel and the
-//! selection screen, the window costs nothing while closed (no egui context then).
+//! storage (`ui.rs`) only comes with a renderer, and so does the screen (issue #100: `bevy_ui`,
+//! after the charter, `menu::options_screen`; it replaces the egui window of #17), which costs
+//! nothing while closed (no tree, no resource before it first opens).
 
 mod ui;
 
@@ -115,20 +119,17 @@ impl OptionRow {
     pub fn label(self) -> &'static str {
         match self {
             OptionRow::Keyboard => "Clavier",
-            OptionRow::NameTags => "Noms au-dessus des karts",
+            // Issue #100: short, on its line (« Noms au-dessus des karts » before).
+            OptionRow::NameTags => "Noms des joueurs",
         }
     }
 
-    /// What it does, under the line.
+    /// What it does, under the lines while it has the focus (a small line of the charter: fewer
+    /// than 48 characters).
     pub fn help(self) -> &'static str {
         match self {
-            OptionRow::Keyboard => {
-                "Les touches restent à la même place sous les doigts ; \
-                 les lettres affichées suivent ton clavier."
-            }
-            OptionRow::NameTags => {
-                "En ligne : le pseudo des autres joueurs au-dessus de leur kart."
-            }
+            OptionRow::Keyboard => "Les lettres affichées suivent ton clavier.",
+            OptionRow::NameTags => "En ligne : le pseudo des autres sur leur kart.",
         }
     }
 }
@@ -154,6 +155,9 @@ pub enum OptionsAction {
     Close,
     /// Moves to the line above (-1) or below (+1).
     Row(i32),
+    /// Issue #100: the pointer is over this line (an index of [`OptionRow::ALL`]): it takes the
+    /// focus.
+    Focus(usize),
     /// Changes a line by one value, backwards (-1) or forwards (+1).
     Change(OptionRow, i32),
     /// Picks a keyboard layout.
@@ -239,6 +243,11 @@ fn apply_options_actions(
                 let rows = OptionRow::ALL.len() as i32;
                 menu.row = (menu.row as i32 + step).rem_euclid(rows) as usize;
             }
+            OptionsAction::Focus(index) => {
+                if index < OptionRow::ALL.len() && menu.row != index {
+                    menu.row = index;
+                }
+            }
             OptionsAction::Change(row, step) => {
                 options.set_if_neq(options.changed(row, step));
                 if let Some(index) = OptionRow::ALL.iter().position(|r| *r == row) {
@@ -281,19 +290,19 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
             "X ou F".to_string(),
         ),
         ("Regarder derrière", "C (tenir)".to_string()),
-        // Issue #56.
+        // Issue #56; issue #100: the menu opened from the game is the pause (online, nothing
+        // waits).
         (
-            "Menu principal (pause en solo)",
+            "Pause (en ligne, le jeu continue)",
             "Échap ; manette : Start".to_string(),
         ),
-        ("Pilote (pseudo, animal, kart, couleur)", "G".to_string()),
-        (
-            // Issue #99: « Jouer solo ».
-            "Jouer solo (championnat, contre-la-montre, circuit seul)",
-            "N".to_string(),
-        ),
+        // Issue #100: the screens by their names (the home's buttons); the table of the options
+        // screen is narrow.
+        ("Pilote", "G".to_string()),
+        // Issue #99: « Jouer solo ».
+        ("Jouer solo", "N".to_string()),
         ("Options", "O".to_string()),
-        ("En ligne (partie entre amis)", "L".to_string()),
+        ("Multijoueur (le salon)", "L".to_string()),
         ("Panneau d'admin", "P".to_string()),
     ]
 }
@@ -455,7 +464,8 @@ mod tests {
             controls(KeyboardLayout::Qwerty)[2].1,
             "Gauche / Droite, ou A / D"
         );
-        // Issue #34: the menu shows the Interaction keys; issue #56, the main menu's.
+        // Issue #34: the menu shows the Interaction keys; issue #56, the main menu's (issue #100:
+        // the pause).
         for layout in KeyboardLayout::ALL {
             assert!(
                 controls(layout)
@@ -465,8 +475,7 @@ mod tests {
             assert!(
                 controls(layout)
                     .iter()
-                    .any(|(action, keys)| action.starts_with("Menu principal")
-                        && keys.starts_with("Échap"))
+                    .any(|(action, keys)| action.starts_with("Pause") && keys.starts_with("Échap"))
             );
         }
     }

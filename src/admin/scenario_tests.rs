@@ -389,10 +389,11 @@ fn closed_the_panel_has_no_egui_context() {
     assert!(!app.world().resource::<KeyboardCapture>().0);
 }
 
-/// Issue #17: the options menu is egui too, with the same rule: its context exists only while it
-/// is open (alone, or with the panel), and closing it gives the game its time back.
+/// Issue #17: the options menu had an egui context while it was open. Issue #100: its screen is
+/// `bevy_ui` now: open, it needs no egui context; the panel opening over it brings one, and
+/// closing the panel takes it away while the options stay open; closed, nothing either.
 #[test]
-fn the_options_menu_has_an_egui_context_only_while_open() {
+fn the_options_screen_needs_no_egui_context() {
     use crate::options::OptionsMenu;
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
@@ -418,13 +419,14 @@ fn the_options_menu_has_an_egui_context_only_while_open() {
     assert_eq!(egui_parts(&mut app), 0);
     app.world_mut().resource_mut::<OptionsMenu>().open = true;
     app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_some());
-    // The panel opens and closes over it: the context stays for the menu.
+    assert_eq!(egui_parts(&mut app), 0, "the options are bevy_ui");
+    // The panel opens over it (a context for the panel), then closes: none is left.
     app.world_mut().resource_mut::<AdminPanel>().open = true;
     app.update();
+    assert!(app.world().get::<EguiContext>(camera).is_some());
     app.world_mut().resource_mut::<AdminPanel>().open = false;
     app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_some());
+    assert_eq!(egui_parts(&mut app), 0);
     app.world_mut().resource_mut::<OptionsMenu>().open = false;
     app.update();
     assert_eq!(egui_parts(&mut app), 0);

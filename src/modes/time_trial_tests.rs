@@ -528,7 +528,7 @@ fn the_ghost_wears_the_parts_of_its_run_in_translucent_materials() {
     assert_eq!(trial_text(&mut app, TrialText::Record), "RECORD 0:10.00");
     assert_eq!(
         trial_text(&mut app, TrialText::Verdict),
-        "LE FANTOME DU RECORD COURT AVEC TOI"
+        "LE FANTÔME DU RECORD COURT AVEC TOI"
     );
     let world = app.world_mut();
     let root = world

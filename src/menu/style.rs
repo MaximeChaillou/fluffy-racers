@@ -77,7 +77,7 @@ pub mod palette {
 /// Sizes of the reference window (px), `docs/UI_CHARTE.md` « Marges et tailles »: a grid of 4 and
 /// 8 px, round corners everywhere.
 pub mod size {
-    /// The title « Fluffy Racers » over the menu opened from the game.
+    /// The title over the menu opened from the game (issue #100: « Pause »).
     pub const TITLE: f32 = 64.0;
     /// Issue #89: the home screen's title, big, its two words on two lines (« Fluffy », «
     /// Racers »), packed (`HOME_TITLE_LINE`: their line height, a share of the size).
@@ -187,6 +187,37 @@ pub mod size {
     /// A cup's icon on its badge, on its line.
     pub const CUP_BADGE: f32 = 30.0;
     pub const CUP_ICON: f32 = 24.0;
+
+    /// Issue #100: the options screen (the panel of « Pilote », its lines): the width of a line's
+    /// label (« Noms des joueurs »), the commands' table on the right (its header, its texts, the
+    /// width of its keys' column, the gap between two of its lines).
+    pub const OPTION_LABEL_WIDTH: f32 = 190.0;
+    pub const CONTROLS_HEADER: f32 = 22.0;
+    pub const CONTROL_TEXT: f32 = 15.0;
+    pub const CONTROL_KEYS_WIDTH: f32 = 200.0;
+    pub const CONTROL_GAP: f32 = 3.0;
+
+    /// Issue #100: the tables of the results, of the overall standings and of the podium (`kit`):
+    /// the title over them, a line (its height, its depth included; its depth; its inner margins;
+    /// the gap between two lines and between two cells), its texts (the name and the time, the
+    /// details), the badge of its place and its text; the panels' widths.
+    pub const SCREEN_TITLE: f32 = 44.0;
+    pub const ROW_HEIGHT: f32 = 34.0;
+    pub const ROW_DEPTH: f32 = 4.0;
+    pub const ROW_PADDING: f32 = 6.0;
+    pub const ROW_GAP: f32 = 5.0;
+    pub const CELL_GAP: f32 = 14.0;
+    pub const ROW_TEXT: f32 = 19.0;
+    pub const ROW_SMALL: f32 = 16.0;
+    pub const PLACE_BADGE: f32 = 28.0;
+    pub const PLACE_TEXT: f32 = 14.0;
+    pub const RESULTS_WIDTH: f32 = 720.0;
+    pub const STANDINGS_WIDTH: f32 = 600.0;
+    pub const PODIUM_WIDTH: f32 = 470.0;
+    /// The columns of the results (the place's badge, the name, the time, the details) and of the
+    /// standings (the place's badge, the name, the points of the race, the total).
+    pub const RESULTS_COLUMNS: [f32; 4] = [PLACE_BADGE, 180.0, 120.0, 260.0];
+    pub const STANDINGS_COLUMNS: [f32; 4] = [PLACE_BADGE, 220.0, 90.0, 120.0];
 }
 
 /// What a button shows (`docs/UI_CHARTE.md` « Boutons »). The pointer over a button gives it the
@@ -277,6 +308,8 @@ pub const ICON_OPTIONS: &str = "ui/icons/gear.png";
 pub const ICON_GARAGE: &str = "ui/icons/wrench.png";
 /// Issue #89: « Quitter », back home.
 pub const ICON_QUIT: &str = "ui/icons/home.png";
+/// Issue #100: « Recommencer » (an arrow going round).
+pub const ICON_RESTART: &str = "ui/icons/return.png";
 /// Issue #99: the cups' icons (`admin::tracks::CupIcon`, named by the manifest).
 pub const ICON_TROPHY: &str = "ui/icons/trophy.png";
 pub const ICON_MEDAL: &str = "ui/icons/medal1.png";
@@ -297,7 +330,7 @@ pub fn cup_icon(icon: CupIcon) -> &'static str {
 
 /// Every file of `assets/ui/` the game uses (each pack's licence is next to them): a test checks
 /// that each one is there with its credits, and that nothing else is.
-pub const UI_FILES: [&str; 13] = [
+pub const UI_FILES: [&str; 14] = [
     FONT_MEDIUM,
     FONT_SEMIBOLD,
     ICON_RESUME,
@@ -306,6 +339,7 @@ pub const UI_FILES: [&str; 13] = [
     ICON_OPTIONS,
     ICON_GARAGE,
     ICON_QUIT,
+    ICON_RESTART,
     ICON_TROPHY,
     ICON_MEDAL,
     ICON_ROSETTE,
@@ -376,6 +410,16 @@ mod tests {
         for badge in [LAGON, FRAISE, MENTHE, PRUNE, CAROTTE] {
             assert!(contrast(NEIGE, badge) >= 2.0, "{badge:?}");
         }
+        // Issue #100: a place's number, in Myrtille on its badge (gold, silver, bronze, blue), and
+        // the texts of a line of a table, on Coton or on Mangue (the player's).
+        for place in 0..12 {
+            let badge = super::super::kit::place_color(place);
+            assert!(contrast(MYRTILLE, badge) >= 4.5, "{place}: {badge:?}");
+        }
+        for player in [false, true] {
+            let (fill, _) = super::super::kit::row_colors(player);
+            assert!(contrast(MYRTILLE, fill.0) >= 7.0, "{player}");
+        }
     }
 
     /// The sizes are given for a 720 px high window and follow its height.
@@ -391,9 +435,11 @@ mod tests {
                 + (buttons - 1.0) * size::PANEL_GAP
                 + 2.0 * size::PANEL_PADDING
         };
-        // Issue #89: the menu opened from the game, its six buttons (« Quitter » last), its
-        // title and the keys (two lines), the gaps between them, fit in the window, with 8 px
-        // to spare above and below (the phrase under the title is the home's).
+        // Issue #89: the menu opened from the game, its buttons (issue #100: the pause's four,
+        // « Quitter » last), its title and the keys (two lines), the gaps between them, fit in
+        // the window, with 8 px to spare above and below (the phrase under the title is the
+        // home's). Six buttons still would.
+        assert_eq!(super::super::nav::GAME_ENTRIES.len(), 4);
         let game = line(size::TITLE) + panel(6.0) + 2.0 * line(size::HINT) + 6.0 + 3.0 * 10.0;
         assert!(game + 16.0 <= REFERENCE_HEIGHT, "{game}");
         // The home screen: its big title on two packed lines, the phrase, four buttons and the

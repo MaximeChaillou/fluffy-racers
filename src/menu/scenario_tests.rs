@@ -207,7 +207,8 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
 }
 
 /// Issue #56: a screen opened from the menu that starts a race (« Course ! », « Entrée » in the
-/// race menu) does not bring the menu back: the race goes.
+/// race menu) does not bring the menu back: the race goes. Issue #100: the pause has no
+/// « Pilote » any more; its shortcut (G) over the pause takes its place, as before.
 #[test]
 fn a_race_started_from_a_screen_of_the_menu_goes_on_without_it() {
     let mut app = menu_app(TrackChoice::TestGround, false);
@@ -228,16 +229,12 @@ fn a_race_started_from_a_screen_of_the_menu_goes_on_without_it() {
             .is_some()
     );
 
-    // « Pilote » then « Course ! » (Entrée): the race starts over, no menu.
+    // « Pilote » (G, over the pause) then « Course ! » (Entrée): the race starts over, no menu.
     tap(&mut app, KeyCode::Escape);
     assert!(menu(&app).open && menu(&app).in_game);
-    for _ in 0..4 {
-        tap(&mut app, KeyCode::ArrowDown);
-    }
-    assert_eq!(focused(&app), Entry::Garage);
     let kart = player(&mut app);
-    choose(&mut app);
-    assert!(selection_open(&app));
+    tap(&mut app, crate::characters::SELECTION_KEY);
+    assert!(selection_open(&app) && !menu(&app).open);
     tap(&mut app, KeyCode::Enter);
     wait_for_the_player(&mut app);
     run(&mut app, 5);
@@ -297,8 +294,9 @@ fn echap_opens_the_menu_from_the_game_but_closes_the_other_screens_first() {
 }
 
 /// Issue #56 (Max's decision, issue #9): online, the menu does not pause the game: the kart
-/// rolls on with its momentum, only its keys are the menu's; « Course solo » is disabled (the
-/// host chooses), skipped by the keys, its reason under it.
+/// rolls on with its momentum, only its keys are the menu's. Issue #100: its title says so
+/// (« Pas de pause ! »); « Recommencer » is disabled (the host starts the races), skipped by the
+/// keys, its reason under it (« Course solo » was, before the pause).
 #[test]
 fn online_the_menu_does_not_pause_and_the_kart_coasts() {
     let mut app = menu_app(TrackChoice::TestGround, false);
@@ -325,12 +323,13 @@ fn online_the_menu_does_not_pause_and_the_kart_coasts() {
         "it rolls on: {coasting}"
     );
 
-    // « Course solo » is skipped, and shown disabled with its reason.
+    // « Recommencer » is skipped, and shown disabled with its reason.
     assert_eq!(focused(&app), Entry::Resume);
+    assert_eq!(menu(&app).entries()[1], Entry::Restart);
     tap(&mut app, KeyCode::ArrowDown);
-    assert_eq!(focused(&app), Entry::Online, "over « Course solo »");
+    assert_eq!(focused(&app), Entry::Options, "over « Recommencer »");
     act(&mut app, MainMenuAction::Hover(1));
-    assert_eq!(focused(&app), Entry::Online, "the pointer cannot focus it");
+    assert_eq!(focused(&app), Entry::Options, "the pointer cannot focus it");
     act(&mut app, MainMenuAction::Press(1));
     assert_eq!(menu(&app).pressed, None);
     let reasons: Vec<String> = {
@@ -342,7 +341,17 @@ fn online_the_menu_does_not_pause_and_the_kart_coasts() {
             .map(|(_, text)| text.0.clone())
             .collect()
     };
-    assert_eq!(reasons, [Entry::Solo.why_disabled().to_string()]);
+    assert_eq!(reasons, [Entry::Restart.why_disabled().to_string()]);
+    let titles: Vec<String> = {
+        let world = app.world_mut();
+        world
+            .query::<&Text>()
+            .iter(world)
+            .map(|text| text.0.clone())
+            .filter(|text| text == game_title(true) || text == game_title(false))
+            .collect()
+    };
+    assert_eq!(titles, [game_title(true)], "online, no pause");
 
     // Closed: the keys drive again.
     tap(&mut app, KeyCode::Escape);
@@ -381,20 +390,21 @@ fn the_gamepad_goes_through_the_menu() {
     button(&mut app, MAIN_MENU_BUTTON);
     assert!(menu(&app).open && paused(&app));
     assert_eq!(focused(&app), Entry::Resume);
+    // Issue #100: the pause's entries.
     button(&mut app, GamepadButton::DPadDown);
-    assert_eq!(focused(&app), Entry::Solo);
+    assert_eq!(focused(&app), Entry::Restart);
     stick(&mut app, -0.9);
-    assert_eq!(focused(&app), Entry::Online, "the stick down");
+    assert_eq!(focused(&app), Entry::Options, "the stick down");
     for _ in 0..10 {
         stick(&mut app, -0.95);
     }
-    assert_eq!(focused(&app), Entry::Online, "held: one step");
+    assert_eq!(focused(&app), Entry::Options, "held: one step");
     stick(&mut app, 0.0);
     stick(&mut app, -0.9);
-    assert_eq!(focused(&app), Entry::Options);
+    assert_eq!(focused(&app), Entry::Quit);
     stick(&mut app, 0.0);
     stick(&mut app, 0.8);
-    assert_eq!(focused(&app), Entry::Online, "up");
+    assert_eq!(focused(&app), Entry::Options, "up");
     stick(&mut app, 0.0);
     button(&mut app, GamepadButton::DPadUp);
     button(&mut app, GamepadButton::DPadUp);
@@ -418,7 +428,7 @@ fn the_gamepad_goes_through_the_menu() {
     button(&mut app, MAIN_MENU_BUTTON);
     assert!(!menu(&app).open);
     button(&mut app, MAIN_MENU_BUTTON);
-    for _ in 0..3 {
+    for _ in 0..2 {
         button(&mut app, GamepadButton::DPadDown);
     }
     assert_eq!(focused(&app), Entry::Options);
@@ -537,7 +547,7 @@ fn closed_the_menu_leaves_nothing_and_open_it_shows_each_state() {
             .map(|(_, fill)| fill.0)
             .unwrap()
     };
-    assert_eq!(badge, accent(Entry::Solo));
+    assert_eq!(badge, accent(Entry::Restart));
     act(&mut app, MainMenuAction::Unpress);
     press(&mut app, KeyCode::Enter, KeyState::Released);
     assert!(menu(&app).activating.is_none(), "let go elsewhere first");
@@ -552,7 +562,8 @@ fn closed_the_menu_leaves_nothing_and_open_it_shows_each_state() {
         "no entity left behind (observers included)"
     );
 
-    // Online, « Course solo » is disabled: grey. The tree follows (a new one), and goes too.
+    // Online, « Recommencer » is disabled: grey (issue #100; « Course solo » was, before the
+    // pause). The tree follows (a new one), and goes too.
     tap(&mut app, KeyCode::Escape);
     run(&mut app, 3);
     assert_eq!(fill(&mut app, 1).0, palette::COTON);
@@ -563,4 +574,134 @@ fn closed_the_menu_leaves_nothing_and_open_it_shows_each_state() {
     tap(&mut app, KeyCode::Escape);
     run(&mut app, 2);
     assert_eq!(count::<With<MenuNode>>(&mut app), 0);
+}
+
+/// Issue #100 acceptance: the pause in solo stops the simulation (no fixed tick: the kart, held
+/// at full throttle, does not move; the clock of the simulation waits), « Reprendre » lets it go
+/// on; online, the same menu never stops it (Max's decision, issue #9): the ticks go on and the
+/// kart rolls on its momentum.
+#[test]
+fn the_pause_stops_the_simulation_in_solo_but_never_online() {
+    let mut app = menu_app(TrackChoice::TestGround, false);
+    let kart = player(&mut app);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 60);
+    let position = |app: &App| app.world().get::<Transform>(kart).unwrap().translation;
+    let ticks = |app: &App| app.world().resource::<Time<Fixed>>().elapsed();
+    let speed = |app: &App| app.world().get::<Velocity>(kart).unwrap().linear.length();
+    assert!(speed(&app) > 10.0);
+
+    tap(&mut app, KeyCode::Escape);
+    assert!(menu(&app).open && menu(&app).in_game && paused(&app));
+    // The accelerator still held.
+    let (at, clock) = (position(&app), ticks(&app));
+    run(&mut app, 60);
+    assert_eq!(position(&app), at, "the kart waits");
+    assert_eq!(ticks(&app), clock, "no tick of the simulation");
+    // « Reprendre »: it goes on.
+    choose(&mut app);
+    assert!(!menu(&app).open);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 10);
+    assert!(!paused(&app));
+    assert!(ticks(&app) > clock && position(&app) != at);
+
+    // Online: the same menu, and the simulation goes on.
+    app.insert_resource(crate::level::Online);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 30);
+    tap(&mut app, KeyCode::Escape);
+    assert!(menu(&app).open && menu(&app).in_game);
+    let (at, clock) = (position(&app), ticks(&app));
+    run(&mut app, 30);
+    assert!(!paused(&app), "online, never");
+    assert!(ticks(&app) > clock, "the ticks go on");
+    assert!(position(&app).distance(at) > 1.0, "it rolls on");
+    tap(&mut app, KeyCode::Escape);
+    app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+}
+
+/// Issue #100 acceptance: « Recommencer » (the pause's second button) starts the race again from
+/// its grid: the level rebuilt (a new kart on its grid slot, a new race, its countdown), no menu
+/// over it, the game running. Online, it is disabled (the host starts the races).
+#[test]
+fn recommencer_starts_the_race_again() {
+    use crate::race::{Race, RacePhase};
+    let mut app = menu_app(TrackChoice::default(), false);
+    fn race(app: &App) -> &Race {
+        app.world().resource::<Race>()
+    }
+    while !race(&app).started() {
+        app.update();
+    }
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 120);
+    let kart = player(&mut app);
+    let grid = app.world().resource::<crate::track::TrackLayout>().grid[app
+        .world()
+        .resource::<crate::race::RaceGrid>()
+        .player_slot()];
+    let ticks = race(&app).flow.tick;
+    assert!(ticks > 300, "{ticks}");
+    let moved = |app: &App, kart: Entity| {
+        app.world()
+            .get::<Transform>(kart)
+            .unwrap()
+            .translation
+            .distance(grid.translation)
+    };
+    assert!(moved(&app, kart) > 10.0);
+
+    tap(&mut app, KeyCode::Escape);
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(focused(&app), Entry::Restart);
+    choose(&mut app);
+    wait_for_the_player(&mut app);
+    run(&mut app, 3);
+    assert!(!menu(&app).open && menu(&app).child.is_none());
+    assert!(!paused(&app));
+    let again = player(&mut app);
+    assert_ne!(again, kart, "the level was rebuilt");
+    assert!(moved(&app, again) < 1.0, "back on its grid slot");
+    assert!(race(&app).flow.tick < 10, "{}", race(&app).flow.tick);
+    assert_eq!(race(&app).phase(), RacePhase::Grid);
+
+    // Online, « Recommencer » cannot be chosen.
+    app.insert_resource(crate::level::Online);
+    tap(&mut app, KeyCode::Escape);
+    act(&mut app, MainMenuAction::Press(1));
+    assert_eq!(menu(&app).pressed, None);
+    assert!(!enabled(Entry::Restart, true));
+    tap(&mut app, KeyCode::Escape);
+}
+
+/// Issue #100 (the charter's question 6): Échap closes the lobby, like every other screen: from
+/// the home (« Multijoueur »), back to the home, the focus on its button; opened by L in a race,
+/// back to the race, without opening the pause.
+#[test]
+fn echap_closes_the_lobby() {
+    let mut app = menu_app(TrackChoice::TestGround, false);
+    act(&mut app, MainMenuAction::OpenAtLaunch);
+    wait_for_the_background(&mut app);
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(focused(&app), Entry::Online);
+    choose(&mut app);
+    assert!(lobby_open(&app) && !menu(&app).open);
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 2);
+    assert!(!lobby_open(&app));
+    assert!(menu(&app).open && !menu(&app).in_game, "back home");
+    assert_eq!(focused(&app), Entry::Online);
+
+    // In a race: L opens it, Échap closes it, and nothing else.
+    tap(&mut app, KeyCode::Escape);
+    wait_for_the_player(&mut app);
+    run(&mut app, 2);
+    assert!(!menu(&app).open);
+    tap(&mut app, crate::net::LOBBY_KEY);
+    assert!(lobby_open(&app));
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 2);
+    assert!(!lobby_open(&app));
+    assert!(!menu(&app).open, "Échap closed the lobby, and that is all");
 }

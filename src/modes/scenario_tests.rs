@@ -374,10 +374,12 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     assert!(!app.world().resource::<RaceMenu>().open);
 }
 
-/// The texts of the championship's screens are ASCII (the HUD's font); issue #99: its standings
-/// say the cup's name (or « Championnat »).
+/// Issue #99: the standings say the cup's name (or « Championnat »). Issue #100: the texts of the
+/// championship's screens are written in Fredoka, with their accents (they were ASCII, the old
+/// font's): every character is one Fredoka draws, and the names are as written (« Crique
+/// Câline », « Entrée »).
 #[test]
-fn the_screens_of_a_championship_write_ascii() {
+fn the_screens_of_a_championship_write_their_accents() {
     let circuits = tracks::circuits();
     let mut grand_prix = GrandPrix::new(cup_of(&circuits, 4), 11);
     grand_prix.score(
@@ -396,18 +398,25 @@ fn the_screens_of_a_championship_write_ascii() {
     for line in standings_lines(&grand_prix) {
         texts.extend([line.rank, line.name, line.won, line.total]);
     }
-    for text in texts {
-        assert!(text.is_ascii(), "{text}");
+    texts.push(screens::STANDINGS_HEADER.to_string());
+    for text in &texts {
+        assert!(text.chars().all(crate::ui::format::writable), "{text}");
     }
+    grand_prix.title = "Championnat".into();
     assert_eq!(
         screens::standings_title(&grand_prix),
-        "CHAMPIONNAT 3/4 - Crique Caline"
+        "Championnat 3/4 · Crique Câline"
     );
     grand_prix.title = "Coupe Doudou".into();
     assert_eq!(
         screens::standings_title(&grand_prix),
-        "COUPE DOUDOU 3/4 - Crique Caline"
+        "Coupe Doudou 3/4 · Crique Câline"
     );
+    assert_eq!(
+        screens::standings_footer(&grand_prix),
+        "Espace ou Entrée (manette : A) : course suivante (Col des Moufles)"
+    );
+    assert_eq!(screens::STANDINGS_HEADER, "Classement général");
 }
 
 fn count<C: Component>(app: &mut App) -> usize {
@@ -488,7 +497,7 @@ fn a_championship_with_its_circuits_chosen_races_them_in_order() {
         assert_eq!(gp.orders.len(), race + 1);
         assert_eq!(
             screens::standings_title(&gp),
-            format!("CHAMPIONNAT {}/2 - {}", race + 1, ascii_name(name))
+            format!("Championnat {}/2 · {name}", race + 1)
         );
         enter(&mut app);
     }
@@ -496,10 +505,6 @@ fn a_championship_with_its_circuits_chosen_races_them_in_order() {
         app.update();
     }
     assert_eq!(grand_prix(&app).stage, GrandPrixStage::Podium);
-}
-
-fn ascii_name(name: &str) -> String {
-    name.chars().map(crate::ui::format::ascii_letter).collect()
 }
 
 /// Issue #99 acceptance: a random custom championship draws its circuits from the race's seed:

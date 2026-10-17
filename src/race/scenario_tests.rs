@@ -333,7 +333,7 @@ fn a_full_three_lap_race_then_results_and_restart() {
         .iter(world)
         .map(|t| t.0.clone())
         .collect();
-    assert!(texts.iter().any(|t| t == "CLASSEMENT"));
+    assert!(texts.iter().any(|t| t == "Classement"));
     assert!(texts.iter().any(|t| t == "Kart 1"), "{texts:?}");
     assert!(texts.contains(&expected));
 

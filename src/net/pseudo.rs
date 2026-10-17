@@ -1,11 +1,12 @@
 //! The player's pseudo (issue #80), pure: what the lobby's field keeps of a typed text, and how
 //! it is kept between sessions.
 //!
-//! - **Characters**: those the HUD's font can write (`crate::ui::format::ascii_letter`): ASCII
-//!   without control characters, and the accented letters of French, which the HUD writes without
-//!   their accent (« Éloïse » → « Eloise » on the results screen and over the karts) while egui
-//!   (the lobby, the banner) shows them. Anything else (an emoji, a tab, « ß ») is left out as it
-//!   is typed: the HUD would show it as « ? ».
+//! - **Characters**: those the HUD's font can write. Issue #100: the HUD writes in Fredoka
+//!   (`crate::ui::format::writable`), accents included (« Éloïse » on the results screen and over
+//!   the karts, as in the lobby); the ASCII filter of #80, which kept the letters the old font
+//!   could write once their accent was dropped, is gone with that font. Anything Fredoka cannot
+//!   draw (an emoji, a tab, a control character) is left out as it is typed: it would be a blank
+//!   box.
 //! - **Length**: [`PSEUDO_MAX_CHARS`] characters at most (the wire takes up to
 //!   `protocol::MAX_NAME_CHARS`, for the characters' names too).
 //! - **Empty**: no pseudo, the name of the player's character instead (`net::profile_of`).
@@ -13,7 +14,7 @@
 //!   RON string, like the color (#55) and the options (#17); `?pseudo=` in the address wins over
 //!   it, without replacing it.
 
-use crate::ui::format::ascii_letter;
+use crate::ui::format::writable;
 
 /// A pseudo has this many characters at most: it fits the lobby's list, the results screen's
 /// name column and a tag over a kart.
@@ -22,9 +23,9 @@ pub const PSEUDO_MAX_CHARS: usize = 12;
 /// Local storage key (web) / file name (native) of the pseudo.
 pub const PSEUDO_STORAGE_KEY: &str = "fluffy-racers/pseudo";
 
-/// Whether a pseudo can hold `c`: a character the HUD's font writes (accents aside).
+/// Whether a pseudo can hold `c`: a character the HUD's font (Fredoka) writes.
 pub fn allowed(c: char) -> bool {
-    c == '?' || ascii_letter(c) != '?'
+    writable(c)
 }
 
 /// What the field keeps of `text` as it is typed: the [`allowed`] characters, at most
@@ -96,22 +97,22 @@ mod tests {
     }
 
     /// No control character (a tab, a new line, a bell), no character the HUD cannot write (an
-    /// emoji, « ß »); the accented letters of French stay, and the HUD writes them without their
-    /// accent.
+    /// emoji, « → »); the accented letters of French stay, and (issue #100) the HUD writes them
+    /// with their accent, as « ß » or « Œ », which Fredoka has.
     #[test]
     fn a_pseudo_keeps_what_the_hud_can_write() {
         assert_eq!(clean("a\tb\nc\u{7}d\u{7f}"), Some("abcd".into()));
         assert_eq!(clean("Bob 😀✨"), Some("Bob".into()));
         assert_eq!(clean("😀"), None);
-        assert_eq!(clean("Straße"), Some("Strae".into()));
+        assert_eq!(clean("Straße"), Some("Straße".into()));
         assert_eq!(clean("Éloïse ça va"), Some("Éloïse ça va".into()));
         assert_eq!(clean("Zoé-42 !?"), Some("Zoé-42 !?".into()));
-        // Every character kept has its letter in the HUD's font: never « ? » for another one.
+        assert_eq!(clean("Œ → Ÿ"), Some("Œ  Ÿ".into()));
+        // Every character kept is one the HUD's font draws.
         let pseudo = clean("Ça, c'est Noël à l'Hôtel").unwrap();
-        let hud: String = pseudo.chars().map(ascii_letter).collect();
-        assert_eq!(hud, "Ca, c'est No");
+        assert_eq!(pseudo, "Ça, c'est No");
         for c in pseudo.chars() {
-            assert!(allowed(c) && !c.is_control(), "{c:?}");
+            assert!(allowed(c) && writable(c) && !c.is_control(), "{c:?}");
         }
         // Typing an emoji in the middle leaves the rest where it was.
         assert_eq!(typed("Ma😀x "), "Max ");

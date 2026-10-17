@@ -2,8 +2,7 @@
 //! the options menu, on by default).
 //!
 //! A small tag per other player's kart (never a bot's, never ours): its pseudo in the HUD's font
-//! (accents dropped, `ui::format::ascii_letter`), white on a dark pill edged with its kart's
-//! color. One tag (three UI nodes) per player's kart, spawned when the kart is known and despawned
+//! (issue #100: Fredoka, its accents kept), white on a dark pill edged with its kart's color. One tag (three UI nodes) per player's kart, spawned when the kart is known and despawned
 //! with it: never an entity per frame. Each frame only moves it (`UiTransform`: no new layout)
 //! over its kart's visual, and hides it behind the camera, beyond
 //! [`NetTuning::name_tag_distance`], for a player who left, or with the option off. Under the HUD
@@ -17,8 +16,9 @@ use bevy::ui::UiSystems;
 use super::{KartId, KartSync, NetTuning, RemoteKart};
 use crate::camera::ChaseCamera;
 use crate::kart::{KartColor, KartEnvironment};
+use crate::menu::MenuAssets;
+use crate::menu::kit;
 use crate::options::PlayerOptions;
-use crate::ui::format::ascii_letter;
 
 /// A tag's box: wide enough for any pseudo (`pseudo::PSEUDO_MAX_CHARS`) and for a character's
 /// name, the pill centered in it (px). Its bottom edge sits on the point over the kart.
@@ -47,7 +47,7 @@ impl Plugin for NameTagPlugin {
 #[derive(Component, Clone, Debug)]
 pub struct NameTag {
     pub kart: KartId,
-    /// The pseudo it writes (as the lobby has it: the text is its HUD letters).
+    /// The pseudo it writes (as the lobby has it).
     pub name: String,
     pub color: KartColor,
     pill: Entity,
@@ -61,10 +61,11 @@ impl NameTag {
     }
 }
 
-/// The name a tag writes: its HUD letters, into a reused string.
+/// The name a tag writes, into a reused string: the pseudo as typed (issue #100: the HUD's font
+/// has its accents).
 pub fn write_tag_text(out: &mut String, name: &str) {
     out.clear();
-    out.extend(name.chars().map(ascii_letter));
+    out.push_str(name);
 }
 
 /// Whether a tag shows: the option on, its kart in front of the camera (`depth` > 0, m) and no
@@ -106,6 +107,7 @@ fn follow_name_tags(
     mut commands: Commands,
     sync: Option<Res<KartSync>>,
     options: Option<Res<PlayerOptions>>,
+    assets: Option<Res<MenuAssets>>,
     tuning: Res<NetTuning>,
     cameras: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
     visuals: Query<&GlobalTransform, Without<ChaseCamera>>,
@@ -181,18 +183,30 @@ fn follow_name_tags(
         if tagged & (1 << (remote.kart % 64)) != 0 {
             continue;
         }
-        spawn_tag(&mut commands, remote.kart, name, remote.color);
+        let (_, face) = kit::faces(assets.as_deref());
+        spawn_tag(&mut commands, remote.kart, name, remote.color, &face);
     }
 }
 
-/// A new tag, hidden until its kart is placed (the next frame).
-fn spawn_tag(commands: &mut Commands, kart: KartId, name: &str, color: KartColor) {
+/// A new tag, hidden until its kart is placed (the next frame): its pseudo in Fredoka (`face`,
+/// the semi-bold).
+fn spawn_tag(
+    commands: &mut Commands,
+    kart: KartId,
+    name: &str,
+    color: KartColor,
+    face: &Handle<Font>,
+) {
     let mut letters = String::new();
     write_tag_text(&mut letters, name);
     let text = commands
         .spawn((
             Text::new(letters),
-            TextFont::from_font_size(TAG_FONT_SIZE),
+            TextFont {
+                font: bevy::text::FontSource::from(face),
+                font_size: TAG_FONT_SIZE.into(),
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
@@ -241,12 +255,13 @@ fn spawn_tag(commands: &mut Commands, kart: KartId, name: &str, color: KartColor
 mod tests {
     use super::*;
 
-    /// The tag writes the pseudo in the HUD's font: its accents dropped.
+    /// The tag writes the pseudo in the HUD's font (issue #100: Fredoka, its accents kept; they
+    /// were dropped before).
     #[test]
-    fn a_tag_writes_the_pseudo_without_its_accents() {
+    fn a_tag_writes_the_pseudo_with_its_accents() {
         let mut out = String::from("old");
         write_tag_text(&mut out, "Éloïse ça va");
-        assert_eq!(out, "Eloise ca va");
+        assert_eq!(out, "Éloïse ça va");
         write_tag_text(&mut out, "Max");
         assert_eq!(out, "Max");
     }

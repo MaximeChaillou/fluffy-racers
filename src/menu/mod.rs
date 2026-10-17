@@ -16,14 +16,15 @@
 //!   when a race is left (« Quitter » in the menu opened from the game), and when a room is left.
 //!   **Échap** on it (or the gamepad's B or Start) races at once, on the circuit behind (« rouler
 //!   tout de suite », as before the home screen).
-//! - **The menu opened from the game**: **Échap** ([`MAIN_MENU_KEY`]) or the gamepad's **Start**
-//!   ([`MAIN_MENU_BUTTON`]), when no other screen is open (Échap closes those first):
-//!   « Reprendre » first, the home's four buttons, then « Quitter » (back to the home screen;
-//!   online, out of the room too). Online, « Jouer solo » is disabled (the host chooses the
-//!   race), with its reason. In solo the game waits while it is open; **online, never** (Max's
-//!   decision, issue #9): the kart rolls on with its momentum, only its keys are the menu's
-//!   (`characters::pause_in_menus`, `kart::PlayerInputMuted`). Its own pause screen comes with
-//!   #100.
+//! - **The menu opened from the game, the pause** (issue #100): **Échap** ([`MAIN_MENU_KEY`]) or
+//!   the gamepad's **Start** ([`MAIN_MENU_BUTTON`]), when no other screen is open (Échap closes
+//!   those first): « Reprendre », « Recommencer » (the race again from its grid: the level
+//!   rebuilt), « Options », « Quitter » (back to the home screen; online, out of the room too).
+//!   The other screens keep their shortcuts (N, L, G). Online, « Recommencer » is disabled (the
+//!   host starts the races), with its reason. In solo the game waits while it is open (its title:
+//!   « Pause »); **online, never** (Max's decision, issue #9; its title: « Pas de pause ! »): the
+//!   kart rolls on with its momentum, only its keys are the menu's (`characters::pause_in_menus`,
+//!   `kart::PlayerInputMuted`).
 //! - **A screen opened from a menu** (or over it, by its shortcut) comes back to it when it
 //!   closes without starting anything: Échap in the options goes back; « Course ! » races.
 //! - **Keys** (no Fn on a Mac, AZERTY and QWERTY alike): up and down (the arrows, or Z/S in
@@ -43,7 +44,9 @@
 //! tests add [`MainMenuPlugin`] to a headless game themselves; everything in it runs headless.
 
 mod anim;
+pub mod kit;
 mod nav;
+mod options_screen;
 pub mod pilot;
 mod pilot_screen;
 pub mod preview;
@@ -51,11 +54,13 @@ mod screen;
 mod showcase;
 pub mod solo;
 mod solo_screen;
-mod style;
+pub mod style;
 pub mod trailer;
 
 #[cfg(test)]
 mod home_tests;
+#[cfg(test)]
+mod options_tests;
 #[cfg(test)]
 mod pilot_tests;
 #[cfg(test)]
@@ -64,7 +69,13 @@ mod scenario_tests;
 mod solo_tests;
 
 pub use anim::ACTIVATE_DELAY;
-pub use nav::{Entry, GAME_ENTRIES, LAUNCH_ENTRIES, StickLatch, enabled, entries, moved};
+pub use nav::{
+    Entry, GAME_ENTRIES, LAUNCH_ENTRIES, StickLatch, enabled, entries, game_title, moved,
+};
+pub use options_screen::{
+    ControlLine, OptionsArrow, OptionsBack, OptionsColumn, OptionsHelp, OptionsHint, OptionsLine,
+    OptionsRoot, OptionsUi, OptionsValue,
+};
 pub use pilot_screen::{
     ColorSwatch, LineValue, PilotArrow, PilotButton, PilotColumn, PilotHint, PilotLine, PilotRoot,
     PilotStorage, PilotUi, PortraitCell, PreviewFrame, PseudoField, PseudoHint, StatBar, StatValue,
@@ -425,12 +436,23 @@ impl Plugin for PilotPlugin {
 /// `modes::RaceMenu` with `bevy_ui`, the gamepad and the mouse. With a renderer only, like the
 /// menu: nothing of it in the headless world of the bot races, and nothing in the world before
 /// it first opens (its resource comes then).
+///
+/// Issue #100: **and the options screen** (`options_screen.rs`, the view of
+/// `options::OptionsMenu`): each system of the solo screen does the same step for the options
+/// screen too (its `SystemParam`s: `OptionsGamepad`, `OptionsSync`, `OptionsRefresh`,
+/// `OptionsAnimate`), each screen checking that it is open. **No system of its own**: a new
+/// system (a new function, or a `pipe`) changes the order in which the game's systems run (each
+/// system type is a set of Bevy's schedule, and the sets go through hash maps when the order is
+/// computed), and the home's background with it: its pack spread out, from 15 m to 32 m
+/// (`home_tests`, the same as #98's). The same systems, with more parameters, keep the order.
 pub struct SoloPlugin;
 
 impl Plugin for SoloPlugin {
     fn build(&self, app: &mut App) {
         use crate::modes::ModeSystems;
 
+        // Issue #100: each of these systems drives both screens (see above); their conditions
+        // say whether either is open.
         app.add_systems(
             Update,
             (
@@ -443,7 +465,7 @@ impl Plugin for SoloPlugin {
                     )
                         .chain()
                         .run_if(solo_screen::solo_open)
-                        .run_if(resource_exists::<SoloUi>),
+                        .run_if(solo_screen::screens_ui_exist),
                 )
                     .chain()
                     .run_if(solo_screen::solo_open_or_shown)
@@ -633,6 +655,7 @@ fn activate(
         Option<ResMut<LobbyWindow>>,
         Option<Res<NetSession>>,
     ),
+    (mode, mut levels): (Option<Res<RaceMode>>, MessageWriter<LoadLevel>),
     mut options_actions: MessageWriter<OptionsAction>,
     mut race_actions: MessageWriter<RaceMenuAction>,
     mut selection_actions: MessageWriter<SelectionAction>,
@@ -651,6 +674,13 @@ fn activate(
     }
     let screen = match entry {
         Entry::Resume => return,
+        // Issue #100: the race again from its grid, as « Relancer » in the admin panel (in a
+        // championship, its points are taken back: `modes`).
+        Entry::Restart => {
+            let mode = mode.map_or(RaceMode::Race, |mode| *mode);
+            levels.write(LoadLevel::restart(mode));
+            return;
+        }
         // Issue #89: back to the home screen (its background replaces the race); in a room, out
         // of it first: the home comes once it is left (`follow_the_screens`).
         Entry::Quit => {

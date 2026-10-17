@@ -28,7 +28,7 @@
 //! « Jouer solo » (`menu::solo_screen`, `bevy_ui`) and the time trial (`time_trial.rs`) only
 //! come with a renderer: the headless world, the bot races', keeps the archetypes and the systems
 //! it was measured with. The standings, the podium's texts and the time trial's HUD are the HUD's
-//! `bevy_ui` (ASCII only: its font has no accents).
+//! `bevy_ui` (issue #100: in Fredoka, with the accents, after the charter: `menu::kit`).
 
 mod ghost;
 mod podium;

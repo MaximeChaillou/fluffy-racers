@@ -8,6 +8,14 @@
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
 //! race and the croquettes: `crate::race` never depends on it. Texts are rewritten only when
 //! their value changes.
+//!
+//! Issue #100: **it writes in Fredoka**, the charter's font (`menu::MenuAssets`, with a renderer;
+//! headless, the default handle), with the accents; its texts keep a dark Myrtille shadow under
+//! them, for the bright skies. The chrono is written from the left of a box of a fixed width
+//! (Fredoka's digits are not all as wide: right-aligned, every digit of it would shake at each
+//! new hundredth).
+//! The results screen follows the charter: over the veil, its title, a cream panel of lines, the
+//! player's in Mangue, each place on its badge (gold, silver, bronze, then blue).
 
 pub mod debug;
 pub mod format;
@@ -22,6 +30,9 @@ use bevy::prelude::*;
 use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::items::{ItemKind, ItemSlots, Slot};
 use crate::kart::{ItemEffects, PlayerKart};
+use crate::menu::MenuAssets;
+use crate::menu::kit;
+use crate::menu::style::{palette, size, u};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use crate::track::GRID_SLOTS;
 use format::{
@@ -281,6 +292,13 @@ pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ResultsScreen;
 
+/// Issue #100: a line of the results screen (0 = the first): its pill is the player's color
+/// (Mangue) when the player is on it.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResultsRow {
+    pub row: usize,
+}
+
 /// A cell of the results screen (issue #70): its line (0 = the first) and its column. Spawned
 /// once with the screen; only its text changes, when what it shows changes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,16 +316,16 @@ pub enum ResultsColumn {
     Name,
     /// "1:02.35", "en course", "~1:45.20" (estimated), "abandon".
     Time,
-    /// "Meilleur tour 0:20.12", "Tour 2/3", "Temps estime".
+    /// "Meilleur tour 0:20.12", "Tour 2/3", "Temps estimé".
     Detail,
 }
 
-/// The columns and their width (px).
-const RESULTS_COLUMNS: [(ResultsColumn, f32); 4] = [
-    (ResultsColumn::Rank, 60.0),
-    (ResultsColumn::Name, 110.0),
-    (ResultsColumn::Time, 140.0),
-    (ResultsColumn::Detail, 320.0),
+/// The columns, in order (their widths: `style::size::RESULTS_COLUMNS`).
+const RESULTS_COLUMNS: [ResultsColumn; 4] = [
+    ResultsColumn::Rank,
+    ResultsColumn::Name,
+    ResultsColumn::Time,
+    ResultsColumn::Detail,
 ];
 
 /// What a line of the results screen shows: its racer and that racer's race.
@@ -343,11 +361,19 @@ struct ResultsShown {
 #[derive(Resource, Default)]
 struct HudShown(Option<HudValues>);
 
+/// The HUD's colors (issue #100: the charter's palette): white texts, the rank and what pops in
+/// Mangue, the slots' panels in see-through Myrtille, a dark Myrtille shadow under the texts
+/// (readable on a white sky as on the road).
 const TEXT_COLOR: Color = Color::WHITE;
-const RANK_COLOR: Color = Color::srgb(1.0, 0.85, 0.25);
-const PANEL_COLOR: Color = Color::srgba(0.08, 0.06, 0.16, 0.6);
+const RANK_COLOR: Color = palette::MANGUE;
+const PANEL_COLOR: Color = Color::srgba(0.227, 0.173, 0.431, 0.6);
 const SLOT_BORDER: Color = Color::srgba(1.0, 1.0, 1.0, 0.85);
 const CROQUETTE_COLOR: Color = Color::srgb(0.75, 0.45, 0.2);
+const TEXT_SHADOW: Color = Color::srgba(0.141, 0.102, 0.290, 0.85);
+/// The chrono's size, and the width of its box (px): « 0:00.00 » with Fredoka's widest digits
+/// (0.58 of its size), written from its left (the box is the one that stays right-aligned).
+const CHRONO_SIZE: f32 = 36.0;
+const CHRONO_WIDTH: f32 = 128.0;
 
 pub struct HudPlugin;
 
@@ -373,20 +399,26 @@ impl Plugin for HudPlugin {
     }
 }
 
-fn text(content: &str, size: f32, color: Color) -> impl Bundle {
+/// A text of the HUD: `size` px in `face` (Fredoka, issue #100), its shadow under it.
+fn text(content: &str, face: &Handle<Font>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(content),
-        TextFont::from_font_size(size),
+        TextFont {
+            font: bevy::text::FontSource::from(face),
+            font_size: size.into(),
+            ..default()
+        },
         TextColor(color),
         TextShadow {
-            offset: Vec2::splat(2.0),
-            ..default()
+            offset: Vec2::new(2.0, 3.0),
+            color: TEXT_SHADOW,
         },
     )
 }
 
-fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
+fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>, assets: Option<Res<MenuAssets>>) {
     shown.0 = None;
+    let (_, face) = kit::faces(assets.as_deref());
     commands
         .spawn((
             Name::new("HUD"),
@@ -470,7 +502,7 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
                             ));
                             slot.spawn((
                                 ItemCount { index },
-                                text("", if index == 0 { 20.0 } else { 14.0 }, TEXT_COLOR),
+                                text("", &face, if index == 0 { 20.0 } else { 14.0 }, TEXT_COLOR),
                                 Node {
                                     position_type: PositionType::Absolute,
                                     right: px(2),
@@ -492,8 +524,17 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
                 ..default()
             })
             .with_children(|times| {
-                times.spawn((HudText::Chrono, text("0:00.00", 36.0, TEXT_COLOR)));
-                times.spawn((HudText::BestLap, text("", 18.0, TEXT_COLOR)));
+                // Issue #100: in a box of a fixed width, from its left: Fredoka's digits are not
+                // all as wide, but a new hundredth only moves the digits after it.
+                times.spawn((
+                    HudText::Chrono,
+                    text("0:00.00", &face, CHRONO_SIZE, TEXT_COLOR),
+                    Node {
+                        width: px(CHRONO_WIDTH),
+                        ..default()
+                    },
+                ));
+                times.spawn((HudText::BestLap, text("", &face, 18.0, TEXT_COLOR)));
             });
 
             // Bottom left: croquettes (issue #14) and lap.
@@ -527,9 +568,9 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
                         BackgroundColor(CROQUETTE_COLOR),
                         BorderColor::all(SLOT_BORDER),
                     ));
-                    croquettes.spawn((HudText::Croquettes, text("x 0", 26.0, TEXT_COLOR)));
+                    croquettes.spawn((HudText::Croquettes, text("x 0", &face, 26.0, TEXT_COLOR)));
                 });
-                left.spawn((HudText::Lap, text("", 36.0, TEXT_COLOR)));
+                left.spawn((HudText::Lap, text("", &face, 36.0, TEXT_COLOR)));
             });
 
             // Bottom right: rank.
@@ -542,10 +583,10 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
                 ..default()
             })
             .with_children(|rank| {
-                rank.spawn((HudText::Rank, text("", 72.0, RANK_COLOR)));
+                rank.spawn((HudText::Rank, text("", &face, 72.0, RANK_COLOR)));
                 rank.spawn((
                     HudText::RacerCount,
-                    text("", 30.0, TEXT_COLOR),
+                    text("", &face, 30.0, TEXT_COLOR),
                     Node {
                         margin: UiRect::bottom(px(12)),
                         ..default()
@@ -564,7 +605,7 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>) {
             .with_children(|middle| {
                 middle.spawn((
                     HudText::Banner,
-                    text("", 110.0, TEXT_COLOR),
+                    text("", &face, 110.0, TEXT_COLOR),
                     TextLayout::justify(Justify::Center),
                 ));
             });
@@ -837,6 +878,7 @@ fn show_results(
     race: Res<Race>,
     online: Option<Res<crate::level::Online>>,
     grand_prix: Option<Res<crate::race::GrandPrix>>,
+    assets: Option<Res<MenuAssets>>,
     mut shown: ResMut<ResultsShown>,
     screens: Query<Entity, With<ResultsScreen>>,
 ) {
@@ -861,6 +903,14 @@ fn show_results(
     }
     .min(GRID_SLOTS);
     *shown = ResultsShown { rows, ..default() };
+    let (medium, semibold) = kit::faces(assets.as_deref());
+    let footer = if online.is_some() {
+        RESULTS_FOOTER_ONLINE
+    } else if grand_prix.is_some() {
+        RESULTS_FOOTER_GRAND_PRIX
+    } else {
+        RESULTS_FOOTER
+    };
     let mut rank = String::new();
     commands
         .spawn((
@@ -874,71 +924,81 @@ fn show_results(
                 align_items: AlignItems::Center,
                 ..default()
             },
+            // Issue #100: the charter's veil, the race seen behind it.
+            BackgroundColor(palette::VOILE),
         ))
         .with_children(|screen| {
             screen
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::all(px(24)),
-                        row_gap: px(8),
-                        border_radius: BorderRadius::all(px(18)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.08, 0.06, 0.16, 0.85)),
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        text(RESULTS_TITLE, 40.0, RANK_COLOR),
-                        Node {
-                            margin: UiRect::bottom(px(8)),
-                            ..default()
-                        },
-                    ));
-                    for row in 0..rows {
-                        write_ordinal(&mut rank, row as u32 + 1);
-                        panel
-                            .spawn(Node {
-                                column_gap: px(18),
-                                ..default()
-                            })
-                            .with_children(|line| {
-                                for (column, width) in RESULTS_COLUMNS {
-                                    let content = match column {
-                                        ResultsColumn::Rank => rank.as_str(),
-                                        _ => "",
-                                    };
-                                    line.spawn((
-                                        ResultsCell { row, column },
-                                        text(content, 24.0, TEXT_COLOR),
-                                        Node {
-                                            width: px(width),
-                                            ..default()
-                                        },
-                                    ));
-                                }
-                            });
-                    }
-                    panel.spawn((
-                        text(
-                            if online.is_some() {
-                                RESULTS_FOOTER_ONLINE
-                            } else if grand_prix.is_some() {
-                                RESULTS_FOOTER_GRAND_PRIX
-                            } else {
-                                RESULTS_FOOTER
-                            },
-                            20.0,
-                            TEXT_COLOR,
-                        ),
-                        Node {
-                            margin: UiRect::top(px(12)),
-                            ..default()
-                        },
-                    ));
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: u(10.0),
+                    ..default()
+                })
+                .with_children(|column| {
+                    column.spawn(kit::title(RESULTS_TITLE, &semibold, size::SCREEN_TITLE));
+                    column
+                        .spawn(kit::panel(size::RESULTS_WIDTH, size::ROW_GAP))
+                        .with_children(|panel| {
+                            for row in 0..rows {
+                                write_ordinal(&mut rank, row as u32 + 1);
+                                panel
+                                    .spawn((
+                                        ResultsRow { row },
+                                        kit::row(size::ROW_HEIGHT, size::CELL_GAP, false),
+                                    ))
+                                    .with_children(|line| {
+                                        spawn_results_cells(line, row, &rank, (&medium, &semibold));
+                                    });
+                            }
+                        });
+                    column.spawn(kit::keys_line(footer, &medium));
                 });
         });
+}
+
+/// The cells of the line `row` of the results screen: its place on its badge (written once), then
+/// the name, the time and the details (filled by [`update_results`]).
+fn spawn_results_cells(
+    line: &mut ChildSpawnerCommands,
+    row: usize,
+    rank: &str,
+    (medium, semibold): (&Handle<Font>, &Handle<Font>),
+) {
+    for (column, width) in RESULTS_COLUMNS.into_iter().zip(size::RESULTS_COLUMNS) {
+        let cell = ResultsCell { row, column };
+        match column {
+            ResultsColumn::Rank => {
+                line.spawn(kit::place_badge(row, width))
+                    .with_children(|badge| {
+                        badge.spawn((
+                            cell,
+                            kit::text(rank, semibold, size::PLACE_TEXT, palette::MYRTILLE),
+                        ));
+                    });
+            }
+            ResultsColumn::Detail => {
+                line.spawn((
+                    cell,
+                    kit::text("", medium, size::ROW_SMALL, palette::MYRTILLE),
+                    Node {
+                        width: u(width),
+                        ..default()
+                    },
+                ));
+            }
+            ResultsColumn::Name | ResultsColumn::Time => {
+                line.spawn((
+                    cell,
+                    kit::text("", semibold, size::ROW_TEXT, palette::MYRTILLE),
+                    Node {
+                        width: u(width),
+                        ..default()
+                    },
+                ));
+            }
+        }
+    }
 }
 
 /// The line `row` of the results screen: the racer at that place and its race, live (the
@@ -973,7 +1033,7 @@ fn results_row(
 /// lap), and once the results closed, the final table (estimated times). Every frame it only
 /// compares what each line shows; a text is rewritten when its value changes (no allocation, no
 /// new entity). Issue #80: a player who changes its pseudo (in the lobby, online) has its new
-/// name on its line at once.
+/// name on its line at once. Issue #100: the line the player is on is Mangue, wherever it goes.
 fn update_results(
     race: Res<Race>,
     course: Res<Course>,
@@ -984,7 +1044,8 @@ fn update_results(
         Has<PlayerKart>,
         Option<Ref<RacerName>>,
     )>,
-    mut cells: Query<(&ResultsCell, &mut Text, &mut TextColor)>,
+    mut cells: Query<(&ResultsCell, &mut Text)>,
+    mut rows: Query<(&ResultsRow, &mut BackgroundColor, &mut BorderColor)>,
 ) {
     if race.phase() != RacePhase::Results {
         return;
@@ -999,7 +1060,18 @@ fn update_results(
     if views == shown.views && !renamed {
         return;
     }
-    for (cell, mut text, mut color) in &mut cells {
+    // The local player's line in Mangue, wherever it goes.
+    for (line, mut fill, mut depth) in &mut rows {
+        let player = views
+            .get(line.row)
+            .copied()
+            .flatten()
+            .is_some_and(|view| view.player);
+        let (wanted_fill, wanted_depth) = kit::row_colors(player);
+        fill.set_if_neq(wanted_fill);
+        depth.set_if_neq(wanted_depth);
+    }
+    for (cell, mut text) in &mut cells {
         let Some(old) = shown.views.get(cell.row).copied() else {
             continue;
         };
@@ -1008,9 +1080,6 @@ fn update_results(
         if old == new && !rename {
             continue;
         }
-        // The local player's line in gold, wherever it goes.
-        let player = new.is_some_and(|view| view.player);
-        color.set_if_neq(TextColor(if player { RANK_COLOR } else { TEXT_COLOR }));
         if !cell.column.changed(old, new) && !rename {
             continue;
         }
