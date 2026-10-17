@@ -78,11 +78,12 @@ fn seat(app: &App, peer: PeerKey) -> KartId {
         .unwrap() as KartId
 }
 
-/// The lobby's notice about our color (`ui::color_notice`).
+/// The lobby's notice about our color (`guide::color_notice`; issue #101: it moved from the egui
+/// window's `ui.rs`).
 fn notice(app: &App) -> Option<String> {
     let session = app.world().resource::<NetSession>();
     let now = now_ms(app.world().resource::<Time<Real>>());
-    super::ui::color_notice(&session.players(now))
+    super::guide::color_notice(&session.players(now))
 }
 
 /// Ana and Bob, each with the color it chose before joining, seated and driving freely, each

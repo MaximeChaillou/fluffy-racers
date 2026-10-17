@@ -432,10 +432,13 @@ fn the_options_screen_needs_no_egui_context() {
     assert_eq!(egui_parts(&mut app), 0);
 }
 
-/// Issue #7: the lobby window is egui too, with the same rule (a context only while it is open),
-/// but it never pauses the game: the race goes on while the players gather.
+/// Issue #7: the lobby window was egui too, a context only while it was open; issue #64: its
+/// banner too, while shown. Issue #101: both are `bevy_ui` now (the lobby's screen of the
+/// charter, `crate::salon`): open or shown, they need no egui context, and never pause the game;
+/// the panel opening over them brings one, and closing it takes it away while the lobby stays
+/// open.
 #[test]
-fn the_lobby_window_has_an_egui_context_only_while_open() {
+fn the_lobby_and_its_banner_need_no_egui_context() {
     use crate::net::LobbyWindow;
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
@@ -447,62 +450,35 @@ fn the_lobby_window_has_an_egui_context_only_while_open() {
         .world_mut()
         .spawn(ChaseCamera::new(Entity::PLACEHOLDER))
         .id();
+    let egui_parts = |app: &mut App| {
+        let world = app.world_mut();
+        count::<
+            Or<(
+                With<PrimaryEguiContext>,
+                With<EguiContext>,
+                With<EguiRenderOutput>,
+            )>,
+        >(world)
+    };
     app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_none());
+    assert_eq!(egui_parts(&mut app), 0);
     app.world_mut().resource_mut::<LobbyWindow>().open = true;
     app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_some());
+    assert_eq!(egui_parts(&mut app), 0, "the lobby's screen is bevy_ui");
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
     app.world_mut().resource_mut::<LobbyWindow>().open = false;
-    app.update();
-    let world = app.world_mut();
-    assert_eq!(
-        count::<
-            Or<(
-                With<PrimaryEguiContext>,
-                With<EguiContext>,
-                With<EguiRenderOutput>
-            )>,
-        >(world),
-        0
-    );
-}
-
-/// Issue #64: the room's banner is egui too: a context while it shows (in a room, out of a
-/// race), none once it is gone, even with the lobby window closed.
-#[test]
-fn the_room_banner_has_an_egui_context_only_while_shown() {
-    use crate::net::LobbyWindow;
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .init_resource::<AdminPanel>()
-        .init_resource::<KeyboardCapture>()
-        .init_resource::<LobbyWindow>()
-        .add_systems(Update, attach_egui_context);
-    let camera = app
-        .world_mut()
-        .spawn(ChaseCamera::new(Entity::PLACEHOLDER))
-        .id();
-    app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_none());
     app.world_mut().resource_mut::<LobbyWindow>().banner = true;
     app.update();
-    assert!(app.world().get::<EguiContext>(camera).is_some());
-    assert!(!app.world().resource::<LobbyWindow>().open);
+    assert_eq!(egui_parts(&mut app), 0, "the banner is bevy_ui");
     assert!(!app.world().resource::<Time<Virtual>>().is_paused());
-    app.world_mut().resource_mut::<LobbyWindow>().banner = false;
+    // The panel opens over them (a context for the panel), then closes: none is left.
+    app.world_mut().resource_mut::<LobbyWindow>().open = true;
+    app.world_mut().resource_mut::<AdminPanel>().open = true;
     app.update();
-    let world = app.world_mut();
-    assert_eq!(
-        count::<
-            Or<(
-                With<PrimaryEguiContext>,
-                With<EguiContext>,
-                With<EguiRenderOutput>
-            )>,
-        >(world),
-        0
-    );
+    assert!(app.world().get::<EguiContext>(camera).is_some());
+    app.world_mut().resource_mut::<AdminPanel>().open = false;
+    app.update();
+    assert_eq!(egui_parts(&mut app), 0);
 }
 
 /// The tunings registered for the panel are the game's resources, and every one of them is

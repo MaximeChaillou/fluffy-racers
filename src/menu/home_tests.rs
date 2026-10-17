@@ -397,28 +397,50 @@ fn a_race_from_the_home_leaves_nothing_of_it_and_quitting_comes_back() {
     assert_eq!(count::<With<MenuNode>>(&mut app), 0);
 }
 
-/// Issue #89: the background's karts stay together and their paws fly: over 40 s, every kart
-/// strikes or grabs, many strikes land and several grabs hold; the pack stays tight; the trailer
-/// camera goes through its shots, near the karts. (One thread, as in the bot races: the same run
-/// every time.)
-#[test]
-fn the_background_karts_race_together_and_strike_and_grab_each_other() {
-    let mut app = home_app(0, true);
+/// What one run of the background did (see below).
+#[derive(Clone, Copy, Debug)]
+struct BackgroundRun {
+    landed: u32,
+    grabs: u32,
+    busy: usize,
+    /// The pack's width along the track (m): on average after 15 s, and at most.
+    spread: f32,
+    widest: f32,
+    /// The width of its four closest karts (m), on average after 15 s: the pack without the one
+    /// a crash left behind.
+    core: f32,
+    /// How far the camera got from the pack's middle (m), at most, and on average.
+    far: f32,
+    far_mean: f32,
+    shots: usize,
+    finished: bool,
+}
+
+/// The background on grid seed `seed` (its karts' draws), 40 s of it. One thread, as in the bot
+/// races: the same run every time.
+fn background_run(seed: u64) -> BackgroundRun {
+    let mut app = game_app_unloaded(TrackChoice::TestGround, 0);
+    app.world_mut().resource_mut::<RaceGrid>().seed = seed;
+    app.add_plugins(MainMenuPlugin { at_launch: true });
+    wait_for_the_player(&mut app);
     crate::tests::single_threaded(&mut app);
     wait_for_the_background(&mut app);
     let karts = HomeTuning::default().kart_count();
     let mut widest: f32 = 0.0;
-    let (mut spread, mut samples) = (0.0f32, 0.0f32);
-    let mut far = 0.0f32;
-    let mut cameras: Vec<Vec3> = Vec::new();
-    for frame in 0..40 * 60 {
+    let (mut spread, mut core, mut samples) = (0.0f32, 0.0f32, 0.0f32);
+    let (mut far, mut far_sum) = (0.0f32, 0.0f32);
+    let frames = 40 * 60;
+    let mut distances: Vec<f32> = Vec::with_capacity(karts);
+    for frame in 0..frames {
         app.update();
         let world = app.world_mut();
-        let distances: Vec<f32> = world
-            .query_filtered::<&RaceProgress, With<ShowcaseKart>>()
-            .iter(world)
-            .map(|p| p.distance)
-            .collect();
+        distances.clear();
+        distances.extend(
+            world
+                .query_filtered::<&RaceProgress, With<ShowcaseKart>>()
+                .iter(world)
+                .map(|p| p.distance),
+        );
         let positions: Vec<Vec3> = world
             .query_filtered::<&Transform, With<ShowcaseKart>>()
             .iter(world)
@@ -430,18 +452,17 @@ fn the_background_karts_race_together_and_strike_and_grab_each_other() {
             .unwrap()
             .translation;
         if frame > 15 * 60 {
-            let (low, high) = distances
-                .iter()
-                .fold((f32::MAX, f32::MIN), |(l, h), d| (l.min(*d), h.max(*d)));
+            distances.sort_by(f32::total_cmp);
+            let n = distances.len();
+            let (low, high) = (distances[0], distances[n - 1]);
             widest = widest.max(high - low);
             spread += high - low;
+            core += (distances[n - 2] - low).min(high - distances[1]);
             samples += 1.0;
         }
         let middle = positions.iter().sum::<Vec3>() / positions.len() as f32;
         far = far.max(camera.distance(middle));
-        if frame % 60 == 0 {
-            cameras.push(camera);
-        }
+        far_sum += camera.distance(middle);
     }
     let world = app.world_mut();
     let stats: Vec<PawStats> = world
@@ -450,32 +471,102 @@ fn the_background_karts_race_together_and_strike_and_grab_each_other() {
         .copied()
         .collect();
     assert_eq!(stats.len(), karts);
-    let landed: u32 = stats.iter().map(|s| s.landed).sum();
-    let grabs: u32 = stats.iter().map(|s| s.grabs).sum();
-    let busy = stats.iter().filter(|s| s.strikes + s.grabs > 0).count();
-    let spread = spread / samples;
+    let finished = world
+        .query::<&RaceProgress>()
+        .iter(world)
+        .any(|p| p.finished());
+    let run = BackgroundRun {
+        landed: stats.iter().map(|s| s.landed).sum(),
+        grabs: stats.iter().map(|s| s.grabs).sum(),
+        busy: stats.iter().filter(|s| s.strikes + s.grabs > 0).count(),
+        spread: spread / samples,
+        widest,
+        core: core / samples,
+        far,
+        far_mean: far_sum / frames as f32,
+        shots: showcase(&app).unwrap().reel.shot,
+        finished,
+    };
     println!(
-        "background: {landed} strikes landed, {grabs} grabs, {busy} karts busy, pack {spread:.1} m wide ({widest:.1} at most), camera at most {far:.1} m from the pack"
+        "background (seed {seed}): {} strikes landed, {} grabs, {} karts busy, pack {:.1} m wide ({:.1} at most; its four closest {:.1}), camera at most {:.1} m from the pack ({:.1} on average)",
+        run.landed, run.grabs, run.busy, run.spread, run.widest, run.core, run.far, run.far_mean
     );
-    // About one strike landed every 2 s, a grab every 10 s (measured: 25 and 6).
-    assert!(landed >= 15, "{stats:?}");
-    assert!(grabs >= 3, "{stats:?}");
-    assert!(busy >= karts - 1, "{stats:?}");
-    // Measured: 15 m on average, 33 m at most (a kart stopped by a crash waits for no one).
-    assert!(spread < 25.0, "the pack stays together: {spread}");
-    assert!(widest < 60.0, "the pack stays together: {widest}");
-    assert!(far < 25.0, "the camera films them: {far}");
-    // The shots change (6 s each).
-    let reel = showcase(&app).unwrap().reel;
-    assert!(reel.shot >= 5, "{reel:?}");
-    // Nobody finished: an endless race.
-    let world = app.world_mut();
-    assert!(
-        world
-            .query::<&RaceProgress>()
-            .iter(world)
-            .all(|p| !p.finished())
+    run
+}
+
+/// Issue #89: the background's karts stay together and their paws fly: over 40 s, every kart
+/// strikes or grabs, many strikes land and several grabs hold; the pack stays tight; the trailer
+/// camera goes through its shots, near the karts.
+///
+/// Issue #101: **judged over the eight seeds of the bot races** (`RaceGrid::seed` 0 to 7, the
+/// karts' draws; `FLUFFY_RACE_SEEDS` for others), side by side, as the bot races of #40 are.
+/// Five karts that strike each other at every turn are chaos: the order in which Bevy runs the
+/// game's systems (it changes as soon as a system is added anywhere in the menu's world: #98,
+/// #100, `docs/ARCHITECTURE.md` § « Écrans de jeu ») changes which entity comes first, so the
+/// contacts and the draws: one order gave the single run of before a pack 15 m wide, another
+/// 32 m. Over 24 seeds on `dev` (`48c0bb1`), the pack was 25.3 m wide on average (13 to 51 m),
+/// 61.3 m at most on average, and the camera 23.6 m from it at most on average: the single run's
+/// thresholds (25 m, 60 m, 25 m) sat on the background's own average, a coin toss at each
+/// change of order (10 of the 24 seeds passed them all on `dev`, 7 on this branch). Hence:
+/// - **the same thresholds, on the mean of the eight runs**, where the background clears them:
+///   strikes landed (≥ 15; 20.6 on average on `dev`), grabs (≥ 3; 8.2); **on every run**, as
+///   before: the karts busy, the shots, the endless race; and the old 25 m for **the pack
+///   without the kart a crash left behind** (its four closest karts: 13.0 m on average on
+///   `dev`, 15.3 on this branch);
+/// - for the whole pack and the camera's farthest, thresholds set as for the bot races (#40:
+///   the mean of eight at about three standard deviations of the usual value, the worst run
+///   beyond the extremes seen over 72 runs: 24 on `dev`, 48 on this branch): the pack under
+///   45 m on average (dev 25.3, branch 30.3) and 100 m at most on average (61.3, 72.5), the
+///   camera at most 42 m from it (23.6, 25.8) and **11 m from it on average, under 14 m** (a
+///   check the single run did not have: 10.8 ± 1.1 m per run on `dev`); no run beyond 80 m,
+///   160 m, 75 m and 25 m (`dev`: seeds 0 to 23; this branch: 0 to 47).
+#[test]
+fn the_background_karts_race_together_and_strike_and_grab_each_other() {
+    let karts = HomeTuning::default().kart_count();
+    let seeds = crate::bots::scenario_tests::race_seeds();
+    let runs = crate::bots::scenario_tests::for_each_seed(&seeds, background_run);
+    let n = runs.len() as f32;
+    let mean = |f: fn(&BackgroundRun) -> f32| runs.iter().map(f).sum::<f32>() / n;
+    let (landed, grabs) = (mean(|r| r.landed as f32), mean(|r| r.grabs as f32));
+    let (spread, widest, core) = (mean(|r| r.spread), mean(|r| r.widest), mean(|r| r.core));
+    let (far, far_mean) = (mean(|r| r.far), mean(|r| r.far_mean));
+    println!(
+        "background, on average over {} seeds: {landed:.1} strikes landed, {grabs:.1} grabs, pack {spread:.1} m wide ({widest:.1} at most; its four closest {core:.1}), camera at most {far:.1} m from the pack ({far_mean:.1} on average)",
+        runs.len()
     );
+    // About one strike landed every 2 s, a grab every 10 s.
+    assert!(landed >= 15.0, "{runs:?}");
+    assert!(grabs >= 3.0, "{runs:?}");
+    // The pack stays together (a kart stopped by a crash waits for no one).
+    assert!(core < 25.0, "the pack stays together: {runs:?}");
+    assert!(spread < 45.0, "the pack stays together: {runs:?}");
+    assert!(widest < 100.0, "the pack stays together: {runs:?}");
+    // The camera films them.
+    assert!(far < 42.0, "the camera films them: {runs:?}");
+    assert!(far_mean < 14.0, "the camera films them: {runs:?}");
+    for run in &runs {
+        assert!(run.busy >= karts - 1, "{run:?}");
+        // The shots change (6 s each).
+        assert!(run.shots >= 5, "{run:?}");
+        // Nobody finished: an endless race.
+        assert!(!run.finished, "{run:?}");
+        assert!(
+            run.spread < 80.0 && run.widest < 160.0 && run.far < 75.0 && run.far_mean < 25.0,
+            "no run falls apart: {run:?}"
+        );
+    }
+}
+
+/// Issue #101: the background over the seeds of `FLUFFY_RACE_SEEDS` (default: those of the bot
+/// races), one line each: what the thresholds above were set from.
+#[test]
+#[ignore = "a measure: FLUFFY_RACE_SEEDS=0-23 cargo test --lib measure_the_background -- --ignored --nocapture"]
+fn measure_the_background_over_seeds() {
+    let seeds = crate::bots::scenario_tests::race_seeds();
+    let runs = crate::bots::scenario_tests::for_each_seed(&seeds, background_run);
+    for (seed, run) in seeds.iter().zip(&runs) {
+        println!("seed {seed}: {run:?}");
+    }
 }
 
 /// Issue #89: leaving a room (or being left by its host) brings the home screen and its

@@ -290,6 +290,7 @@ fn online_mode(
         Option<Res<TrackLayout>>,
         Query<(&mut NetKart, Option<&mut SpawnPoint>), With<PlayerKart>>,
     ),
+    salon: Option<Res<crate::salon::SalonTuning>>,
 ) {
     let lobby = session
         .as_deref()
@@ -343,7 +344,12 @@ fn online_mode(
             }
             commands.insert_resource(OnlineLevel {
                 me,
-                solo_track: choice.clone(),
+                // Issue #101: never back to the lobby's scene out of a room (another room joined
+                // from it, before the level before came back).
+                solo_track: match &*choice {
+                    TrackChoice::Salon => TrackChoice::default(),
+                    other => other.clone(),
+                },
                 solo_mode: *mode,
                 solo_grid: *grid,
                 solo_mirror: mirror.0,
@@ -374,6 +380,8 @@ fn online_mode(
             }
             let wanted = match lobby.announced() {
                 Some(start) => Showing::Race(start.race),
+                // Issue #101: with the lobby in 3D (a renderer), its own scene.
+                None if salon.is_some() => Showing::Salon,
                 // The bots do not change free driving (it has none): no other level for them.
                 None => Showing::Free(RoomSetup {
                     bots: true,
@@ -384,6 +392,16 @@ fn online_mode(
                 level.showing = wanted;
                 let seat = seat_of(lobby);
                 match lobby.announced() {
+                    None if wanted == Showing::Salon => {
+                        info!("network: the lobby's scene, seat {seat}");
+                        commands.insert_resource(OnlineSlot(seat));
+                        commands.remove_resource::<OnlineRace>();
+                        commands.remove_resource::<OnlineFlow>();
+                        *grid = RaceGrid { bots: 0, ..*grid };
+                        sync.set_session(0);
+                        sync.set_kart(seat as KartId);
+                        levels.write(LoadLevel::on(TrackChoice::Salon, RaceMode::FreeRoam));
+                    }
                     None => {
                         let setup = lobby.setup();
                         info!(
@@ -452,6 +470,9 @@ fn online_mode(
                     set_race_roster(sync, lobby, race);
                 }
                 (Showing::Race(_), _) => {}
+                // Issue #101: on foot in the lobby: no kart of anyone (the characters are
+                // `crate::salon`'s).
+                (Showing::Salon, _) => sync.set_roster(std::iter::empty()),
                 _ => {
                     // Our seat can change while we drive freely: a player before us left, or two
                     // peers who sat alone at first (a slow connection) met. Our kart's id and its

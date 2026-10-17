@@ -476,7 +476,12 @@ impl Lobby {
             | Message::Steal(_)
             | Message::Stolen(_)
             | Message::KartState(_)
-            | Message::KartStates(_) => {
+            | Message::KartStates(_)
+            // Issue #101: the characters on foot of the lobby and their strikes (the host
+            // relays the strikes; the states go in its bundles).
+            | Message::FootState(_)
+            | Message::FootStates(_)
+            | Message::FootStrike(_) => {
                 if self.hosting {
                     self.relay(from, &message);
                 }

@@ -38,6 +38,9 @@ pub enum TrackChoice {
     Circuit(String),
     /// The flat physics test ground of issue #1.
     TestGround,
+    /// Issue #101: the lobby in 3D, online (`crate::salon`, with a renderer: it builds its
+    /// scene): no track, no kart.
+    Salon,
 }
 
 impl Default for TrackChoice {

@@ -340,6 +340,22 @@ impl Seated {
     }
 }
 
+/// What the lobby says when a color was taken (issue #55): `None` when every player wears the
+/// color it chose.
+pub fn color_notice(rows: &[super::PlayerRow]) -> Option<String> {
+    let mine = rows
+        .iter()
+        .find(|row| row.me && row.seated && row.chosen != row.color)?;
+    let (Some(chosen), Some(worn)) = (mine.chosen, mine.color) else {
+        return None;
+    };
+    Some(format!(
+        "Couleur déjà prise : tu es en {} au lieu de {}.",
+        worn.label(),
+        chosen.label()
+    ))
+}
+
 /// « 1 joueur », « 3 joueurs ».
 fn players(count: usize) -> String {
     if count > 1 {

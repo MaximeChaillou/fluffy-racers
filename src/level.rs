@@ -115,7 +115,8 @@ fn load_level(
         // Same track: a circuit is rebuilt from its `TrackHandle` (still loaded) by the track
         // plugin; the test ground is built here, also when it replaced a circuit that failed to
         // load (no `TrackHandle` left).
-        if *choice == TrackChoice::TestGround || handle.is_none() {
+        if *choice == TrackChoice::TestGround || (handle.is_none() && *choice != TrackChoice::Salon)
+        {
             test_ground::build(&mut commands, &mut meshes, &mut materials);
         }
         return;
@@ -129,6 +130,10 @@ fn load_level(
         TrackChoice::TestGround => {
             commands.remove_resource::<TrackHandle>();
             test_ground::build(&mut commands, &mut meshes, &mut materials);
+        }
+        // Issue #101: the lobby builds its own scene (`crate::salon`).
+        TrackChoice::Salon => {
+            commands.remove_resource::<TrackHandle>();
         }
     }
     choice.set_if_neq(track);

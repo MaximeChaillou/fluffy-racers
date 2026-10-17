@@ -7,7 +7,9 @@
 //! them (the elephant's is its trunk), `leg-*` for the legs and `wing-*` for the birds. Its clips
 //! move the nodes (no skinning): each node becomes an entity, named for the clips by its path
 //! from the file's root (`AnimationTargetId`, as Bevy's glTF loader names them). The legs are
-//! left out: they would stick out under the seat. The `body`, the `tail` and the birds' wings
+//! left out of a driver: they would stick out under the seat. Issue #101: they are kept apart
+//! ([`AnimalModelData::legs`]) for the animals on foot of the lobby, which walk and run on them
+//! (the files' `walk` and `run` clips move them). The `body`, the `tail` and the birds' wings
 //! keep a marker ([`AnimalPart`]): the soft wobble (#12, `wobble.rs`) hangs from them. The ears
 //! are part of the body's mesh in every Cube Pet (no node of their own): they lean with it.
 //!
@@ -27,7 +29,7 @@ pub const BODY: &str = "body";
 pub const TAIL: &str = "tail";
 pub const LEFT_WING: &str = "wing-left";
 pub const RIGHT_WING: &str = "wing-right";
-/// The legs' nodes start with this: left out.
+/// The legs' nodes start with this: left out of a driver, kept apart for an animal on foot.
 const LEG: &str = "leg-";
 
 /// A part of an animal that the wobble (#12) moves. The wings are the birds' (chick, penguin,
@@ -73,13 +75,19 @@ impl AnimalNode {
     }
 }
 
-/// An animal, ready to sit in a kart.
+/// An animal, ready to sit in a kart (or, issue #101, to stand on its legs).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AnimalModelData {
     /// From the file's root down, a parent before its children; no leg.
     pub nodes: Vec<AnimalNode>,
+    /// Issue #101: its legs, each with its parent in [`AnimalModelData::nodes`] (the `root`):
+    /// only an animal on foot has them.
+    pub legs: Vec<AnimalNode>,
     /// The middle of its body's bottom at rest, in the file's space: what sits on the seat.
     pub seat_point: Vec3,
+    /// Issue #101: its body's box at rest, in the file's space (the animal stands on the
+    /// ground, `y = 0`): how big a character on foot is.
+    pub body_box: (Vec3, Vec3),
 }
 
 impl AnimalModelData {
@@ -103,10 +111,11 @@ impl AnimalModelData {
 }
 
 /// The animal of a baked Cube Pet (None: no tree, or no body with a mesh: the primitives stay).
-/// Only the first root's tree, without the legs.
+/// Only the first root's tree, the legs apart.
 pub fn animal_model_data(model: &BakedModel) -> Option<AnimalModelData> {
     model.nodes.first().filter(|n| n.parent.is_none())?;
     let mut nodes: Vec<AnimalNode> = Vec::with_capacity(model.nodes.len());
+    let mut legs: Vec<AnimalNode> = Vec::new();
     // Where each of the file's nodes is in `nodes` (None: left out).
     let mut kept: Vec<Option<usize>> = vec![None; model.nodes.len()];
     // The body's vertices in the file's space, at rest.
@@ -126,6 +135,18 @@ pub fn animal_model_data(model: &BakedModel) -> Option<AnimalModelData> {
             },
         };
         if node.name.starts_with(LEG) {
+            // Its own children (none in the Cube Pets) are left out with it.
+            legs.push(AnimalNode {
+                name: node.name.clone(),
+                parent,
+                local: node.local,
+                mesh: node
+                    .part
+                    .and_then(|p| model.parts.get(p))
+                    .map(|p| p.mesh.clone()),
+                path: model.path(i).into_iter().map(str::to_string).collect(),
+                part: None,
+            });
             continue;
         }
         let part = match node.name.as_str() {
@@ -166,7 +187,9 @@ pub fn animal_model_data(model: &BakedModel) -> Option<AnimalModelData> {
     }
     Some(AnimalModelData {
         nodes,
+        legs,
         seat_point: Vec3::new((lo.x + hi.x) / 2.0, lo.y, (lo.z + hi.z) / 2.0),
+        body_box: (lo, hi),
     })
 }
 
@@ -242,12 +265,34 @@ mod tests {
 
     /// Issue #69: the tree is kept without the legs (nor another root); each node knows its
     /// path from the file's root (the clips' name for it) and its parent; the body and the tail
-    /// are marked for the wobble (#12); the body's bottom is what sits on the seat.
+    /// are marked for the wobble (#12); the body's bottom is what sits on the seat. Issue #101:
+    /// the legs are kept apart, under the `root`, with their meshes and their paths, for an
+    /// animal on foot; the body's box says how big it stands.
     #[test]
     fn an_animal_keeps_its_tree_without_its_legs() {
         let animal = animal_model_data(&made_up_animal()).unwrap();
         let names: Vec<&str> = animal.nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["animal-test", "root", "body", "Group", "tail"]);
+        let legs: Vec<(&str, Option<usize>)> = animal
+            .legs
+            .iter()
+            .map(|n| (n.name.as_str(), n.parent))
+            .collect();
+        assert_eq!(
+            legs,
+            [("leg-front-left", Some(1)), ("leg-back-left", Some(1))]
+        );
+        assert!(animal.legs.iter().all(|leg| leg.mesh.is_some()));
+        assert_eq!(
+            animal.legs[0].path,
+            ["animal-test", "root", "leg-front-left"]
+        );
+        let (lo, hi) = animal.body_box;
+        assert!(
+            (lo - Vec3::new(-0.625, 0.18, -0.625)).length() < 1e-5,
+            "{lo}"
+        );
+        assert!((hi - Vec3::new(0.625, 1.58, 0.725)).length() < 1e-5, "{hi}");
         let parents: Vec<Option<usize>> = animal.nodes.iter().map(|n| n.parent).collect();
         assert_eq!(parents, [None, Some(0), Some(1), Some(2), Some(2)]);
         assert_eq!(
