@@ -2,7 +2,7 @@
 //! next race, the screens, the podium) are in `crate::modes`.
 //!
 //! - **Four races** on the circuits of the cup (the first four of `assets/tracks/index.ron`), in
-//!   its order, in the speed class and the mirror mode chosen for the whole Grand Prix.
+//!   its order, in the mirror mode chosen for the whole Grand Prix.
 //! - **Points** (GD § 1, MK8): 15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 from the 1st to the 12th
 //!   ([`GrandPrixTuning::points`]), from the closed results of each race (issue #70: the racers
 //!   still on track get their estimated place).

@@ -1,7 +1,8 @@
 //! Headless scenarios of the special environments (GD § 10, issue #20) on the Lagon Duvet: the
 //! whole game (`GamePlugin`) with `MinimalPlugins`, the player alone, its race started, one fixed
 //! tick per `app.update()`. The acceptance criteria: for the glider and the water, the way in and
-//! the way out, and no fall through the track, at several speeds, in every class, and drifting.
+//! the way out, and no fall through the track, at several speeds (issue #118: up to the top speed
+//! and boosted beyond it), and drifting.
 
 use bevy_rapier3d::prelude::{GravityScale, Velocity};
 
@@ -16,6 +17,18 @@ use crate::tests::{
 use crate::track::{Gap, Lake, MirrorMode, TrackChoice, TrackLayout, gap_at};
 
 const LAGOON: &str = "tracks/lagon.track.ron";
+
+/// How fast the kart of a run goes. Issue #118: the game has a single speed (no more speed
+/// classes); the runs that went through issue #19's classes go up to the kart's top speed, and
+/// boosted beyond it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pace {
+    /// Up to its top speed (`KartTuning::max_speed`: 28.5 m/s).
+    Top,
+    /// Boosted all along the run with the strength of a purple mini-turbo (the strongest boost of
+    /// the game, a piment's too: +30 %, 37 m/s).
+    Boosted,
+}
 
 /// The Lagon Duvet, the player alone on the grid, its race started.
 struct Lagoon {
@@ -56,10 +69,9 @@ struct Log {
 }
 
 impl Lagoon {
-    fn new(class: SpeedClass, mirrored: bool, loadout: Option<Loadout>) -> Self {
+    fn new(mirrored: bool, loadout: Option<Loadout>) -> Self {
         let mut app = game_app_unloaded(TrackChoice::Circuit(LAGOON.into()), 0);
-        app.insert_resource(RaceClass(class))
-            .insert_resource(MirrorMode(mirrored));
+        app.insert_resource(MirrorMode(mirrored));
         if let Some(loadout) = loadout {
             app.insert_resource(PlayerLoadout(loadout));
         }
@@ -114,6 +126,36 @@ impl Lagoon {
         let mut progress = world.get_mut::<RaceProgress>(self.kart).unwrap();
         progress.passed = passed;
         progress.distance = distance;
+    }
+
+    /// Issue #118: the boost of `pace`: none, or a purple mini-turbo's strength.
+    fn boost_strength(&self, pace: Pace) -> f32 {
+        match pace {
+            Pace::Top => 0.0,
+            Pace::Boosted => {
+                self.app
+                    .world()
+                    .resource::<KartTuning>()
+                    .mini_turbo_strengths[2]
+            }
+        }
+    }
+
+    /// The kart's top speed at `pace` (m/s).
+    fn top_speed(&self, pace: Pace) -> f32 {
+        self.app.world().resource::<KartTuning>().max_speed * (1.0 + self.boost_strength(pace))
+    }
+
+    /// The boost of `pace` for the rest of the run (a minute), once placed.
+    fn boost(&mut self, pace: Pace) {
+        let strength = self.boost_strength(pace);
+        if strength > 0.0 {
+            let world = self.app.world_mut();
+            world
+                .get_mut::<Boost>(self.kart)
+                .unwrap()
+                .add(strength, 60.0);
+        }
     }
 
     fn environment(&self) -> KartEnvironment {
@@ -249,25 +291,20 @@ enum Pitch {
 /// (once, within a few ticks of the takeoff), the kart flies over the lagoon with the stats
 /// « air » and without gravity (the glide sets its descent), and lands on the north beach, where
 /// the glider closes (once); the pelican never comes, and the kart never goes through the road.
-/// In 50cc, 150cc and 200cc, at three speeds (slow, medium, its top speed), diving, gliding level
-/// and climbing, and drifting into the ramp; on the mirror image too. Diving lands sooner than
-/// gliding level, which lands sooner than climbing.
+/// At three speeds (slow, medium, its top speed), and boosted all along ([`Pace`]), diving,
+/// gliding level and climbing, and drifting into the ramp; on the mirror image too. Diving lands
+/// sooner than gliding level, which lands sooner than climbing.
 #[test]
 fn the_glider_opens_over_the_lagoon_and_closes_on_the_beach() {
     let mut failures = Vec::new();
-    for (class, mirrored) in [
-        (SpeedClass::Cc50, false),
-        (SpeedClass::Cc150, false),
-        (SpeedClass::Cc200, false),
-        (SpeedClass::Cc150, true),
+    for (pace, mirrored) in [
+        (Pace::Top, false),
+        (Pace::Boosted, false),
+        (Pace::Top, true),
+        (Pace::Boosted, true),
     ] {
-        let mut lagoon = Lagoon::new(class, mirrored, None);
-        let top = lagoon.app.world().resource::<KartTuning>().max_speed
-            * lagoon
-                .app
-                .world()
-                .resource::<SpeedClassTuning>()
-                .speed(class);
+        let mut lagoon = Lagoon::new(mirrored, None);
+        let top = lagoon.top_speed(pace);
         for (speed, pitch, drift) in [
             (10.0, Pitch::Level, false),
             (20.0, Pitch::Dive, false),
@@ -278,7 +315,7 @@ fn the_glider_opens_over_the_lagoon_and_closes_on_the_beach() {
             (top, Pitch::Level, true),
         ] {
             let name = format!(
-                "{class:?}{} at {speed:.1} m/s, {pitch:?}{}",
+                "{pace:?}{} at {speed:.1} m/s, {pitch:?}{}",
                 if mirrored { " (mirror)" } else { "" },
                 if drift { ", drifting" } else { "" }
             );
@@ -286,6 +323,7 @@ fn the_glider_opens_over_the_lagoon_and_closes_on_the_beach() {
             // The drift turns right whatever the stick: it starts from the left of the road.
             let lateral = if drift { -6.0 } else { 0.0 };
             lagoon.place(lip - 70.0, lateral, speed);
+            lagoon.boost(pace);
             let mut log = new_log();
             let mut landed_at = None;
             let mut drifted = false;
@@ -370,24 +408,23 @@ fn the_glider_opens_over_the_lagoon_and_closes_on_the_beach() {
 /// and drives with the stats « eau » and the water's physics (slower: its top speed × 0.9; half
 /// the gravity), on the road at the bottom; it comes out on the other side (once) and drives on
 /// as before (on the ground: exactly the factors it was spawned with). The pelican never comes,
-/// the kart never goes through the road. In 50cc, 150cc and 200cc, at three speeds, and drifting
-/// into the water; on the mirror image too.
+/// the kart never goes through the road. At three speeds (slow, medium, its top speed), and
+/// boosted all along ([`Pace`]), and drifting into the water; on the mirror image too.
 #[test]
 fn the_kart_dives_into_the_lagoon_and_comes_out_of_it() {
     let mut failures = Vec::new();
-    for (class, mirrored) in [
-        (SpeedClass::Cc50, false),
-        (SpeedClass::Cc150, false),
-        (SpeedClass::Cc200, false),
-        (SpeedClass::Cc150, true),
+    for (pace, mirrored) in [
+        (Pace::Top, false),
+        (Pace::Boosted, false),
+        (Pace::Top, true),
+        (Pace::Boosted, true),
     ] {
-        let mut lagoon = Lagoon::new(class, mirrored, None);
+        let mut lagoon = Lagoon::new(mirrored, None);
+        let top = lagoon.top_speed(pace);
         let world = lagoon.app.world();
         let water_top = world.resource::<KartTuning>().environment.water_top_speed;
         let gravity = world.resource::<KartTuning>().gravity_scale
             * world.resource::<KartTuning>().environment.water_gravity;
-        let top = world.resource::<KartTuning>().max_speed
-            * world.resource::<SpeedClassTuning>().speed(class);
         // Where a kart goes under the water: the first sample of the lap where its center would
         // be under the surface by more than the margin.
         let center = lagoon.layout.center.clone();
@@ -403,13 +440,14 @@ fn the_kart_dives_into_the_lagoon_and_comes_out_of_it() {
             .distance;
         for (speed, drift) in [(10.0, false), (20.0, false), (top, false), (top, true)] {
             let name = format!(
-                "{class:?}{} at {speed:.1} m/s{}",
+                "{pace:?}{} at {speed:.1} m/s{}",
                 if mirrored { " (mirror)" } else { "" },
                 if drift { ", drifting" } else { "" }
             );
             // The drift turns right whatever the stick: it starts from the left of the road.
             let lateral = if drift { -6.0 } else { 0.0 };
             lagoon.place(entry - 60.0, lateral, speed);
+            lagoon.boost(pace);
             let mut log = new_log();
             let mut out_at = None;
             for _ in 0..(20 * 60) {
@@ -498,7 +536,7 @@ fn under_water_a_hop_floats_and_the_bathtub_swims() {
         PartKind::Kart,
         roster.find(PartKind::Kart, "Baignoire").unwrap(),
     );
-    let mut lagoon = Lagoon::new(SpeedClass::Cc150, false, None);
+    let mut lagoon = Lagoon::new(false, None);
     let center = lagoon.layout.center.clone();
     // The bottom of the lagoon: the deepest sample of the road.
     let bottom = center
@@ -550,7 +588,7 @@ fn under_water_a_hop_floats_and_the_bathtub_swims() {
     // The bathtub's Speed « eau » (its stats there): faster than the default kart under water,
     // its Speed of the ground back out of it.
     let factors = |loadout: Option<Loadout>| {
-        let mut lagoon = Lagoon::new(SpeedClass::Cc150, false, loadout);
+        let mut lagoon = Lagoon::new(false, loadout);
         lagoon.place(bottom - 30.0, 0.0, 15.0);
         let mut log = new_log();
         for _ in 0..30 {
@@ -587,7 +625,7 @@ fn under_water_a_hop_floats_and_the_bathtub_swims() {
 /// `RaceTuning::outside_seconds`, as always).
 #[test]
 fn a_glider_beyond_the_walls_is_out_of_the_track_only_once_landed() {
-    let mut lagoon = Lagoon::new(SpeedClass::Cc150, false, None);
+    let mut lagoon = Lagoon::new(false, None);
     let tuning = lagoon
         .app
         .world()
@@ -656,7 +694,7 @@ fn a_glider_beyond_the_walls_is_out_of_the_track_only_once_landed() {
 #[test]
 fn a_bump_in_the_air_does_not_spin_the_glider() {
     for kick in [6.0f32, -6.0] {
-        let mut lagoon = Lagoon::new(SpeedClass::Cc150, false, None);
+        let mut lagoon = Lagoon::new(false, None);
         let full_turn = glide_yaw_target(&KartTuning::default().environment, 1.0, 1.0).abs();
         // Gliding just past the lip, on the line, 12 m up, kicked.
         lagoon.place(lagoon.gap.from + 8.0, 0.0, 26.0);

@@ -112,8 +112,8 @@
         (from: 18.0, to: 26.0),
     ],
     // Boost pads: two on the wall itself and two on the ceiling (the anti-gravity's own, cyan
-    // blue). None in the banked turn (issue #96): boosted round it in 200cc, a kart on an outer
-    // lane flies off the end of its twist.
+    // blue). None in the banked turn (issue #96): boosted round it at 50 m/s (the fastest speed
+    // class of issue #19), a kart on an outer lane flew off the end of its twist.
     boost_pads: [
         (at: 9.3, offset: -0.35),
         (at: 9.7, offset: 0.35),

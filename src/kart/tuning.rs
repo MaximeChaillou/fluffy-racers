@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use super::environment::EnvironmentTuning;
 
-/// All the knobs of the arcade kart model, for the 150cc class and an average kart.
+/// All the knobs of the arcade kart model, for an average kart.
 ///
 /// Speeds are in m/s, accelerations in m/s², rates in 1/s, angles in radians.
 ///
@@ -15,7 +15,7 @@ use super::environment::EnvironmentTuning;
 #[reflect(Resource, Default)]
 pub struct KartTuning {
     // --- Engine -------------------------------------------------------------------------------
-    /// Top speed on the road, 150cc. GD § 2 starts at 26 m/s; raised to 28.5 m/s (≈ 103 km/h)
+    /// Top speed on the road. GD § 2 starts at 26 m/s; raised to 28.5 m/s (≈ 103 km/h)
     /// after Max's first test drive (issue #25).
     pub max_speed: f32,
     /// Time to reach `max_speed` from a standstill, full throttle (GD § 2: about 2.5 s).

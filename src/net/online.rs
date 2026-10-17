@@ -55,7 +55,7 @@ use crate::interactions::{
 use crate::interpolation::InterpolationSystems;
 use crate::kart::{
     ColorSet, Kart, KartColor, KartPaint, KartSystems, OnlinePlayerColors, PALETTE_SIZE,
-    PlayerKart, RaceClass, Remote, SpawnPoint, bot_colors,
+    PlayerKart, Remote, SpawnPoint, bot_colors,
 };
 use crate::level::{LoadLevel, Online};
 use crate::race::{
@@ -255,11 +255,7 @@ fn online_mode(
     race: Option<Res<OnlineRace>>,
     mut interaction_clock: Option<ResMut<InteractionClock>>,
     (choice, mode, mut grid): (Res<TrackChoice>, Res<RaceMode>, ResMut<RaceGrid>),
-    (mut class, mut mirror, time_trial): (
-        ResMut<RaceClass>,
-        ResMut<MirrorMode>,
-        Option<Res<crate::modes::TimeTrial>>,
-    ),
+    (mut mirror, time_trial): (ResMut<MirrorMode>, Option<Res<crate::modes::TimeTrial>>),
     roster: Option<Res<Roster>>,
     real: Res<Time<Real>>,
     mut time: ResMut<Time<Virtual>>,
@@ -298,7 +294,6 @@ fn online_mode(
                 clock.set_if_neq(InteractionClock::default());
             }
             *grid = level.solo_grid;
-            class.set_if_neq(RaceClass(level.solo_class));
             mirror.set_if_neq(MirrorMode(level.solo_mirror));
             levels.write(LoadLevel::on(level.solo_track.clone(), level.solo_mode));
         }
@@ -310,8 +305,8 @@ fn online_mode(
             commands.insert_resource(OnlineItems::default());
             commands.insert_resource(OnlineSlot(seat));
             commands.insert_resource(Online);
-            // Issue #19: online, 150cc on the circuits as they are, and a Grand Prix in progress
-            // ends (its grid order with it).
+            // Issue #19: online, the circuits as they are (not mirrored), and a Grand Prix in
+            // progress ends (its grid order with it).
             commands.remove_resource::<GrandPrix>();
             grid.lineup = None;
             // Issue #76: a time trial ends too, the player's bots back (kept for the way out).
@@ -324,11 +319,9 @@ fn online_mode(
                 solo_track: choice.clone(),
                 solo_mode: *mode,
                 solo_grid: *grid,
-                solo_class: class.0,
                 solo_mirror: mirror.0,
                 showing: Showing::Nothing,
             });
-            class.set_if_neq(RaceClass::default());
             mirror.set_if_neq(MirrorMode::default());
             // The level follows on the next frame, once these are in.
         }

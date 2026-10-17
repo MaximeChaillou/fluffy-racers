@@ -1,8 +1,8 @@
 //! The time trial (issue #76, GD § 1, « Contre-la-montre »): alone on the circuit against the
 //! clock, three piments in the hand, and the ghost of the record.
 //!
-//! - **The mode**: the race menu's third mode (`super::GameMode::TimeTrial`), with the circuit,
-//!   the class and the mirror of a free race. The menu inserts [`TimeTrial`] and builds the level;
+//! - **The mode**: the race menu's third mode (`super::GameMode::TimeTrial`), with the circuit
+//!   and the mirror of a free race. The menu inserts [`TimeTrial`] and builds the level;
 //!   the next choice of mode, or a room online, ends it.
 //! - **Alone**: no bot (`RaceGrid::bots` is 0 while it lasts; the player's value is kept in
 //!   [`TimeTrial::solo_bots`] and given back at the end), no item box (the circuit's boxes are
@@ -11,7 +11,7 @@
 //! - **Three piments** (`RaceTuning::time_trial_chilis`): in the hand at each (re)start of the
 //!   race, an « x3 » used one press at a time, and nothing else.
 //! - **The clock**: the total time and the time of each lap (on the right, under the chrono); the
-//!   record of the circuit, class and mirror (`trial.rs`) at the start and at the finish, with
+//!   record of the circuit and mirror (`trial.rs`) at the start and at the finish, with
 //!   « RECORD ! » when it is beaten. The records and their ghosts are kept between sessions
 //!   (`admin::storage`, [`super::TIME_TRIAL_STORAGE_KEY`]), when the plugin has the storage.
 //! - **The ghost** (`ghost.rs`): each run is recorded tick by tick (the transforms, quantized like
@@ -46,7 +46,7 @@ use crate::interpolation::InterpolationSystems;
 use crate::items::{ItemKind, ItemSlots};
 use crate::kart::{
     Boost, DriftMotion, Invincibility, ItemEffects, Kart, KartAssists, KartEnvironment, KartPaint,
-    KartState, KartTuning, KartVisualAssets, KartWheels, PlayerKart, RaceClass, Slipstream, Stall,
+    KartState, KartTuning, KartVisualAssets, KartWheels, PlayerKart, Slipstream, Stall,
     StatEffects, StatsTuning, spawn_kart_visual_with_driver,
 };
 use crate::level::{LevelScoped, Online};
@@ -276,7 +276,7 @@ fn run_time_trial(
     mut state: ResMut<TimeTrialState>,
     race: Res<Race>,
     (tuning, kart_tuning): (Res<RaceTuning>, Res<KartTuning>),
-    (choice, class, mirror): (Res<TrackChoice>, Res<RaceClass>, Res<MirrorMode>),
+    (choice, mirror): (Res<TrackChoice>, Res<MirrorMode>),
     loadout: Option<Res<PlayerLoadout>>,
     mut racers: Query<
         (
@@ -318,7 +318,6 @@ fn run_time_trial(
         let key = match &*choice {
             TrackChoice::Circuit(path) => Some(TrialKey {
                 circuit: path.clone(),
-                class: class.0,
                 mirror: mirror.0,
             }),
             TrackChoice::TestGround => None,
