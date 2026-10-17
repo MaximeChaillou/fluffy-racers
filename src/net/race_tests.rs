@@ -1492,3 +1492,31 @@ fn two_games_race_through_a_local_signaling_server() {
     }
     println!("the whole race took {:.0} s", start.elapsed().as_secs_f32());
 }
+
+/// Issue #76: entering a room ends a time trial and gives the player's bots back (kept for the
+/// way out, like the rest of the solo level); leaving the room, the solo game has them, and no
+/// time trial.
+#[test]
+fn a_room_ends_the_time_trial_and_gives_the_bots_back() {
+    let hub = Hub::default();
+    let mut app = game(&hub, ANA, "Ana", true);
+    app.insert_resource(crate::modes::TimeTrial { solo_bots: 7 });
+    app.world_mut().resource_mut::<RaceGrid>().bots = 0;
+    let mut room = Room {
+        hub,
+        games: vec![(ANA, app)],
+    };
+    room.until(15.0, "in the room", |app| {
+        app.world().get_resource::<OnlineLevel>().is_some()
+    });
+    let app = room.app(ANA);
+    assert!(!app.world().contains_resource::<crate::modes::TimeTrial>());
+    assert_eq!(app.world().resource::<OnlineLevel>().solo_grid.bots, 7);
+    room.act(ANA, NetAction::Leave);
+    room.until(10.0, "solo again", |app| {
+        app.world().get_resource::<OnlineLevel>().is_none()
+    });
+    let app = room.app(ANA);
+    assert_eq!(app.world().resource::<RaceGrid>().bots, 7);
+    assert!(!app.world().contains_resource::<crate::modes::TimeTrial>());
+}

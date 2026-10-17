@@ -97,7 +97,7 @@ pub use guide::{Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, race_
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
-    SampleKind, SampleLimits, SnapshotBuffer, TICK_MS, TickClock,
+    SampleKind, SampleLimits, SnapshotBuffer, TICK_MS, TickClock, interpolate,
 };
 pub use items_online::{ItemLog, OnlineItems, OnlineItemsPlugin};
 pub use links::{

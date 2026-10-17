@@ -69,6 +69,11 @@ pub struct RaceTuning {
     /// spot for `stuck_seconds` is stuck: the pelican brings it back.
     pub stuck_seconds: f32,
     pub stuck_radius: f32,
+
+    // --- Time trial (GD § 1, issue #76) --------------------------------------------------------
+    /// Piments in the hand at the start of a time trial (GD § 1: 3, an « x3 »), and no other
+    /// item. Read at each (re)start of the race.
+    pub time_trial_chilis: u32,
 }
 
 impl Default for RaceTuning {
@@ -99,6 +104,8 @@ impl Default for RaceTuning {
             outside_seconds: 1.0,
             stuck_seconds: 3.0,
             stuck_radius: 2.0,
+
+            time_trial_chilis: 3,
         }
     }
 }
@@ -124,6 +131,7 @@ mod tests {
         assert_eq!(t.countdown_steps, 3);
         assert_eq!(seconds_to_ticks(t.countdown_step_seconds), 60);
         assert_eq!(seconds_to_ticks(t.tow_seconds), 150);
+        assert_eq!(t.time_trial_chilis, 3, "GD § 1: three piments");
         assert!(t.tow_lift_share + t.tow_carry_share < 1.0);
     }
 

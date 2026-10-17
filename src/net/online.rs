@@ -255,7 +255,11 @@ fn online_mode(
     race: Option<Res<OnlineRace>>,
     mut interaction_clock: Option<ResMut<InteractionClock>>,
     (choice, mode, mut grid): (Res<TrackChoice>, Res<RaceMode>, ResMut<RaceGrid>),
-    (mut class, mut mirror): (ResMut<RaceClass>, ResMut<MirrorMode>),
+    (mut class, mut mirror, time_trial): (
+        ResMut<RaceClass>,
+        ResMut<MirrorMode>,
+        Option<Res<crate::modes::TimeTrial>>,
+    ),
     roster: Option<Res<Roster>>,
     real: Res<Time<Real>>,
     mut time: ResMut<Time<Virtual>>,
@@ -310,6 +314,11 @@ fn online_mode(
             // ends (its grid order with it).
             commands.remove_resource::<GrandPrix>();
             grid.lineup = None;
+            // Issue #76: a time trial ends too, the player's bots back (kept for the way out).
+            if let Some(trial) = &time_trial {
+                commands.remove_resource::<crate::modes::TimeTrial>();
+                grid.bots = trial.solo_bots;
+            }
             commands.insert_resource(OnlineLevel {
                 me,
                 solo_track: choice.clone(),

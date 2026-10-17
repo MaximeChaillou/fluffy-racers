@@ -405,8 +405,9 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     assert!(!app.world().resource::<RaceMenu>().open);
 }
 
-/// The lines of the race menu: the mode, the circuit (a free race only: a Grand Prix races the
-/// cup), the class and the mirror, each one around.
+/// The lines of the race menu: the mode (issue #76: free race, Grand Prix, time trial), the
+/// circuit (a free race or a time trial: a Grand Prix races the cup), the class and the mirror,
+/// each one around.
 #[test]
 fn the_menu_lines_go_around() {
     let circuits = tracks::circuits();
@@ -416,9 +417,20 @@ fn the_menu_lines_go_around() {
     assert_eq!(setup.mode, GameMode::FreeRace);
     let gp = setup.changed(MenuRow::Mode, 1, n);
     assert_eq!(gp.mode, GameMode::GrandPrix);
-    assert_eq!(gp.changed(MenuRow::Mode, 1, n), setup);
+    let trial = gp.changed(MenuRow::Mode, 1, n);
+    assert_eq!(trial.mode, GameMode::TimeTrial);
+    assert_eq!(trial.changed(MenuRow::Mode, 1, n), setup, "around");
+    assert_eq!(setup.changed(MenuRow::Mode, -1, n), trial);
+    assert_eq!(GameMode::TimeTrial.label(), "Contre-la-montre");
     assert_eq!(setup.changed(MenuRow::Circuit, -1, n).circuit, n - 1);
     assert_eq!(gp.changed(MenuRow::Circuit, 1, n).circuit, 0, "the cup");
+    assert_eq!(trial.changed(MenuRow::Circuit, 2, n).circuit, 2 % n);
+    assert_eq!(
+        trial
+            .changed(MenuRow::Circuit, 1, n)
+            .value(MenuRow::Circuit, &circuits, 4),
+        circuits[1 % n].name
+    );
     assert_eq!(setup.changed(MenuRow::Class, 1, n).class, SpeedClass::Cc200);
     assert!(setup.changed(MenuRow::Mirror, 1, n).mirror);
     assert!(!setup.changed(MenuRow::Mirror, 2, n).mirror);

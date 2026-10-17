@@ -17,9 +17,10 @@
 //! 150cc: `crate::net` puts it back in a room). It applies at once, to every kart.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-/// A speed class (GD § 1).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// A speed class (GD § 1). Issue #76: by its name in the time trial's records (`Cc150`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SpeedClass {
     Cc50,
     Cc100,

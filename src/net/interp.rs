@@ -174,6 +174,14 @@ impl SnapshotBuffer {
     }
 }
 
+/// The pose between two states `a` and `b` (`a.tick <= tick <= b.tick`), as
+/// [`SnapshotBuffer::sample`] finds it: the curve of their velocities, a slerp, the look carried
+/// on; a teleport between two states too far apart. Issue #76: the ghost of the time trial
+/// (`crate::modes`) is shown with it between two of its recorded ticks.
+pub fn interpolate(a: &KartPose, b: &KartPose, tick: f64, limits: &SampleLimits) -> Sample {
+    between(a, b, tick, limits)
+}
+
 /// Between `a` and `b` (`a.tick <= tick < b.tick`).
 fn between(a: &KartPose, b: &KartPose, tick: f64, limits: &SampleLimits) -> Sample {
     let span = f64::from(b.tick - a.tick);

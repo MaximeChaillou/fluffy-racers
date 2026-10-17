@@ -40,7 +40,8 @@ fn help(row: MenuRow) -> &'static str {
     match row {
         MenuRow::Mode => {
             "Course libre : une course sur le circuit choisi. Grand Prix : quatre courses, \
-             des points à chaque course, puis le podium."
+             des points à chaque course, puis le podium. Contre-la-montre : seul contre le \
+             chrono, trois piments en main, et le fantôme de ton record."
         }
         MenuRow::Circuit => "Le Grand Prix court les quatre circuits, dans cet ordre.",
         MenuRow::Class => {
@@ -93,7 +94,7 @@ fn race_menu_window(
                                 }
                             }
                         }
-                        MenuRow::Circuit if setup.mode == GameMode::FreeRace => {
+                        MenuRow::Circuit if setup.mode.picks_a_circuit() => {
                             for (i, entry) in circuits.iter().enumerate() {
                                 let text = RichText::new(&entry.name).strong();
                                 if ui.selectable_label(setup.circuit == i, text).clicked() {
@@ -139,6 +140,7 @@ fn race_menu_window(
                 let start = match setup.mode {
                     GameMode::FreeRace => "Course !",
                     GameMode::GrandPrix => "Grand Prix !",
+                    GameMode::TimeTrial => "Chrono !",
                 };
                 if ui
                     .button(RichText::new(start).strong().size(18.0))

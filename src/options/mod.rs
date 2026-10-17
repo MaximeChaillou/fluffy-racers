@@ -288,7 +288,7 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
         ),
         ("Pilote et kart", "G".to_string()),
         (
-            "Nouvelle course (circuit, Grand Prix, classe, miroir)",
+            "Nouvelle course (circuit, Grand Prix, contre-la-montre, classe, miroir)",
             "N".to_string(),
         ),
         ("Options", "O".to_string()),
