@@ -25,6 +25,7 @@ mod rig;
 mod underwater;
 
 pub use rig::{CameraRig, RigInput};
+pub(crate) use underwater::tint_under_water;
 pub use underwater::{UNDERWATER_TINT, UnderwaterTint};
 
 use bevy::prelude::*;
@@ -217,7 +218,9 @@ impl Plugin for CameraPlugin {
     }
 }
 
-fn chase(
+/// The chase (`PostUpdate`). Issue #89: the home screen's trailer camera moves the camera after
+/// it, before the water's tint (`menu`), while the home's background runs.
+pub(crate) fn chase(
     time: Res<Time>,
     tuning: Res<CameraTuning>,
     fixed: Option<Res<FixedView>>,

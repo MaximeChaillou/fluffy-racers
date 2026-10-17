@@ -1,33 +1,37 @@
-//! The main menu's entries and its navigation (issue #56), pure: what each entry is, which
-//! entries a menu has, how the focus moves (around, over the disabled entries), and the gamepad's
-//! stick turned into single steps.
+//! The entries of the home screen and of the menu opened from the game (issues #56 and #89), and
+//! their navigation, pure: what each entry is, which entries a menu has, how the focus moves
+//! (around, over the disabled entries), and the gamepad's stick turned into single steps.
 
 use crate::kart::KeyboardLayout;
 
-/// An entry of the main menu.
+/// An entry of the home screen, or of the menu opened from the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Entry {
     /// Back to the race (only when the menu was opened from the game).
     Resume,
-    /// « Course solo »: the race menu of issue #19 (N): free race, Grand Prix or (issue #76) time
-    /// trial, circuit, class.
+    /// « Jouer solo »: the race menu of issue #19 (N): free race, Grand Prix or (issue #76) time
+    /// trial, circuit, class. Its own screen comes with issue #99.
     Solo,
-    /// « En ligne »: the lobby of issue #7 (L): create or join a game.
+    /// « Multijoueur »: the lobby of issue #7 (L): create or join a game.
     Online,
     /// « Options »: the options menu of issue #17 (O).
     Options,
-    /// « Pilote et kart »: the selection screen of issue #15 (G).
+    /// « Pilote »: the selection screen of issue #15 (G). Its own screen comes with issue #98.
     Garage,
+    /// Issue #89: « Quitter », back to the home screen (only from the game; online, out of the
+    /// room too).
+    Quit,
 }
 
 impl Entry {
     pub fn label(self) -> &'static str {
         match self {
             Entry::Resume => "Reprendre",
-            Entry::Solo => "Course solo",
-            Entry::Online => "En ligne",
+            Entry::Solo => "Jouer solo",
+            Entry::Online => "Multijoueur",
             Entry::Options => "Options",
-            Entry::Garage => "Pilote et kart",
+            Entry::Garage => "Pilote",
+            Entry::Quit => "Quitter",
         }
     }
 
@@ -40,6 +44,15 @@ impl Entry {
             Entry::Online => "Créer ou rejoindre une partie entre amis",
             Entry::Options => "Clavier, noms au-dessus des karts",
             Entry::Garage => "Ton animal, ton kart, tes roues, ton aile",
+            Entry::Quit => "Retour à l'accueil",
+        }
+    }
+
+    /// The small line online, when it says something else: « Quitter » leaves the room too.
+    pub fn caption_online(self) -> &'static str {
+        match self {
+            Entry::Quit => "Retour à l'accueil : tu quittes la partie.",
+            _ => self.caption(),
         }
     }
 
@@ -54,7 +67,7 @@ impl Entry {
     /// The shortcut that opens the same screen during the game, shown in the options' list.
     pub fn shortcut(self) -> Option<&'static str> {
         match self {
-            Entry::Resume => None,
+            Entry::Resume | Entry::Quit => None,
             Entry::Solo => Some("N"),
             Entry::Online => Some("L"),
             Entry::Options => Some("O"),
@@ -63,18 +76,20 @@ impl Entry {
     }
 }
 
-/// The entries of the menu at launch: what to play first.
+/// The entries of the home screen (issue #89), in this order: what to play first.
 pub const LAUNCH_ENTRIES: [Entry; 4] = [Entry::Solo, Entry::Online, Entry::Options, Entry::Garage];
-/// The entries of the menu opened from the game (Échap, Start): « Reprendre » first.
-pub const GAME_ENTRIES: [Entry; 5] = [
+/// The entries of the menu opened from the game (Échap, Start): « Reprendre » first, the home's
+/// entries, then « Quitter » (back to the home screen).
+pub const GAME_ENTRIES: [Entry; 6] = [
     Entry::Resume,
     Entry::Solo,
     Entry::Online,
     Entry::Options,
     Entry::Garage,
+    Entry::Quit,
 ];
 
-/// The entries of the menu, at launch or opened from the game.
+/// The entries of the home screen, or of the menu opened from the game.
 pub fn entries(in_game: bool) -> &'static [Entry] {
     if in_game {
         &GAME_ENTRIES
@@ -121,17 +136,19 @@ pub fn moved(entries: &[Entry], focus: usize, step: i32, online: bool) -> usize 
     }
 }
 
-/// The line of keys at the bottom of the menu, with the letters of the player's keyboard.
+/// The line of keys at the bottom of the menu, with the letters of the player's keyboard: the
+/// keyboard's, then the gamepad's. On the home screen (issue #89), each one in two lines, to fit
+/// its column: Échap there races at once, on the circuit behind.
 pub fn hint(layout: KeyboardLayout, in_game: bool) -> [String; 2] {
     let [up, _, down, _] = layout.letters();
-    let back = if in_game {
-        "reprendre"
+    let (back, cut) = if in_game {
+        ("reprendre", "  ·  ")
     } else {
-        "rouler tout de suite"
+        ("rouler tout de suite", "\n")
     };
     [
-        format!("Haut / Bas ({up} / {down}) : choisir  ·  Entrée : valider  ·  Échap : {back}"),
-        format!("Manette : croix ou stick, A : valider, B ou Start : {back}"),
+        format!("Haut / Bas ({up} / {down}) : choisir  ·  Entrée : valider{cut}Échap : {back}"),
+        format!("Manette : croix ou stick, A : valider{cut}B ou Start : {back}"),
     ]
 }
 
@@ -168,11 +185,18 @@ impl StickLatch {
 mod tests {
     use super::*;
 
+    /// Issue #89: the home screen has its four buttons in this order (Jouer solo, Multijoueur,
+    /// Options, Pilote); the menu opened from the game has « Reprendre » first, the same four,
+    /// then « Quitter » last.
     #[test]
     fn the_menu_has_reprendre_only_from_the_game() {
         assert_eq!(entries(false), &LAUNCH_ENTRIES);
+        let labels: Vec<&str> = LAUNCH_ENTRIES.iter().map(|e| e.label()).collect();
+        assert_eq!(labels, ["Jouer solo", "Multijoueur", "Options", "Pilote"]);
         assert_eq!(entries(true)[0], Entry::Resume);
-        assert_eq!(&entries(true)[1..], &LAUNCH_ENTRIES);
+        assert_eq!(&entries(true)[1..5], &LAUNCH_ENTRIES);
+        assert_eq!(entries(true).last(), Some(&Entry::Quit));
+        assert!(!LAUNCH_ENTRIES.contains(&Entry::Quit) && !LAUNCH_ENTRIES.contains(&Entry::Resume));
         for entry in GAME_ENTRIES {
             assert!(!entry.label().is_empty() && !entry.caption().is_empty());
             assert!(
@@ -180,12 +204,14 @@ mod tests {
                 "short: {}",
                 entry.label()
             );
-            assert!(
-                entry.caption().chars().count() <= 48,
-                "short: {}",
-                entry.caption()
-            );
+            for caption in [entry.caption(), entry.caption_online()] {
+                assert!(caption.chars().count() <= 48, "short: {caption}");
+            }
         }
+        // Online, « Quitter » says it leaves the room too; the others say the same as solo.
+        assert_ne!(Entry::Quit.caption_online(), Entry::Quit.caption());
+        assert_eq!(Entry::Options.caption_online(), Entry::Options.caption());
+        assert_eq!(Entry::Quit.shortcut(), None);
         // The shortcuts are those of the screens they open.
         assert_eq!(Entry::Solo.shortcut(), Some("N"));
         assert_eq!(Entry::Online.shortcut(), Some("L"));
@@ -228,9 +254,18 @@ mod tests {
         assert!(keys.starts_with("Haut / Bas (Z / S)"), "{keys}");
         assert!(keys.contains("Échap : reprendre"), "{keys}");
         assert!(pad.contains("A : valider"), "{pad}");
-        let [keys, _] = hint(KeyboardLayout::Qwerty, false);
+        let [keys, pad] = hint(KeyboardLayout::Qwerty, false);
         assert!(keys.starts_with("Haut / Bas (W / S)"), "{keys}");
         assert!(keys.contains("Échap : rouler tout de suite"), "{keys}");
+        // Issue #89: on the home screen, two short lines each (its column is narrow).
+        for line in keys.lines().chain(pad.lines()) {
+            assert!(line.chars().count() <= 52, "{line}");
+        }
+        assert_eq!(keys.lines().count() + pad.lines().count(), 4);
+        assert!(
+            pad.contains("A : valider") && pad.contains("Start : rouler"),
+            "{pad}"
+        );
     }
 
     /// The stick held does not run through the menu: one step per push.

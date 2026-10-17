@@ -75,8 +75,12 @@ pub mod palette {
 /// Sizes of the reference window (px), `docs/UI_CHARTE.md` « Marges et tailles »: a grid of 4 and
 /// 8 px, round corners everywhere.
 pub mod size {
-    /// The title « Fluffy Racers ».
+    /// The title « Fluffy Racers » over the menu opened from the game.
     pub const TITLE: f32 = 64.0;
+    /// Issue #89: the home screen's title, big, its two words on two lines (« Fluffy », «
+    /// Racers »), packed (`HOME_TITLE_LINE`: their line height, a share of the size).
+    pub const HOME_TITLE: f32 = 88.0;
+    pub const HOME_TITLE_LINE: f32 = 0.9;
     /// The line under the title.
     pub const TAGLINE: f32 = 21.0;
     /// A button's label.
@@ -106,6 +110,15 @@ pub mod size {
     /// The round badge of a button's icon, and the icon in it.
     pub const BADGE: f32 = 52.0;
     pub const ICON: f32 = 40.0;
+
+    /// Issue #89: the home screen's column (title, panel, keys) stands this far from the left
+    /// edge; the background shows on the right.
+    pub const HOME_MARGIN: f32 = 64.0;
+    /// The home's veil: full (`palette::VOILE`) from the left edge to this far, behind the column,
+    /// then fading out to nothing at `HOME_VEIL_END` (px of the reference window, from the left):
+    /// the karts on the right are seen as they are.
+    pub const HOME_VEIL_FULL: f32 = 640.0;
+    pub const HOME_VEIL_END: f32 = 1000.0;
 }
 
 /// What a button shows (`docs/UI_CHARTE.md` « Boutons »). The pointer over a button gives it the
@@ -194,10 +207,12 @@ pub const ICON_SOLO: &str = "ui/icons/singleplayer.png";
 pub const ICON_ONLINE: &str = "ui/icons/multiplayer.png";
 pub const ICON_OPTIONS: &str = "ui/icons/gear.png";
 pub const ICON_GARAGE: &str = "ui/icons/wrench.png";
+/// Issue #89: « Quitter », back home.
+pub const ICON_QUIT: &str = "ui/icons/home.png";
 
 /// Every file of `assets/ui/` the game uses (each pack's licence is next to them): a test checks
 /// that each one is there with its credits, and that nothing else is.
-pub const UI_FILES: [&str; 7] = [
+pub const UI_FILES: [&str; 8] = [
     FONT_MEDIUM,
     FONT_SEMIBOLD,
     ICON_RESUME,
@@ -205,6 +220,7 @@ pub const UI_FILES: [&str; 7] = [
     ICON_ONLINE,
     ICON_OPTIONS,
     ICON_GARAGE,
+    ICON_QUIT,
 ];
 
 #[cfg(test)]
@@ -278,10 +294,36 @@ mod tests {
         assert_eq!(u(72.0), Val::Vh(10.0));
         assert_eq!(u(REFERENCE_HEIGHT), Val::Vh(100.0));
         assert!(matches!(font(36.0), FontSize::Vh(v) if (v - 5.0).abs() < 1e-5));
-        // Five buttons, the title and the keys fit in the window.
-        let panel = 5.0 * size::BUTTON_HEIGHT + 4.0 * size::PANEL_GAP + 2.0 * size::PANEL_PADDING;
-        let screen = size::TITLE + size::TAGLINE + panel + 3.0 * size::HINT + 60.0;
-        assert!(screen < REFERENCE_HEIGHT, "{screen}");
+        // A text's line is 1.2 times its size (Bevy's default line height).
+        let line = |px: f32| 1.2 * px;
+        let panel = |buttons: f32| {
+            buttons * size::BUTTON_HEIGHT
+                + (buttons - 1.0) * size::PANEL_GAP
+                + 2.0 * size::PANEL_PADDING
+        };
+        // Issue #89: the menu opened from the game, its six buttons (« Quitter » last), its
+        // title and the keys (two lines), the gaps between them, fit in the window, with 8 px
+        // to spare above and below (the phrase under the title is the home's).
+        let game = line(size::TITLE) + panel(6.0) + 2.0 * line(size::HINT) + 6.0 + 3.0 * 10.0;
+        assert!(game + 16.0 <= REFERENCE_HEIGHT, "{game}");
+        // The home screen: its big title on two packed lines, the phrase, four buttons and the
+        // keys (four lines: the two of the menu, each cut in two), with 16 px to spare above and
+        // below.
+        let title = 2.0 * size::HOME_TITLE * size::HOME_TITLE_LINE;
+        let home = title
+            + line(size::TAGLINE)
+            + 6.0
+            + panel(4.0)
+            + 4.0 * line(size::HINT)
+            + 6.0
+            + 4.0 * 10.0;
+        assert!(home + 32.0 <= REFERENCE_HEIGHT, "{home}");
+        const { assert!(size::HOME_TITLE >= 1.35 * size::TITLE, "big") };
+        // The home's column fits under its full veil (the keys' longest line: about 0.5 em a
+        // character, 52 characters, `nav::hint`).
+        let column = size::HOME_MARGIN + size::PANEL_WIDTH.max(52.0 * 0.5 * size::HINT);
+        assert!(column <= size::HOME_VEIL_FULL, "{column}");
+        const { assert!(size::HOME_VEIL_END > size::HOME_VEIL_FULL) };
         assert_eq!(size::BUTTON_RADIUS * 2.0, size::BUTTON_HEIGHT, "a pill");
     }
 

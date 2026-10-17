@@ -131,6 +131,26 @@ pub fn squash_and_stretch(height: f32) -> Vec2 {
     Vec2::new(1.0 + (1.0 / height - 1.0) * SQUASH_WIDEN, height)
 }
 
+/// Issue #89: the home screen's title is alive. Each of its two words leans its own way
+/// (clockwise, rad: « Fluffy » up to the right, « Racers » a little down)...
+pub const TITLE_LEAN: [f32; 2] = [-0.05, 0.03];
+/// ...and bobs this much (px of the reference window) and tilts this much more (rad), slowly
+/// (s), the second word half a period after the first: like a marshmallow on jelly.
+pub const TITLE_BOB: f32 = 4.0;
+pub const TITLE_TILT: f32 = 0.03;
+pub const TITLE_PERIOD: f32 = 2.8;
+
+/// How far down (px of the reference window) and how turned (clockwise, rad) the `word`-th word
+/// of the home's title is, `t` seconds after the screen opened.
+pub fn title_word(t: f32, word: usize) -> (f32, f32) {
+    let phase = TAU * t / TITLE_PERIOD + std::f32::consts::PI * word as f32;
+    let lean = TITLE_LEAN[word.min(TITLE_LEAN.len() - 1)];
+    (
+        TITLE_BOB * phase.sin(),
+        lean + TITLE_TILT * (phase + 0.6).sin(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +224,38 @@ mod tests {
         // Losing the focus: back to exactly 1.
         assert_eq!(focus_scale(false, FOCUS_TIME), 1.0);
         assert!(focus_scale(false, 0.05) < FOCUS_SCALE);
+    }
+
+    /// Issue #89: the home's title moves a little, slowly, its two words out of step, never far
+    /// from their lean.
+    #[test]
+    fn the_home_title_bobs_slowly_its_words_out_of_step() {
+        let curve = |word: usize| samples(TITLE_PERIOD, move |t| title_word(t, word).0);
+        for (word, lean) in TITLE_LEAN.iter().enumerate() {
+            let (low, high) = curve(word)
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(*y), h.max(*y)));
+            assert!(high > 0.9 * TITLE_BOB && low < -0.9 * TITLE_BOB);
+            assert!(high <= TITLE_BOB + 1e-4 && low >= -TITLE_BOB - 1e-4);
+            for t in [0.0, 0.7, 1.9, 5.0] {
+                let (_, turn) = title_word(t, word);
+                assert!((turn - lean).abs() <= TITLE_TILT + 1e-5, "{turn}");
+                // Periodic.
+                let (a, b) = (title_word(t, word), title_word(t + TITLE_PERIOD, word));
+                assert!((a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-4);
+            }
+        }
+        // Out of step: when one is up, the other is down.
+        let quarter = TITLE_PERIOD / 4.0;
+        assert!(title_word(quarter, 0).0 > 0.9 * TITLE_BOB);
+        assert!(title_word(quarter, 1).0 < -0.9 * TITLE_BOB);
+        // Slow: never more than 12 px a second (a gentle bob, behind the buttons' bounces).
+        let fastest = samples(TITLE_PERIOD, |t| {
+            (title_word(t + 1.0 / 240.0, 0).0 - title_word(t, 0).0).abs() * 240.0
+        })
+        .into_iter()
+        .fold(0.0f32, f32::max);
+        assert!(fastest < 12.0, "{fastest}");
     }
 
     /// Issue #56: a click squashes the button (wider, lower), and its release stretches it past

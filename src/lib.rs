@@ -72,9 +72,10 @@ impl Plugin for SimulationPlugin {
 /// camera, HUD, debug overlay, the player's options (issue #17), admin panel and the network's
 /// rooms and lobby (issue #7; the egui parts only with a renderer), the other players' karts
 /// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room), and the game modes
-/// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix), and with a renderer the main
-/// menu (issue #56, `menu::MainMenuPlugin`) and the time trial (issue #76,
-/// `modes::TimeTrialPlugin`). `LevelPlugin` restarts the level or switches tracks (issue #36).
+/// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix), and with a renderer the home
+/// screen and the menu opened from the game (issues #56 and #89, `menu::MainMenuPlugin`, with the
+/// home's background) and the time trial (issue #76, `modes::TimeTrialPlugin`). `LevelPlugin`
+/// restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
@@ -122,8 +123,9 @@ impl Plugin for GamePlugin {
             ))
             .add_systems(Startup, spawn_light)
             .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
-        // Issue #56: the main menu, at launch and with Échap. Only on screen: the headless game
-        // (the tests, the bot races) keeps the world it was measured with (`menu`).
+        // Issue #56: the main menu, with Échap; issue #89: the home screen at launch, and its
+        // background. Only on screen: the headless game (the tests, the bot races) keeps the
+        // world it was measured with (`menu`).
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
             app.add_plugins(MainMenuPlugin { at_launch: true });
             // Issue #76: the time trial, its records kept in the browser. Only on screen, like
