@@ -1,6 +1,7 @@
 //! The tow pelican (GD § 2), pure logic: when to call it, and the path it carries a kart along.
 //!
-//! It comes for a kart that **fell** (more than `fall_depth` below the road: at once), that is
+//! It comes for a kart that **fell** (more than `fall_depth` below the road: at once; issue #94:
+//! more than `fall_depth` away from a road upside down, under it), that is
 //! **out of the track** (beyond the walls for `outside_seconds`: after a big jump over a wall,
 //! or a shortcut through the infield), or that is **stuck** (trying to move, throttle or brake,
 //! but staying within `stuck_radius` of the same spot for `stuck_seconds`: on its side, wedged
@@ -33,6 +34,9 @@ pub struct TowObservation {
     pub outside: bool,
     /// Height above the road surface (m).
     pub height: f32,
+    /// Issue #94: the road there is upside down (`Course::project`): a kart falling off it falls
+    /// away from it, `height` growing.
+    pub upside_down: bool,
 }
 
 /// The tow pelican of a racer: counters that decide when it comes, and the carry in progress.
@@ -61,7 +65,8 @@ impl Tow {
         if std::mem::take(&mut self.requested) {
             return Some(TowReason::Requested);
         }
-        if obs.height < -tuning.fall_depth {
+        // Issue #94: off a ceiling, a kart falls toward the world's ground, away from the road.
+        if obs.height < -tuning.fall_depth || (obs.upside_down && obs.height > tuning.fall_depth) {
             return Some(TowReason::Fell);
         }
         self.outside_ticks = if obs.outside {
@@ -180,6 +185,7 @@ mod tests {
             trying_to_move: trying,
             outside: false,
             height: 0.0,
+            upside_down: false,
         }
     }
 
@@ -196,6 +202,34 @@ mod tests {
         );
         o.height = -5.5;
         assert_eq!(watch.observe(&t, &o), Some(TowReason::Fell));
+    }
+
+    /// Issue #94: under a road upside down (a ceiling), a kart that came off it falls toward the
+    /// world's ground, away from the road: more than `fall_depth` under it, it fell. Above a road
+    /// that faces up, as high is a jump.
+    #[test]
+    fn a_fall_off_a_ceiling_calls_the_pelican_at_once() {
+        let t = RaceTuning::default();
+        let mut watch = Tow::default();
+        let mut o = obs(Vec3::ZERO, true);
+        o.upside_down = true;
+        o.height = 0.55;
+        assert_eq!(watch.observe(&t, &o), None, "driving under the ceiling");
+        o.height = 4.0;
+        assert_eq!(watch.observe(&t, &o), None, "a bump");
+        o.height = 5.5;
+        assert_eq!(watch.observe(&t, &o), Some(TowReason::Fell));
+        o.height = -5.5;
+        assert_eq!(watch.observe(&t, &o), Some(TowReason::Fell), "through it");
+        let jump = TowObservation {
+            height: 8.0,
+            ..obs(Vec3::ZERO, true)
+        };
+        assert_eq!(
+            watch.observe(&t, &jump),
+            None,
+            "a jump over a road facing up"
+        );
     }
 
     #[test]

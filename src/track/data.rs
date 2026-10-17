@@ -46,9 +46,10 @@ pub struct TrackData {
     #[serde(default)]
     pub lakes: Vec<LakeData>,
     /// Anti-gravity zones (GD § 10, issue #78): stretches of the centerline where the karts'
-    /// gravity follows the road's normal, so that they drive on walls. Only there may the road
-    /// bank beyond 45° (up to [`MAX_ANTI_GRAVITY_BANK`]); the zone must begin and end where the
-    /// road is still flat enough to drive on without it.
+    /// gravity follows the road's normal, so that they drive on walls and ceilings. Only there may
+    /// the road bank beyond 45° (up to [`MAX_ANTI_GRAVITY_BANK`]); the zone must begin and end
+    /// where the road is still flat enough to drive on without it, and run straight (issue #94,
+    /// [`MAX_ANTI_GRAVITY_TURN`]).
     #[serde(default)]
     pub anti_gravity: Vec<AntiGravityData>,
     /// Boost pads on the ground (GD § 2, issue #13).
@@ -179,9 +180,34 @@ pub struct AntiGravityData {
 /// The steepest banking outside the anti-gravity zones (degrees): the karts drive there with the
 /// world's gravity.
 pub const MAX_BANK: f32 = 45.0;
-/// The steepest banking in an anti-gravity zone (degrees, issue #78): a wall. Beyond, a road upside
-/// down (a tube) is for a later issue (its skirts, its camera).
-pub const MAX_ANTI_GRAVITY_BANK: f32 = 90.0;
+/// The steepest banking in an anti-gravity zone (degrees): a wall at 90° (issue #78), the road
+/// upside down at 180° (issue #94: a ceiling, the karts under it).
+pub const MAX_ANTI_GRAVITY_BANK: f32 = 180.0;
+/// The most an anti-gravity zone may turn, its centerline's heading seen from above (degrees,
+/// issue #94): the bots' racing line is drawn on the ground plane (`bots::line`), across the
+/// heading in a zone, which only holds on a straight. A zone in a turn waits for a racing line in
+/// the track's own coordinates.
+pub const MAX_ANTI_GRAVITY_TURN: f32 = 3.0;
+
+/// How much the centerline turns over the anti-gravity zone `zone` (issue #94): the sum of the
+/// changes of its heading seen from above, sample to sample (degrees).
+pub fn anti_gravity_turn(center: &super::layout::CenterLine, zone: &AntiGravityData) -> f32 {
+    let from = center.param_to_distance(zone.from);
+    let length = center.wrap(center.param_to_distance(zone.to) - from);
+    let step = center.length() / center.samples().len() as f32;
+    let count = (length / step).ceil().max(1.0) as usize;
+    let heading = |k: usize| {
+        let forward = center.at(from + length * k as f32 / count as f32).forward;
+        Vec2::new(forward.x, forward.z).normalize_or_zero()
+    };
+    (1..=count)
+        .map(|k| {
+            let (a, b) = (heading(k - 1), heading(k));
+            a.perp_dot(b).atan2(a.dot(b)).abs()
+        })
+        .sum::<f32>()
+        .to_degrees()
+}
 
 /// A lake (issue #20): a rectangle of the ground plane, dug down to `floor` and full of water up
 /// to `level` (m). `level` is below the ground (`mesh::GROUND_HEIGHT`): the water stays in its
@@ -389,6 +415,19 @@ impl TrackData {
             return fail(format!(
                 "banked beyond {MAX_BANK}° at {param}, out of an anti-gravity zone"
             ));
+        }
+        if !self.anti_gravity.is_empty() {
+            let center = super::layout::CenterLine::of(self);
+            for zone in &self.anti_gravity {
+                let turn = anti_gravity_turn(&center, zone);
+                if turn > MAX_ANTI_GRAVITY_TURN {
+                    return fail(format!(
+                        "anti-gravity zone {}..{} turns by {turn:.1}° (seen from above): \
+                         {MAX_ANTI_GRAVITY_TURN}° at most, a zone runs straight",
+                        zone.from, zone.to
+                    ));
+                }
+            }
         }
         for lake in &self.lakes {
             let ground = super::mesh::GROUND_HEIGHT;

@@ -2,7 +2,8 @@
 //! game (`GamePlugin`) with `MinimalPlugins`, its race started, one fixed tick per `app.update()`.
 //! The acceptance criteria: the way onto the wall and back down, never through the road, at
 //! several speeds, in every class, drifting, on the mirror image too; the spin boost of two karts
-//! bumping into each other there, and its pads.
+//! bumping into each other there, and its pads. Issue #94: the same under the ceiling (the road
+//! upside down, the Ruban's second zone), and a kart that comes off it falls.
 
 use bevy_rapier3d::prelude::{GravityScale, Velocity};
 
@@ -17,7 +18,7 @@ use crate::track::{AntiGravityZone, MirrorMode, TrackChoice, TrackLayout};
 const RIBBON: &str = "tracks/ruban.track.ron";
 
 /// The Ruban Réglisse, the player (and `others` more karts, bots no longer driven by their
-/// brains), its race started.
+/// brains), its race started; the zone its runs drive through ([`WALL`] or [`CEILING`]).
 struct Ribbon {
     app: App,
     kart: Entity,
@@ -25,7 +26,14 @@ struct Ribbon {
     layout: TrackLayout,
     course: Course,
     zone: AntiGravityZone,
+    /// Issue #94: which zone ([`WALL`] or [`CEILING`]).
+    which: usize,
 }
+
+/// The Ruban's first zone: the wall (90°, issue #78)...
+const WALL: usize = 0;
+/// ...and its second: the ceiling (180°, issue #94).
+const CEILING: usize = 1;
 
 /// What a run saw, tick by tick.
 #[derive(Clone, Debug, Default)]
@@ -54,10 +62,23 @@ struct Log {
     speed_out: Option<f32>,
     /// Ticks drifting on the wall.
     drifting_on_the_wall: u32,
+    /// Issue #94: ticks upside down (the road banked 170° or more), those of them with a wheel on
+    /// the road, and drifting.
+    upside_down: u32,
+    ceiling_grounded: u32,
+    drifting_upside_down: u32,
+    /// Issue #94: the checkpoints the kart validated over the run (its race progress, through the
+    /// gates).
+    gates: u32,
 }
 
 impl Ribbon {
     fn new(class: SpeedClass, mirrored: bool, others: usize) -> Self {
+        Self::at(class, mirrored, others, WALL)
+    }
+
+    /// The same, its runs through the zone `which` ([`WALL`] or [`CEILING`]).
+    fn at(class: SpeedClass, mirrored: bool, others: usize, which: usize) -> Self {
         let mut app = game_app_unloaded(TrackChoice::Circuit(RIBBON.into()), others);
         app.insert_resource(RaceClass(class))
             .insert_resource(MirrorMode(mirrored));
@@ -92,8 +113,12 @@ impl Ribbon {
         let layout = app.world().resource::<TrackLayout>().clone();
         let course = app.world().resource::<Course>().clone();
         assert_eq!(layout.mirrored, mirrored);
-        assert_eq!(layout.anti_gravity.len(), 1, "the wall's zone");
-        let zone = layout.anti_gravity[0];
+        assert_eq!(
+            layout.anti_gravity.len(),
+            2,
+            "the wall's zone and the ceiling's"
+        );
+        let zone = layout.anti_gravity[which];
         Self {
             app,
             kart,
@@ -101,6 +126,7 @@ impl Ribbon {
             layout,
             course,
             zone,
+            which,
         }
     }
 
@@ -121,7 +147,9 @@ impl Ribbon {
         world.get_mut::<PhysicsPose>(kart).unwrap().snap(transform);
         *world.get_mut::<KartState>(kart).unwrap() = KartState::Grounded;
         *world.get_mut::<DriftMotion>(kart).unwrap() = DriftMotion::default();
-        let zoned = self.zone.contains(&self.layout.center, distance);
+        let zoned =
+            crate::track::anti_gravity_at(&self.layout.anti_gravity, &self.layout.center, distance)
+                .is_some();
         *world.get_mut::<KartEnvironment>(kart).unwrap() = KartEnvironment {
             anti_gravity: zoned,
             up: if zoned { sample.up } else { Vec3::Y },
@@ -232,6 +260,11 @@ impl Ribbon {
             log.wall_grounded += u32::from(wheels.wheels_on_ground() > 0);
             log.drifting_on_the_wall += u32::from(matches!(state, KartState::Drifting { .. }));
         }
+        if self.bank(kart) >= 170.0 {
+            log.upside_down += 1;
+            log.ceiling_grounded += u32::from(wheels.wheels_on_ground() > 0);
+            log.drifting_upside_down += u32::from(matches!(state, KartState::Drifting { .. }));
+        }
     }
 
     /// The test's autopilot for `kart`: toward its lane (`lateral` meters right of the
@@ -308,6 +341,12 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
     }
     let mut log = new_log();
     let mut ticks = 0;
+    // Issue #94: the ceiling's zone is longer (the run at 12 m/s lasts about 40 s), and its drift
+    // starts afresh where the road is about to be upside down.
+    let (seconds, fresh_drift_bank) = match ribbon.which {
+        CEILING => (50, 160.0),
+        _ => (30, 70.0),
+    };
     // The drifts: their side, and the ticks since the last change; whether the kart reached the
     // wall yet.
     let (mut side, mut since, mut at_the_wall) = (-1.0f32, 0u32, false);
@@ -315,16 +354,17 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
     let along = |d: f32| center.wrap(d - start + 1.0) - 1.0;
     while along(ribbon.sample(kart).distance) < end - start {
         ticks += 1;
-        assert!(ticks < 60 * 30, "{driving:?}: the run never ended");
+        assert!(ticks < 60 * seconds, "{driving:?}: the run never ended");
         let mut input = ribbon.autopilot(kart, lane, speed);
         if driving == Driving::Drift && ticks > 30 {
             // Hop toward `side` (the stick there for the hop), hold the drift (the autopilot's
             // stick widens or tightens it) until it is 3 m off its lane, release, then the other
             // side.
-            // Reaching the wall (70°), a fresh drift, whatever the timing of those before it: let
-            // go for a tick (unless in the middle of a hop), then hop again. It lands on the wall
-            // itself (90°) and drifts there, in every class.
-            if !at_the_wall && ribbon.bank(kart) >= 70.0 {
+            // Reaching the wall (70°; issue #94: the ceiling, 160°), a fresh drift, whatever the
+            // timing of those before it: let go for a tick (unless in the middle of a hop), then
+            // hop again. It lands on the wall itself (90°; the ceiling, 180°) and drifts there, in
+            // every class.
+            if !at_the_wall && ribbon.bank(kart) >= fresh_drift_bank {
                 at_the_wall = true;
                 if !matches!(ribbon.state(kart), KartState::Hop { .. }) {
                     since = DRIFT_HOLD + DRIFT_RELEASE - 1;
@@ -344,7 +384,10 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
                 (side, since) = (-side, 0);
             }
         }
+        let passed = |ribbon: &Ribbon| ribbon.app.world().get::<RaceProgress>(kart).unwrap().passed;
+        let before = passed(ribbon);
         ribbon.tick(input, &[], &mut log);
+        log.gates += passed(ribbon).saturating_sub(before);
         if log.towed {
             break;
         }
@@ -476,6 +519,264 @@ fn karts_drive_onto_the_wall_and_back_down() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Issue #94 acceptance (GD § 10: « on roule sur les murs et les plafonds »): under the ceiling
+/// and back. The Ruban's second zone rolls the road over onto its back (180°): the kart goes into
+/// anti-gravity once, at the start of the zone, and out of it once, at its end; in between, its
+/// gravity pulls it up to the road over it (the world's off), its up follows the road's normal
+/// on the ground (down under the ceiling), its wheels stay on the road upside down (but for the
+/// hops of the drifts), it never goes through the road nor falls off it (its center never below
+/// 0.2 m from it, the pelican never comes), with its stats « anti-gravité », its speed kept. In
+/// 50cc, 100cc, 150cc and 200cc, on the mirror image too, slow, at its top speed and boosted, on
+/// three lanes, and drifting under the ceiling.
+#[test]
+fn karts_drive_under_the_ceiling_and_back() {
+    let mut failures = Vec::new();
+    for (class, mirrored) in [
+        (SpeedClass::Cc50, false),
+        (SpeedClass::Cc100, true),
+        (SpeedClass::Cc150, false),
+        (SpeedClass::Cc150, true),
+        (SpeedClass::Cc200, false),
+        (SpeedClass::Cc200, true),
+    ] {
+        let mut ribbon = Ribbon::at(class, mirrored, 0, CEILING);
+        let center = ribbon.layout.center.clone();
+        let zone = ribbon.zone;
+        let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
+        let runs = [
+            Driving::Cruise {
+                speed: 12.0,
+                lateral: 0.0,
+            },
+            Driving::Cruise {
+                speed: 100.0,
+                lateral: -3.5,
+            },
+            Driving::Cruise {
+                speed: 100.0,
+                lateral: 0.0,
+            },
+            Driving::Cruise {
+                speed: 100.0,
+                lateral: 3.5,
+            },
+            Driving::Boosted,
+            Driving::Drift,
+        ];
+        for driving in runs {
+            let log = run_through(&mut ribbon, driving);
+            let label = format!(
+                "{class:?}{}, {driving:?}",
+                if mirrored { " (mirror)" } else { "" }
+            );
+            println!(
+                "{label}: in {:?} out {:?}, lowest {:.2} m, alignment {:.3}, upside down {} ticks \
+                 ({} on the ground, {} drifting), speed {:?} -> {:?}",
+                log.entered,
+                log.left,
+                log.lowest,
+                log.worst_alignment,
+                log.upside_down,
+                log.ceiling_grounded,
+                log.drifting_upside_down,
+                log.speed_in,
+                log.speed_out,
+            );
+            let near = |at: f32, d: f32| center.wrap(d - at + 15.0) < 30.0;
+            let mut check = |ok: bool, what: &str| {
+                if !ok {
+                    failures.push(format!("{label}: {what}"));
+                }
+            };
+            check(!log.towed, "no pelican");
+            check(log.entered.len() == 1, "into anti-gravity once");
+            check(log.left.len() == 1, "out of it once");
+            check(
+                log.entered
+                    .first()
+                    .is_some_and(|(_, d)| near(zone.from, *d)),
+                "in at the start of the zone",
+            );
+            check(
+                log.left.first().is_some_and(|(_, d)| near(zone.to, *d)),
+                "out at its end",
+            );
+            check(log.lowest > 0.2, "never through the road");
+            check(log.upside_down > 20, "upside down");
+            // Through every gate on the way (the race sees the kart under the road).
+            let gates = ribbon
+                .course
+                .checkpoints
+                .iter()
+                .filter(|d| center.wrap(**d - (zone.from - 40.0)) < zone.length(&center) + 80.0)
+                .count() as u32;
+            check(
+                log.gates >= gates.saturating_sub(1) && gates > 10,
+                "through the gates",
+            );
+            // Under the ceiling, its wheels on it but for the hops of the drifts.
+            let grounded = if driving == Driving::Drift { 0.5 } else { 0.95 };
+            check(
+                log.ceiling_grounded as f32 >= grounded * log.upside_down as f32,
+                "the wheels on the ceiling",
+            );
+            check(log.worst_alignment > 0.9, "its up follows the road");
+            check(log.gravity_in_zone == Some(0.0), "the world's gravity off");
+            check(
+                ribbon
+                    .app
+                    .world()
+                    .get::<GravityScale>(ribbon.kart)
+                    .unwrap()
+                    .0
+                    == gravity,
+                "the world's gravity back",
+            );
+            let effects = *ribbon.app.world().get::<StatEffects>(ribbon.kart).unwrap();
+            check(
+                log.stats_in_zone == Some(effects.on(Terrain::AntiGravity).top_speed),
+                "its stats « anti-gravité »",
+            );
+            if let (Some(speed_in), Some(speed_out)) = (log.speed_in, log.speed_out)
+                && matches!(driving, Driving::Cruise { speed: 100.0, .. })
+            {
+                check(speed_out > 0.85 * speed_in, "its speed kept upside down");
+            }
+            if driving == Driving::Drift {
+                check(log.drifting_upside_down > 20, "drifting under the ceiling");
+            }
+            let back = ribbon.environment(ribbon.kart);
+            check(
+                !back.anti_gravity && back.up == Vec3::Y,
+                "the world's up again",
+            );
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #94 (GD § 10): standing still under the ceiling, a kart stays on it (its gravity pulls
+/// it up to the road, as strong as the world's: MK8DX's karts never drop off a road upside down);
+/// it drives off again from there.
+#[test]
+fn a_kart_stopped_under_the_ceiling_stays_on_it() {
+    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, CEILING);
+    let kart = ribbon.kart;
+    let ceiling = ribbon.zone.from + ribbon.zone.length(&ribbon.layout.center) / 2.0;
+    assert!(ribbon.layout.center.at(ceiling).up.y < -0.999);
+    ribbon.place(kart, ceiling, 1.0, 0.0);
+    let mut log = new_log();
+    for _ in 0..180 {
+        ribbon.tick(KartInput::default(), &[], &mut log);
+    }
+    let world = ribbon.app.world();
+    let wheels = *world.get::<KartWheels>(kart).unwrap();
+    assert_eq!(
+        wheels.wheels_on_ground(),
+        4,
+        "on its wheels under the ceiling"
+    );
+    assert!(ribbon.environment(kart).anti_gravity);
+    assert!(
+        ribbon.velocity(kart).length() < 0.2,
+        "{}",
+        ribbon.velocity(kart)
+    );
+    assert!((ribbon.height(kart) - crate::track::GRID_HEIGHT).abs() < 0.15);
+    assert!(log.lowest > 0.2 && !log.towed);
+    // And off again, under the ceiling.
+    for _ in 0..120 {
+        let input = ribbon.autopilot(kart, 1.0, 100.0);
+        ribbon.tick(input, &[], &mut log);
+    }
+    assert!(ribbon.velocity(kart).length() > 10.0);
+    assert!(ribbon.environment(kart).anti_gravity && !log.towed && log.lowest > 0.2);
+}
+
+/// Issue #94 (GD § 10, « tombé »): a kart that comes off the ceiling (beyond its edge, where no
+/// road is along its up any more) lets go: out of the anti-gravity, the world's gravity back, it
+/// falls toward the world's ground, and the pelican comes for it and drops it before the zone, on
+/// the road, out of the anti-gravity. A kart that fell under the ceiling, more than `fall_depth`
+/// from it, is picked up at once.
+#[test]
+fn a_kart_off_the_ceiling_falls_and_the_pelican_comes() {
+    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, CEILING);
+    let kart = ribbon.kart;
+    let center = ribbon.layout.center.clone();
+    let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
+    let ceiling = ribbon.zone.from + ribbon.zone.length(&center) / 2.0;
+    let s = center.at(ceiling);
+    // Beyond the ceiling's edge (its wall's outer face at 8.5 m), in the air, its gravity still
+    // toward the road.
+    let lateral = crate::track::mesh::wall_offset(&s) + 3.0;
+    ribbon.place(kart, ceiling, lateral, 20.0);
+    let start = ribbon.transform(kart).translation;
+    let mut log = new_log();
+    let (mut let_go, mut lowest) = (None, f32::MAX);
+    for tick in 0..240 {
+        ribbon.tick(KartInput::default(), &[], &mut log);
+        if let_go.is_none() && !ribbon.environment(kart).anti_gravity {
+            let_go = Some(tick);
+            assert_eq!(
+                ribbon.app.world().get::<GravityScale>(kart).unwrap().0,
+                gravity,
+                "the world's gravity back"
+            );
+        }
+        if log.towed {
+            break;
+        }
+        lowest = lowest.min(ribbon.transform(kart).translation.y);
+    }
+    assert!(let_go.is_some_and(|t| t < 3), "it lets go: {let_go:?}");
+    assert!(start.y - lowest > 3.0, "it falls: {} -> {lowest}", start.y);
+    assert!(log.towed, "the pelican comes");
+    let reason = ribbon
+        .app
+        .world()
+        .get::<crate::race::Tow>(kart)
+        .unwrap()
+        .carry
+        .map(|carry| carry.reason);
+    assert!(
+        matches!(
+            reason,
+            Some(crate::race::TowReason::Fell | crate::race::TowReason::OutOfTrack)
+        ),
+        "{reason:?}"
+    );
+    // Carried, then dropped before the zone, on the road, out of the anti-gravity.
+    for _ in 0..200 {
+        ribbon.tick(KartInput::default(), &[], &mut log);
+    }
+    assert_eq!(ribbon.state(kart), KartState::Grounded);
+    let dropped = ribbon.sample(kart);
+    assert!(!ribbon.zone.contains(&center, dropped.distance));
+    assert!(!ribbon.environment(kart).anti_gravity);
+    assert_eq!(ribbon.environment(kart).up, Vec3::Y);
+    // Fallen under the ceiling, 6 m from it (its gravity the world's): the pelican at once.
+    ribbon.place(kart, ceiling, 0.0, 0.0);
+    let world = ribbon.app.world_mut();
+    let fallen = s.point(0.0, 6.0);
+    world.get_mut::<Transform>(kart).unwrap().translation = fallen;
+    world
+        .get_mut::<PhysicsPose>(kart)
+        .unwrap()
+        .snap(Transform::from_translation(fallen));
+    *world.get_mut::<KartEnvironment>(kart).unwrap() = KartEnvironment::default();
+    let mut log = new_log();
+    ribbon.tick(KartInput::default(), &[], &mut log);
+    assert!(log.towed, "fell from the ceiling");
+    let reason = ribbon
+        .app
+        .world()
+        .get::<crate::race::Tow>(kart)
+        .unwrap()
+        .carry
+        .map(|carry| carry.reason);
+    assert_eq!(reason, Some(crate::race::TowReason::Fell));
+}
+
 /// Two karts on `ribbon` at centerline distance `at`, on the lane `lateral`: the player's kart
 /// 4 m behind the other one, faster (28 against 20 m/s), both driving straight on: it runs into
 /// the other one. Returns, over 1 s, the strongest boost each one got, and whether the other one
@@ -559,11 +860,51 @@ fn a_bump_in_anti_gravity_boosts_both_karts() {
     }
 }
 
+/// Issue #94 (GD § 10, the spin boost): under the ceiling too, two karts that bump into each
+/// other both get the boost, on the mirror image as well.
+#[test]
+fn a_bump_under_the_ceiling_boosts_both_karts() {
+    for mirrored in [false, true] {
+        let mut ribbon = Ribbon::at(SpeedClass::Cc150, mirrored, 1, CEILING);
+        let strength = ribbon
+            .app
+            .world()
+            .resource::<KartTuning>()
+            .environment
+            .spin_boost_strength;
+        // Upside down, past its pads (their boost is another).
+        let ceiling = ribbon.layout.center.param_to_distance(40.4);
+        assert!(ribbon.layout.center.at(ceiling).up.y < -0.98);
+        let (mine, theirs, bumped) = rear_end(&mut ribbon, ceiling, 1.0);
+        assert!(bumped, "mirror {mirrored}: bumped under the ceiling");
+        assert!(
+            (mine - strength).abs() < 1e-6 && (theirs - strength).abs() < 1e-6,
+            "mirror {mirrored}: both karts boosted under the ceiling: {mine} {theirs}"
+        );
+        for kart in [ribbon.kart, ribbon.others[0]] {
+            let environment = ribbon.environment(kart);
+            assert!(environment.anti_gravity && environment.up.y < -0.5);
+        }
+    }
+}
+
 /// Issue #78 (GD § 10: « des plots dédiés donnent aussi un boost »): the pads on the wall (90°)
 /// give the pads' boost to a kart driving over them, on its lane, like the pads on the ground.
 #[test]
 fn the_pads_on_the_wall_boost() {
-    let mut ribbon = Ribbon::new(SpeedClass::Cc150, false, 0);
+    pads_boost(WALL, |pad| pad.up().y.abs() < 0.1, "on the wall");
+}
+
+/// Issue #94: the same under the ceiling (180°): its two pads, upside down, boost.
+#[test]
+fn the_pads_on_the_ceiling_boost() {
+    pads_boost(CEILING, |pad| pad.up().y < -0.99, "on the ceiling");
+}
+
+/// The two pads of the zone `which` (`mine` tells them from the others): a kart driving over each
+/// one, on its lane, gets the pads' boost, in anti-gravity.
+fn pads_boost(which: usize, mine: impl Fn(&Transform) -> bool, what: &str) {
+    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
     let tuning = ribbon.app.world().resource::<KartTuning>().clone();
@@ -573,11 +914,8 @@ fn the_pads_on_the_wall_boost() {
         .iter(world)
         .copied()
         .collect();
-    let on_the_wall: Vec<Transform> = pads
-        .into_iter()
-        .filter(|pad| pad.up().y.abs() < 0.1)
-        .collect();
-    assert_eq!(on_the_wall.len(), 2, "two pads on the wall");
+    let on_the_wall: Vec<Transform> = pads.into_iter().filter(|pad| mine(pad)).collect();
+    assert_eq!(on_the_wall.len(), 2, "two pads {what}");
     for pad in on_the_wall {
         let s = center.samples()[center.nearest_index(pad.translation)];
         let lateral = (pad.translation - s.position).dot(s.right);
@@ -595,7 +933,7 @@ fn the_pads_on_the_wall_boost() {
         assert!(ribbon.environment(kart).anti_gravity);
         assert!(
             (boosted - tuning.boost_pad_strength).abs() < 1e-6,
-            "the pad at {lateral:.1} m: {boosted}"
+            "the pad at {lateral:.1} m {what}: {boosted}"
         );
     }
 }
@@ -605,12 +943,26 @@ fn the_pads_on_the_wall_boost() {
 /// never falling off; a pelure dropped behind lies on the wall, just above it.
 #[test]
 fn items_roll_and_lie_on_the_wall() {
+    items_roll_and_lie_on(WALL, 9.4, |up| up.y.abs() < 0.01);
+}
+
+/// Issue #94: the same under the ceiling (180°): the pelote rolls along it, upside down, the
+/// pelure lies on it; neither falls to the ground.
+#[test]
+fn items_roll_and_lie_under_the_ceiling() {
+    items_roll_and_lie_on(CEILING, 39.4, |up| up.y < -0.999);
+}
+
+/// A pelote thrown ahead and a pelure dropped behind at the spline parameter `at` of the zone
+/// `which` (its road's normal there as `facing` says): the pelote rolls along the road, its center
+/// its radius above it, never falling off; the pelure lies on it, just above it.
+fn items_roll_and_lie_on(which: usize, at: f32, facing: impl Fn(Vec3) -> bool) {
     use crate::items::{ItemKind, ItemObject, ItemSlots, Motion};
-    let mut ribbon = Ribbon::new(SpeedClass::Cc150, false, 0);
+    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
-    let wall = center.param_to_distance(9.4);
-    assert!(center.at(wall).up.y.abs() < 0.01, "on the wall");
+    let wall = center.param_to_distance(at);
+    assert!(facing(center.at(wall).up), "on the wall");
     // Where an item is relative to the road: along it, across it, and above it.
     let on_road = |at: Vec3| {
         let s = center.samples()[center.nearest_index(at)];

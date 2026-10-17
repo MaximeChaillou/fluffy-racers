@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 
 use super::tuning::RaceTuning;
-use crate::track::mesh::{WALL_THICKNESS, wall_offset};
+use crate::track::mesh::{FACING_UP_TOLERANCE, WALL_THICKNESS, wall_offset};
 use crate::track::{
     AntiGravityZone, CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at,
 };
@@ -31,6 +31,10 @@ pub struct Projection {
     /// Issue #20: over a gap (no road: the karts glide over it). `height` is then above the lower
     /// end of the gap (where a falling kart falls below), and the walls are not there.
     pub gap: bool,
+    /// Issue #94: the road there is upside down (an anti-gravity zone's ceiling, banked beyond
+    /// 90°): its normal points below the horizontal (`FACING_UP_TOLERANCE`: not a wall at 90°), a
+    /// kart falling off it falls away from it (`height` grows).
+    pub upside_down: bool,
 }
 
 /// The circuit as the race rules see it. Built once per track from the [`TrackLayout`].
@@ -102,6 +106,7 @@ impl Course {
             },
             wall: wall_offset(s),
             gap: gap.is_some(),
+            upside_down: gap.is_none() && s.up.y < -FACING_UP_TOLERANCE,
         }
     }
 

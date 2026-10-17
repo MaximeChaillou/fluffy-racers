@@ -944,24 +944,29 @@ fn drive_karts(
         // ray, only for a kart in the air in anti-gravity).
         env.anti_gravity = next_anti_gravity(&env, grounded, on_zone);
         let mut held_down = 0.0;
-        if env.anti_gravity
-            && grounded == 0
-            && let Some((_, below)) = context
-                .cast_ray_and_get_normal(
-                    transform.translation,
-                    -vertical,
-                    environment_tuning.anti_gravity_probe,
-                    true,
-                    filter,
-                )
-                .filter(|(hit, ray)| {
-                    zones.contains(*hit) && ray.normal.dot(vertical) >= tuning.min_ground_normal_y
-                })
-        {
-            wheels.ground_normal = below.normal;
-            // High above the road (it twisted away under the kart): held to it harder.
-            if below.time_of_impact > environment_tuning.anti_gravity_hold_height {
-                held_down = environment_tuning.anti_gravity_hold.max(0.0);
+        if env.anti_gravity && grounded == 0 {
+            match context.cast_ray_and_get_normal(
+                transform.translation,
+                -vertical,
+                environment_tuning.anti_gravity_probe,
+                true,
+                filter,
+            ) {
+                Some((hit, below))
+                    if zones.contains(hit)
+                        && below.normal.dot(vertical) >= tuning.min_ground_normal_y =>
+                {
+                    wheels.ground_normal = below.normal;
+                    // High above the road (it twisted away under the kart): held to it harder.
+                    if below.time_of_impact > environment_tuning.anti_gravity_hold_height {
+                        held_down = environment_tuning.anti_gravity_hold.max(0.0);
+                    }
+                }
+                // Another ground below it: it lands there, and leaves the anti-gravity then.
+                Some(_) => {}
+                // Issue #94: no ground at all along its up (thrown off a ceiling, beyond its
+                // walls): it lets go, and falls with the world's gravity.
+                None => env.anti_gravity = false,
             }
         }
         env.up = if env.anti_gravity {
