@@ -56,6 +56,10 @@ pub struct RaceTuning {
     pub tow_carry_share: f32,
     /// The pelican carries the kart this high above the higher of the pickup and drop points.
     pub tow_lift_height: f32,
+    /// Issue #96: under a road that faces down (a ceiling), the pelican first takes the kart out
+    /// from under it, this far beyond its edge and below its walls (m), then lifts it: never up
+    /// through the road.
+    pub tow_clearance: f32,
     /// Distance between two drop lanes, as a share of the half road width: karts dropped at the
     /// same point use the centre, left or right lane by grid slot (#6 brings 11 bots).
     pub tow_drop_lane: f32,
@@ -99,6 +103,7 @@ impl Default for RaceTuning {
             tow_lift_share: 0.3,
             tow_carry_share: 0.4,
             tow_lift_height: 6.0,
+            tow_clearance: 1.5,
             tow_drop_lane: 0.4,
             fall_depth: 5.0,
             outside_margin: 0.5,

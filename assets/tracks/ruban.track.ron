@@ -2,8 +2,10 @@
 // circuit. Original layout, about 1.3 km a lap, turning right. Along the north side, on an
 // embankment, the ribbon twists up into a wall (issue #78): the karts roll onto it, drive on its
 // face (90°, their gravity along the road's normal, their wheels flat), and roll back down before
-// the north-east turn. Down the east side, a hook: a left turn, then a long hairpin to the right
-// that climbs onto the south side (issue #94: a turn long enough for the bots to drift). Along the
+// the north-east turn. Down the east side, still up on the embankment, a hook: a long left turn
+// banked like a wall (issue #96: the ribbon twists into it up to 90°, its face toward the inside
+// of the turn, the karts go round on it without steering), then a long hairpin to the right that
+// climbs onto the south side (issue #94: a turn long enough for the bots to drift). Along the
 // south side, 10 m up, the ribbon rolls the other way, over onto its back: the karts drive under
 // it, upside down (180°, a ceiling), then it rolls back up before the south-west turn, which
 // comes down onto the start straight.
@@ -44,27 +46,31 @@
         (pos: (260.0, 9.0, -75.0), width: 12.0, bank: 45.0, shoulder: 1.0),
         (pos: (285.0, 9.0, -75.0), width: 12.0, bank: 15.0, shoulder: 1.0),
         (pos: (310.0, 9.0, -75.0), width: 12.0, shoulder: 1.0),
-        // 16-18: the north-east turn, to the right, heading south, down from the embankment.
-        (pos: (335.0, 7.0, -75.0)),
-        (pos: (359.75, 3.0, -64.75)),
-        (pos: (370.0, 0.5, -40.0)),
-        // 19-21: the east straight.
-        (pos: (370.0, 0.0, -10.0)),
-        (pos: (370.0, 0.0, 20.0)),
-        (pos: (370.0, 0.0, 45.0)),
-        // 22-23: a left turn (radius 25 m), heading east.
-        (pos: (377.32, 0.0, 62.68)),
-        (pos: (395.0, 0.0, 70.0)),
-        // 24-26: a straight, climbing.
-        (pos: (425.0, 1.0, 70.0)),
-        (pos: (455.0, 3.0, 70.0)),
-        (pos: (485.0, 5.0, 70.0)),
-        // 27-31: the hairpin, to the right (180°, radius 25 m), heading west, still climbing
+        // 16-17: the north-east turn, to the right, heading south, still on the embankment (issue
+        // #96: the east side stays 9 m up).
+        (pos: (335.0, 9.0, -75.0)),
+        (pos: (359.75, 9.0, -64.75)),
+        // 18-26: the banked turn (issue #96), 9 m up. Down the east straight, the ribbon twists to
+        // the left (its left edge down, its right edge up) in one flowing roll into a long left
+        // turn (radius 60 m), banked like a wall around it (90° at its middle, its face toward the
+        // inside of the turn: the karts are pressed onto it and go round without steering), then
+        // rolls back up along the straight toward the hairpin. The anti-gravity zone runs from
+        // point 18 to point 26, where the road is flat.
+        (pos: (370.0, 9.0, -40.0), width: 12.0, shoulder: 1.0),
+        (pos: (370.0, 9.0, -15.0), width: 12.0, bank: -30.0, shoulder: 1.0),
+        (pos: (370.0, 9.0, 10.0), width: 12.0, bank: -60.0, shoulder: 1.0),
+        (pos: (374.57, 9.0, 32.96), width: 12.0, bank: -80.0, shoulder: 1.0),
+        (pos: (387.57, 9.0, 52.43), width: 12.0, bank: -90.0, shoulder: 1.0),
+        (pos: (407.04, 9.0, 65.43), width: 12.0, bank: -80.0, shoulder: 1.0),
+        (pos: (430.0, 9.0, 70.0), width: 12.0, bank: -60.0, shoulder: 1.0),
+        (pos: (455.0, 9.0, 70.0), width: 12.0, bank: -30.0, shoulder: 1.0),
+        (pos: (480.0, 9.0, 70.0), width: 12.0, shoulder: 1.0),
+        // 27-31: the hairpin, to the right (180°, radius 25 m), heading west, climbing a little
         // onto the south side, 10 m up (issue #94: a turn long enough for the bots to drift).
-        (pos: (502.68, 6.5, 77.32), bank: 8.0),
-        (pos: (510.0, 8.0, 95.0), bank: 10.0),
-        (pos: (502.68, 9.0, 112.68), bank: 8.0),
-        (pos: (485.0, 9.6, 120.0)),
+        (pos: (502.68, 9.3, 77.32), bank: 8.0),
+        (pos: (510.0, 9.6, 95.0), bank: 10.0),
+        (pos: (502.68, 9.8, 112.68), bank: 8.0),
+        (pos: (485.0, 10.0, 120.0)),
         (pos: (460.0, 10.0, 120.0)),
         // 32-47: the upside-down ribbon (issue #94), 10 m up. It twists to the left in one
         // flowing roll (its right edge up, its left edge down) past the wall (90°) onto its back
@@ -97,32 +103,35 @@
         (pos: (0.0, 0.0, 45.0)),
         (pos: (0.0, 0.0, 30.0)),
     ],
-    // Issue #78: the wall, from flat to flat; issue #94: the ceiling, from flat to flat.
+    // Issue #78: the wall, from flat to flat; issue #94: the ceiling, from flat to flat; issue
+    // #96: the banked turn, from flat to flat (the third zone, after the other two in this list:
+    // their tests know them by their place in it).
     anti_gravity: [
         (from: 5.0, to: 15.0),
         (from: 32.0, to: 47.0),
+        (from: 18.0, to: 26.0),
     ],
     // Boost pads: two on the wall itself and two on the ceiling (the anti-gravity's own, cyan
-    // blue), one on the east straight.
+    // blue). None in the banked turn (issue #96): boosted round it in 200cc, a kart on an outer
+    // lane flies off the end of its twist.
     boost_pads: [
         (at: 9.3, offset: -0.35),
         (at: 9.7, offset: 0.35),
-        (at: 19.0, offset: 0.0),
         (at: 39.3, offset: 0.35),
         (at: 39.7, offset: -0.35),
     ],
     item_boxes: [
         (at: 1.3, offsets: [-0.6, -0.2, 0.2, 0.6]),
         (at: 4.3, offsets: [-0.5, 0.0, 0.5]),
-        (at: 23.5, offsets: [-0.4, 0.4]),
+        (at: 25.5, offsets: [-0.4, 0.4]),
         (at: 30.5, offsets: [0.0], double: true),
     ],
-    // Croquettes: a line along the wall, low on its face, and one along the ceiling; lines along
-    // the straights, never on the grid.
+    // Croquettes: a line along the wall, low on its face, one low on the face of the banked turn
+    // and one along the ceiling; lines along the straights, never on the grid.
     croquettes: [
         (from: 0.5, count: 4, spacing: 3.0, offset: -0.45),
         (from: 8.7, count: 6, spacing: 4.0, offset: 0.45),
-        (from: 19.2, count: 5, spacing: 3.0, offset: 0.4),
+        (from: 21.3, count: 6, spacing: 4.0, offset: -0.45),
         (from: 24.3, count: 5, spacing: 3.0, offset: -0.4),
         (from: 39.1, count: 5, spacing: 4.0, offset: 0.0),
     ],

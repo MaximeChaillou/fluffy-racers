@@ -20,7 +20,7 @@ use bevy_rapier3d::prelude::*;
 
 use crate::level::LevelScoped;
 
-pub use anti_gravity::{AntiGravity, AntiGravityZone, anti_gravity_at};
+pub use anti_gravity::{AntiGravity, AntiGravityZone, Bend, anti_gravity_at, bend_at};
 pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, GlideRamp, ITEM_BOX_HEIGHT,
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,

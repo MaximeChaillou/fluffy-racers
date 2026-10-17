@@ -105,6 +105,10 @@ pub struct Carry {
     /// Where it was picked up and where it is dropped.
     pub from: Transform,
     pub to: Transform,
+    /// Issue #96: where it is taken first, out from under the road it was under (a ceiling:
+    /// `Course::tow_clearance`), before it is lifted; `from`'s place under the sky (it is lifted
+    /// straight up from there).
+    pub clear: Vec3,
     /// Ticks carried so far, out of `duration`.
     pub ticks: u32,
     pub duration: u32,
@@ -116,9 +120,15 @@ impl Carry {
             reason,
             from,
             to,
+            clear: from.translation,
             ticks: 0,
             duration: seconds_to_ticks(tuning.tow_seconds).max(1),
         }
+    }
+
+    /// The same, taken out to `clear` first (issue #96).
+    pub fn clearing(self, clear: Vec3) -> Self {
+        Self { clear, ..self }
     }
 
     /// Advances one tick; true once the kart is dropped.
@@ -129,9 +139,10 @@ impl Carry {
 
     /// Pose of the carried kart now.
     pub fn pose(&self, tuning: &RaceTuning) -> Transform {
-        tow_pose(
+        tow_pose_via(
             tuning,
             &self.from,
+            self.clear,
             &self.to,
             self.ticks as f32 / self.duration as f32,
         )
@@ -142,11 +153,24 @@ impl Carry {
 /// above the higher of both points, across to above the drop point while turning to face the
 /// race, then straight down.
 pub fn tow_pose(tuning: &RaceTuning, from: &Transform, to: &Transform, t: f32) -> Transform {
+    tow_pose_via(tuning, from, from.translation, to, t)
+}
+
+/// The same, out to `clear` first (issue #96: from under a ceiling, beside it and below its
+/// walls), in the first half of the lift, then straight up from there in its second half. With
+/// `clear` at `from`, exactly [`tow_pose`].
+pub fn tow_pose_via(
+    tuning: &RaceTuning,
+    from: &Transform,
+    clear: Vec3,
+    to: &Transform,
+    t: f32,
+) -> Transform {
     let t = t.clamp(0.0, 1.0);
     let lift = tuning.tow_lift_share.clamp(0.0, 1.0);
     let carry = tuning.tow_carry_share.clamp(0.0, 1.0 - lift);
     let altitude = from.translation.y.max(to.translation.y) + tuning.tow_lift_height;
-    let high_from = from.translation.with_y(altitude);
+    let high_from = clear.with_y(altitude);
     let high_to = to.translation.with_y(altitude);
     let ease = |x: f32| x * x * (3.0 - 2.0 * x);
     let phase = |start: f32, length: f32| {
@@ -161,7 +185,15 @@ pub fn tow_pose(tuning: &RaceTuning, from: &Transform, to: &Transform, t: f32) -
         phase(lift, carry),
         phase(lift + carry, 1.0 - lift - carry),
     );
-    let translation = if t <= lift {
+    let translation = if clear != from.translation && t <= lift {
+        // Out from under the road, then up beside it.
+        let half = lift / 2.0;
+        if t <= half {
+            from.translation.lerp(clear, phase(0.0, half))
+        } else {
+            clear.lerp(high_from, phase(half, half))
+        }
+    } else if t <= lift {
         from.translation.lerp(high_from, up)
     } else if t <= lift + carry {
         high_from.lerp(high_to, across)
@@ -349,6 +381,37 @@ mod tests {
             let p = at(i as f32 / 100.0);
             assert!(p.x >= previous.x - 1e-5);
             previous = p;
+        }
+    }
+
+    /// Issue #96: picked up under a ceiling, the kart is taken out beside it first (`clear`, in
+    /// the first half of the lift), then lifted straight up from there, across and down as
+    /// before: it never goes up through the road over it. Taken out where it is, the path is
+    /// exactly the one before #96.
+    #[test]
+    fn from_under_a_ceiling_the_path_goes_out_then_up() {
+        let t = RaceTuning::default();
+        // A ceiling at 10 m, 17 m wide along X (its edges at x = ±8.5), the kart under it.
+        let from = Transform::from_xyz(1.0, 10.0 - 0.55, 0.0);
+        let to = Transform::from_xyz(0.0, 0.55, 60.0);
+        let clear = Vec3::new(10.0, 7.3, 0.0);
+        let at = |x: f32| tow_pose_via(&t, &from, clear, &to, x).translation;
+        assert_eq!(at(0.0), from.translation);
+        assert!(at(t.tow_lift_share / 2.0).distance(clear) < 1e-4);
+        let high = 10.0 - 0.55 + t.tow_lift_height;
+        assert!(at(t.tow_lift_share).distance(clear.with_y(high)) < 1e-4);
+        assert_eq!(at(1.0), to.translation);
+        for i in 0..=300 {
+            let p = at(i as f32 / 300.0);
+            let under_the_road = p.x.abs() < 8.5 && p.z.abs() < 30.0;
+            assert!(!(under_the_road && (9.7..10.6).contains(&p.y)), "{i}: {p}");
+        }
+        for i in 0..=100 {
+            let x = i as f32 / 100.0;
+            assert_eq!(
+                tow_pose_via(&t, &from, from.translation, &to, x),
+                tow_pose(&t, &from, &to, x)
+            );
         }
     }
 }

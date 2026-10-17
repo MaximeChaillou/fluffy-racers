@@ -981,9 +981,20 @@ impl Launch<'_> {
         from: Option<Vec3>,
     ) -> Option<ItemObject> {
         let transform = self.transform;
-        let forward = transform.forward().with_y(0.0).normalize_or(Vec3::NEG_Z);
+        // Issue #96: out of the kart in the frame of the road under it: the world's up, or over
+        // an anti-gravity zone the road's normal (on a wall, under a ceiling: the items come out
+        // on the road, never behind it). Everywhere else, exactly the launch before #96.
+        let up = self
+            .course
+            .map_or(Vec3::Y, |course| course.up_at(transform.translation));
+        let forward = if up == Vec3::Y {
+            transform.forward().with_y(0.0).normalize_or(Vec3::NEG_Z)
+        } else {
+            let heading = *transform.forward();
+            (heading - up * heading.dot(up)).normalize_or(up.any_orthonormal_vector())
+        };
         let radius = item_radius(item, tuning);
-        let low = Vec3::Y * (KART_RIDE_HEIGHT - radius);
+        let low = up * (KART_RIDE_HEIGHT - radius);
         // Just off the front (or the back) of the kart, on the ground.
         let reach = forward * (KART_HALF_EXTENTS.z + radius + 0.2);
         let (front, back) = (
@@ -1035,7 +1046,7 @@ impl Launch<'_> {
                             sample.point(lateral, tuning.abeille_height),
                         )
                     }
-                    _ => (Flight::Dive, front + Vec3::Y * 0.5),
+                    _ => (Flight::Dive, front + up * 0.5),
                 };
                 ItemObject::new(
                     item,
@@ -1068,7 +1079,7 @@ impl Launch<'_> {
                         grounded: false,
                         impact: true,
                     },
-                    front + Vec3::Y * (KART_HALF_EXTENTS.y + radius),
+                    front + up * (KART_HALF_EXTENTS.y + radius),
                     forward * (speed + tuning.bombe_throw_speed),
                 )
             }
@@ -1089,7 +1100,7 @@ impl Launch<'_> {
                         PillowFlight::Hover {
                             left: f32::INFINITY,
                         },
-                        transform.translation + Vec3::Y * tuning.oreiller_height,
+                        transform.translation + up * tuning.oreiller_height,
                     ),
                 };
                 ItemObject::new(
@@ -1701,16 +1712,21 @@ fn move_items(
                 (transform.translation, progress.map(|p| p.distance))
             })
     };
+    // Issue #96: the road's normal at a point (an anti-gravity zone's), the world's up anywhere
+    // else.
+    let up_at = |at: Vec3| course.as_deref().map_or(Vec3::Y, |course| course.up_at(at));
     // The leader now, for the oreillers géants.
     let leader = race
         .as_ref()
         .and_then(|race| race.standings.first().copied())
         .filter(|leader| chaseable(*leader).is_some());
     // One tick of an item; false once it is gone (`Some(at)`: it exploded there). `cast`: the
-    // rays against the track (turned in the frame of an anti-gravity zone's road, issue #78).
+    // rays against the track (turned in the frame of an anti-gravity zone's road, issue #78);
+    // `local`: a point of the world in that frame (issue #96: the boomerang's thrower).
     let step = |item: &mut ItemObject,
                 exploded: &mut Option<Vec3>,
-                cast: &dyn Fn(Vec3, Vec3, f32) -> Option<(f32, Vec3)>|
+                cast: &dyn Fn(Vec3, Vec3, f32) -> Option<(f32, Vec3)>,
+                local: &dyn Fn(Vec3) -> Vec3|
      -> bool {
         item.previous = item.position;
         item.age += dt;
@@ -1877,8 +1893,11 @@ fn move_items(
                         }
                     }
                     (PillowFlight::Track { .. } | PillowFlight::Hover { .. }, _, Some((at, _))) => {
-                        // Above its target (it catches up from afar first).
-                        let over = at + Vec3::Y * tuning.oreiller_height;
+                        // Above its target (it catches up from afar first). Issue #96: along the
+                        // road's normal there (on a wall, under a ceiling: on its side of the
+                        // road, never through it).
+                        let up = up_at(at);
+                        let over = at + up * tuning.oreiller_height;
                         let to = over - item.position;
                         let most = tuning.oreiller_speed * dt;
                         item.position += to.clamp_length_max(most);
@@ -1901,23 +1920,50 @@ fn move_items(
                         }
                     }
                     (PillowFlight::Drop, _, Some((at, _))) => {
-                        // Down on its target, wherever it drives.
-                        let y = item.position.y - tuning.oreiller_drop_speed * dt;
-                        if y - radius <= at.y + KART_HALF_EXTENTS.y {
-                            *exploded = Some(at);
-                            return false;
+                        // Down on its target, wherever it drives (issue #96: along the road's
+                        // normal there).
+                        let up = up_at(at);
+                        if up == Vec3::Y {
+                            let y = item.position.y - tuning.oreiller_drop_speed * dt;
+                            if y - radius <= at.y + KART_HALF_EXTENTS.y {
+                                *exploded = Some(at);
+                                return false;
+                            }
+                            item.position = Vec3::new(at.x, y, at.z);
+                        } else {
+                            let height =
+                                (item.position - at).dot(up) - tuning.oreiller_drop_speed * dt;
+                            if height - radius <= KART_HALF_EXTENTS.y {
+                                *exploded = Some(at);
+                                return false;
+                            }
+                            item.position = at + up * height;
                         }
-                        item.position = Vec3::new(at.x, y, at.z);
                         item.velocity = (item.position - item.previous) / dt;
                         PillowFlight::Drop
                     }
                     (_, _, None) => {
-                        // No one to go after: straight down where it is.
-                        let ground = ground_under(&cast, item.position, radius, 50.0);
-                        item.position.y -= tuning.oreiller_drop_speed * dt;
-                        if ground.is_none_or(|g| item.position.y - radius <= g) {
-                            *exploded = Some(item.position);
-                            return false;
+                        // No one to go after: straight down where it is (issue #96: down to the
+                        // road of an anti-gravity zone along its normal).
+                        let up = up_at(item.position);
+                        if up == Vec3::Y {
+                            let ground = ground_under(&cast, item.position, radius, 50.0);
+                            item.position.y -= tuning.oreiller_drop_speed * dt;
+                            if ground.is_none_or(|g| item.position.y - radius <= g) {
+                                *exploded = Some(item.position);
+                                return false;
+                            }
+                        } else {
+                            let reach = GROUND_PROBE_UP + radius + 50.0;
+                            let ground = cast(item.position + up * GROUND_PROBE_UP, -up, reach)
+                                .filter(|(_, normal)| normal.dot(up) >= WALL_NORMAL_Y)
+                                .map(|(distance, _)| GROUND_PROBE_UP - distance);
+                            let fall = tuning.oreiller_drop_speed * dt;
+                            item.position -= up * fall;
+                            if ground.is_none_or(|g| g + fall >= -radius) {
+                                *exploded = Some(item.position);
+                                return false;
+                            }
                         }
                         PillowFlight::Drop
                     }
@@ -1935,7 +1981,10 @@ fn move_items(
                 // Issue #21: out, curving (issue #88: as its thrower steered); then back to its
                 // thrower (where its body is: online, where this peer shows it).
                 let heading = item.velocity.with_y(0.0).normalize_or(Vec3::NEG_Z);
-                let owner = karts.get(item.owner).ok().map(|(_, t, ..)| t.translation);
+                let owner = karts
+                    .get(item.owner)
+                    .ok()
+                    .map(|(_, t, ..)| local(t.translation));
                 let direction = match (returning, owner) {
                     (false, _) => Quat::from_rotation_y(curve * dt) * heading,
                     (true, Some(owner)) => boomerang_heading(
@@ -2045,16 +2094,22 @@ fn move_items(
     };
     // Issue #78: over the road of an anti-gravity zone, an item that lies, rolls or bounces on the
     // road (a pelure, a pelote, a bombe) does it in the road's frame, its normal as the item's up:
-    // the same motion, turned. Everywhere else, exactly the motion before #78.
+    // the same motion, turned. Issue #96: the boomerang-os too (it flies low over the road, and
+    // curves around its normal), its thrower seen in that frame. Everywhere else, exactly the
+    // motion before #78.
     let step_on_road = |item: &mut ItemObject, exploded: &mut Option<Vec3>| -> bool {
         let up = match (item.motion, course.as_deref()) {
-            (Motion::Ground | Motion::Rolling { .. } | Motion::Bomb { .. }, Some(course)) => {
-                course.up_at(item.position)
-            }
+            (
+                Motion::Ground
+                | Motion::Rolling { .. }
+                | Motion::Bomb { .. }
+                | Motion::Boomerang { .. },
+                Some(course),
+            ) => course.up_at(item.position),
             _ => Vec3::Y,
         };
         if up == Vec3::Y {
-            return step(item, exploded, &cast);
+            return step(item, exploded, &cast, &|p| p);
         }
         let to_road = Quat::from_rotation_arc(up, Vec3::Y);
         let to_world = to_road.inverse();
@@ -2070,7 +2125,9 @@ fn move_items(
             ..*item
         };
         let mut blast = None;
-        let alive = step(&mut local, &mut blast, &road_cast);
+        let alive = step(&mut local, &mut blast, &road_cast, &|p| {
+            to_road * (p - origin)
+        });
         *item = ItemObject {
             position: world(local.position),
             previous: world(local.previous),

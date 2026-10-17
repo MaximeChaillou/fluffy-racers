@@ -119,6 +119,9 @@ pub struct LooseCroquette {
     pub age: f32,
     /// The kart that lost it (it waits `owner_pickup_delay` to take it back).
     pub dropped_by: Entity,
+    /// Issue #96: its hop goes up along this: the world's up, or in an anti-gravity zone the
+    /// road's normal (on a wall, under a ceiling: it hops off the road and lands back on it).
+    pub up: Vec3,
 }
 
 impl LooseCroquette {
@@ -128,14 +131,21 @@ impl LooseCroquette {
             to,
             age: 0.0,
             dropped_by,
+            up: Vec3::Y,
         }
+    }
+
+    /// The same, hopping along `up` (issue #96).
+    pub fn along(self, up: Vec3) -> Self {
+        Self { up, ..self }
     }
 
     /// Where it is `age` seconds after flying out.
     pub fn position_at(&self, tuning: &CroquetteTuning, age: f32) -> Vec3 {
-        flight_position(
+        flight_position_along(
             self.from,
             self.to,
+            self.up,
             tuning.scatter_height,
             tuning.scatter_flight_time,
             age,
@@ -165,20 +175,45 @@ impl LooseCroquette {
 /// Position on a parabolic hop from `from` to `to`, `height` above the straight line at its
 /// middle, `flight_time` long; `to` after the landing.
 pub fn flight_position(from: Vec3, to: Vec3, height: f32, flight_time: f32, age: f32) -> Vec3 {
+    flight_position_along(from, to, Vec3::Y, height, flight_time, age)
+}
+
+/// The same hop, `height` above the straight line along `up` (issue #96: the road's normal in an
+/// anti-gravity zone).
+pub fn flight_position_along(
+    from: Vec3,
+    to: Vec3,
+    up: Vec3,
+    height: f32,
+    flight_time: f32,
+    age: f32,
+) -> Vec3 {
     let t = (age / flight_time.max(1e-3)).clamp(0.0, 1.0);
-    from.lerp(to, t) + Vec3::Y * (4.0 * height * t * (1.0 - t))
+    from.lerp(to, t) + up * (4.0 * height * t * (1.0 - t))
 }
 
 /// Horizontal directions of `n` lost croquettes flying out of a kart heading `forward`: spread
 /// evenly over `spread` radians behind it, straight behind for a single one.
 pub fn scatter_direction(forward: Vec3, i: u8, n: u8, spread: f32) -> Vec3 {
     let back = (-forward).with_y(0.0).normalize_or(Vec3::Z);
-    let angle = if n <= 1 {
+    Quat::from_rotation_y(scatter_angle(i, n, spread)) * back
+}
+
+/// Issue #96: the same across `up` (the road's normal of an anti-gravity zone): behind the kart,
+/// along the road.
+pub fn scatter_direction_along(forward: Vec3, up: Vec3, i: u8, n: u8, spread: f32) -> Vec3 {
+    let back = -forward;
+    let back = (back - up * back.dot(up)).normalize_or(up.any_orthonormal_vector());
+    Quat::from_axis_angle(up, scatter_angle(i, n, spread)) * back
+}
+
+/// The angle of the `i`-th of `n` lost croquettes off straight behind (rad).
+fn scatter_angle(i: u8, n: u8, spread: f32) -> f32 {
+    if n <= 1 {
         0.0
     } else {
         -spread / 2.0 + spread * i as f32 / (n - 1) as f32
-    };
-    Quat::from_rotation_y(angle) * back
+    }
 }
 
 /// Whether `point` (a croquette's center) touches a kart: inside its collision box (half size

@@ -16,7 +16,7 @@ use bevy::ui::UiSystems;
 
 use super::{KartId, KartSync, NetTuning, RemoteKart};
 use crate::camera::ChaseCamera;
-use crate::kart::KartColor;
+use crate::kart::{KartColor, KartEnvironment};
 use crate::options::PlayerOptions;
 use crate::ui::format::ascii_letter;
 
@@ -73,6 +73,13 @@ pub fn tag_shown(enabled: bool, depth: f32, distance: f32, max_distance: f32) ->
     enabled && depth > 0.0 && distance <= max_distance
 }
 
+/// The point over a kart at `kart` whose up is `up` where its tag sits, `height` above it (m).
+/// Issue #96: along its up (`KartEnvironment::up`): the world's, or in anti-gravity the road's
+/// normal (on a wall, beside it; under a ceiling, below it, never in the road).
+pub fn tag_anchor(kart: Vec3, up: Vec3, height: f32) -> Vec3 {
+    kart + up * height
+}
+
 /// Where a tag goes (its top-left corner, px) for the point `over` of its kart on screen: its
 /// pill centered, its bottom edge on that point.
 pub fn tag_corner(over: Vec2) -> Vec2 {
@@ -102,6 +109,7 @@ fn follow_name_tags(
     tuning: Res<NetTuning>,
     cameras: Query<(&Camera, &GlobalTransform), With<ChaseCamera>>,
     visuals: Query<&GlobalTransform, Without<ChaseCamera>>,
+    environments: Query<&KartEnvironment>,
     mut tags: Query<(Entity, &mut NameTag, &mut UiTransform, &mut Visibility)>,
     mut borders: Query<&mut BorderColor>,
     mut texts: Query<&mut Text>,
@@ -138,10 +146,15 @@ fn follow_name_tags(
                 *border = border_of(remote.color);
             }
         }
+        // Issue #96: over its kart along its up (its body's in anti-gravity, as its peer says).
+        let up = remote
+            .proxy
+            .and_then(|proxy| environments.get(proxy).ok())
+            .map_or(Vec3::Y, |environment| environment.up);
         let place = camera.zip(remote.visual.filter(|_| !remote.left)).and_then(
             |((camera, eye), visual)| {
-                let over =
-                    visuals.get(visual).ok()?.translation() + Vec3::Y * tuning.name_tag_height;
+                let kart = visuals.get(visual).ok()?.translation();
+                let over = tag_anchor(kart, up, tuning.name_tag_height);
                 let on_screen = camera.world_to_viewport_with_depth(eye, over).ok()?;
                 let distance = eye.translation().distance(over);
                 tag_shown(enabled, on_screen.z, distance, tuning.name_tag_distance)
@@ -252,5 +265,23 @@ mod tests {
             corner + Vec2::new(TAG_WIDTH / 2.0, TAG_HEIGHT),
             Vec2::new(400.0, 300.0)
         );
+    }
+
+    /// Issue #96: the tag sits over its kart along its up: the world's up (exactly as before), or
+    /// in anti-gravity the road's normal: beside a kart on a wall, below a kart under a ceiling
+    /// (its up pointing down), never up in the road over it.
+    #[test]
+    fn a_tag_sits_along_its_karts_up() {
+        let kart = Vec3::new(3.0, 10.0 - 0.55, -7.0);
+        assert_eq!(
+            tag_anchor(kart, Vec3::Y, 1.9),
+            Vec3::new(3.0, 10.0 - 0.55 + 1.9, -7.0)
+        );
+        // Under a ceiling at 10 m: the tag below the kart, away from the road.
+        let under = tag_anchor(kart, Vec3::NEG_Y, 1.9);
+        assert!(under.y < kart.y - 1.8 && under.y < 10.0, "{under}");
+        // On a wall facing +X: beside the kart, off the wall.
+        let beside = tag_anchor(Vec3::new(0.55, 5.0, 0.0), Vec3::X, 1.9);
+        assert_eq!(beside, Vec3::new(2.45, 5.0, 0.0));
     }
 }

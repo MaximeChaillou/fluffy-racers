@@ -118,6 +118,12 @@ pub struct EnvironmentTuning {
     /// ...is pulled toward it this many times harder (on top of its gravity): where the road twists
     /// away under a kart in the air, it never flies over a wall (1.2 m high).
     pub anti_gravity_hold: f32,
+    /// Issue #96: on the ground in anti-gravity, where the zone's road bends along it (a turn
+    /// banked like a wall), the kart's velocity turns with it ([`anti_gravity_guide`]): the road
+    /// guides it like a rail, and its springs only hold its gravity. Off, its springs alone turn
+    /// it, pressed into the road by the curve (in 200cc round the Ruban's banked turn, down to its
+    /// bump stops). A straight zone, however it twists, does not bend: nothing changes there.
+    pub anti_gravity_guide: bool,
     /// Two karts in anti-gravity that bump into each other this fast (closing speed, m/s) both get
     /// the spin boost (GD § 10, MK8DX)...
     pub spin_boost_min_speed: f32,
@@ -160,6 +166,7 @@ impl Default for EnvironmentTuning {
             anti_gravity_probe: 8.0,
             anti_gravity_hold_height: 1.0,
             anti_gravity_hold: 2.0,
+            anti_gravity_guide: true,
             spin_boost_min_speed: 3.0,
             spin_boost_strength: 0.2,
             spin_boost_duration: 0.6,
@@ -240,6 +247,20 @@ pub fn next_anti_gravity(
 /// the world's) (N).
 pub fn anti_gravity_force(up: Vec3, gravity_scale: f32, mass: f32) -> Vec3 {
     -up * (GRAVITY * gravity_scale * mass)
+}
+
+/// Issue #96: the velocity `velocity` of a kart on the ground in anti-gravity, over the road of a
+/// zone that bends (`bend`: a wall round a turn), turned with the road over this tick (`dt`, s):
+/// as far as the kart goes along it, about the road's right, by the angle its normal turns (the
+/// road guides it like a rail, as fast as it goes, instead of running into it). A straight zone
+/// does not bend, however it twists: there, exactly the same velocity (the springs keep the kart
+/// on its twist, as before). The rotation keeps its speed.
+pub fn anti_gravity_guide(velocity: Vec3, bend: &crate::track::Bend, dt: f32) -> Vec3 {
+    let angle = bend.rate * velocity.dot(bend.forward) * dt;
+    if angle == 0.0 {
+        return velocity;
+    }
+    Quat::from_axis_angle(bend.right, angle) * velocity
 }
 
 /// Whether a kart is under water now: `depth` is how deep its center is under the surface of the
@@ -521,6 +542,37 @@ mod tests {
         // As strong as the world's gravity on the kart (`GravityScale` times Rapier's).
         let weight = GRAVITY * tuning.gravity_scale * tuning.mass;
         assert!((force.length() - weight).abs() < 1e-3 * weight);
+    }
+
+    /// Issue #96: on the ground in anti-gravity, the road guides the kart: its velocity turns
+    /// with the road's normal under it (round a wall that curves, its velocity along the road
+    /// stays along it, at the same speed); with the same normal, exactly the same velocity.
+    #[test]
+    fn the_road_guides_a_kart_in_anti_gravity() {
+        // A wall facing +X curving round about the vertical (its right, down the wall): 1/40 per
+        // meter; a kart driving along it (-Z) at 40 m/s, one tick.
+        let bend = crate::track::Bend {
+            forward: Vec3::NEG_Z,
+            right: Vec3::NEG_Y,
+            rate: 1.0 / 40.0,
+        };
+        let dt = 1.0 / 60.0;
+        let along = Vec3::new(0.0, 0.0, -40.0);
+        let guided = anti_gravity_guide(along, &bend, dt);
+        // Its normal turned by 1/40 × 40 m/s × dt about -Y: the velocity with it, its speed kept.
+        let turned = Quat::from_axis_angle(Vec3::NEG_Y, dt);
+        assert!((guided.length() - 40.0).abs() < 1e-3);
+        assert!(guided.dot(turned * Vec3::X).abs() < 1e-3, "{guided}");
+        // Backward, the other way; standing still or on a straight (no bend), the same velocity.
+        let back = anti_gravity_guide(-along, &bend, dt);
+        assert!(back.dot(turned.inverse() * Vec3::X).abs() < 1e-3, "{back}");
+        assert_eq!(
+            anti_gravity_guide(Vec3::new(0.0, 2.0, 0.0), &bend, dt),
+            Vec3::new(0.0, 2.0, 0.0)
+        );
+        let straight = crate::track::Bend { rate: 0.0, ..bend };
+        assert_eq!(anti_gravity_guide(along, &straight, dt), along);
+        assert!(EnvironmentTuning::default().anti_gravity_guide);
     }
 
     /// The knobs are in the admin panel, which edits `KartTuning` by reflection: every one of

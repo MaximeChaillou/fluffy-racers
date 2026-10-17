@@ -29,6 +29,7 @@ use super::{Blast, Honked, ItemBox, ItemObject, ItemTuning};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{ItemEffects, PlayerKart};
 use crate::level::LevelScoped;
+use crate::race::Course;
 use crate::track::ItemBoxSpot;
 
 /// Size of a box (m).
@@ -741,27 +742,39 @@ fn animate_effects(
 }
 
 /// Every item out, between its last two simulated positions; a pelote rolls, an abeille faces
-/// where it flies, a pelure turns slowly on the ground.
+/// where it flies, a pelure turns slowly on the ground. Issue #96: over the road of an
+/// anti-gravity zone, the same in the road's frame (its normal as the item's up: a pelure lies
+/// flat on a wall, a boomerang-os spins flat over a ceiling); only on a circuit with a zone.
 fn place_items(
     fixed_time: Res<Time<Fixed>>,
     tuning: Res<ItemTuning>,
+    course: Option<Res<Course>>,
     mut items: Query<(&ItemObject, &mut Transform)>,
 ) {
     let alpha = fixed_time.overstep_fraction();
+    let zoned = course.as_deref().filter(|c| !c.anti_gravity.is_empty());
     for (item, mut transform) in &mut items {
         transform.translation = item.previous.lerp(item.position, alpha);
-        let flat = item.velocity.with_y(0.0);
-        transform.rotation = match item.item {
+        let up = zoned.map_or(Vec3::Y, |course| course.up_at(transform.translation));
+        let to_world = if up == Vec3::Y {
+            None
+        } else {
+            Some(Quat::from_rotation_arc(Vec3::Y, up))
+        };
+        let velocity = match to_world {
+            Some(turn) => turn.inverse() * item.velocity,
+            None => item.velocity,
+        };
+        let flat = velocity.with_y(0.0);
+        let rotation = match item.item {
             ItemKind::Pelote if flat.length() > 0.1 => {
                 // Rolled distance over the radius: its turn around the axis across its path.
                 let axis = flat.normalize().cross(Vec3::Y);
                 let angle = -item.age * flat.length() / item.radius(&tuning).max(0.05);
                 Quat::from_axis_angle(axis, angle % TAU)
             }
-            ItemKind::Abeille if item.velocity.length() > 0.1 => {
-                Transform::default()
-                    .looking_to(item.velocity, Vec3::Y)
-                    .rotation
+            ItemKind::Abeille if velocity.length() > 0.1 => {
+                Transform::default().looking_to(velocity, Vec3::Y).rotation
             }
             // Issue #21: the boomerang-os spins flat as it flies.
             ItemKind::Boomerang => Quat::from_rotation_y(item.age * BOOMERANG_SPIN),
@@ -771,6 +784,10 @@ fn place_items(
                     * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
             }
             _ => Quat::from_rotation_y(item.age * 0.5),
+        };
+        transform.rotation = match to_world {
+            Some(turn) => turn * rotation,
+            None => rotation,
         };
     }
 }

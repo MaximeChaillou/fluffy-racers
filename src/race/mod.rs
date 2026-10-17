@@ -576,7 +576,9 @@ fn update_progress(
                     racer.drop_lane(),
                     tuning.tow_drop_lane,
                 );
-                tow.carry = Some(Carry::new(&tuning, reason, *transform, to));
+                // Issue #96: out from under a ceiling first, never up through it.
+                let clear = course.tow_clearance(transform.translation, tuning.tow_clearance);
+                tow.carry = Some(Carry::new(&tuning, reason, *transform, to).clearing(clear));
                 *state = KartState::Respawning;
                 *boost = Boost::default();
                 *velocity = Velocity::zero();

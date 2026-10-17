@@ -12,12 +12,19 @@
 //!
 //! Lateral positions are in meters along the road surface, right positive (like
 //! `TrackSample::point`); curvatures in 1/m, right turns positive.
+//!
+//! Issue #96: in and around the anti-gravity zones, the line is drawn in the track's own
+//! coordinates (distance along it, offset across it): the road there is **developed** onto a
+//! plane (`Developed`), its centerline turning only as it turns in the road's own plane (its
+//! curvature measured around the road's normal). A turn banked to 90° (a wall that curves) is
+//! straight there: a kart takes it without steering. Everywhere else, and on a circuit without a
+//! zone, the line is drawn seen from above, exactly as before.
 
 use bevy::prelude::*;
 
 use crate::kart::DriftSide;
 use crate::track::mesh::wall_offset;
-use crate::track::{CenterLine, TrackLayout, anti_gravity_at};
+use crate::track::{CenterLine, TrackLayout, TrackSample, anti_gravity_at};
 
 /// A curvature below this (radius above 70 m) is a straight for the turn detection (1/m).
 const TURN_MIN_CURVATURE: f32 = 1.0 / 70.0;
@@ -33,6 +40,10 @@ const SEARCH_BEHIND: isize = 6;
 const SEARCH_AHEAD: isize = 12;
 /// Sand patches keep the line away this far before and after them along the track (m).
 const SAND_BUFFER: f32 = 4.0;
+/// Issue #96: how far the smoothing of the racing line reaches on each side of a sample (twice
+/// its coarsest stride, samples). The samples this close to an anti-gravity zone are smoothed in
+/// the developed road ([`Developed`]), their neighbours with them.
+const STENCIL_REACH: usize = 2 * LINE_STRIDES[0];
 
 /// A turn of the racing line: samples `start..start + len` (wrapping), all turning to `side`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,23 +149,41 @@ impl RacingLine {
             .map(|s| Vec2::new(s.position.x, s.position.z))
             .collect();
         // Issue #78: in an anti-gravity zone, the road may be a wall, its right pointing down:
-        // there the line moves across the track along the horizontal right of the heading (the
-        // same direction where the road is still flat enough to be seen from above).
+        // seen from above, the line moves across the track along the horizontal right of the
+        // heading there (only the samples around a zone see it, and since issue #96 they draw the
+        // line in the developed road instead).
+        let zoned: Vec<bool> = samples
+            .iter()
+            .map(|s| anti_gravity_at(&layout.anti_gravity, &center, s.distance).is_some())
+            .collect();
         let rights: Vec<Vec2> = samples
             .iter()
-            .map(|s| {
-                if anti_gravity_at(&layout.anti_gravity, &center, s.distance).is_some() {
+            .zip(&zoned)
+            .map(|(s, zoned)| {
+                if *zoned {
                     Vec2::new(-s.forward.z, s.forward.x).normalize_or(Vec2::X)
                 } else {
                     Vec2::new(s.right.x, s.right.z).normalize_or(Vec2::X)
                 }
             })
             .collect();
-        let offset = least_curvature_offsets(&points, &rights, &line_limits);
+        // Issue #96: around the anti-gravity zones, the road developed onto a plane (none on a
+        // circuit without a zone: everything below is then exactly as before).
+        let developed = Developed::new(samples, &zoned);
+        let offset = least_curvature_offsets(&points, &rights, &line_limits, developed.as_ref());
 
         let line_points: Vec<Vec2> = (0..n).map(|i| points[i] + rights[i] * offset[i]).collect();
-        let (angles, curvature) = turning(&line_points);
-        let (_, center_curvature) = turning(&points);
+        let line_chain = developed.as_ref().map(|d| d.line(&offset));
+        let (angles, curvature) = turning(
+            &line_points,
+            line_chain
+                .as_deref()
+                .zip(developed.as_ref().map(|d| &d.zoned[..])),
+        );
+        let (_, center_curvature) = turning(
+            &points,
+            developed.as_ref().map(|d| (&d.points[..], &d.zoned[..])),
+        );
         let (turns, turn_of) = find_turns(&curvature, &angles);
 
         Self {
@@ -283,10 +312,104 @@ impl RacingLine {
     }
 }
 
+/// Issue #96: the road around the anti-gravity zones, developed onto a plane: its centerline
+/// walked sample after sample, turning by as much as it turns in the road's own plane (around the
+/// road's normal), each sample with its right across the road. Seen from above, a wall that
+/// curves (a turn banked to 90°) turns; developed, it runs straight. Its coordinates are those of
+/// the ground plane's (`x`, `z`) seen from above (a right turn is a positive angle), but they
+/// only have a meaning relative to each other, a few samples apart: the walk does not close on
+/// itself.
+///
+/// The walk covers every sample, from [`STENCIL_REACH`] samples before the start line to as many
+/// past the end of the lap: sample `i` is at `i + STENCIL_REACH`, its neighbours on both sides of
+/// the line's smoothing next to it.
+struct Developed {
+    /// The centerline's samples, developed (len: samples + 2 × [`STENCIL_REACH`]).
+    points: Vec<Vec2>,
+    /// Their right, across the road.
+    rights: Vec<Vec2>,
+    /// Per sample: in an anti-gravity zone (its turning is measured in the road's plane).
+    zoned: Vec<bool>,
+    /// Per sample: close enough to a zone for the line's smoothing to see it (its neighbours are
+    /// taken in the developed road).
+    near: Vec<bool>,
+}
+
+impl Developed {
+    /// The developed road of a centerline whose samples `zoned` are in an anti-gravity zone;
+    /// `None` without any (the line is then drawn seen from above, as before issue #96).
+    fn new(samples: &[TrackSample], zoned: &[bool]) -> Option<Self> {
+        if !zoned.contains(&true) {
+            return None;
+        }
+        let n = samples.len();
+        let sample = |c: usize| &samples[Self::sample(c, n)];
+        let count = n + 2 * STENCIL_REACH;
+        let (mut points, mut rights) = (Vec::with_capacity(count), Vec::with_capacity(count));
+        let (mut at, mut heading) = (Vec2::ZERO, 0.0f32);
+        for c in 0..count {
+            points.push(at);
+            rights.push(Vec2::from_angle(heading).perp());
+            let (a, b) = (sample(c), sample(c + 1));
+            let next = heading + road_turn(a, b);
+            at += Vec2::from_angle(0.5 * (heading + next)) * a.position.distance(b.position);
+            heading = next;
+        }
+        // The samples whose smoothing reaches a zone's.
+        let mut near = vec![false; n];
+        let reach = STENCIL_REACH as isize;
+        for (i, _) in zoned.iter().enumerate().filter(|(_, z)| **z) {
+            for k in -reach..=reach {
+                near[(i as isize + k).rem_euclid(n as isize) as usize] = true;
+            }
+        }
+        Some(Self {
+            points,
+            rights,
+            zoned: zoned.to_vec(),
+            near,
+        })
+    }
+
+    /// Where sample `i` is in the walk.
+    fn index(i: usize) -> usize {
+        i + STENCIL_REACH
+    }
+
+    /// The sample at `c` in the walk (of a centerline of `n` samples).
+    fn sample(c: usize, n: usize) -> usize {
+        (c + n - STENCIL_REACH % n) % n
+    }
+
+    /// The racing line `offset` (per sample) in the developed road, walked like it.
+    fn line(&self, offset: &[f32]) -> Vec<Vec2> {
+        let n = offset.len();
+        (0..self.points.len())
+            .map(|c| self.points[c] + self.rights[c] * offset[Self::sample(c, n)])
+            .collect()
+    }
+}
+
+/// Issue #96: how much the centerline turns from sample `a` to sample `b` in the road's own plane
+/// (rad, toward the road's right positive): the angle between their headings around the road's
+/// normal between them. On flat ground, its turn seen from above; on a wall that curves, nothing.
+fn road_turn(a: &TrackSample, b: &TrackSample) -> f32 {
+    let up = (a.up + b.up).normalize_or(a.up);
+    let level = |v: Vec3| (v - up * v.dot(up)).normalize_or_zero();
+    let (from, to) = (level(a.forward), level(b.forward));
+    from.cross(to).dot(-up).atan2(from.dot(to))
+}
+
 /// Lateral offsets (within `limits`) of the closed line through `points` (moved along
 /// `rights`) with the least total curvature: projected coordinate descent on the squared second
-/// differences, from coarse to fine strides so that long turns converge quickly.
-fn least_curvature_offsets(points: &[Vec2], rights: &[Vec2], limits: &[[f32; 2]]) -> Vec<f32> {
+/// differences, from coarse to fine strides so that long turns converge quickly. Issue #96: the
+/// samples near an anti-gravity zone bend the line the least in the `developed` road instead.
+fn least_curvature_offsets(
+    points: &[Vec2],
+    rights: &[Vec2],
+    limits: &[[f32; 2]],
+    developed: Option<&Developed>,
+) -> Vec<f32> {
     let n = points.len();
     let mut offset: Vec<f32> = limits.iter().map(|[lo, hi]| 0f32.clamp(*lo, *hi)).collect();
     for stride in LINE_STRIDES {
@@ -296,13 +419,26 @@ fn least_curvature_offsets(points: &[Vec2], rights: &[Vec2], limits: &[[f32; 2]]
         let s = stride as isize;
         for _ in 0..LINE_SWEEPS {
             for i in 0..n {
+                let [lo, hi] = limits[i];
+                if let Some(road) = developed.filter(|d| d.near[i]) {
+                    // In the developed road: the same rule, its neighbours taken along it.
+                    let c = Developed::index(i) as isize;
+                    let at = |k: isize| {
+                        let j = (i as isize + k).rem_euclid(n as isize) as usize;
+                        let c = (c + k) as usize;
+                        road.points[c] + road.rights[c] * offset[j]
+                    };
+                    let best = (4.0 * (at(-s) + at(s)) - (at(-2 * s) + at(2 * s))) / 6.0;
+                    let c = c as usize;
+                    offset[i] = (best - road.points[c]).dot(road.rights[c]).clamp(lo, hi);
+                    continue;
+                }
                 let at = |k: isize| {
                     let j = (i as isize + k).rem_euclid(n as isize) as usize;
                     points[j] + rights[j] * offset[j]
                 };
                 // Where point `i` bends the line the least, given its neighbours.
                 let best = (4.0 * (at(-s) + at(s)) - (at(-2 * s) + at(2 * s))) / 6.0;
-                let [lo, hi] = limits[i];
                 offset[i] = (best - points[i]).dot(rights[i]).clamp(lo, hi);
             }
         }
@@ -311,13 +447,23 @@ fn least_curvature_offsets(points: &[Vec2], rights: &[Vec2], limits: &[[f32; 2]]
 }
 
 /// Heading change at each point of a closed polyline (rad, right turns positive) and the
-/// curvature there (1/m), both smoothed over a few samples.
-fn turning(points: &[Vec2]) -> (Vec<f32>, Vec<f32>) {
+/// curvature there (1/m), both smoothed over a few samples. Issue #96: `developed`, the same
+/// line walked in the developed road ([`Developed`]) and the samples in an anti-gravity zone,
+/// whose turning is measured there (in the road's own plane).
+fn turning(points: &[Vec2], developed: Option<(&[Vec2], &[bool])>) -> (Vec<f32>, Vec<f32>) {
     let n = points.len();
     let (mut angles, mut lengths) = (Vec::with_capacity(n), Vec::with_capacity(n));
     for i in 0..n {
-        let before = points[i] - points[(i + n - 1) % n];
-        let after = points[(i + 1) % n] - points[i];
+        let (before, after) = match developed {
+            Some((walk, zoned)) if zoned[i] => {
+                let c = Developed::index(i);
+                (walk[c] - walk[c - 1], walk[c + 1] - walk[c])
+            }
+            _ => (
+                points[i] - points[(i + n - 1) % n],
+                points[(i + 1) % n] - points[i],
+            ),
+        };
         // In the (x, z) plane, a positive angle is a right turn (z points backwards).
         angles.push(
             before
@@ -533,6 +679,152 @@ pub(crate) mod tests {
         assert_eq!(line.turn_ahead(before, 10), Some((hairpin, 5)));
         assert_eq!(line.turn_ahead(middle, 0), Some((hairpin, 0)));
         let _ = layout;
+    }
+
+    /// A loop turning right, 9 m up, whose north-east corner is a turn of 90° (radius 60 m):
+    /// banked like a wall around it (90° at its middle) in an anti-gravity zone, or flat without
+    /// it (`banked` false).
+    fn banked_loop(banked: bool) -> TrackData {
+        let corners: [(f32, f32, f32); 23] = [
+            (0.0, 100.0, 0.0),
+            (0.0, 50.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (8.79, -21.21, 0.0),
+            (30.0, -30.0, 0.0),
+            (60.0, -30.0, 0.0),
+            (85.0, -30.0, 30.0),
+            (110.0, -30.0, 60.0),
+            (132.96, -25.43, 80.0),
+            (152.43, -12.43, 90.0),
+            (165.43, 7.04, 80.0),
+            (170.0, 30.0, 60.0),
+            (170.0, 55.0, 30.0),
+            (170.0, 80.0, 0.0),
+            (170.0, 120.0, 0.0),
+            (170.0, 150.0, 0.0),
+            (161.21, 171.21, 0.0),
+            (140.0, 180.0, 0.0),
+            (100.0, 180.0, 0.0),
+            (60.0, 180.0, 0.0),
+            (30.0, 180.0, 0.0),
+            (8.79, 171.21, 0.0),
+            (0.0, 150.0, 0.0),
+        ];
+        let points: Vec<String> = corners
+            .iter()
+            .map(|(x, z, bank)| {
+                let bank = if banked { *bank } else { 0.0 };
+                format!("(pos: ({x}, 9.0, {z}), width: 12.0, bank: {bank}, shoulder: 1.0)")
+            })
+            .collect();
+        let zones = if banked {
+            "anti_gravity: [(from: 5.0, to: 13.0)],"
+        } else {
+            ""
+        };
+        let text = format!(
+            "(name: \"Virage\", points: [{}], {zones})",
+            points.join(", ")
+        );
+        let data = TrackData::from_ron(&text).unwrap();
+        assert_eq!(data.validate(), Ok(()));
+        data
+    }
+
+    fn line_of(data: &TrackData) -> (TrackLayout, RacingLine) {
+        let layout = TrackLayout::new(data);
+        let t = BotTuning::default();
+        let line = RacingLine::new(&layout, t.road_margin, t.sand_margin, t.line_margin);
+        (layout, line)
+    }
+
+    /// Issue #96 (GD § 10): in an anti-gravity zone, the racing line is drawn in the track's own
+    /// coordinates, its curvature measured in the road's plane. A turn of 90° banked like a wall
+    /// (a radius of 60 m seen from above) is straight there: around its middle, neither the
+    /// centerline nor the racing line turns (a kart takes it without steering), no turn is found
+    /// there (no braking, no drift), and the line stays on the road. Flat, the same corner is a
+    /// right turn of about 90° where the line curves at about 1/60 m, as seen from above.
+    #[test]
+    fn a_turn_banked_like_a_wall_is_straight_for_the_bots() {
+        let t = BotTuning::default();
+        for banked in [true, false] {
+            let data = banked_loop(banked);
+            let (layout, line) = line_of(&data);
+            let center = &layout.center;
+            let middle = center.param_to_distance(9.0);
+            let apex = center.nearest_index(center.at(middle).position);
+            assert_eq!(banked, center.samples()[apex].up.y.abs() < 0.02);
+            for k in -10isize..=10 {
+                let i = line.wrap_index(apex as isize + k);
+                let (centerline, racing) = (line.curvature(i, 0.0), line.curvature(i, 1.0));
+                if banked {
+                    assert!(centerline.abs() < 1.0 / 400.0, "{i}: {centerline}");
+                    assert!(racing.abs() < 1.0 / 400.0, "{i}: {racing}");
+                    assert!(line.turn_at(i).is_none(), "{i}");
+                } else {
+                    // Seen from above (the racing line cuts the corner, a little wider).
+                    assert!(
+                        (1.0 / 75.0..1.0 / 50.0).contains(&centerline),
+                        "{i}: {centerline}"
+                    );
+                    assert!(racing > 1.0 / 150.0, "{i}: {racing}");
+                }
+            }
+            // Banked, no turn at all around the corner (a turn of the corner would start before
+            // its middle).
+            if banked {
+                let around = center.param_to_distance(5.0)..center.param_to_distance(13.0);
+                for turn in line.turns() {
+                    let start = turn.start as f32 * line.step();
+                    assert!(
+                        !around.contains(&start) || turn.angle < 30f32.to_radians(),
+                        "{turn:?}"
+                    );
+                }
+            }
+            for i in 0..line.sample_count() {
+                let [lo, hi] = line.limits(i);
+                let o = line.offset(i);
+                assert!(
+                    o >= lo + t.line_margin - 1e-3 && o <= hi - t.line_margin + 1e-3,
+                    "{i}: {o}"
+                );
+            }
+        }
+    }
+
+    /// Issue #96: the Ruban Réglisse's banked turn (its third zone) is straight for the bots too,
+    /// around its middle; its mirror image too. Its other turns are still found (the hairpin
+    /// where they drift, issue #94).
+    #[test]
+    fn the_ribbon_banked_turn_is_straight_for_the_bots() {
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        for data in [data.clone(), data.mirrored()] {
+            let (layout, line) = line_of(&data);
+            let center = &layout.center;
+            let zone = layout.anti_gravity[2];
+            let middle = zone.from + zone.length(center) / 2.0;
+            let apex = center.nearest_index(center.at(middle).position);
+            let mut walled = 0;
+            for k in -10isize..=10 {
+                let i = line.wrap_index(apex as isize + k);
+                assert!(line.turn_at(i).is_none(), "{i}");
+                if center.samples()[i].up.y.abs() < 0.1 {
+                    walled += 1;
+                    let curvature = line.curvature(i, 1.0);
+                    assert!(curvature.abs() < 1.0 / 300.0, "{i}: {curvature}");
+                }
+            }
+            assert!(walled >= 10, "{walled}");
+            assert!(
+                line.turns()
+                    .iter()
+                    .any(|turn| turn.angle > 130f32.to_radians()),
+                "the hairpin: {:?}",
+                line.turns()
+            );
+        }
     }
 
     #[test]
