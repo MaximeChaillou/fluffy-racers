@@ -412,6 +412,7 @@ fn the_game_dresses_both_circuits_and_the_karts() {
         ("tracks/crique.track.ron", "Crique Câline"),
         ("tracks/col.track.ron", "Col des Moufles"),
         ("tracks/lagon.track.ron", "Lagon Duvet"),
+        ("tracks/ruban.track.ron", "Ruban Réglisse"),
     ] {
         let mut app =
             crate::tests::game_app_unloaded(crate::track::TrackChoice::Circuit(track.into()), 11);

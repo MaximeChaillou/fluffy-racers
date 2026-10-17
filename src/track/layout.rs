@@ -3,7 +3,8 @@
 
 use bevy::prelude::*;
 
-use super::data::{ControlPoint, OffroadZone, TrackData};
+use super::anti_gravity::AntiGravityZone;
+use super::data::{AntiGravityData, ControlPoint, OffroadZone, TrackData};
 use super::water::{Gap, Lake};
 
 /// One point of the sampled centerline.
@@ -74,15 +75,71 @@ fn catmull_rom_tangent(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
 }
 
 /// Smooth blend of a per-point value between two control points.
-fn blend(a: f32, b: f32, t: f32) -> f32 {
+pub(crate) fn blend(a: f32, b: f32, t: f32) -> f32 {
     let s = t * t * (3.0 - 2.0 * t);
     a + (b - a) * s
+}
+
+/// Issue #78: the slope of the banking at each control point (degrees per segment). Zero
+/// everywhere (the banking settles at each point: [`blend`], as before #78), but strictly inside
+/// an anti-gravity zone, where the road twists in one flowing roll from point to point: the
+/// slope of its neighbours (Catmull-Rom), zero at a point where the roll turns back (or stops),
+/// and never more than three times the slope of either side (Fritsch-Carlson: no overshoot,
+/// never beyond the banking of the points around). A kart off the centerline rides the twist like
+/// a ramp: a roll that stops at every point would throw it off the wall at every point.
+pub fn bank_slopes(points: &[ControlPoint], zones: &[AntiGravityData]) -> Vec<f32> {
+    let n = points.len();
+    (0..n)
+        .map(|i| {
+            let param = i as f32;
+            let inside = zones.iter().any(|zone| {
+                let along = (param - zone.from).rem_euclid(n as f32);
+                along > 1e-4 && along < (zone.to - zone.from).rem_euclid(n as f32) - 1e-4
+            });
+            if !inside {
+                return 0.0;
+            }
+            let before = points[i].bank - points[(i + n - 1) % n].bank;
+            let after = points[(i + 1) % n].bank - points[i].bank;
+            if before * after <= 0.0 {
+                return 0.0;
+            }
+            let most = 3.0 * before.abs().min(after.abs());
+            ((before + after) / 2.0).clamp(-most, most)
+        })
+        .collect()
+}
+
+/// The banking (degrees) at `t` (0 to 1) of the segment from point `a` to point `b`, whose slopes
+/// are `slopes` ([`bank_slopes`]): exactly [`blend`] when both are zero, a cubic Hermite curve
+/// otherwise.
+pub fn bank_between(a: f32, b: f32, slopes: (f32, f32), t: f32) -> f32 {
+    if slopes == (0.0, 0.0) {
+        return blend(a, b, t);
+    }
+    let (t2, t3) = (t * t, t * t * t);
+    (2.0 * t3 - 3.0 * t2 + 1.0) * a
+        + (t3 - 2.0 * t2 + t) * slopes.0
+        + (-2.0 * t3 + 3.0 * t2) * b
+        + (t3 - t2) * slopes.1
 }
 
 impl CenterLine {
     /// Samples the closed spline through `points` roughly every `step` meters.
     pub fn new(points: &[ControlPoint], step: f32) -> Self {
+        Self::with_zones(points, step, &[])
+    }
+
+    /// The centerline of a circuit's file: its points, its step, and its anti-gravity zones,
+    /// where the banking flows from point to point (issue #78, [`bank_slopes`]).
+    pub fn of(data: &TrackData) -> Self {
+        Self::with_zones(&data.points, data.sample_step, &data.anti_gravity)
+    }
+
+    /// The same, the banking flowing in the anti-gravity zones `zones` ([`bank_slopes`]).
+    pub fn with_zones(points: &[ControlPoint], step: f32, zones: &[AntiGravityData]) -> Self {
         let n = points.len();
+        let slopes = bank_slopes(points, zones);
         assert!(n >= 4, "a track needs at least 4 control points");
         let point = |i: usize| points[i % n];
         let curve_at = |param: f32| {
@@ -100,6 +157,7 @@ impl CenterLine {
                 point(segment),
                 point(segment + 1),
                 t,
+                (slopes[segment], slopes[(segment + 1) % n]),
             )
         };
 
@@ -133,12 +191,12 @@ impl CenterLine {
             let span = (fine_lengths[fine + 1] - fine_lengths[fine]).max(1e-6);
             let along = ((distance - fine_lengths[fine]) / span).clamp(0.0, 1.0);
             let param = fine_params[fine] + (fine_params[fine + 1] - fine_params[fine]) * along;
-            let (position, tangent, a, b, t) = curve_at(param);
+            let (position, tangent, a, b, t, slopes) = curve_at(param);
 
             let forward = tangent.normalize_or(Vec3::NEG_Z);
             let flat_right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
             let flat_up = flat_right.cross(forward);
-            let bank = blend(a.bank, b.bank, t).to_radians();
+            let bank = bank_between(a.bank, b.bank, slopes, t).to_radians();
             let (sin, cos) = bank.sin_cos();
             samples.push(TrackSample {
                 distance,
@@ -289,6 +347,8 @@ pub struct TrackLayout {
     /// Issue #20: the stretches with no road (the karts glide over them) and the lakes.
     pub gaps: Vec<Gap>,
     pub lakes: Vec<Lake>,
+    /// Issue #78: the anti-gravity zones (the karts drive on the walls there).
+    pub anti_gravity: Vec<AntiGravityZone>,
 }
 
 /// Racers on the grid (GD § 1).
@@ -296,21 +356,28 @@ pub const GRID_SLOTS: usize = 12;
 
 impl TrackLayout {
     pub fn new(data: &TrackData) -> Self {
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(data);
         let checkpoints = center.checkpoints(data.checkpoint_spacing);
         let respawns = if data.respawns.is_empty() {
             // One per checkpoint, except where a kart must not be dropped: on a ramp, in sand, in
-            // a gap (issue #20: no road there) or just before one.
+            // a gap (issue #20: no road there) or just before one, in an anti-gravity zone (issue
+            // #78: on a wall, maybe).
             let blocked: Vec<(f32, f32)> = data
                 .trick_ramps
                 .iter()
                 .chain(&data.glide_ramps)
                 .map(|r| (r.at, r.length + 3.0))
-                .chain(data.gaps.iter().map(|g| {
-                    let from = center.param_to_distance(g.from);
-                    let to = center.param_to_distance(g.to);
-                    (g.from, center.wrap(to - from) + 3.0)
-                }))
+                .chain(
+                    data.gaps
+                        .iter()
+                        .map(|g| (g.from, g.to))
+                        .chain(data.anti_gravity.iter().map(|z| (z.from, z.to)))
+                        .map(|(from_param, to_param)| {
+                            let from = center.param_to_distance(from_param);
+                            let to = center.param_to_distance(to_param);
+                            (from_param, center.wrap(to - from) + 3.0)
+                        }),
+                )
                 .chain(data.offroad.iter().map(|z| {
                     let from = center.param_to_distance(z.from);
                     let to = center.param_to_distance(z.to);
@@ -343,6 +410,11 @@ impl TrackLayout {
             mirrored: data.mirrored,
             gaps: data.gaps.iter().map(|g| Gap::new(&center, g)).collect(),
             lakes: data.lakes.iter().map(Lake::new).collect(),
+            anti_gravity: data
+                .anti_gravity
+                .iter()
+                .map(|z| AntiGravityZone::new(&center, z))
+                .collect(),
             center,
         }
     }
@@ -355,6 +427,64 @@ mod tests {
 
     fn prairie() -> TrackData {
         TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
+    }
+
+    /// Issue #78 (GD § 10): the Ruban Réglisse has one anti-gravity zone, its road flat at both
+    /// ends (where the karts go in and out), a wall in the middle (90°, its lower edge above the
+    /// ground); its banking goes beyond 45° only in it; no pelican drops a kart in it (nor 3 m
+    /// before it); the items find the wall's normal over it, and the world's up elsewhere. Its
+    /// mirror image too (the banking the other way, the zone at the same place along the track).
+    #[test]
+    fn the_ribbon_has_its_wall_in_its_zone() {
+        let data = every_circuit()
+            .into_iter()
+            .find(|d| d.name == "Ruban Réglisse")
+            .expect("the circuit of issue #78");
+        for data in [data.clone(), data.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            assert_eq!(layout.anti_gravity.len(), 1);
+            let zone = layout.anti_gravity[0];
+            let flat = |s: &TrackSample| s.up.y > 0.97;
+            assert!(flat(&center.at(zone.from)) && flat(&center.at(zone.to)));
+            let length = zone.length(center);
+            assert!((150.0..300.0).contains(&length), "{length}");
+            let mut on_the_wall = 0;
+            for s in center.samples() {
+                let zoned = zone.contains(center, s.distance);
+                // A right-handed road frame: right × forward is up.
+                let frame = s.up.angle_between(s.right.cross(s.forward)).to_degrees();
+                assert!(frame < 1.0, "{:.0} m: not a road frame", s.distance);
+                let tilt = s.up.y.clamp(-1.0, 1.0).acos().to_degrees();
+                if !zoned {
+                    assert!(tilt <= 46.0, "{:.0} m: {tilt}° out of the zone", s.distance);
+                }
+                if s.up.y.abs() < 0.02 {
+                    assert!(zoned);
+                    on_the_wall += 1;
+                    // The wall's lower edge, its outer face, above the ground.
+                    let low = [-1.0f32, 1.0]
+                        .map(|side| s.point(side * (wall_offset(s) + WALL_THICKNESS), 0.0).y)
+                        .into_iter()
+                        .fold(f32::MAX, f32::min);
+                    assert!(low > GROUND_HEIGHT + 0.2, "{low}");
+                }
+            }
+            assert!(on_the_wall >= 25, "{on_the_wall} m of wall");
+            for drop in &layout.respawns {
+                assert!(
+                    center.wrap(*drop - zone.from + 3.0) > length + 3.0,
+                    "a drop point at {drop} in the zone"
+                );
+            }
+            let course = crate::race::Course::new(&layout, &crate::race::RaceTuning::default());
+            let wall = center.at(zone.from + length / 2.0);
+            assert!(course.up_at(wall.point(2.0, 0.4)).dot(wall.up) > 0.999);
+            assert_eq!(
+                course.up_at(center.at(zone.from - 30.0).point(0.0, 0.4)),
+                Vec3::Y
+            );
+        }
     }
 
     /// Issue #20 (GD § 10): the Lagon Duvet has a glide ramp at the start of its gap (the lip
@@ -441,7 +571,7 @@ mod tests {
     #[test]
     fn centerline_is_closed_and_evenly_sampled() {
         let data = prairie();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         let samples = center.samples();
         let step = center.length() / samples.len() as f32;
         assert!((step - data.sample_step).abs() < 0.1, "{step}");
@@ -552,7 +682,7 @@ mod tests {
     #[test]
     fn params_map_to_increasing_distances() {
         let data = prairie();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         assert_eq!(center.param_to_distance(0.0), 0.0);
         let mut previous = -1.0;
         for k in 0..(data.points.len() * 4) {
@@ -599,7 +729,7 @@ mod tests {
                 if data.mirrored { " (miroir)" } else { "" }
             );
             let layout = TrackLayout::new(&data);
-            let center = CenterLine::new(&data.points, data.sample_step);
+            let center = CenterLine::of(&data);
             let samples = center.samples();
             for (i, s) in samples.iter().enumerate() {
                 let radius = center.turn_radius(i);
@@ -747,7 +877,7 @@ mod tests {
     #[test]
     fn walls_never_fold_and_everything_stays_above_the_ground() {
         let data = prairie();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         // The inner wall folds over itself where a turn is tighter than its offset.
         for (i, s) in center.samples().iter().enumerate() {
             let radius = center.turn_radius(i);

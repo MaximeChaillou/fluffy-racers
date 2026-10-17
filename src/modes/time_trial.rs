@@ -570,6 +570,13 @@ fn show_ghost(
         environment.set_if_neq(KartEnvironment {
             gliding: look.gliding,
             underwater: look.underwater,
+            // Issue #78: its wheels pivot in anti-gravity.
+            anti_gravity: look.anti_gravity,
+            up: if look.anti_gravity {
+                pose.rotation * Vec3::Y
+            } else {
+                Vec3::Y
+            },
             ..*environment
         });
         let moving = Velocity {

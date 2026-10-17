@@ -788,3 +788,96 @@ fn the_glider_and_the_water_are_seen_on_the_other_screens() {
     let own = *ana.world().get::<KartEnvironment>(kart).unwrap();
     assert!(own.underwater, "and on hers");
 }
+
+/// Issue #78 acceptance (GD § 10): the anti-gravity travels in the last bit of a kart's flags
+/// (bit 7 of `KartState`): Ana's kart drives onto the Ruban Réglisse's wall and back down; on
+/// Bob's screen, its body is in anti-gravity while it drives on the wall (its up turned to the
+/// side, as on hers), its wheels pivot flat, and both come back once it is off the wall.
+#[test]
+fn the_anti_gravity_is_seen_on_the_other_screens() {
+    use crate::interpolation::PhysicsPose;
+    use crate::kart::{KartBodyPivot, KartEnvironment, WheelVisual};
+    let ribbon = || TrackChoice::Circuit("tracks/ruban.track.ron".into());
+    let mut ana = online_game_on(ribbon(), ANA, 0, BOB, 1);
+    let mut bob = online_game_on(ribbon(), BOB, 1, ANA, 0);
+    on_the_same_clock(&mut ana, &mut bob);
+    for app in [&mut ana, &mut bob] {
+        app.world_mut()
+            .resource_mut::<KartSync>()
+            .drain_outgoing()
+            .for_each(drop);
+    }
+    let kart = crate::tests::player(&mut ana);
+    let layout = ana.world().resource::<crate::track::TrackLayout>().clone();
+    let zone = layout.anti_gravity[0];
+    let start = layout.center.at(zone.from - 20.0);
+    let transform = start.transform(0.0, crate::track::GRID_HEIGHT);
+    let world = ana.world_mut();
+    *world.get_mut::<Transform>(kart).unwrap() = transform;
+    world.get_mut::<PhysicsPose>(kart).unwrap().snap(transform);
+    world.get_mut::<Velocity>(kart).unwrap().linear = start.forward * 25.0;
+    // What Bob shows of Ana's kart: its environment, its up, its wheels' pivot (the most and the
+    // least pivoted of the four).
+    let shown = |bob: &mut App| -> Option<(KartEnvironment, Vec3, f32, f32)> {
+        let proxy = bob.world().resource::<KartSync>().remote(ANA)?.proxy?;
+        let world = bob.world_mut();
+        let environment = *world.get::<KartEnvironment>(proxy)?;
+        let up = *world.get::<Transform>(proxy)?.up();
+        let pivots: Vec<f32> = world
+            .query::<(&WheelVisual, &ChildOf)>()
+            .iter(world)
+            .filter(|(_, child_of)| {
+                world
+                    .get::<KartBodyPivot>(child_of.parent())
+                    .is_some_and(|pivot| pivot.body == proxy)
+            })
+            .map(|(wheel, _)| wheel.pivot)
+            .collect();
+        (pivots.len() == 4).then(|| {
+            let most = pivots.iter().copied().fold(0.0, f32::max);
+            let least = pivots.iter().copied().fold(1.0, f32::min);
+            (environment, up, most, least)
+        })
+    };
+    let (mut on_the_wall, mut flat, mut back) = (false, false, false);
+    let mut was_in = false;
+    // 20 s at most (frames of 1/120 s): the kart drives straight on, its stick untouched, and
+    // may slow down on the shoulders of the wall.
+    for _ in 0..(20 * 120) {
+        ana.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowUp);
+        ana.update();
+        bob.update();
+        transfer(&mut ana, ANA, &mut bob);
+        transfer(&mut bob, BOB, &mut ana);
+        let Some((environment, up, most, least)) = shown(&mut bob) else {
+            continue;
+        };
+        let own = *ana.world().get::<KartEnvironment>(kart).unwrap();
+        if environment.anti_gravity {
+            was_in = true;
+            // On the wall: its body turned to the side, its up the body's, as on Ana's screen.
+            if up.y.abs() < 0.2 {
+                on_the_wall = true;
+                assert!(
+                    environment.up.dot(up) > 0.999,
+                    "{:?} vs {up}",
+                    environment.up
+                );
+                assert!(own.anti_gravity, "and on Ana's screen");
+            }
+            flat |= least > 0.99;
+        } else if was_in && on_the_wall && most == 0.0 {
+            back = true;
+            assert_eq!(environment.up, Vec3::Y);
+            break;
+        }
+    }
+    assert!(on_the_wall, "Ana's kart never on the wall on Bob's screen");
+    assert!(flat, "its wheels never pivoted flat on Bob's screen");
+    assert!(
+        back,
+        "its anti-gravity and its wheels never came back on Bob's screen"
+    );
+}

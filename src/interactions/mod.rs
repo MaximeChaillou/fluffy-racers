@@ -62,8 +62,9 @@ use crate::TICK_HZ;
 use crate::croquettes::{CroquetteSystems, LoseCroquettes, LossCause};
 use crate::items::ItemSystems;
 use crate::kart::{
-    Invincibility, Kart, KartInput, KartState, KartSystems, MaxSpeedFactors, Remote, Shove, Stall,
-    StatEffects, StatsTuning, TetherPull, strike_push_factor, tether_force_scale,
+    Invincibility, Kart, KartEnvironment, KartInput, KartState, KartSystems, MaxSpeedFactors,
+    Remote, Shove, Stall, StatEffects, StatsTuning, TetherPull, strike_push_factor,
+    tether_force_scale,
 };
 use crate::net::KartHistory;
 use crate::race::{Race, RaceProgress, RaceSystems};
@@ -293,7 +294,7 @@ fn use_paws(
             &StatEffects,
             &Remote,
             Option<&Paw>,
-            Option<&RaceProgress>,
+            (Option<&RaceProgress>, Option<&KartEnvironment>),
         ),
         Without<Kart>,
     >,
@@ -308,7 +309,7 @@ fn use_paws(
             &Invincibility,
             &StatEffects,
             (&mut Paw, &mut PawStats, &mut Shove),
-            Option<&RaceProgress>,
+            (Option<&RaceProgress>, &KartEnvironment),
         ),
         With<Kart>,
     >,
@@ -330,10 +331,12 @@ fn use_paws(
             invincibility,
             effects,
             (paw, ..),
-            progress,
+            (progress, environment),
         )| {
             let finished = progress.is_some_and(|p| p.finished());
             let invincible = invincibility.is_active();
+            // Issue #78: no paw in anti-gravity (the spin boost instead).
+            let racing = racing && !environment.anti_gravity;
             KartView {
                 entity,
                 position: transform.translation,
@@ -348,9 +351,20 @@ fn use_paws(
         },
     ));
     views.extend(remotes.iter().map(
-        |(entity, transform, velocity, state, invincibility, effects, remote, paw, progress)| {
+        |(
+            entity,
+            transform,
+            velocity,
+            state,
+            invincibility,
+            effects,
+            remote,
+            paw,
+            (progress, environment),
+        )| {
             let finished = progress.is_some_and(|p| p.finished());
             let invincible = invincibility.is_active();
+            let racing = racing && !environment.is_some_and(|e| e.anti_gravity);
             let (protected, linked) = paw.map_or((false, false), |p| (p.protected > 0, p.linked()));
             KartView {
                 entity,
@@ -375,7 +389,7 @@ fn use_paws(
         _,
         effects,
         (mut paw, mut stats, mut shove),
-        progress,
+        (progress, environment),
     ) in &mut karts
     {
         // Nothing going on, nothing pressed: nothing to do.
@@ -383,6 +397,9 @@ fn use_paws(
             continue;
         }
         let finished = progress.is_some_and(|p| p.finished());
+        // Issue #78: in anti-gravity, no paw; a tether lets go there (like off the ground).
+        let anti_gravity = environment.anti_gravity;
+        let racing = racing && !anti_gravity;
         let stalled = stall.is_active();
         let forward = heading(transform);
         let right = right_of(forward);
@@ -399,7 +416,7 @@ fn use_paws(
             },
             can_strike: can_strike(state, stalled, racing, finished),
             can_grab: can_grab(state, stalled, racing, finished, paw.held.is_some()),
-            grounded: *state == KartState::Grounded,
+            grounded: *state == KartState::Grounded && !anti_gravity,
             hit: state.is_hit(),
             towed: *state == KartState::Respawning,
             finished,
@@ -545,7 +562,7 @@ fn receive_interactions(
             &Invincibility,
             (&mut Paw, &mut PawStats, &mut Shove),
             Option<&RaceProgress>,
-            Option<&KartHistory>,
+            (Option<&KartHistory>, &KartEnvironment),
         ),
         With<Kart>,
     >,
@@ -570,12 +587,14 @@ fn receive_interactions(
             invincibility,
             (mut paw, mut stats, mut shove),
             progress,
-            history,
+            (history, environment),
         )) = karts.get_mut(strike.target)
         else {
             continue;
         };
         let finished = progress.is_some_and(|p| p.finished());
+        // Issue #78: no paw reaches a kart in anti-gravity.
+        let racing = racing && !environment.anti_gravity;
         // A throw comes from the kart holding it; a strike from a kart in reach.
         let in_reach = if strike.throw {
             paw.held.is_some_and(|held| held.by == strike.striker)
@@ -620,8 +639,16 @@ fn receive_interactions(
         });
     }
     for grab in grabs.read() {
-        let Ok((_, transform, _, state, invincibility, (mut paw, mut stats, _), progress, history)) =
-            karts.get_mut(grab.target)
+        let Ok((
+            _,
+            transform,
+            _,
+            state,
+            invincibility,
+            (mut paw, mut stats, _),
+            progress,
+            (history, environment),
+        )) = karts.get_mut(grab.target)
         else {
             // Another peer's kart decides for itself (online); a kart gone cannot be held.
             if !remote.contains(grab.target) {
@@ -634,6 +661,7 @@ fn receive_interactions(
             continue;
         };
         let finished = progress.is_some_and(|p| p.finished());
+        let racing = racing && !environment.anti_gravity;
         let accepted = seen_at(transform, history, grab.seen).is_some_and(|position| {
             accepts(&tuning, tick, grab.tick, grab.grabber_position, position)
         }) && can_be_grabbed(

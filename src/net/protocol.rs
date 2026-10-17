@@ -40,13 +40,14 @@
 //! newest state ([`Message::KartStates`], grouped by the peer that drives them). Version 9 (issue
 //! #70): the host's closed results ([`RaceResults`]: every racer's time, estimated for those
 //! still on track). Version 10 (issue #20): two more bits of a kart's flags, its glider open and
-//! under water ([`KART_FLAGS`]). Version 11 (issue #21): the items of phase 3: the boomerang-os
+//! under water (`KART_FLAGS`). Version 11 (issue #21): the items of phase 3: the boomerang-os
 //! thrown ([`OutMotion::Boomerang`]), a pie voleuse's theft asked of its victim's peer
 //! ([`Steal`]) and what that peer gave up ([`Stolen`]); in the kart states, two bits of the items
 //! byte (it holds an item a pie voleuse can take; invisible) and one more byte, the piñata's
 //! items left around the kart (`KartSnapshot::pinata`, 50 bytes). Version 12 (issue #88): a
 //! boomerang-os thrown carries its curve ([`OutMotion::Boomerang`]: the steering of its throw, 4
-//! bytes more).
+//! bytes more). Version 13 (issue #78): the last bit of a kart's flags, in anti-gravity
+//! (`KART_FLAGS`).
 
 use std::fmt;
 
@@ -56,7 +57,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 12;
+pub const PROTOCOL_VERSION: u8 = 13;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -312,9 +313,11 @@ pub const OUT_ITEMS: [ItemKind; 6] = [
     ItemKind::Boomerang,
 ];
 
-/// The highest flags of a kart state (`KartSnapshot::flags`): bit 7 is 0. Issue #20: bit 5 is the
-/// glider open, bit 6 under water.
-pub const KART_FLAGS: u8 = 0b111_1111;
+/// The highest flags of a kart state (`KartSnapshot::flags`): every bit is taken. Issue #20: bit
+/// 5 is the glider open, bit 6 under water; issue #78: bit 7 in anti-gravity. Since then, any byte
+/// is a valid set of flags: only the tests need it.
+#[cfg(test)]
+pub const KART_FLAGS: u8 = 0b1111_1111;
 
 /// The items whose user tells the others what they do to them (issue #61, [`EffectOut`]), in
 /// their wire order.
@@ -1847,9 +1850,8 @@ impl Reader<'_> {
         if kart.state & 0x07 == 0x07 || kart.state & 0x80 != 0 {
             return Err(DecodeError::Invalid("kart state"));
         }
-        if kart.flags > KART_FLAGS {
-            return Err(DecodeError::Invalid("kart flags"));
-        }
+        // Every bit of the flags means something since issue #78 (bit 7: in anti-gravity): any
+        // byte is a valid set of flags (`KART_FLAGS`).
         if !valid_held_items(kart.items) {
             return Err(DecodeError::Invalid("kart items"));
         }
@@ -2748,24 +2750,36 @@ mod tests {
             2 + 4 + 2 + 12 + 6 + 12 + 1,
         );
         // Issue #61: bits 2 to 4 of the flags are the super câlin, the fusée and the dégonflage;
-        // issue #20: 5 and 6 the glider and the water; 7 stays free.
-        for (at, value) in [
-            (state, 0x07),
-            (state, 0x80),
-            (flags, 0b1010_0000),
-            (flags, 0b1000_0100),
-            (flags, 0x80),
-            (rotation, 0x80),
-        ] {
+        // issue #20: 5 and 6 the glider and the water; issue #78: 7 the anti-gravity, the last
+        // free one (it was refused before): every flags byte is valid now.
+        for (at, value) in [(state, 0x07), (state, 0x80), (rotation, 0x80)] {
             let mut bad = kart.clone();
             bad[at] = value;
             assert!(invalid(&bad), "byte {at} = {value:#x}");
         }
         assert!(Message::decode(&kart).is_ok());
-        for value in [0b100, 0b1000, 0b1_0000, 0b10_0000, 0b100_0000, KART_FLAGS] {
+        for value in [
+            0b100,
+            0b1000,
+            0b1_0000,
+            0b10_0000,
+            0b100_0000,
+            0b1000_0000,
+            0b1010_0000,
+            0b1000_0100,
+            KART_FLAGS,
+        ] {
             let mut good = kart.clone();
             good[flags] = value;
-            assert!(Message::decode(&good).is_ok(), "flags {value:#b}");
+            let Ok(Message::KartState(state)) = Message::decode(&good) else {
+                panic!("flags {value:#b}");
+            };
+            assert_eq!(state.flags, value);
+            assert_eq!(
+                state.pose().look.anti_gravity,
+                value & 0x80 != 0,
+                "flags {value:#b}"
+            );
         }
         // Issue #9: a race without laps, with a bot difficulty beyond Hard, with more racers than
         // the grid has slots, with a player twice; a checkpoint of a kart beyond the grid; a

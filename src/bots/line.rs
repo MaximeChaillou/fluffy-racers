@@ -17,7 +17,7 @@ use bevy::prelude::*;
 
 use crate::kart::DriftSide;
 use crate::track::mesh::wall_offset;
-use crate::track::{CenterLine, TrackLayout};
+use crate::track::{CenterLine, TrackLayout, anti_gravity_at};
 
 /// A curvature below this (radius above 70 m) is a straight for the turn detection (1/m).
 const TURN_MIN_CURVATURE: f32 = 1.0 / 70.0;
@@ -137,9 +137,18 @@ impl RacingLine {
             .iter()
             .map(|s| Vec2::new(s.position.x, s.position.z))
             .collect();
+        // Issue #78: in an anti-gravity zone, the road may be a wall, its right pointing down:
+        // there the line moves across the track along the horizontal right of the heading (the
+        // same direction where the road is still flat enough to be seen from above).
         let rights: Vec<Vec2> = samples
             .iter()
-            .map(|s| Vec2::new(s.right.x, s.right.z).normalize_or(Vec2::X))
+            .map(|s| {
+                if anti_gravity_at(&layout.anti_gravity, &center, s.distance).is_some() {
+                    Vec2::new(-s.forward.z, s.forward.x).normalize_or(Vec2::X)
+                } else {
+                    Vec2::new(s.right.x, s.right.z).normalize_or(Vec2::X)
+                }
+            })
             .collect();
         let offset = least_curvature_offsets(&points, &rights, &line_limits);
 

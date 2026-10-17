@@ -1,5 +1,5 @@
-//! Special environments (GD § 10, issue #20): under water and the glider. The anti-gravity is
-//! not built yet (its own issue); its terrain stats are ready (`stats.rs`, [`Terrain`]).
+//! Special environments (GD § 10): under water and the glider (issue #20), the anti-gravity
+//! (issue #78).
 //!
 //! - **Under water**: a kart whose center is under the water of a lake (`crate::track::Lake`,
 //!   with a little hysteresis: [`next_underwater`]) drives with its stats « eau » (the Speed and
@@ -13,6 +13,15 @@
 //!   whatever the kart did on the ramp. Touching the ground closes it, and so do the water and
 //!   the pelican. Its pitch and bank are only shown ([`glide_pose`]): the simulated body stays
 //!   level (the camera and the collisions do not change).
+//! - **The anti-gravity** (issue #78): a wheel on the road of an anti-gravity zone
+//!   (`crate::track::AntiGravity`) puts the kart in it, a wheel on the road beyond takes it out
+//!   (in the air, it stays as it was). There, its gravity pulls along the road's normal under its
+//!   wheels ([`KartEnvironment::up`]; in the air, that of the zone's road below it, or the last
+//!   one), as strong as the world's
+//!   ([`anti_gravity_force`]); its tilt follows that normal on the ground, and turns back to it in
+//!   the air; it drives with its stats « anti-gravité » ([`Terrain::AntiGravity`]); its wheels
+//!   pivot (shown only); two karts in anti-gravity that bump into each other both get a boost
+//!   (the spin boost, [`EnvironmentTuning::spin_boost_strength`]).
 //!
 //! The kart only reads its `KartInput`. Everything here is pure and unit-tested, but the two
 //! systems at the end (`KartSystems::Drive`).
@@ -93,6 +102,31 @@ pub struct EnvironmentTuning {
     pub glide_bank: f32,
     /// Shown only: the wing opens (and folds) in this long (s).
     pub wing_open_seconds: f32,
+
+    // --- Anti-gravity (issue #78) ---------------------------------------------------------------
+    /// On the ground in anti-gravity, the kart's tilt turns its up toward the road's normal at
+    /// this rate (1/s): the road twists under it, the kart follows (a lag of about a tenth of the
+    /// road's roll rate). In the air, `KartTuning::righting_rate` turns it back to that normal.
+    pub anti_gravity_align_rate: f32,
+    /// In the air in anti-gravity (a hop, a jump), the kart's gravity follows the road of the
+    /// zone below it, found up to this far along its up (m): the road twists away under a kart
+    /// in the air, its gravity turns with it. Without road there, the normal of the last contact.
+    pub anti_gravity_probe: f32,
+    /// The anti-gravity holds the karts to its road: a kart in the air more than this high above
+    /// it (its center, m: a hop rises to about 0.85 m)...
+    pub anti_gravity_hold_height: f32,
+    /// ...is pulled toward it this many times harder (on top of its gravity): where the road twists
+    /// away under a kart in the air, it never flies over a wall (1.2 m high).
+    pub anti_gravity_hold: f32,
+    /// Two karts in anti-gravity that bump into each other this fast (closing speed, m/s) both get
+    /// the spin boost (GD § 10, MK8DX)...
+    pub spin_boost_min_speed: f32,
+    /// ...of this strength (top speed +20 %, like a blue mini-turbo)...
+    pub spin_boost_strength: f32,
+    /// ...for this long (s).
+    pub spin_boost_duration: f32,
+    /// Shown only: the wheels pivot flat (and back) in this long (s).
+    pub wheel_pivot_seconds: f32,
 }
 
 impl Default for EnvironmentTuning {
@@ -121,12 +155,21 @@ impl Default for EnvironmentTuning {
             glide_pitch: 0.3,
             glide_bank: 0.5,
             wing_open_seconds: 0.3,
+
+            anti_gravity_align_rate: 12.0,
+            anti_gravity_probe: 8.0,
+            anti_gravity_hold_height: 1.0,
+            anti_gravity_hold: 2.0,
+            spin_boost_min_speed: 3.0,
+            spin_boost_strength: 0.2,
+            spin_boost_duration: 0.6,
+            wheel_pivot_seconds: 0.25,
         }
     }
 }
 
-/// Where a kart is (issue #20): under water, gliding. On every kart; online, on the other peers'
-/// karts too (from their states: `crate::net`), for the visuals.
+/// Where a kart is (issue #20): under water, gliding; in anti-gravity (issue #78). On every kart;
+/// online, on the other peers' karts too (from their states: `crate::net`), for the visuals.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct KartEnvironment {
     /// Its center is under the water of a lake.
@@ -135,6 +178,12 @@ pub struct KartEnvironment {
     pub gliding: bool,
     /// Ticks since a wheel last touched a glide ramp (`u32::MAX`: never).
     pub since_glide_ramp: u32,
+    /// Issue #78: in an anti-gravity zone (a wheel last touched its road).
+    pub anti_gravity: bool,
+    /// Issue #78: its up, where its gravity pulls away from: the world's up, but in anti-gravity
+    /// the road's normal under its wheels (in the air, that of the zone's road below it, or the
+    /// last one). What the camera, the bots and the items take as the kart's vertical.
+    pub up: Vec3,
 }
 
 impl Default for KartEnvironment {
@@ -143,21 +192,54 @@ impl Default for KartEnvironment {
             underwater: false,
             gliding: false,
             since_glide_ramp: u32::MAX,
+            anti_gravity: false,
+            up: Vec3::Y,
         }
     }
 }
 
 impl KartEnvironment {
-    /// The terrain its stats use (GD § 9): the air while gliding, the water under water.
+    /// The terrain its stats use (GD § 9): the air while gliding, the water under water, the
+    /// anti-gravity in anti-gravity (issue #78).
     pub fn terrain(&self) -> Terrain {
         if self.gliding {
             Terrain::Air
         } else if self.underwater {
             Terrain::Water
+        } else if self.anti_gravity {
+            Terrain::AntiGravity
         } else {
             Terrain::Ground
         }
     }
+}
+
+/// The world's gravity (m/s²): Rapier's default, `RapierConfiguration::gravity`, downward.
+pub const GRAVITY: f32 = 9.81;
+
+/// Issue #78: whether the kart is in anti-gravity after this tick: with a wheel on the ground,
+/// whether one is on the road of a zone (`on_zone`); in the air, as it was (a hop, a jump on the
+/// wall: it lands back on it). Never under its glider nor under water.
+pub fn next_anti_gravity(
+    environment: &KartEnvironment,
+    wheels_on_ground: usize,
+    on_zone: bool,
+) -> bool {
+    if environment.gliding || environment.underwater {
+        return false;
+    }
+    if wheels_on_ground > 0 {
+        on_zone
+    } else {
+        environment.anti_gravity
+    }
+}
+
+/// Issue #78: the force of the gravity of a kart of `mass` (kg) in anti-gravity, toward the road
+/// under it (`up`, unit: away from it), as strong as its gravity elsewhere (`gravity_scale` times
+/// the world's) (N).
+pub fn anti_gravity_force(up: Vec3, gravity_scale: f32, mass: f32) -> Vec3 {
+    -up * (GRAVITY * gravity_scale * mass)
 }
 
 /// Whether a kart is under water now: `depth` is how deep its center is under the surface of the
@@ -402,6 +484,45 @@ mod tests {
         );
     }
 
+    /// Issue #78: a wheel on the road of a zone puts the kart in anti-gravity, a wheel on any
+    /// other ground takes it out; in the air, it stays as it was; never under the glider or
+    /// under water. Its gravity there pulls toward the road, as strong as elsewhere; its terrain
+    /// is the anti-gravity's.
+    #[test]
+    fn the_anti_gravity_holds_from_its_road_to_the_next_ground() {
+        let out = KartEnvironment::default();
+        let inside = KartEnvironment {
+            anti_gravity: true,
+            up: Vec3::X,
+            ..default()
+        };
+        assert!(next_anti_gravity(&out, 2, true));
+        assert!(!next_anti_gravity(&out, 2, false));
+        assert!(!next_anti_gravity(&out, 0, true), "in the air: as it was");
+        assert!(next_anti_gravity(&inside, 0, false), "a hop on the wall");
+        assert!(!next_anti_gravity(&inside, 1, false), "back on the ground");
+        assert!(next_anti_gravity(&inside, 4, true));
+        let gliding = KartEnvironment {
+            gliding: true,
+            ..inside
+        };
+        assert!(!next_anti_gravity(&gliding, 0, true));
+        let wet = KartEnvironment {
+            underwater: true,
+            ..inside
+        };
+        assert!(!next_anti_gravity(&wet, 3, true));
+        assert_eq!(inside.terrain(), Terrain::AntiGravity);
+        assert_eq!(gliding.terrain(), Terrain::Air);
+        assert_eq!(out.up, Vec3::Y);
+        let tuning = KartTuning::default();
+        let force = anti_gravity_force(Vec3::X, tuning.gravity_scale, tuning.mass);
+        assert!(force.normalize().dot(Vec3::NEG_X) > 0.9999);
+        // As strong as the world's gravity on the kart (`GravityScale` times Rapier's).
+        let weight = GRAVITY * tuning.gravity_scale * tuning.mass;
+        assert!((force.length() - weight).abs() < 1e-3 * weight);
+    }
+
     /// The knobs are in the admin panel, which edits `KartTuning` by reflection: every one of
     /// them is a reflected field of `KartTuning::environment`, at its default.
     #[test]
@@ -426,6 +547,10 @@ mod tests {
             "water_gravity",
             "glide_slope",
             "glide_turn_rate",
+            "anti_gravity_align_rate",
+            "spin_boost_strength",
+            "spin_boost_duration",
+            "wheel_pivot_seconds",
         ] {
             assert!(environment.field(name).is_some(), "{name}");
         }

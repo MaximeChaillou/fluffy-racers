@@ -16,7 +16,10 @@ use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, GROUND_HEIGHT, MeshData};
 use super::start_line::StartLine;
 use super::water;
-use super::{MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, ramp_transform_on};
+use super::{
+    AntiGravity, MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, anti_gravity_at,
+    ramp_transform_on,
+};
 use crate::level::LevelScoped;
 use bevy::light::NotShadowCaster;
 
@@ -182,6 +185,26 @@ pub fn build_circuit_when_loaded(
         WALL_RESTITUTION,
         TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,
     );
+    // Issue #78: the road and the shoulders of the anti-gravity zones, marked: a wheel on them
+    // puts the kart in anti-gravity. Only on a circuit that has a zone (nothing new elsewhere: the
+    // same archetypes as before, so the same bot races).
+    for (mesh, surface) in [
+        (&generated.anti_gravity_road, Surface::Road),
+        (&generated.anti_gravity_offroad, Surface::Offroad),
+    ] {
+        if mesh.indices.is_empty() {
+            continue;
+        }
+        if let Some(entity) = spawn_trimesh(
+            &mut commands,
+            mesh,
+            surface,
+            0.0,
+            TriMeshFlags::FIX_INTERNAL_EDGES,
+        ) {
+            commands.entity(entity).insert(AntiGravity);
+        }
+    }
 
     spawn_ground(
         &mut commands,
@@ -233,21 +256,26 @@ fn spawn_trimesh(
     surface: Surface,
     restitution: f32,
     flags: TriMeshFlags,
-) {
+) -> Option<Entity> {
     let (vertices, triangles) = data.collider_data();
     match Collider::trimesh_with_flags(vertices, triangles, flags) {
-        Ok(collider) => {
-            commands.spawn((
-                LevelScoped,
-                Transform::default(),
-                RigidBody::Fixed,
-                collider,
-                Restitution::coefficient(restitution),
-                Friction::coefficient(0.0),
-                surface,
-            ));
+        Ok(collider) => Some(
+            commands
+                .spawn((
+                    LevelScoped,
+                    Transform::default(),
+                    RigidBody::Fixed,
+                    collider,
+                    Restitution::coefficient(restitution),
+                    Friction::coefficient(0.0),
+                    surface,
+                ))
+                .id(),
+        ),
+        Err(error) => {
+            error!("track collider ({surface:?}) could not be built: {error:?}");
+            None
         }
-        Err(error) => error!("track collider ({surface:?}) could not be built: {error:?}"),
     }
 }
 
@@ -509,7 +537,24 @@ fn spawn_spots(
         emissive: LinearRgba::rgb(0.9, 0.8, 0.2),
         ..default()
     });
+    // Issue #78: the pads of the anti-gravity zones are theirs, cyan blue (the same boost).
+    let zones = &layout.anti_gravity;
+    let mut zone_pad_material = None;
     for pad in &data.boost_pads {
+        let sample = at(pad.at);
+        let material = if anti_gravity_at(zones, center, sample.distance).is_some() {
+            zone_pad_material
+                .get_or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.1, 0.65, 1.0),
+                        emissive: LinearRgba::rgb(0.05, 0.35, 0.8),
+                        ..default()
+                    })
+                })
+                .clone()
+        } else {
+            pad_material.clone()
+        };
         commands
             .spawn((
                 LevelScoped,
@@ -517,8 +562,8 @@ fn spawn_spots(
                     half_size: BOOST_PAD_SIZE / 2.0,
                 },
                 Mesh3d(pad_mesh.clone()),
-                MeshMaterial3d(pad_material.clone()),
-                place(&at(pad.at), pad.offset, 0.03),
+                MeshMaterial3d(material),
+                place(&sample, pad.offset, 0.03),
             ))
             .with_children(|pad| {
                 for z in [-0.9, 0.7] {

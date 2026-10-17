@@ -52,9 +52,9 @@ pub use class::{RaceClass, SpeedClass, SpeedClassTuning, drift_brake_speed};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use environment::{
-    EnvironmentTuning, GLIDERS, KartEnvironment, glide_pitch, glide_pose, glide_speeds,
-    glide_targets, glide_yaw_target, glider_groups, groups_meet, next_gliding, next_underwater,
-    water_tuning,
+    EnvironmentTuning, GLIDERS, GRAVITY, KartEnvironment, anti_gravity_force, glide_pitch,
+    glide_pose, glide_speeds, glide_targets, glide_yaw_target, glider_groups, groups_meet,
+    next_anti_gravity, next_gliding, next_underwater, water_tuning,
 };
 pub use environment_visual::{Bubble, WaterEffects, Wing};
 pub use input::{
@@ -83,7 +83,7 @@ pub use tuning::KartTuning;
 pub use visual::{
     BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverPrimitive,
     DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets, KartVisualPlugin,
-    StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, shown_while_invincible,
+    StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, pivoted_wheel, shown_while_invincible,
     shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
@@ -92,7 +92,7 @@ use bevy_rapier3d::prelude::*;
 use bevy_rapier3d::rapier::geometry::Collider as RapierCollider;
 
 use crate::interpolation::PhysicsPose;
-use crate::track::{BoostPad, GlideRamp, Surface, TrickRamp};
+use crate::track::{AntiGravity, BoostPad, GlideRamp, Surface, TrickRamp};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
     approach_yaw_rate, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
@@ -479,18 +479,36 @@ fn record_step_velocities(mut karts: Query<(&Velocity, &mut StepVelocity), With<
 
 /// After the physics step: every pair of karts the solver pushed apart in that step, hitting
 /// each other fast enough, is a bump (GD § 7, `bump.rs`). Read from Rapier's contact graph
-/// (each kart's own contact pairs, a few per kart): no extra physics query.
+/// (each kart's own contact pairs, a few per kart): no extra physics query. Issue #78 (GD § 10):
+/// two karts in anti-gravity that hit each other both get the spin boost; online, each peer gives
+/// it to its own kart (the other one's peer to the other).
 fn detect_bumps(
     tuning: Res<KartTuning>,
     rapier: ReadRapierContext,
-    karts: Query<(Entity, &Transform, &StepVelocity, &KartState), With<Kart>>,
-    remotes: Query<(&Transform, &Velocity, &KartState), (With<Remote>, Without<Kart>)>,
+    karts: Query<
+        (
+            Entity,
+            &Transform,
+            &StepVelocity,
+            &KartState,
+            &KartEnvironment,
+        ),
+        With<Kart>,
+    >,
+    remotes: Query<
+        (&Transform, &Velocity, &KartState, Option<&KartEnvironment>),
+        (With<Remote>, Without<Kart>),
+    >,
+    mut boosts: Query<&mut Boost, With<Kart>>,
+    mut spun: Local<Vec<Entity>>,
     mut bumps: MessageWriter<KartBump>,
 ) {
     let Ok(context) = rapier.single() else {
         return;
     };
-    for (a, a_transform, a_velocity, a_state) in &karts {
+    let environment = &tuning.environment;
+    spun.clear();
+    for (a, a_transform, a_velocity, a_state, a_environment) in &karts {
         if *a_state == KartState::Respawning {
             continue;
         }
@@ -501,19 +519,33 @@ fn detect_bumps(
             let b = if c1 == a { c2 } else { c1 };
             // Online (issue #53): another peer's kart. Only ours is judged here (its own peer
             // judges the other one): the victim decides.
-            let remote = remotes.get(b).ok().map(|(transform, velocity, state)| {
-                (b, transform, StepVelocity(velocity.linear), state)
-            });
+            let remote = remotes
+                .get(b)
+                .ok()
+                .map(|(transform, velocity, state, environment)| {
+                    let anti_gravity = environment.is_some_and(|e| e.anti_gravity);
+                    (
+                        b,
+                        transform,
+                        StepVelocity(velocity.linear),
+                        state,
+                        anti_gravity,
+                    )
+                });
             // Each pair once; only karts.
             if remote.is_none() && b <= a {
                 continue;
             }
-            let Some((_, b_transform, b_velocity, b_state)) = remote.or_else(|| {
-                karts
-                    .get(b)
-                    .ok()
-                    .map(|(b, transform, velocity, state)| (b, transform, *velocity, state))
-            }) else {
+            let Some((_, b_transform, b_velocity, b_state, b_anti_gravity)) =
+                remote.or_else(|| {
+                    karts
+                        .get(b)
+                        .ok()
+                        .map(|(b, transform, velocity, state, environment)| {
+                            (b, transform, *velocity, state, environment.anti_gravity)
+                        })
+                })
+            else {
                 continue;
             };
             if *b_state == KartState::Respawning
@@ -534,12 +566,22 @@ fn detect_bumps(
             } else {
                 normal
             };
+            let closing_speed = closing_speed(a_velocity.0, b_velocity.0, normal);
+            // Issue #78: the spin boost, for both karts in anti-gravity (ours only, online).
+            if a_environment.anti_gravity
+                && b_anti_gravity
+                && closing_speed >= environment.spin_boost_min_speed
+            {
+                spun.push(a);
+                if remote.is_none() {
+                    spun.push(b);
+                }
+            }
             let Some((a_bumped, b_bumped)) =
                 bump_victims(&tuning, a_velocity.0, b_velocity.0, normal)
             else {
                 continue;
             };
-            let closing_speed = closing_speed(a_velocity.0, b_velocity.0, normal);
             if a_bumped {
                 bumps.write(KartBump {
                     kart: a,
@@ -554,6 +596,14 @@ fn detect_bumps(
                     closing_speed,
                 });
             }
+        }
+    }
+    for kart in spun.drain(..) {
+        if let Ok(mut boost) = boosts.get_mut(kart) {
+            boost.add(
+                environment.spin_boost_strength,
+                environment.spin_boost_duration,
+            );
         }
     }
 }
@@ -656,7 +706,11 @@ fn drive_karts(
     time: Res<Time>,
     rapier: ReadRapierContext,
     surfaces: Query<&Surface>,
-    (ramps, glide_ramps): (Query<(), With<TrickRamp>>, Query<(), With<GlideRamp>>),
+    (ramps, glide_ramps, zones): (
+        Query<(), With<TrickRamp>>,
+        Query<(), With<GlideRamp>>,
+        Query<(), With<AntiGravity>>,
+    ),
     mut karts: Query<
         (
             &Transform,
@@ -739,8 +793,13 @@ fn drive_karts(
         }
         let tuning = &*kart_tuning;
         if *state == KartState::Respawning {
-            // Issue #20: the pelican folds the glider.
-            if environment.gliding || environment.since_glide_ramp != u32::MAX {
+            // Issue #20: the pelican folds the glider; issue #78: it takes the kart out of the
+            // anti-gravity.
+            if environment.gliding
+                || environment.since_glide_ramp != u32::MAX
+                || environment.anti_gravity
+                || environment.up != Vec3::Y
+            {
                 *environment = KartEnvironment {
                     underwater: environment.underwater,
                     ..default()
@@ -794,6 +853,14 @@ fn drive_karts(
         let up = *transform.up();
         let forward = *transform.forward();
         let center_of_mass = transform.transform_point(Vec3::Y * tuning.center_of_mass_height);
+        // Issue #78: in anti-gravity, the kart's vertical is the road's normal under its wheels
+        // (last tick's); everywhere else, exactly the world's.
+        let anti_gravity = environment.anti_gravity;
+        let vertical = if anti_gravity {
+            environment.up
+        } else {
+            Vec3::Y
+        };
 
         // --- Suspension: one ray per wheel, spring + damper pushing along the kart's up axis.
         let mut total_force = Vec3::ZERO;
@@ -803,6 +870,7 @@ fn drive_karts(
         let mut offroad = 0;
         let mut on_trick_ramp = false;
         let mut on_glide_ramp = false;
+        let mut on_zone = false;
         for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
             let origin = transform.transform_point(*anchor);
             let hit = context.cast_ray_and_get_normal(
@@ -812,9 +880,16 @@ fn drive_karts(
                 true,
                 filter,
             );
-            let Some((hit_entity, hit)) =
-                hit.filter(|(_, hit)| hit.normal.y >= tuning.min_ground_normal_y)
-            else {
+            // Too steep a face is no ground: steeper than `min_ground_normal_y` from the world's
+            // up, or in anti-gravity (issue #78) from the road's normal the kart drives on.
+            let flat_enough = |normal: Vec3| {
+                if anti_gravity {
+                    normal.dot(vertical) >= tuning.min_ground_normal_y
+                } else {
+                    normal.y >= tuning.min_ground_normal_y
+                }
+            };
+            let Some((hit_entity, hit)) = hit.filter(|(_, hit)| flat_enough(hit.normal)) else {
                 wheels.compression[i] = 0.0;
                 wheels.on_ground[i] = false;
                 continue;
@@ -833,6 +908,7 @@ fn drive_karts(
             }
             on_trick_ramp |= ramps.contains(hit_entity);
             on_glide_ramp |= glide_ramps.contains(hit_entity);
+            on_zone |= zones.contains(hit_entity);
             wheels.compression[i] = compression;
             wheels.on_ground[i] = true;
         }
@@ -862,8 +938,41 @@ fn drive_karts(
             false,
             dt,
         );
+        // Issue #78: in anti-gravity on the road of a zone; its vertical, the road's normal: under
+        // its wheels, or in the air the normal of the zone's road below it (the road twists away
+        // under a kart in the air: its gravity, and the frame it drives in, turn with it; one
+        // ray, only for a kart in the air in anti-gravity).
+        env.anti_gravity = next_anti_gravity(&env, grounded, on_zone);
+        let mut held_down = 0.0;
+        if env.anti_gravity
+            && grounded == 0
+            && let Some((_, below)) = context
+                .cast_ray_and_get_normal(
+                    transform.translation,
+                    -vertical,
+                    environment_tuning.anti_gravity_probe,
+                    true,
+                    filter,
+                )
+                .filter(|(hit, ray)| {
+                    zones.contains(*hit) && ray.normal.dot(vertical) >= tuning.min_ground_normal_y
+                })
+        {
+            wheels.ground_normal = below.normal;
+            // High above the road (it twisted away under the kart): held to it harder.
+            if below.time_of_impact > environment_tuning.anti_gravity_hold_height {
+                held_down = environment_tuning.anti_gravity_hold.max(0.0);
+            }
+        }
+        env.up = if env.anti_gravity {
+            wheels.ground_normal
+        } else {
+            Vec3::Y
+        };
         environment.set_if_neq(env);
         let gliding = env.gliding;
+        let anti_gravity = env.anti_gravity;
+        let vertical = env.up;
         let normal = wheels.ground_normal;
         let ahead = (forward - normal * forward.dot(normal)).normalize_or(forward);
         let right = ahead.cross(normal);
@@ -913,10 +1022,20 @@ fn drive_karts(
             // Hop: at least `hop_speed` along the ground normal (never stacks on a bump).
             linvel += normal * (tuning.hop_speed - linvel.dot(normal)).max(0.0);
         }
-        // Gliding, the glide sets the vertical speed itself (issue #20).
-        let gravity_scale = if gliding { 0.0 } else { tuning.gravity_scale };
+        // Gliding, the glide sets the vertical speed itself (issue #20). In anti-gravity (issue
+        // #78), the world's gravity is off and the kart's own pulls it toward the road under it,
+        // as strong.
+        let gravity_scale = if gliding || anti_gravity {
+            0.0
+        } else {
+            tuning.gravity_scale
+        };
         if gravity.0 != gravity_scale {
             gravity.0 = gravity_scale;
+        }
+        if anti_gravity {
+            force.force +=
+                anti_gravity_force(vertical, tuning.gravity_scale, tuning.mass) * (1.0 + held_down);
         }
         // The drift's curve and slip set in and fade out progressively (issue #30), from the
         // rotation the kart has now.
@@ -1078,18 +1197,27 @@ fn drive_karts(
             let travel = Quat::from_axis_angle(normal, drift_motion.blend() * new_yaw * dt) * ahead;
             velocity.linear =
                 travel * new_forward + right * new_lateral + normal * linvel.dot(normal);
-            velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
+            // In anti-gravity (issue #78), the road may twist under the kart: its tilt follows the
+            // road's normal. Elsewhere, the springs keep it on the road and its tilt calms down.
+            let tilt = if anti_gravity {
+                righting_angular_velocity(up, normal, environment_tuning.anti_gravity_align_rate)
+            } else {
+                tilt * (-tuning.tilt_damping * dt).exp()
+            };
+            velocity.angular = normal * new_yaw + tilt;
         } else {
-            // A little air control, and turn back upright to land on the wheels.
+            // A little air control, and turn back upright to land on the wheels: upright along the
+            // world's up, or in anti-gravity (issue #78) along the road it flies over.
             velocity.linear = linvel + pull.accel * dt;
-            let yaw = angvel.dot(Vec3::Y);
-            let tilt = angvel - Vec3::Y * yaw;
+            let yaw = angvel.dot(vertical);
+            let tilt = angvel - vertical * yaw;
             let target =
                 target_yaw_rate(tuning, input.steer, linvel.dot(forward)) * tuning.air_steer_factor;
-            let righting = righting_angular_velocity(up, Vec3::Y, tuning.righting_rate);
+            let righting = righting_angular_velocity(up, vertical, tuning.righting_rate);
             let blend = 1.0 - (-tuning.air_rotation_response * dt).exp();
-            velocity.angular =
-                Vec3::Y * next_yaw_rate(tuning, yaw, target, dt) + tilt + (righting - tilt) * blend;
+            velocity.angular = vertical * next_yaw_rate(tuning, yaw, target, dt)
+                + tilt
+                + (righting - tilt) * blend;
         }
         // Under water, off the ground, the water slows the jumps and the falls (issue #20).
         if env.underwater && grounded == 0 {
@@ -1105,6 +1233,8 @@ fn drive_karts(
     }
 }
 
+#[cfg(test)]
+mod anti_gravity_tests;
 #[cfg(test)]
 mod environment_tests;
 #[cfg(test)]

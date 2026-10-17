@@ -284,25 +284,28 @@ fn item_box_ahead(
 fn karts_around(
     me: Entity,
     position: Vec3,
-    forward: Vec3,
+    (forward, up): (Vec3, Vec3),
     neighbors: &[Neighbor],
     hidden: &[Entity],
     (ahead_range, behind_range): (f32, f32),
 ) -> (Option<(f32, f32)>, Option<(f32, f32)>) {
-    let flat = forward.with_y(0.0).normalize_or(Vec3::NEG_Z);
+    // Issue #78: across its up (the world's, or the road's normal on a wall).
+    let level = |v: Vec3| v - up * v.dot(up);
+    let flat = level(forward).normalize_or(level(Vec3::NEG_Z).normalize_or(Vec3::NEG_Z));
     let mut ahead: Option<(f32, f32)> = None;
     let mut behind: Option<(f32, f32)> = None;
     for other in neighbors {
         let to = other.position - position;
-        if other.entity == me || to.y.abs() > 3.0 || hidden.contains(&other.entity) {
+        if other.entity == me || to.dot(up).abs() > 3.0 || hidden.contains(&other.entity) {
             continue;
         }
-        let distance = to.with_y(0.0).length();
+        let distance = level(to).length();
         if distance < 1e-3 {
             continue;
         }
-        let angle = flat.angle_between(to.with_y(0.0));
-        let side = flat.cross(to).y.signum();
+        let angle = flat.angle_between(level(to));
+        let turn = flat.cross(to);
+        let side = if up == Vec3::Y { turn.y } else { turn.dot(up) }.signum();
         if angle < std::f32::consts::FRAC_PI_2 {
             if distance < ahead_range && ahead.is_none_or(|(d, _)| distance < d) {
                 ahead = Some((distance, angle * -side));
@@ -436,6 +439,7 @@ fn drive_bots(
             position: transform.translation,
             forward: *transform.forward(),
             right: *transform.right(),
+            up: environment.up,
             velocity: velocity.linear,
             yaw_rate: -velocity.angular.dot(*transform.up()),
             boost_left: boost.remaining,
@@ -474,7 +478,7 @@ fn drive_bots(
             let (ahead, behind) = karts_around(
                 entity,
                 transform.translation,
-                *transform.forward(),
+                (*transform.forward(), environment.up),
                 &neighbors,
                 &hidden,
                 (tuning.item_ahead_range, tuning.item_behind_range),

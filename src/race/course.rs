@@ -11,7 +11,9 @@ use bevy::prelude::*;
 
 use super::tuning::RaceTuning;
 use crate::track::mesh::{WALL_THICKNESS, wall_offset};
-use crate::track::{CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at};
+use crate::track::{
+    AntiGravityZone, CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at,
+};
 
 /// Where a kart is, relative to the stretch of track its progress allows (see
 /// [`Course::project`]).
@@ -49,6 +51,9 @@ pub struct Course {
     pub gate_height: f32,
     /// Issue #20: the stretches with no road (`TrackLayout::gaps`).
     pub gaps: Vec<Gap>,
+    /// Issue #78: the anti-gravity zones (`TrackLayout::anti_gravity`): where the items find the
+    /// road's normal ([`Course::up_at`]).
+    pub anti_gravity: Vec<AntiGravityZone>,
 }
 
 impl Course {
@@ -73,7 +78,14 @@ impl Course {
             gate_margin: tuning.gate_margin,
             gate_height: tuning.gate_height,
             gaps: layout.gaps.clone(),
+            anti_gravity: layout.anti_gravity.clone(),
         }
+    }
+
+    /// The up at `position` (issue #78): the road's normal over an anti-gravity zone, exactly the
+    /// world's up anywhere else.
+    pub fn up_at(&self, position: Vec3) -> Vec3 {
+        crate::track::anti_gravity::up_at(&self.anti_gravity, &self.center, position)
     }
 
     /// Where `position` is relative to the sample `s` of the centerline, at race distance

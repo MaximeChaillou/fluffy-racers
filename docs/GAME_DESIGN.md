@@ -282,7 +282,18 @@ Toutes les valeurs sont dans `KartTuning::environment` (`EnvironmentTuning` : pa
   - un **lac** (`lakes` : un rectangle creusé dans le sol jusqu'à son fond, plein d'eau jusqu'à son niveau, juste sous le sol) ; la route peut y plonger, et seulement là. Le kart est sous l'eau quand son centre est sous la surface de plus de 0,15 m ; il en sort quand il est au-dessus de plus de 0,15 m ;
   - sous l'eau : les stats « eau », la vitesse max × 0,9, la gravité × 0,5 (les sauts et les petits sauts flottent : leur durée maximale en l'air s'allonge d'autant, un petit saut finit toujours en drift), l'eau freine plus (décélérations × 1,6) et ralentit les sauts (la vitesse verticale s'éteint à 1,2 /s hors du sol) ;
   - à l'écran : des bulles montent derrière le kart, une gerbe de gouttes à l'entrée et à la sortie ; sous l'eau, la caméra voit tout en bleu (un voile sur l'écran, sous le HUD).
-- **En ligne** : deux bits de l'état du kart (planeur, sous l'eau) ; les autres voient l'aile, l'inclinaison et les bulles.
+- **Anti-gravité** (#78, première étape : un mur à 90° sur une ligne droite ; le tube, les plafonds et les zones en virage : #94) :
+  - une **zone d'anti-gravité** est marquée dans le RON du circuit (`anti_gravity: [(from: 5.0, to: 14.0)]`, en paramètres de la ligne centrale, comme les vides) ; la route y est plate à ses deux bouts (pour y entrer et en sortir), et c'est le seul endroit où elle peut pencher **au-delà de 45° (jusqu'à 90°)** : un circuit qui penche plus ailleurs est refusé. Dans une zone, le dévers suit une courbe lisse (sans à-coup aux points du tracé), pour que les karts loin du centre ne soient pas jetés en l'air quand la route se tord ;
+  - **à l'écran** : la route de la zone a ses bordures bleues et blanches, deux bandes bleues le long de la route et une bande bleue en travers à l'entrée et à la sortie ; ses plots de boost sont bleu cyan. **Les roues pivotent** à plat sous le kart (face extérieure en bas) en 0,25 s en entrant, et se redressent en sortant (visuel seulement) ;
+  - **entrer, sortir** : une roue sur la route de la zone met le kart en anti-gravité, une roue sur une autre route l'en sort ; en l'air (petit saut, saut), il reste comme il était. Jamais sous le planeur ni sous l'eau ; le pélican l'en sort ;
+  - **la gravité du kart** tire vers la route sous ses roues (sa normale), aussi fort que la gravité du monde ; en l'air, vers la route de la zone en dessous (cherchée jusqu'à 8 m), sinon vers la dernière touchée. Au sol, le kart s'aligne sur la normale de la route (12 /s : la route se tord, il suit) ; en l'air, il se redresse vers elle (comme ailleurs vers le haut du monde). **Un kart à plus d'1 m au-dessus de la route est tenu 3 fois plus fort** (sa gravité plus 2 fois elle) : là où la route se tord sous un kart en l'air, il ne passe jamais au-dessus d'un muret. Tout le reste (drift, mini-turbos, petits sauts, freinage, croquettes) se fait dans le repère de la route : la conduite est la même sur le mur, avec les stats « anti-gravité » (§ 9) ;
+  - **le spin boost** (MK8DX) : deux karts en anti-gravité qui se touchent à au moins 3 m/s (vitesse de rapprochement) reçoivent tous les deux un boost de +20 % pendant 0,6 s (un mini-turbo bleu). Les plots de boost de la zone donnent le boost habituel. **Pas de patte en anti-gravité** (§ 15, « Immunités ») : ni coup, ni attrape, dans un sens comme dans l'autre ; une laisse lâche ;
+  - **la caméra** tourne avec le kart : son haut suit celui du kart par un ressort (`CameraTuning::up_frequency`, 6 rad/s), sans à-coup ; elle reste derrière et au-dessus du kart dans le repère de la route, et revient exactement au haut du monde à la sortie ;
+  - **les objets** posés, qui roulent ou rebondissent sur la route (pelure, pelote, bombe) le font dans le repère de la route de la zone : une pelure tient sur le mur, une pelote roule dessus. Les autres objets volent comme ailleurs ;
+  - **les bots** suivent leur ligne sur le mur (la ligne se décale en travers selon l'horizontale), voient les karts autour d'eux dans le repère de la route ;
+  - **en ligne** : le dernier bit de l'état du kart (bit 7 : en anti-gravité) ; les autres voient son corps tourné sur le mur et ses roues pivotées. Le spin boost : chaque pair donne le boost à son propre kart ;
+  - **le Ruban Réglisse** (#78, 6e circuit) : sur un remblai de 9 m, le long du côté nord, le ruban se tord jusqu'à devenir un mur (90°), roule dessus, puis se remet à plat avant le virage.
+- **En ligne** : trois bits de l'état du kart (planeur, sous l'eau, anti-gravité) ; les autres voient l'aile, l'inclinaison, les bulles, le kart sur le mur et ses roues pivotées.
 - **Le Lagon Duvet** (#20, le circuit de démonstration) : départ en haut d'une falaise, envol au-dessus du lagon, atterrissage sur la plage, puis la route plonge sous l'eau du lagon avant de remonter la falaise.
 
 ## 11. Aides et accessibilité (MK8DX)
@@ -422,6 +433,7 @@ Le niveau de Poids (0 à 20, § 9) module la **force**, jamais la portée ni les
 | Touché (§ 8) | non | non | non | non |
 | Invincible (après un objet, super câlin, pie voleuse…) | oui | oui | non | non |
 | Pélican dépanneur | non | non | non | non |
+| Anti-gravité (§ 10, #78 : le spin boost à la place) | non | non | non | non |
 | Calage du départ (§ 4) | non | non | oui | oui |
 | Avant le GO, après l'arrivée | non | non | non | non |
 

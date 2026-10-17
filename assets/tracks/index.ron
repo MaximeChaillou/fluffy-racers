@@ -2,11 +2,13 @@
 // a folder, so every new `*.track.ron` file is added here too (a test checks it). `name` is the
 // circuit's `name`, `file` its file in this folder. The first one is the game's circuit. The
 // Grand Prix (issue #19) races the first four, in this order. The Lagon Duvet (issue #20) shows
-// the special environments: the glider and the water.
+// the special environments: the glider and the water; the Ruban Réglisse (issue #78), the
+// anti-gravity.
 [
     (name: "Prairie Pompon", file: "prairie.track.ron"),
     (name: "Anneau Guimauve", file: "anneau.track.ron"),
     (name: "Crique Câline", file: "crique.track.ron"),
     (name: "Col des Moufles", file: "col.track.ron"),
     (name: "Lagon Duvet", file: "lagon.track.ron"),
+    (name: "Ruban Réglisse", file: "ruban.track.ron"),
 ]

@@ -1,0 +1,96 @@
+// "Ruban Réglisse": a licorice ribbon through the pastry land (issue #78), the anti-gravity's
+// circuit. Original layout, about 940 m a lap, turning right: a wide rectangle with its corners
+// rounded. Along the north side, on an embankment, the ribbon twists up into a wall: the karts
+// roll onto it, drive on its face (90°, their gravity along the road's normal, their wheels
+// flat), and roll back down before the north-east turn. The south side sweeps in a long S.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Ruban Réglisse",
+    // Dressing (issue #11): the pastry land (`assets/data/biomes.ron`), the same every time
+    // (seed), and a giant cake in the infield.
+    biome: "Guimauve",
+    decor_seed: 78,
+    props: [
+        (model: "food-kit/cake-birthday", at: 26.0, side: Right, height: 5.0, radius: 6.5, gap: 18.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-1: the start straight, heading north.
+        (pos: (0.0, 0.0, 15.0)),
+        (pos: (0.0, 0.0, -10.0)),
+        // 2-4: the north-west turn, to the right (radius 35 m), heading east, climbing onto the
+        // embankment of the north side, 9 m up.
+        (pos: (0.0, 0.5, -40.0)),
+        (pos: (10.25, 3.0, -64.75)),
+        (pos: (35.0, 7.0, -75.0)),
+        // 5-14: the anti-gravity wall, on the embankment. The ribbon narrows and twists to the
+        // right in one flowing roll up to 90° (its left edge up, its right edge down, just above
+        // the ground), runs on as a wall, then rolls back down. The anti-gravity zone runs from
+        // point 5 to point 14, where the road is flat.
+        (pos: (60.0, 9.0, -75.0), width: 12.0, shoulder: 1.0),
+        (pos: (85.0, 9.0, -75.0), width: 12.0, bank: 15.0, shoulder: 1.0),
+        (pos: (110.0, 9.0, -75.0), width: 12.0, bank: 45.0, shoulder: 1.0),
+        (pos: (135.0, 9.0, -75.0), width: 12.0, bank: 75.0, shoulder: 1.0),
+        (pos: (160.0, 9.0, -75.0), width: 12.0, bank: 90.0, shoulder: 1.0),
+        (pos: (185.0, 9.0, -75.0), width: 12.0, bank: 90.0, shoulder: 1.0),
+        (pos: (210.0, 9.0, -75.0), width: 12.0, bank: 75.0, shoulder: 1.0),
+        (pos: (235.0, 9.0, -75.0), width: 12.0, bank: 45.0, shoulder: 1.0),
+        (pos: (260.0, 9.0, -75.0), width: 12.0, bank: 15.0, shoulder: 1.0),
+        (pos: (285.0, 9.0, -75.0), width: 12.0, shoulder: 1.0),
+        // 15-17: the north-east turn, to the right, heading south, down from the embankment.
+        (pos: (310.0, 7.0, -75.0)),
+        (pos: (334.75, 3.0, -64.75)),
+        (pos: (345.0, 0.5, -40.0)),
+        // 18-20: the east straight.
+        (pos: (345.0, 0.0, -10.0)),
+        (pos: (345.0, 0.0, 20.0)),
+        (pos: (345.0, 0.0, 45.0)),
+        // 21-22: the south-east turn, to the right, heading west.
+        (pos: (334.75, 0.0, 69.75)),
+        (pos: (310.0, 0.0, 80.0)),
+        // 23-32: the south straight, a long S (left, then right) around the infield's cake.
+        (pos: (280.0, 0.0, 80.0)),
+        (pos: (250.0, 0.0, 80.0)),
+        (pos: (222.0, 0.0, 88.0)),
+        (pos: (194.0, 0.0, 92.0)),
+        (pos: (166.0, 0.0, 88.0)),
+        (pos: (138.0, 0.0, 80.0)),
+        (pos: (110.0, 0.0, 80.0)),
+        (pos: (85.0, 0.0, 80.0)),
+        (pos: (60.0, 0.0, 80.0)),
+        (pos: (35.0, 0.0, 80.0)),
+        // 33-35: the south-west turn, to the right, back onto the start straight (the grid sits
+        // behind point 0, from point 34 on). Point 35 keeps the start straight straight: the
+        // start line and its arch, at point 0, stand square across it.
+        (pos: (10.25, 0.0, 69.75)),
+        (pos: (0.0, 0.0, 45.0)),
+        (pos: (0.0, 0.0, 30.0)),
+    ],
+    // Issue #78: the wall, from flat to flat.
+    anti_gravity: [
+        (from: 5.0, to: 14.0),
+    ],
+    // Boost pads: two on the wall itself (the anti-gravity's own, cyan blue), one on the east
+    // straight.
+    boost_pads: [
+        (at: 9.3, offset: -0.35),
+        (at: 9.7, offset: 0.35),
+        (at: 19.0, offset: 0.0),
+    ],
+    item_boxes: [
+        (at: 1.3, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 4.3, offsets: [-0.5, 0.0, 0.5]),
+        (at: 23.5, offsets: [-0.4, 0.4]),
+        (at: 30.5, offsets: [0.0], double: true),
+    ],
+    // Croquettes: a line along the wall, low on its face; lines along the straights, never on
+    // the grid.
+    croquettes: [
+        (from: 0.5, count: 4, spacing: 3.0, offset: -0.45),
+        (from: 8.7, count: 6, spacing: 4.0, offset: 0.45),
+        (from: 18.2, count: 5, spacing: 3.0, offset: 0.4),
+        (from: 24.3, count: 5, spacing: 3.0, offset: -0.4),
+    ],
+)

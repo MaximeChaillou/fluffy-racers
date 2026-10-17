@@ -1706,8 +1706,12 @@ fn move_items(
         .as_ref()
         .and_then(|race| race.standings.first().copied())
         .filter(|leader| chaseable(*leader).is_some());
-    // One tick of an item; false once it is gone (`Some(at)`: it exploded there).
-    let step = |item: &mut ItemObject, exploded: &mut Option<Vec3>| -> bool {
+    // One tick of an item; false once it is gone (`Some(at)`: it exploded there). `cast`: the
+    // rays against the track (turned in the frame of an anti-gravity zone's road, issue #78).
+    let step = |item: &mut ItemObject,
+                exploded: &mut Option<Vec3>,
+                cast: &dyn Fn(Vec3, Vec3, f32) -> Option<(f32, Vec3)>|
+     -> bool {
         item.previous = item.position;
         item.age += dt;
         let radius = item.radius(&tuning);
@@ -2039,6 +2043,43 @@ fn move_items(
             }
         }
     };
+    // Issue #78: over the road of an anti-gravity zone, an item that lies, rolls or bounces on the
+    // road (a pelure, a pelote, a bombe) does it in the road's frame, its normal as the item's up:
+    // the same motion, turned. Everywhere else, exactly the motion before #78.
+    let step_on_road = |item: &mut ItemObject, exploded: &mut Option<Vec3>| -> bool {
+        let up = match (item.motion, course.as_deref()) {
+            (Motion::Ground | Motion::Rolling { .. } | Motion::Bomb { .. }, Some(course)) => {
+                course.up_at(item.position)
+            }
+            _ => Vec3::Y,
+        };
+        if up == Vec3::Y {
+            return step(item, exploded, &cast);
+        }
+        let to_road = Quat::from_rotation_arc(up, Vec3::Y);
+        let to_world = to_road.inverse();
+        let origin = item.position;
+        let world = |p: Vec3| origin + to_world * p;
+        let road_cast = |from: Vec3, direction: Vec3, length: f32| {
+            cast(world(from), to_world * direction, length).map(|(t, normal)| (t, to_road * normal))
+        };
+        let mut local = ItemObject {
+            position: Vec3::ZERO,
+            previous: to_road * (item.previous - origin),
+            velocity: to_road * item.velocity,
+            ..*item
+        };
+        let mut blast = None;
+        let alive = step(&mut local, &mut blast, &road_cast);
+        *item = ItemObject {
+            position: world(local.position),
+            previous: world(local.previous),
+            velocity: to_world * local.velocity,
+            ..local
+        };
+        *exploded = blast.map(world);
+        alive
+    };
     for (entity, mut object, catch_up) in &mut objects {
         let mut item = *object;
         // An item from another peer: the ticks since its throw first, then this one. Its
@@ -2048,7 +2089,7 @@ fn move_items(
         let mut alive = true;
         let mut exploded = None;
         for _ in 0..=behind {
-            alive = step(&mut item, &mut exploded);
+            alive = step_on_road(&mut item, &mut exploded);
             if !alive {
                 break;
             }
