@@ -3,7 +3,7 @@
 //! menu opened from the game.
 //!
 //! - **The home screen** (issue #89): the game's title, big, and four buttons, in this order:
-//!   « Jouer solo » opens the race menu (N, issue #19; its own screen comes with #99),
+//!   « Jouer solo » opens its screen (issue #99, N: `solo.rs`, `solo_screen.rs`, [`SoloPlugin`]),
 //!   « Multijoueur » the lobby (L, issue #7: create or join a game), « Options » the options menu
 //!   (O, issue #17), « Pilote » the screen of the pilot and its kart (G, issues #15 and #98:
 //!   `pilot.rs`, `pilot_screen.rs`, `preview.rs`, [`PilotPlugin`]).
@@ -49,6 +49,8 @@ mod pilot_screen;
 pub mod preview;
 mod screen;
 mod showcase;
+pub mod solo;
+mod solo_screen;
 mod style;
 pub mod trailer;
 
@@ -58,6 +60,8 @@ mod home_tests;
 mod pilot_tests;
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod solo_tests;
 
 pub use anim::ACTIVATE_DELAY;
 pub use nav::{Entry, GAME_ENTRIES, LAUNCH_ENTRIES, StickLatch, enabled, entries, moved};
@@ -70,8 +74,12 @@ pub use preview::{
     LayerRoot, PilotPreview, PortraitScene, PortraitState, Portraits, PreviewBody, PreviewCamera,
     PreviewKart, PreviewScene,
 };
-pub use screen::{MainMenuRoot, MenuButton, MenuNode, TitleWord};
+pub use screen::{MainMenuRoot, MenuAssets, MenuButton, MenuNode, TitleWord};
 pub use showcase::{HomeTuning, SHOWCASE_LAPS, Showcase, ShowcaseKart, ShowcasePhase, pack_scale};
+pub use solo_screen::{
+    RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloHint, SoloLine,
+    SoloRoot, SoloShape, SoloUi, SoloValue, Vignette,
+};
 pub use style::{ButtonLook, ButtonState, UI_FILES, button_look};
 
 use bevy::ecs::system::SystemParam;
@@ -104,7 +112,7 @@ const HAND_OVER_FRAMES: u8 = 3;
 /// A screen the main menu opens, or that opens over it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Screen {
-    /// The race menu (N).
+    /// « Jouer solo » (issue #99, N).
     RaceMenu,
     /// The lobby window (L).
     Lobby,
@@ -335,6 +343,8 @@ impl Plugin for MainMenuPlugin {
         if !app.is_plugin_added::<PilotPlugin>() {
             app.add_plugins(PilotPlugin { storage: false });
         }
+        // Issue #99: the « Jouer solo » screen.
+        app.add_plugins(SoloPlugin);
         // Its tuning in the admin panel, next to the others (when the panel is there: the game's).
         if let Some(mut tunings) = app.world_mut().get_resource_mut::<Tunings>() {
             tunings.register::<HomeTuning>();
@@ -406,6 +416,38 @@ impl Plugin for PilotPlugin {
                     .after(TransformSystems::Propagate)
                     .before(VisibilitySystems::CheckVisibility)
                     .run_if(preview::layers_to_spread),
+            ),
+        );
+    }
+}
+
+/// Issue #99: the « Jouer solo » screen (`solo.rs`, `solo_screen.rs`): the view of
+/// `modes::RaceMenu` with `bevy_ui`, the gamepad and the mouse. With a renderer only, like the
+/// menu: nothing of it in the headless world of the bot races, and nothing in the world before
+/// it first opens (its resource comes then).
+pub struct SoloPlugin;
+
+impl Plugin for SoloPlugin {
+    fn build(&self, app: &mut App) {
+        use crate::modes::ModeSystems;
+
+        app.add_systems(
+            Update,
+            (
+                solo_screen::solo_gamepad.before(ModeSystems),
+                (
+                    solo_screen::sync_solo_tree,
+                    (
+                        solo_screen::refresh_solo_tree,
+                        solo_screen::animate_solo_tree,
+                    )
+                        .chain()
+                        .run_if(solo_screen::solo_open)
+                        .run_if(resource_exists::<SoloUi>),
+                )
+                    .chain()
+                    .run_if(solo_screen::solo_open_or_shown)
+                    .after(ModeSystems),
             ),
         );
     }

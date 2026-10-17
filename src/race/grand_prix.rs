@@ -16,7 +16,10 @@
 //!   the bots (each keeps its character, parts, color and name from one race to the next),
 //!   entrant `bots` the player.
 //!
-//! Solo for now; online, a Grand Prix will need the host to carry the standings and the grid.
+//! Issue #99: « Championnat » on the screens; its races are a cup's (four circuits of the
+//! manifest) or a custom championship's (its races chosen or drawn: `modes::setup`), the same
+//! rules for both. Solo for now; online, a championship will need the host to carry the standings
+//! and the grid.
 
 use bevy::prelude::*;
 
@@ -26,8 +29,9 @@ use crate::track::GRID_SLOTS;
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
 pub struct GrandPrixTuning {
-    /// Races of a Grand Prix (GD § 1: 4), on the first circuits of the manifest. Read when a
-    /// Grand Prix starts.
+    /// Races of a cup (GD § 1: 4): issue #99, the cups of the manifest take its circuits so many
+    /// at a time, in its order (`modes::cups`); a custom championship starts with as many races.
+    /// Read when the « Jouer solo » screen opens and when a championship starts.
     pub races: u32,
     /// Points of each place, from the 1st (GD § 1: 15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1).
     pub points: [u32; GRID_SLOTS],
@@ -46,6 +50,9 @@ impl Default for GrandPrixTuning {
 pub fn points_for(points: &[u32], place: usize) -> u32 {
     points.get(place).copied().unwrap_or(0)
 }
+
+/// Issue #99: the name of a championship that is not a cup's.
+pub const CHAMPIONSHIP: &str = "Championnat";
 
 /// A circuit of the cup: its name and its file (an asset path).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,10 +73,14 @@ pub enum GrandPrixStage {
     Podium,
 }
 
-/// A Grand Prix in progress (solo). Exists from its start to the next choice of mode.
+/// A Grand Prix in progress (solo): issue #99, « Championnat » on the screens. Exists from its
+/// start to the next choice of mode.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct GrandPrix {
-    /// The circuits, in order.
+    /// Issue #99: its name on its screens: the cup's (« Coupe Doudou »), or « Championnat » (a
+    /// custom one).
+    pub title: String,
+    /// The circuits, in order: a cup's, or (issue #99) those of a custom championship.
     pub cup: Vec<CupRace>,
     /// Racers of the whole Grand Prix: the bots then the player (see the module's documentation).
     pub entrants: usize,
@@ -92,6 +103,7 @@ impl GrandPrix {
     pub fn new(cup: Vec<CupRace>, bots: usize) -> Self {
         let entrants = (bots + 1).min(GRID_SLOTS);
         Self {
+            title: CHAMPIONSHIP.to_string(),
             cup,
             entrants,
             race: 0,

@@ -77,10 +77,21 @@ pub struct NetKart(pub KartId);
 pub enum Showing {
     /// Not yet decided (just seated).
     Nothing,
-    /// Free driving on the room's circuit (an index of `assets/tracks/index.ron`).
-    Free(u8),
+    /// Free driving on the room's circuit (an index of `assets/tracks/index.ron`), issue #99: with
+    /// the room's mirror and items (another setting, another level).
+    Free(super::protocol::RoomSetup),
     /// The race of this number: on its grid, or watching it (not on it: free driving there).
     Race(u16),
+}
+
+impl Showing {
+    /// Free driving on circuit `track` with the room's default settings (no mirror, items on).
+    pub fn free(track: u8) -> Self {
+        Showing::Free(super::protocol::RoomSetup {
+            track,
+            ..Default::default()
+        })
+    }
 }
 
 /// We drive online: the level we were on before, to get back to it when we leave the room.
@@ -92,9 +103,11 @@ pub struct OnlineLevel {
     pub solo_mode: RaceMode,
     /// The solo grid (bots, seed): a race online changes it.
     pub solo_grid: crate::race::RaceGrid,
-    /// Issue #19: the solo mirror mode, back once out of the room (online, never mirrored, for
-    /// now).
+    /// Issue #19: the solo mirror mode, back once out of the room (issue #99: online, the host's).
     pub solo_mirror: bool,
+    /// Issue #99: whether the solo races have their item boxes (`track::NoItemBoxes`), back once
+    /// out of the room (online, the host's choice).
+    pub solo_items: bool,
     /// What we show now.
     pub showing: Showing,
 }

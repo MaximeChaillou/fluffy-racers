@@ -4,7 +4,9 @@
 //!
 //! - **The room** ([`online_mode`]): free driving on the host's circuit (`Lobby::circuit`), or the
 //!   race it announced (`Lobby::announced`): its circuit, its grid (the bots in front, the players
-//!   behind in the host's order, [`OnlineSlot`]), its seed (the same bots everywhere). A peer that
+//!   behind in the host's order, [`OnlineSlot`]), its seed (the same bots everywhere). Issue #99:
+//!   with the host's mirror and items (`Lobby::setup`, `RaceStart::mirror` and `items`:
+//!   `track::MirrorMode`, `track::NoItemBoxes`), and without bots if it says so. A peer that
 //!   is not on its grid (it came during the race) drives freely there and watches. Leaving the
 //!   room brings back the level we were on. In the room, the game never pauses (`level::Online`).
 //! - **The clock** ([`follow_room_clock`]): the race's flow follows the room's common tick
@@ -37,7 +39,8 @@ use bevy::prelude::*;
 use super::interp::TICK_MS;
 use super::items_online::OnlineItems;
 use super::protocol::{
-    Grab, KartId, Message, PeerKey, Progress, RaceStart, Strike, StrikeReply, TetherBreak,
+    Grab, KartId, Message, PeerKey, Progress, RaceStart, RoomSetup, Strike, StrikeReply,
+    TetherBreak,
 };
 use super::race::{Driver, SharedRace};
 use super::sync::{
@@ -62,7 +65,7 @@ use crate::race::{
     Course, GrandPrix, OnlineFlow, Race, RaceGrid, RaceMode, RaceProgress, RaceSystems, RaceTuning,
     Racer, ResultLine, Standing, close_results, seconds_to_ticks,
 };
-use crate::track::{GRID_SLOTS, MirrorMode, TrackChoice, TrackLayout};
+use crate::track::{GRID_SLOTS, MirrorMode, NoItemBoxes, TrackChoice, TrackLayout};
 
 /// The race online in progress here (issue #9): from its announcement to the next one (or the
 /// host's next circuit).
@@ -109,8 +112,8 @@ pub fn session_of(race: u16) -> u8 {
 }
 
 /// The host starts a race now, at our `now_ms`: the room's circuit, a fresh seed, the seated
-/// players behind the bots that fill the grid. `None` when we do not host, or do not know the
-/// room's clock yet.
+/// players behind the bots that fill the grid (issue #99: if the room has bots), the room's mirror
+/// and items. `None` when we do not host, or do not know the room's clock yet.
 pub fn race_to_start(
     lobby: &Lobby,
     now_ms: u64,
@@ -125,13 +128,22 @@ pub fn race_to_start(
     let room_ms = lobby.room_time_ms(now_ms)?;
     let players: Vec<PeerKey> = lobby.seats().iter().take(GRID_SLOTS).copied().collect();
     let lead_ms = f64::from(tuning.start_lead_ms.max(0.0));
+    // Issue #99: the room's settings: without bots, the players only.
+    let setup = lobby.setup();
+    let bots = if setup.bots {
+        GRID_SLOTS - players.len()
+    } else {
+        0
+    };
     Some(RaceStart {
         race: lobby.next_race(),
         seed,
-        track: lobby.circuit(),
+        track: setup.track,
         laps: laps.clamp(1, 255) as u8,
-        bots: (GRID_SLOTS - players.len()) as u8,
+        bots: bots as u8,
         difficulty: difficulty.index() as u8,
+        mirror: setup.mirror,
+        items: setup.items,
         start_tick: ((room_ms as f64 + lead_ms) / TICK_MS).ceil() as u32,
         players,
     })
@@ -233,6 +245,16 @@ impl Plugin for OnlineRacePlugin {
     }
 }
 
+/// Issue #99: the circuits built from now on have their item boxes (`on`) or not
+/// (`track::NoItemBoxes`).
+fn items_on(commands: &mut Commands, on: bool) {
+    if on {
+        commands.remove_resource::<NoItemBoxes>();
+    } else {
+        commands.insert_resource(NoItemBoxes);
+    }
+}
+
 /// Our seat's place (0 first), as a grid slot.
 fn seat_of(lobby: &Lobby) -> usize {
     lobby
@@ -255,7 +277,11 @@ fn online_mode(
     race: Option<Res<OnlineRace>>,
     mut interaction_clock: Option<ResMut<InteractionClock>>,
     (choice, mode, mut grid): (Res<TrackChoice>, Res<RaceMode>, ResMut<RaceGrid>),
-    (mut mirror, time_trial): (ResMut<MirrorMode>, Option<Res<crate::modes::TimeTrial>>),
+    (mut mirror, no_boxes, time_trial): (
+        ResMut<MirrorMode>,
+        Option<Res<NoItemBoxes>>,
+        Option<Res<crate::modes::TimeTrial>>,
+    ),
     roster: Option<Res<Roster>>,
     real: Res<Time<Real>>,
     mut time: ResMut<Time<Virtual>>,
@@ -295,6 +321,7 @@ fn online_mode(
             }
             *grid = level.solo_grid;
             mirror.set_if_neq(MirrorMode(level.solo_mirror));
+            items_on(&mut commands, level.solo_items);
             levels.write(LoadLevel::on(level.solo_track.clone(), level.solo_mode));
         }
         (None, Some(lobby)) => {
@@ -305,8 +332,8 @@ fn online_mode(
             commands.insert_resource(OnlineItems::default());
             commands.insert_resource(OnlineSlot(seat));
             commands.insert_resource(Online);
-            // Issue #19: online, the circuits as they are (not mirrored), and a Grand Prix in
-            // progress ends (its grid order with it).
+            // Issue #19: a Grand Prix in progress ends (its grid order with it). Issue #99: the
+            // circuits mirrored or not, with items or not, as the host says (below).
             commands.remove_resource::<GrandPrix>();
             grid.lineup = None;
             // Issue #76: a time trial ends too, the player's bots back (kept for the way out).
@@ -320,9 +347,9 @@ fn online_mode(
                 solo_mode: *mode,
                 solo_grid: *grid,
                 solo_mirror: mirror.0,
+                solo_items: no_boxes.is_none(),
                 showing: Showing::Nothing,
             });
-            mirror.set_if_neq(MirrorMode::default());
             // The level follows on the next frame, once these are in.
         }
         (Some(level), Some(lobby)) => {
@@ -347,17 +374,25 @@ fn online_mode(
             }
             let wanted = match lobby.announced() {
                 Some(start) => Showing::Race(start.race),
-                None => Showing::Free(lobby.circuit()),
+                // The bots do not change free driving (it has none): no other level for them.
+                None => Showing::Free(RoomSetup {
+                    bots: true,
+                    ..lobby.setup()
+                }),
             };
             if level.showing != wanted {
                 level.showing = wanted;
                 let seat = seat_of(lobby);
                 match lobby.announced() {
                     None => {
+                        let setup = lobby.setup();
                         info!(
-                            "network: free driving on circuit {}, from grid slot {seat}",
-                            lobby.circuit()
+                            "network: free driving on circuit {} (mirrored: {}, items: {}), from grid slot {seat}",
+                            setup.track, setup.mirror, setup.items
                         );
+                        // Issue #99: the host's mirror and items.
+                        mirror.set_if_neq(MirrorMode(setup.mirror));
+                        items_on(&mut commands, setup.items);
                         commands.insert_resource(OnlineSlot(seat));
                         commands.remove_resource::<OnlineRace>();
                         commands.remove_resource::<OnlineFlow>();
@@ -372,6 +407,9 @@ fn online_mode(
                         };
                         let race =
                             OnlineRace::new(start.clone(), lobby.me(), lobby.is_host(), roster);
+                        // Issue #99: the race's mirror and items, the same for everyone.
+                        mirror.set_if_neq(MirrorMode(start.mirror));
+                        items_on(&mut commands, start.items);
                         let slot = race.shared.slot_of(lobby.me());
                         *grid = RaceGrid {
                             bots: if lobby.is_host() {

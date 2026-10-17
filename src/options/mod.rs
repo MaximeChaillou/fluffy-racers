@@ -288,7 +288,8 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
         ),
         ("Pilote (pseudo, animal, kart, couleur)", "G".to_string()),
         (
-            "Nouvelle course (circuit, Grand Prix, contre-la-montre, miroir)",
+            // Issue #99: « Jouer solo ».
+            "Jouer solo (championnat, contre-la-montre, circuit seul)",
             "N".to_string(),
         ),
         ("Options", "O".to_string()),

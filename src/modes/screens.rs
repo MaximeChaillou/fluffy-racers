@@ -1,4 +1,4 @@
-//! The screens of a Grand Prix (issue #19), with the HUD's `bevy_ui` (its font is ASCII only): the
+//! The screens of a Grand Prix (issue #19; issue #99: a championship), with the HUD's `bevy_ui` (its font is ASCII only): the
 //! overall standings after each race (place, racer, the points of the race, the total), then the
 //! podium's names over the 3D podium. Spawned once per stage (a handful of texts, no change while
 //! shown), over the results screen; part of the level (`LevelScoped`).
@@ -61,14 +61,16 @@ fn ascii(text: &str) -> String {
     text.chars().map(ascii_letter).collect()
 }
 
-/// The title of the standings: « GRAND PRIX 2/4 - Anneau Guimauve ».
+/// The title of the standings: « COUPE DOUDOU 2/4 - Anneau Guimauve » (issue #99: the cup's
+/// name, or « CHAMPIONNAT » for a custom one).
 pub fn standings_title(grand_prix: &GrandPrix) -> String {
     let name = grand_prix
         .cup
         .get(grand_prix.race)
         .map_or_else(String::new, |race| ascii(&race.name));
     format!(
-        "GRAND PRIX {}/{} - {name}",
+        "{} {}/{} - {name}",
+        ascii(&grand_prix.title).to_uppercase(),
         grand_prix.race + 1,
         grand_prix.cup.len()
     )
@@ -86,7 +88,7 @@ pub fn standings_footer(grand_prix: &GrandPrix) -> String {
 }
 
 pub const PODIUM_TITLE: &str = "PODIUM";
-pub const PODIUM_FOOTER: &str = "ENTREE : nouveau Grand Prix - N : changer de mode";
+pub const PODIUM_FOOTER: &str = "ENTREE : on recommence - N : changer de mode";
 
 const TEXT_COLOR: Color = Color::WHITE;
 const GOLD: Color = Color::srgb(1.0, 0.85, 0.25);

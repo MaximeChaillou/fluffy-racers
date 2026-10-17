@@ -88,12 +88,16 @@ mod race_tests;
 #[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod setup_tests;
+#[cfg(test)]
 mod star_tests;
 #[cfg(test)]
 mod sync_tests;
 
 pub use clock::{PeerClock, RoomClock};
-pub use guide::{Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, race_now};
+pub use guide::{
+    Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, race_line, race_now, settings_line,
+};
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
     BUFFER_CAPACITY, HISTORY_TICKS, Insert, Playback, PlaybackSettings, PoseHistory, Sample,
@@ -115,8 +119,8 @@ pub use protocol::{
     ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES,
     MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
     OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS,
-    RaceOver, RaceResults, RaceStart, Rammed, Retarget, Scatter, Spot, Strike, StrikeReply,
-    TetherBreak, Verdict,
+    RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter, Spot, Strike,
+    StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
@@ -233,6 +237,9 @@ pub enum NetAction {
     Ready(bool),
     /// The host chooses the room's circuit (issue #9): an index of `assets/tracks/index.ron`.
     ChooseCircuit(u8),
+    /// Issue #99: the host chooses the room's settings (the circuit, the mirror, the bots, the
+    /// items).
+    ChooseSetup(RoomSetup),
     /// The host starts a race (issue #9) on the room's circuit, with everyone seated.
     StartRace,
 }
@@ -517,6 +524,13 @@ fn apply_net_actions(
                     && lobby.choose_circuit(*track)
                 {
                     info!("network: we choose circuit {track} for the room");
+                }
+            }
+            NetAction::ChooseSetup(setup) => {
+                if let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut())
+                    && lobby.choose_setup(*setup)
+                {
+                    info!("network: we choose the room's settings: {setup:?}");
                 }
             }
             NetAction::StartRace => {

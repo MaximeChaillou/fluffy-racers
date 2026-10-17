@@ -178,8 +178,8 @@ pub fn write_debug_overlay(
 /// Static labels of the HUD and the results screen.
 pub const RESULTS_TITLE: &str = "CLASSEMENT";
 pub const RESULTS_FOOTER: &str = "ESPACE ou ENTREE (manette : A) : rejouer";
-/// Issue #19: in a Grand Prix, the same keys go on to its standings.
-pub const RESULTS_FOOTER_GRAND_PRIX: &str = "ESPACE ou ENTREE (manette : A) : Grand Prix";
+/// Issue #19: in a Grand Prix (issue #99: a championship), the same keys go on to its standings.
+pub const RESULTS_FOOTER_GRAND_PRIX: &str = "ESPACE ou ENTREE (manette : A) : classement general";
 /// Online (issue #9): the host starts the next race.
 pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hote la lance depuis le salon (L)";
 pub const PLAYER_NAME: &str = "Toi";

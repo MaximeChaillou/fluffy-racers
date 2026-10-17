@@ -15,7 +15,42 @@ use std::fmt;
 
 use super::lobby::Lobby;
 use super::online::OnlineRace;
+use super::protocol::{RaceStart, RoomSetup};
 use super::{NetSession, NetStatus};
+
+/// Issue #99: the host's settings of the room, as every player's lobby writes them: « Miroir :
+/// non · Bots : oui · Objets : oui ».
+pub fn settings_line(setup: RoomSetup) -> String {
+    let yes_no = |on: bool| if on { "oui" } else { "non" };
+    format!(
+        "Miroir : {} · Bots : {} · Objets : {}",
+        yes_no(setup.mirror),
+        yes_no(setup.bots),
+        yes_no(setup.items)
+    )
+}
+
+/// Issue #99: what a race started has, after its circuit: « 3 tours, 9 bots, en miroir, sans
+/// objets ».
+pub fn race_line(start: &RaceStart) -> String {
+    let mut line = format!(
+        "{} tour{}, ",
+        start.laps,
+        if start.laps > 1 { "s" } else { "" }
+    );
+    match start.bots {
+        0 => line.push_str("sans bots"),
+        1 => line.push_str("1 bot"),
+        bots => line.push_str(&format!("{bots} bots")),
+    }
+    if start.mirror {
+        line.push_str(", en miroir");
+    }
+    if !start.items {
+        line.push_str(", sans objets");
+    }
+    line
+}
 
 /// Where the player is with its room, as the lobby shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -569,5 +604,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Issue #99: the lobby writes the host's settings, and a race's: its laps, its bots (or none),
+    /// the mirror and the items when they are not the default.
+    #[test]
+    fn the_lobby_writes_the_hosts_settings() {
+        assert_eq!(
+            settings_line(RoomSetup::default()),
+            "Miroir : non · Bots : oui · Objets : oui"
+        );
+        let all_off = RoomSetup {
+            track: 2,
+            mirror: true,
+            bots: false,
+            items: false,
+        };
+        assert_eq!(
+            settings_line(all_off),
+            "Miroir : oui · Bots : non · Objets : non"
+        );
+        let mut start = RaceStart {
+            race: 1,
+            seed: 0,
+            track: 0,
+            laps: 3,
+            bots: 9,
+            difficulty: 1,
+            mirror: false,
+            items: true,
+            start_tick: 0,
+            players: Vec::new(),
+        };
+        assert_eq!(race_line(&start), "3 tours, 9 bots");
+        start.bots = 0;
+        start.mirror = true;
+        start.items = false;
+        start.laps = 1;
+        assert_eq!(
+            race_line(&start),
+            "1 tour, sans bots, en miroir, sans objets"
+        );
+        start.bots = 1;
+        assert!(race_line(&start).contains("1 bot,"));
     }
 }

@@ -36,7 +36,9 @@ pub(crate) use course::tests::prairie as course_for_tests;
 
 pub use course::{Course, Projection, drop_point};
 pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
-pub use grand_prix::{CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, points_for};
+pub use grand_prix::{
+    CHAMPIONSHIP, CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, points_for,
+};
 pub use pelican::{PelicanPlugin, PelicanVisual};
 pub use progress::{ProgressEvent, RaceProgress};
 pub use ranking::{RankEntry, distance_to_leader, rank, rank_by_order};

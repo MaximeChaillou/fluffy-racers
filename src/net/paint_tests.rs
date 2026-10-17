@@ -94,7 +94,7 @@ fn seated_in(ana: KartColor, bob: KartColor) -> Room {
     room.until(15.0, "both seated, free driving", |app| {
         app.world().get_resource::<KartSync>().is_some_and(|sync| {
             sync.remotes().len() == 1 && sync.remotes().iter().all(|r| r.proxy.is_some())
-        }) && showing(app) == Some(Showing::Free(0))
+        }) && showing(app) == Some(Showing::free(0))
             && app.world().get_resource::<TrackLayout>().is_some()
     });
     room

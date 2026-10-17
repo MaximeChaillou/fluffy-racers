@@ -24,6 +24,7 @@ fn circuit_files() -> Vec<TrackData> {
     let index = std::fs::read_to_string(format!("{ASSETS}/tracks/index.ron")).unwrap();
     crate::admin::tracks::parse_manifest(&index)
         .unwrap()
+        .circuits
         .iter()
         .map(|entry| {
             let text = std::fs::read_to_string(format!("{ASSETS}/tracks/{}", entry.file)).unwrap();

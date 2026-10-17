@@ -555,11 +555,10 @@ fn main_action(
     match (lobby.announced(), seated.race) {
         (Some(start), RaceStage::Racing | RaceStage::Watching) => {
             ui.label(format!(
-                "Course n° {} en cours sur {} : {} tours, {} bots.",
+                "Course n° {} en cours sur {} : {}.",
                 start.race,
                 name(start.track),
-                start.laps,
-                start.bots
+                super::race_line(start)
             ));
         }
         (Some(start), _) => {
@@ -569,23 +568,30 @@ fn main_action(
             ui.label(format!("Roulage libre sur {}.", name(lobby.circuit())));
         }
     }
+    let setup = lobby.setup();
     if seated.hosting {
-        ui.horizontal(|ui| {
-            ui.label("Circuit");
-            let mut chosen = lobby.circuit();
-            ui.add_enabled_ui(!racing, |ui| {
+        // Issue #99: the host's settings (the race on keeps its own until the next one).
+        let mut chosen = setup;
+        ui.add_enabled_ui(!racing, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Circuit");
                 egui::ComboBox::from_id_salt("lobby-circuit")
-                    .selected_text(name(chosen))
+                    .selected_text(name(chosen.track))
                     .show_ui(ui, |ui| {
                         for (index, entry) in circuits.iter().enumerate() {
-                            ui.selectable_value(&mut chosen, index as u8, &entry.name);
+                            ui.selectable_value(&mut chosen.track, index as u8, &entry.name);
                         }
                     });
             });
-            if chosen != lobby.circuit() {
-                actions.write(NetAction::ChooseCircuit(chosen));
-            }
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut chosen.mirror, "Miroir");
+                ui.checkbox(&mut chosen.bots, "Bots");
+                ui.checkbox(&mut chosen.items, "Objets");
+            });
         });
+        if chosen != setup {
+            actions.write(NetAction::ChooseSetup(chosen));
+        }
         if ui
             .add_enabled(seated.can_start(), action_button("Lancer la course"))
             .clicked()
@@ -596,8 +602,21 @@ fn main_action(
             Some(reason) => ui.label(RichText::new(reason).color(HOST)),
             None => ui.label(RichText::new("Tout le monde est prêt !").color(GOOD)),
         };
-        ui.small("Les bots complètent la grille de 12 ; tu les fais rouler pour tous.");
+        ui.small(if setup.bots {
+            "Les bots complètent la grille de 12 ; tu les fais rouler pour tous."
+        } else {
+            "Sans bots : seuls les joueurs courent."
+        });
+        if !setup.items {
+            ui.small("Sans objets : aucune boîte sur la piste, les croquettes restent.");
+        }
     } else {
+        // Issue #99: the host's choices, for everyone to see.
+        ui.label(format!(
+            "Réglages de l'hôte : {} · {}",
+            name(setup.track),
+            super::settings_line(setup)
+        ));
         let clicked = if seated.ready {
             ui.button("Pas prêt").clicked()
         } else {
