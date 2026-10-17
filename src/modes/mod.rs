@@ -375,6 +375,10 @@ fn apply_menu_actions(
 /// (« Relancer » in the admin panel, a new kart on the selection screen, from its results, its
 /// standings or the podium): then its score is taken back and it is raced again.
 fn restart_with_the_level(mut grand_prix: ResMut<GrandPrix>, tuning: Res<GrandPrixTuning>) {
+    // Issue #122: online, the host runs it (`net::championship`).
+    if grand_prix.online.is_some() {
+        return;
+    }
     if grand_prix.stage != GrandPrixStage::Racing || grand_prix.scored() {
         grand_prix.restart_race(&tuning.points);
     }
@@ -392,7 +396,11 @@ fn score_the_race(
     let Some(race) = race else {
         return;
     };
-    if grand_prix.stage != GrandPrixStage::Racing || grand_prix.scored() || !race.results_closed() {
+    if grand_prix.online.is_some()
+        || grand_prix.stage != GrandPrixStage::Racing
+        || grand_prix.scored()
+        || !race.results_closed()
+    {
         return;
     }
     let order: Vec<usize> = race
@@ -416,12 +424,15 @@ fn grand_prix_keys(
     time: Option<Res<Time<Virtual>>>,
     race: Option<Res<Race>>,
     menu: Res<RaceMenu>,
+    grand_prix: Res<GrandPrix>,
     mut actions: MessageWriter<GrandPrixAction>,
 ) {
     let Some(race) = race else {
         return;
     };
-    if menu.open
+    // Issue #122: online, the host moves it on (`salon`).
+    if grand_prix.online.is_some()
+        || menu.open
         || time.is_some_and(|time| time.is_paused())
         || race.phase() != RacePhase::Results
         || !race.flow.can_restart(&race.timings)
@@ -447,6 +458,10 @@ fn apply_grand_prix_actions(
 ) {
     let mut race = race;
     for action in actions.read() {
+        // Issue #122: online, the host moves it on.
+        if grand_prix.online.is_some() {
+            continue;
+        }
         match (*action, grand_prix.stage) {
             (GrandPrixAction::Continue, GrandPrixStage::Racing) => {
                 if grand_prix.scored() {

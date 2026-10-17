@@ -28,18 +28,18 @@ use bevy::text::Justify;
 
 use super::scene::SalonRoot;
 use super::view::{ButtonKind, SalonRow, SalonView, ViewInput, salon_view};
-use crate::admin::tracks::{TrackEntry, circuits};
 use crate::characters::{PlayerLoadout, Roster, SelectionAction, SelectionScreen};
 use crate::kart::KeyboardLayout;
 use crate::menu::style::{self, ButtonState, palette, size, u};
 use crate::menu::{MainMenu, MenuAssets, MenuNode, StickLatch, anim, kit};
+use crate::modes::Catalog;
 use crate::modes::RaceMenu;
 use crate::net::{
     LobbyWindow, NetAction, NetSession, NetSettings, OnlineRace, RoomFacts, character_name,
     invitation, is_local_signal, loopback_page, now_ms,
 };
 use crate::options::OptionsMenu;
-use crate::race::Race;
+use crate::race::{GrandPrixTuning, Race};
 
 /// What the player does with the lobby's screen: the keys and the gamepad (`salon_keys`), the
 /// mouse (its nodes' observers).
@@ -68,8 +68,8 @@ pub struct SalonMenu {
     pub focused_at: f64,
     /// When « Copier » was last chosen.
     pub copied_at: Option<f64>,
-    /// The circuits the host chooses from.
-    pub circuits: Vec<TrackEntry>,
+    /// The circuits (and issue #122 the cups) the host chooses from.
+    pub catalog: Catalog,
     /// What the screen shows (computed once a frame while it is wanted).
     pub view: Option<SalonView>,
     /// The gamepad's stick, as steps (vertical, horizontal).
@@ -87,12 +87,12 @@ pub enum Focusable {
     Button(usize),
 }
 
-/// What takes the focus, in order: the settings' lines (when they can change), then the buttons
-/// that can be used.
+/// What takes the focus, in order: the settings' lines (when they can change: issue #122, the
+/// mode's, then a custom championship's races on the right), then the buttons that can be used.
 pub fn focusables(view: &SalonView) -> Vec<Focusable> {
     let mut all: Vec<Focusable> = Vec::new();
-    if view.seat.as_ref().is_some_and(|seat| seat.editable) {
-        all.extend(SalonRow::ALL.map(Focusable::Row));
+    if let Some(seat) = view.seat.as_ref().filter(|seat| seat.editable) {
+        all.extend(seat.rows.iter().copied().map(Focusable::Row));
     }
     all.extend(
         view.buttons
@@ -111,7 +111,7 @@ pub fn help_of(view: &SalonView, focus: Option<Focusable>) -> String {
         return String::new();
     };
     match (focus, seat.locked) {
-        (Some(Focusable::Row(row)), _) => row.help(seat.setup).to_string(),
+        (Some(Focusable::Row(row)), _) => seat.help(row).to_string(),
         (_, Some(reason)) => reason.to_string(),
         _ => String::new(),
     }
@@ -130,6 +130,9 @@ pub struct SalonScreenRoot {
 pub struct Shape {
     lines: usize,
     seat: Option<bool>,
+    /// Issue #122: the settings' lines, and the program's.
+    rows: Vec<SalonRow>,
+    program: usize,
     buttons: Vec<(ButtonKind, bool)>,
     players: usize,
     invite: bool,
@@ -141,6 +144,11 @@ fn shape_of(view: &SalonView, layout: KeyboardLayout) -> Shape {
     Shape {
         lines: view.lines.len(),
         seat: view.seat.as_ref().map(|seat| seat.editable),
+        rows: view
+            .seat
+            .as_ref()
+            .map_or_else(Vec::new, |seat| seat.rows.clone()),
+        program: view.seat.as_ref().map_or(0, |seat| seat.program.len()),
         buttons: view.buttons.iter().map(|b| (b.kind, b.enabled)).collect(),
         players: view.players.len(),
         invite: view.invite.is_some(),
@@ -215,10 +223,13 @@ pub enum SalonText {
     Invite,
     Note(usize),
     Banner,
+    /// Issue #122: a championship's program: its header, its races.
+    ProgramTitle,
+    Program(usize),
 }
 
 /// The text a node writes, from the view.
-fn text_of(view: &SalonView, key: SalonText, help: &str, circuits: &[TrackEntry]) -> String {
+fn text_of(view: &SalonView, key: SalonText, help: &str) -> String {
     let get = |list: &[String], i: usize| list.get(i).cloned().unwrap_or_default();
     match key {
         SalonText::Title => view.title.clone(),
@@ -226,7 +237,7 @@ fn text_of(view: &SalonView, key: SalonText, help: &str, circuits: &[TrackEntry]
         SalonText::Value(row) => view
             .seat
             .as_ref()
-            .map(|seat| row.value(seat.setup, circuits))
+            .map(|seat| seat.value(row).to_string())
             .unwrap_or_default(),
         SalonText::Help => help.to_string(),
         SalonText::Label(i) => view
@@ -258,6 +269,16 @@ fn text_of(view: &SalonView, key: SalonText, help: &str, circuits: &[TrackEntry]
         SalonText::Invite => view.invite.clone().unwrap_or_default(),
         SalonText::Note(i) => get(&view.notes, i),
         SalonText::Banner => String::new(),
+        SalonText::ProgramTitle => view
+            .seat
+            .as_ref()
+            .map(|seat| seat.program_title.clone())
+            .unwrap_or_default(),
+        SalonText::Program(i) => view
+            .seat
+            .as_ref()
+            .map(|seat| get(&seat.program, i))
+            .unwrap_or_default(),
     }
 }
 
@@ -416,7 +437,10 @@ pub fn apply_salon_actions(
     let mut clipboard = clipboard;
     let now = now(&time);
     let list = focusables(&view);
-    let circuits = menu.circuits.len();
+    // Issue #122: a championship drawn at random from the room's seed.
+    let seed = session
+        .as_deref()
+        .map_or(0, |session| crate::net::room_seed(&session.room));
     for action in actions.read() {
         // A button to press, or a setting to change.
         let (pressed, stepped) = match *action {
@@ -463,7 +487,12 @@ pub fn apply_salon_actions(
                 .as_deref()
                 .and_then(|s| s.lobby.as_ref())
                 .map_or(seat.setup, |lobby| lobby.setup());
-            net.write(NetAction::ChooseSetup(row.changed(setup, step, circuits)));
+            net.write(NetAction::ChooseSetup(row.changed(
+                setup,
+                step,
+                seed,
+                &menu.catalog,
+            )));
         }
         let Some(kind) = pressed else {
             continue;
@@ -529,12 +558,13 @@ pub fn sync_salon_tree(
         Option<Res<MainMenu>>,
         Option<Res<Race>>,
     ),
-    (roster, settings, loadout, layout, assets): (
+    (roster, settings, loadout, layout, assets, cups): (
         Res<Roster>,
         Res<NetSettings>,
         Option<Res<PlayerLoadout>>,
         Option<Res<KeyboardLayout>>,
         Option<Res<MenuAssets>>,
+        Option<Res<GrandPrixTuning>>,
     ),
     menu: Option<ResMut<SalonMenu>>,
     time: Res<Time<Real>>,
@@ -594,13 +624,15 @@ pub fn sync_salon_tree(
         return;
     }
     let now = now(&time);
+    // Issue #122: the cups of « Jouer solo » (`GrandPrixTuning::races` circuits each).
+    let cup_size = cups.map_or(4, |tuning| tuning.races as usize);
     let Some(mut menu) = menu else {
         commands.insert_resource(SalonMenu {
             focus: 0,
             opened_at: now,
             focused_at: now,
             copied_at: None,
-            circuits: circuits(),
+            catalog: Catalog::game(cup_size),
             view: None,
             latches: [StickLatch::default(); 2],
         });
@@ -616,7 +648,7 @@ pub fn sync_salon_tree(
         session,
         race: race.as_deref(),
         roster: Some(&roster),
-        circuits: &menu.circuits,
+        catalog: &menu.catalog,
         pseudo: &pseudo,
         link: link.as_deref(),
         copied: menu.copied_at.is_some_and(|at| now - at < COPIED_SECONDS),
@@ -839,8 +871,8 @@ fn spawn_tree(
                         Pickable::IGNORE,
                     ))
                     .with_children(|panel| {
-                        spawn_left(panel, view, &list, focus, &help, medium, semibold);
-                        spawn_right(panel, view, &list, medium, semibold);
+                        spawn_left(panel, view, (&list, focus), &help, medium, semibold);
+                        spawn_right(panel, view, (&list, focus), medium, semibold);
                     });
                 for hint in panel_hint(layout) {
                     column.spawn((
@@ -854,14 +886,60 @@ fn spawn_tree(
         });
 }
 
+/// The size of a setting's pill: its height, its text, the gap under it (px at 720).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LineSize {
+    height: f32,
+    text: f32,
+    gap: f32,
+}
+
+/// The pills of the charter (`size::LINE_HEIGHT`)...
+const LINE: LineSize = LineSize {
+    height: size::LINE_HEIGHT,
+    text: size::LINE_TEXT,
+    gap: size::LINE_GAP,
+};
+/// ...issue #122: smaller when the championship's lines would not fit in the panel (more than
+/// [`FULL_LINES`] of them)...
+const COMPACT_LINE: LineSize = LineSize {
+    height: 36.0,
+    text: 18.0,
+    gap: 5.0,
+};
+/// ...smaller still beyond [`COMPACT_LINES`] (a custom championship: seven lines)...
+const TIGHT_LINE: LineSize = LineSize {
+    height: 30.0,
+    text: 16.0,
+    gap: 3.0,
+};
+/// ...and for a custom championship's races, on the right, with the program.
+const RACE_LINE: LineSize = LineSize {
+    height: 30.0,
+    text: 16.0,
+    gap: 3.0,
+};
+/// The most settings' lines of the charter's size on the left.
+const FULL_LINES: usize = 5;
+/// ...and of the compact size.
+const COMPACT_LINES: usize = 6;
+
+/// The size of the settings' lines on the left, for `count` of them.
+fn line_size(count: usize) -> LineSize {
+    match count {
+        count if count > COMPACT_LINES => TIGHT_LINE,
+        count if count > FULL_LINES => COMPACT_LINE,
+        _ => LINE,
+    }
+}
+
 /// The left column: the lines, the settings, the help, the buttons (« Copier » is on the
 /// right, with the link).
 #[allow(clippy::too_many_arguments)]
 fn spawn_left(
     panel: &mut ChildSpawnerCommands,
     view: &SalonView,
-    list: &[Focusable],
-    focus: Option<Focusable>,
+    (list, focus): (&[Focusable], Option<Focusable>),
     help: &str,
     medium: &Handle<Font>,
     semibold: &Handle<Font>,
@@ -900,10 +978,26 @@ fn spawn_left(
                 ));
             }
             if let Some(seat) = view.seat.as_ref() {
-                for row in SalonRow::ALL {
-                    let index = list.iter().position(|f| *f == Focusable::Row(row));
-                    spawn_line(left, view, row, index, seat.editable, focus, semibold);
-                }
+                // Issue #122: the mode's lines (the races of a custom one are on the right).
+                let rows: Vec<SalonRow> =
+                    seat.rows.iter().copied().filter(|r| !r.is_race()).collect();
+                let size = line_size(rows.len());
+                left.spawn((
+                    MenuNode,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: u(size.gap),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|lines| {
+                    for row in rows {
+                        let index = list.iter().position(|f| *f == Focusable::Row(row));
+                        let state = (index, seat.editable, focus);
+                        spawn_line(lines, view, row, state, size, semibold);
+                    }
+                });
                 left.spawn((
                     text(
                         SalonText::Help,
@@ -944,27 +1038,27 @@ fn spawn_left(
         });
 }
 
-/// A setting's pill: its label, « < », its value, « > ».
+/// A setting's pill: its label, « < », its value, « > » (its value written by
+/// [`refresh_salon_tree`]).
 fn spawn_line(
     column: &mut ChildSpawnerCommands,
     view: &SalonView,
     row: SalonRow,
-    index: Option<usize>,
-    editable: bool,
-    focus: Option<Focusable>,
+    (index, editable, focus): (Option<usize>, bool, Option<Focusable>),
+    line_size: LineSize,
     face: &Handle<Font>,
 ) {
     let look = look(focus == Some(Focusable::Row(row)), editable);
     let value = view
         .seat
         .as_ref()
-        .map(|seat| row.value(seat.setup, &circuits()))
+        .map(|seat| seat.value(row).to_string())
         .unwrap_or_default();
     let mut line = column.spawn((
-        Name::new(row.label()),
+        Name::new(row.label().into_owned()),
         SalonLineNode { row },
         Node {
-            height: u(size::LINE_HEIGHT),
+            height: u(line_size.height),
             flex_shrink: 0.0,
             align_items: AlignItems::Center,
             column_gap: u(8.0),
@@ -973,21 +1067,23 @@ fn spawn_line(
                 right: u(8.0),
                 ..default()
             },
-            border: UiRect::bottom(u(size::LINE_DEPTH)),
-            border_radius: BorderRadius::all(u(size::LINE_HEIGHT / 2.0)),
+            border: UiRect::bottom(u(size::LINE_DEPTH.min(line_size.height / 8.0))),
+            border_radius: BorderRadius::all(u(line_size.height / 2.0)),
             ..default()
         },
         BackgroundColor(look.fill),
         BorderColor::all(look.depth),
         UiTransform::IDENTITY,
     ));
+    // The arrows a little smaller than the pill.
+    let arrow_size = size::ARROW.min(line_size.height - 6.0);
     line.with_children(|line| {
         line.spawn((
-            kit::text(row.label(), face, size::LINE_TEXT, look.label),
+            kit::text(row.label(), face, line_size.text, look.label),
             MenuNode,
             Pickable::IGNORE,
             Node {
-                width: u(size::LINE_LABEL_WIDTH),
+                width: u(size::LINE_LABEL_WIDTH * line_size.text / size::LINE_TEXT),
                 flex_shrink: 0.0,
                 ..default()
             },
@@ -996,8 +1092,8 @@ fn spawn_line(
             let mut arrow = line.spawn((
                 MenuNode,
                 Node {
-                    width: u(size::ARROW),
-                    height: u(size::ARROW),
+                    width: u(arrow_size),
+                    height: u(arrow_size),
                     flex_shrink: 0.0,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -1015,7 +1111,7 @@ fn spawn_line(
                     kit::text(
                         if step < 0 { "<" } else { ">" },
                         face,
-                        size::LINE_TEXT,
+                        line_size.text,
                         look.label,
                     ),
                     MenuNode,
@@ -1035,7 +1131,7 @@ fn spawn_line(
                         SalonText::Value(row),
                         value.clone(),
                         face,
-                        size::LINE_TEXT,
+                        line_size.text,
                         look.label,
                     ),
                     TextLayout::justify(Justify::Center),
@@ -1158,11 +1254,12 @@ fn spawn_button(
     }
 }
 
-/// The right column: the players, the invitation, the notes.
+/// The right column: the players, issue #122 a championship's program (its races, the host's
+/// lines when chosen one by one), the invitation, the notes.
 fn spawn_right(
     panel: &mut ChildSpawnerCommands,
     view: &SalonView,
-    list: &[Focusable],
+    (list, focus): (&[Focusable], Option<Focusable>),
     medium: &Handle<Font>,
     semibold: &Handle<Font>,
 ) {
@@ -1278,6 +1375,9 @@ fn spawn_right(
                         }
                     });
             }
+            if let Some(seat) = view.seat.as_ref().filter(|s| !s.program_title.is_empty()) {
+                spawn_program(right, view, seat, (list, focus), medium, semibold);
+            }
             if view.invite.is_some() {
                 right.spawn((
                     MenuNode,
@@ -1333,6 +1433,73 @@ fn spawn_right(
                         palette::MYRTILLE.with_alpha(0.8)
                     },
                 ));
+            }
+        });
+}
+
+/// Issue #122: a championship's program, under the players: its header, then each race (« 1 ·
+/// Prairie Pompon »), or for a custom one chosen one by one the host's lines, a pill each.
+fn spawn_program(
+    right: &mut ChildSpawnerCommands,
+    view: &SalonView,
+    seat: &super::view::Seat,
+    (list, focus): (&[Focusable], Option<Focusable>),
+    medium: &Handle<Font>,
+    semibold: &Handle<Font>,
+) {
+    right.spawn((
+        text(
+            SalonText::ProgramTitle,
+            seat.program_title.clone(),
+            semibold,
+            17.0,
+            palette::MYRTILLE,
+        ),
+        Node {
+            margin: UiRect::top(u(8.0)),
+            ..default()
+        },
+    ));
+    let races: Vec<SalonRow> = seat.rows.iter().copied().filter(|r| r.is_race()).collect();
+    if races.is_empty() {
+        for (index, race) in seat.program.iter().enumerate() {
+            right.spawn((
+                text(
+                    SalonText::Program(index),
+                    race.clone(),
+                    medium,
+                    15.0,
+                    palette::MYRTILLE.with_alpha(0.85),
+                ),
+                Node {
+                    margin: UiRect::left(u(8.0)),
+                    ..default()
+                },
+            ));
+        }
+        return;
+    }
+    right
+        .spawn((
+            MenuNode,
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: u(RACE_LINE.gap),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .with_children(|lines| {
+            for row in races {
+                let index = list.iter().position(|f| *f == Focusable::Row(row));
+                spawn_line(
+                    lines,
+                    view,
+                    row,
+                    (index, seat.editable, focus),
+                    RACE_LINE,
+                    semibold,
+                );
             }
         });
 }
@@ -1464,7 +1631,7 @@ pub fn refresh_salon_tree(
         if *key == SalonText::Banner {
             continue;
         }
-        let wanted = text_of(view, *key, &help, &menu.circuits);
+        let wanted = text_of(view, *key, &help);
         if written.0 != wanted {
             written.0 = wanted;
         }

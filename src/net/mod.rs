@@ -49,6 +49,7 @@
 //! browser's single-threaded executor, STATUS.md « Métriques »).
 
 mod browser;
+pub mod championship;
 mod clock;
 pub mod foot;
 mod guide;
@@ -75,6 +76,8 @@ mod tuning;
 mod ui;
 
 #[cfg(test)]
+mod championship_tests;
+#[cfg(test)]
 mod guide_tests;
 #[cfg(test)]
 mod item_tests;
@@ -97,6 +100,7 @@ mod star_tests;
 #[cfg(test)]
 mod sync_tests;
 
+pub use championship::{Championship, NO_ENTRANT, room_seed};
 pub use clock::{PeerClock, RoomClock};
 pub use foot::{
     FootLook, FootPose, FootRelay, FootSync, LookTrack, RemoteWalker, WalkerEntry, strike_lands,
@@ -119,15 +123,18 @@ pub use lobby::{
     SILENT_MS,
 };
 pub use netsim::{NetSim, NetSimTuning};
-pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
+pub use online::{
+    OnlineRace, OnlineRacePlugin, OnlineSystems, championship_to_start, race_to_start, session_of,
+};
 pub use pickups::{Arbiter, ClaimKey, Pillow, PillowRules};
 pub use protocol::{
-    BlastOut, Channel, Claim, DecodeError, EFFECT_ITEMS, EffectOut, FOOT_POSE_BITS, FootState,
-    FootStrike, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId,
-    MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message,
-    OUT_ITEMS, OutMotion, OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile,
-    Progress, RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter,
-    Spot, Strike, StrikeReply, TetherBreak, Verdict,
+    BlastOut, ChampionshipSetup, ChampionshipState, Channel, Claim, DecodeError, EFFECT_ITEMS,
+    EffectOut, FOOT_POSE_BITS, FootState, FootStrike, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId,
+    ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES,
+    MAX_NAME_CHARS, MAX_PLAYERS, MAX_PROGRAM, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
+    OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Program, Progress,
+    RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter, Spot,
+    Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
@@ -157,7 +164,7 @@ use crate::bots::BotTuning;
 use crate::characters::{Loadout, PartKind, PlayerColor, PlayerLoadout, Roster, SelectionScreen};
 use crate::kart::KartColor;
 use crate::options::OptionsMenu;
-use crate::race::RaceTuning;
+use crate::race::{GrandPrixTuning, RaceTuning};
 
 /// Opens and closes the lobby window: « L » for « en ligne », a letter at the same place and
 /// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
@@ -576,6 +583,17 @@ fn apply_net_actions(
                     continue;
                 };
                 let seed = random_seed(time.elapsed().as_nanos() as u64);
+                // Issue #122: the room's mode is the championship: it starts with this race
+                // (its seed the seed of its bots), or goes on.
+                if let Some(championship) = online::championship_to_start(lobby, seed) {
+                    info!(
+                        "network: we start a championship of {} races, {} players and {} bots",
+                        championship.state.setup.program.len(),
+                        championship.state.players.len(),
+                        championship.state.bots
+                    );
+                    lobby.start_championship(championship);
+                }
                 let difficulty = bot_tuning
                     .as_ref()
                     .map_or_else(Default::default, |t| t.grid_difficulty);
@@ -584,12 +602,14 @@ fn apply_net_actions(
                 match race_to_start(lobby, now_ms(&time), seed, laps, difficulty, &tuning) {
                     Some(start) => {
                         info!(
-                            "network: we start race {} on circuit {} at tick {}, {} players and {} bots",
+                            "network: we start race {} on circuit {} at tick {}, {} players and {} bots (round {}, grid {:?})",
                             start.race,
                             start.track,
                             start.start_tick,
                             start.players.len(),
-                            start.bots
+                            start.bots,
+                            start.round,
+                            start.lineup
                         );
                         lobby.announce_race(start);
                     }
@@ -806,7 +826,7 @@ fn poll_session(
     mut sync: Option<ResMut<KartSync>>,
     mut race: Option<ResMut<OnlineRace>>,
     (mut items, mut foot): (Option<ResMut<OnlineItems>>, Option<ResMut<FootSync>>),
-    tuning: Option<Res<NetTuning>>,
+    (tuning, points): (Option<Res<NetTuning>>, Option<Res<GrandPrixTuning>>),
     mut window: ResMut<LobbyWindow>,
 ) {
     let now = now_ms(&time);
@@ -987,6 +1007,16 @@ fn poll_session(
         }
         if let Some(race) = race.as_deref_mut() {
             for message in race.drain_outbox() {
+                // Issue #122: the host's closed results score the race of its championship
+                // (everyone is told the standings).
+                if let Message::RaceResults(results) = &message
+                    && hosting
+                {
+                    let table = points.as_deref().cloned().unwrap_or_default().points;
+                    if lobby.score_championship(results, &table) {
+                        info!("network: race {} of the championship scored", results.race);
+                    }
+                }
                 to_everyone(socket, &message);
             }
         }

@@ -18,8 +18,13 @@
 //!
 //! Issue #99: « Championnat » on the screens; its races are a cup's (four circuits of the
 //! manifest) or a custom championship's (its races chosen or drawn: `modes::setup`), the same
-//! rules for both. Solo for now; online, a championship will need the host to carry the standings
-//! and the grid.
+//! rules for both.
+//!
+//! Issue #122: **online**, the host carries the championship (`net::championship`): it scores
+//! the races with this logic (several players among the entrants, [`GrandPrix::with_entrants`];
+//! a player who left wins nothing, [`GrandPrix::score_without`]) and tells everyone; every peer
+//! shows what it told ([`GrandPrix::online`]: the names, the standings, our entrant), the screens
+//! and the podium of `crate::modes` as in solo, without its keys.
 
 use bevy::prelude::*;
 
@@ -73,8 +78,22 @@ pub enum GrandPrixStage {
     Podium,
 }
 
+/// Issue #122: a championship online, as this peer shows it: what the host told (see the
+/// module's documentation).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OnlineStandings {
+    /// Every entrant's name: its player's pseudo, « Kart N » for a bot.
+    pub names: Vec<String>,
+    /// Our entrant (`None`: we watch it, seated after its start).
+    pub me: Option<usize>,
+    /// The overall standings the host told: entrants, first to last.
+    pub standings: Vec<usize>,
+    /// We host it: Entrée moves it on.
+    pub hosting: bool,
+}
+
 /// A Grand Prix in progress (solo): issue #99, « Championnat » on the screens. Exists from its
-/// start to the next choice of mode.
+/// start to the next choice of mode. Issue #122: online too, as the host tells it.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct GrandPrix {
     /// Issue #99: its name on its screens: the cup's (« Coupe Doudou »), or « Championnat » (a
@@ -96,12 +115,20 @@ pub struct GrandPrix {
     /// The player asked to move on before the results closed: the standings come once the race
     /// is scored.
     pub advance_when_scored: bool,
+    /// Issue #122: online, what the host told (`None`: solo, this peer runs it).
+    pub online: Option<OnlineStandings>,
 }
 
 impl GrandPrix {
     /// A new Grand Prix on `cup` with `bots` bots and the player.
     pub fn new(cup: Vec<CupRace>, bots: usize) -> Self {
-        let entrants = (bots + 1).min(GRID_SLOTS);
+        Self::with_entrants(cup, bots + 1)
+    }
+
+    /// Issue #122: a new Grand Prix on `cup` with `entrants` racers (online: the bots, then the
+    /// players).
+    pub fn with_entrants(cup: Vec<CupRace>, entrants: usize) -> Self {
+        let entrants = entrants.clamp(1, GRID_SLOTS);
         Self {
             title: CHAMPIONSHIP.to_string(),
             cup,
@@ -112,12 +139,22 @@ impl GrandPrix {
             points: vec![0; entrants],
             last_points: vec![0; entrants],
             advance_when_scored: false,
+            online: None,
         }
     }
 
     /// The player's entrant (after the bots).
     pub fn player(&self) -> usize {
         self.entrants - 1
+    }
+
+    /// Whether `entrant` is our player: solo, the one after the bots; issue #122, online, ours
+    /// (none when we watch).
+    pub fn is_player(&self, entrant: usize) -> bool {
+        match &self.online {
+            Some(online) => online.me == Some(entrant),
+            None => entrant == self.player(),
+        }
     }
 
     /// Whether the race being run has been scored.
@@ -134,22 +171,30 @@ impl GrandPrix {
     /// (from the closed results). An entrant missing from it (it should not be) comes last, in
     /// its number's order; an unknown or repeated one is ignored.
     pub fn score(&mut self, order: &[usize], points: &[u32]) {
+        self.score_without(order, &[], points);
+    }
+
+    /// Issue #122: scores the race being run like [`GrandPrix::score`], the entrants `out` (online:
+    /// the players who left, before or during it) last and **without points** (they gave up),
+    /// in their number's order. Online only: a race is never run again there (no points to take
+    /// back, [`GrandPrix::restart_race`]).
+    pub fn score_without(&mut self, order: &[usize], out: &[usize], points: &[u32]) {
         if self.scored() {
             return;
         }
         let mut full: Vec<usize> = Vec::with_capacity(self.entrants);
         for entrant in order {
-            if *entrant < self.entrants && !full.contains(entrant) {
+            if *entrant < self.entrants && !full.contains(entrant) && !out.contains(entrant) {
                 full.push(*entrant);
             }
         }
-        for entrant in 0..self.entrants {
-            if !full.contains(&entrant) {
-                full.push(entrant);
-            }
-        }
+        let racing = (0..self.entrants).filter(|entrant| !out.contains(entrant));
+        let missing: Vec<usize> = racing.filter(|entrant| !full.contains(entrant)).collect();
+        full.extend(missing);
+        let scoring = full.len();
+        full.extend((0..self.entrants).filter(|entrant| out.contains(entrant)));
         self.last_points.fill(0);
-        for (place, entrant) in full.iter().enumerate() {
+        for (place, entrant) in full.iter().enumerate().take(scoring) {
             let won = points_for(points, place);
             self.points[*entrant] += won;
             self.last_points[*entrant] = won;
@@ -187,6 +232,10 @@ impl GrandPrix {
     /// place in the last race run first, then in the race before (see the module's
     /// documentation), then the entrant's number.
     pub fn standings(&self) -> Vec<usize> {
+        // Issue #122: online, the host's.
+        if let Some(online) = &self.online {
+            return online.standings.clone();
+        }
         let mut entrants: Vec<usize> = (0..self.entrants).collect();
         entrants.sort_by(|a, b| {
             self.points[*b]
@@ -379,6 +428,47 @@ mod tests {
         gp.score(&[1, 0, 2, 3], &points);
         assert_eq!(gp.points, [27, 27, 20, 18]);
         assert_eq!(gp.orders.len(), 2);
+    }
+
+    /// Issue #122: online, several players among the entrants; one who left (before a race, or
+    /// during it: it gave up) comes last of it and wins nothing, the others win the points of
+    /// their places as if it were not there; it keeps what it won before, and the ties are
+    /// broken as ever (the last race first).
+    #[test]
+    fn a_player_who_left_keeps_its_points_and_wins_no_more() {
+        let points = GrandPrixTuning::default().points;
+        let mut gp = GrandPrix::with_entrants(cup(3), 4);
+        assert_eq!(gp.entrants, 4);
+        gp.score(&[3, 2, 1, 0], &points);
+        assert_eq!(gp.points, [9, 10, 12, 15]);
+        gp.next_race();
+        // 3 gave up (it left during the race): last in the results, out of the points.
+        gp.score_without(&[2, 3, 1, 0], &[3], &points);
+        assert_eq!(gp.orders[1], [2, 1, 0, 3]);
+        assert_eq!(gp.last_points, [10, 12, 15, 0]);
+        assert_eq!(gp.points, [19, 22, 27, 15]);
+        assert_eq!(gp.standings(), [2, 1, 0, 3]);
+        gp.next_race();
+        // It left before this one: not in the results at all.
+        gp.score_without(&[0, 1, 2], &[3], &points);
+        assert_eq!(gp.points, [34, 34, 37, 15]);
+        assert_eq!(
+            gp.standings(),
+            [2, 0, 1, 3],
+            "0 ahead of 1: better in the last race"
+        );
+        // Without anyone out, the same as `score`.
+        let mut a = GrandPrix::with_entrants(cup(2), 3);
+        let mut b = a.clone();
+        a.score(&[1, 2], &points);
+        b.score_without(&[1, 2], &[], &points);
+        assert_eq!(a, b);
+        assert_eq!(a.orders[0], [1, 2, 0]);
+        assert_eq!(GrandPrix::with_entrants(cup(2), 0).entrants, 1);
+        assert_eq!(
+            GrandPrix::new(cup(2), 11),
+            GrandPrix::with_entrants(cup(2), 12)
+        );
     }
 
     /// An order missing an entrant (or naming one twice, or one that does not exist) still

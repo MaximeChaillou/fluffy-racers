@@ -417,6 +417,51 @@ fn the_screens_of_a_championship_write_their_accents() {
         "Espace ou Entrée (manette : A) : course suivante (Col des Moufles)"
     );
     assert_eq!(screens::STANDINGS_HEADER, "Classement général");
+    // Issue #122: online, the players' pseudos (ours « Toi »), the host's standings, and what
+    // comes next: the host moves on after a moment (or Entrée), the others wait.
+    let mut names: Vec<String> = (0..12).map(|e| format!("Kart {}", e + 1)).collect();
+    names[10] = "Éloïse".into();
+    names[11] = "Zoé".into();
+    let standings: Vec<usize> = (0..12).rev().collect();
+    grand_prix.online = Some(crate::race::OnlineStandings {
+        names,
+        me: Some(10),
+        standings: standings.clone(),
+        hosting: false,
+    });
+    assert_eq!(grand_prix.standings(), standings);
+    let lines = standings_lines(&grand_prix);
+    assert_eq!((lines[0].name.as_str(), lines[0].player), ("Zoé", false));
+    assert_eq!((lines[1].name.as_str(), lines[1].player), ("Toi", true));
+    assert_eq!(lines[2].name, "Kart 10");
+    assert_eq!(
+        screens::standings_footer(&grand_prix),
+        "Course suivante (Col des Moufles) dans un instant"
+    );
+    let mut online_texts = vec![
+        screens::standings_footer(&grand_prix),
+        screens::podium_footer(&grand_prix),
+    ];
+    grand_prix.online.as_mut().unwrap().hosting = true;
+    grand_prix.race = 3;
+    assert_eq!(
+        screens::standings_footer(&grand_prix),
+        "Le podium dans un instant  ·  Entrée : tout de suite"
+    );
+    assert_eq!(
+        screens::podium_footer(&grand_prix),
+        "Retour au salon dans un instant  ·  Entrée : tout de suite"
+    );
+    online_texts.extend([
+        screens::standings_footer(&grand_prix),
+        screens::podium_footer(&grand_prix),
+    ]);
+    for line in standings_lines(&grand_prix) {
+        online_texts.push(line.name);
+    }
+    for text in &online_texts {
+        assert!(text.chars().all(crate::ui::format::writable), "{text}");
+    }
 }
 
 fn count<C: Component>(app: &mut App) -> usize {

@@ -144,6 +144,9 @@ pub struct RosterEntry<'a> {
     pub color: KartColor,
     /// Its player's name (a bot: none; `None` for a player: the one it had, a player who left).
     pub name: Option<&'a str>,
+    /// Issue #122: a bot of the race: its number (its name on the results, « Kart N », wherever
+    /// it starts: a championship's grid is the reverse of the standings).
+    pub bot: Option<u8>,
     /// It races: a racer of our race (its progress comes from its peer's events).
     pub racer: bool,
     /// Its player left the race: kept for the ranking, hidden, nothing to bump into.
@@ -163,6 +166,8 @@ pub struct RemoteKart {
     pub kart: KartId,
     /// Its player's name.
     pub name: Option<String>,
+    /// Issue #122: a bot: its number.
+    pub bot: Option<u8>,
     /// A racer of our race (issue #9).
     pub racer: bool,
     /// Its player left the race.
@@ -188,6 +193,7 @@ impl RemoteKart {
             color: entry.color,
             kart: entry.kart,
             name: entry.name.map(str::to_string),
+            bot: entry.bot,
             racer: entry.racer,
             left: entry.left,
             buffer: SnapshotBuffer::default(),
@@ -319,6 +325,7 @@ impl KartSync {
                 loadout: Some(loadout),
                 color,
                 name,
+                bot: None,
                 racer: false,
                 left: false,
             },
@@ -353,10 +360,12 @@ impl KartSync {
                     if remote.loadout != loadout
                         || remote.racer != entry.racer
                         || remote.left != entry.left
+                        || remote.bot != entry.bot
                     {
                         remote.loadout = loadout;
                         remote.racer = entry.racer;
                         remote.left = entry.left;
+                        remote.bot = entry.bot;
                         remote.respawn = true;
                     }
                     // A player who left keeps its name (`None`: unknown now).
@@ -715,6 +724,9 @@ fn spawn_remote_karts(
         }
         if let Some(name) = &remote.name {
             proxy.insert(RacerName(name.clone()));
+        } else if let Some(bot) = remote.bot.filter(|bot| *bot != remote.kart) {
+            // Issue #122: a bot away from its own slot keeps its name (its number).
+            proxy.insert(RacerName(super::championship::bot_name(usize::from(bot))));
         }
         let proxy = proxy.id();
         remote.proxy = Some(proxy);

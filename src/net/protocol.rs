@@ -53,7 +53,13 @@
 //! [`RaceStart::items`]; without bots, [`RaceStart::bots`] is 0). Version 15 (issue #101): the
 //! lobby in 3D: each player's character on foot ([`FootState`], 33 bytes, on the unreliable
 //! channel; the host bundles them, [`Message::FootStates`]) and a paw's strike on foot
-//! ([`FootStrike`]: the victim decides whether it falls over).
+//! ([`FootStrike`]: the victim decides whether it falls over). Version 16 (issue #122): the
+//! championship online: the room's settings carry the mode ([`RoomSetup::championship`]) and the
+//! championship chosen ([`ChampionshipSetup`]: a cup or a custom one, its circuits in order,
+//! drawn by the host when at random); a race's start says its round of the championship and its
+//! grid ([`RaceStart::round`], [`RaceStart::lineup`]: the reverse of the overall standings); the
+//! host tells the championship in progress ([`Message::Championship`], [`ChampionshipState`]:
+//! its entrants, the points of each one, the last race's, the overall standings, the podium).
 
 use std::fmt;
 
@@ -63,7 +69,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 15;
+pub const PROTOCOL_VERSION: u8 = 16;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -141,7 +147,9 @@ impl Profile {
 
 /// Issue #99: the host's settings of the room, which every peer shows (the lobby) and drives
 /// with: the circuit (free driving on it until a race, and the next race's), the mirror, whether
-/// bots fill the grid, whether the item boxes are on the track.
+/// bots fill the grid, whether the item boxes are on the track. Issue #122: the mode (a race
+/// alone on the circuit, or a championship) and the championship chosen, kept while the mode is
+/// the circuit alone (the host finds it again).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RoomSetup {
     /// Index of the circuit in `assets/tracks/index.ron`.
@@ -151,6 +159,10 @@ pub struct RoomSetup {
     pub bots: bool,
     /// Item boxes on the track (off: none, the croquettes stay).
     pub items: bool,
+    /// Issue #122: the mode is the championship (else « Circuit seul »: one race on `track`).
+    pub championship: bool,
+    /// Issue #122: the championship chosen (its program raced when `championship`).
+    pub plan: ChampionshipSetup,
 }
 
 impl Default for RoomSetup {
@@ -160,6 +172,8 @@ impl Default for RoomSetup {
             mirror: false,
             bots: true,
             items: true,
+            championship: false,
+            plan: ChampionshipSetup::default(),
         }
     }
 }
@@ -168,6 +182,86 @@ impl Default for RoomSetup {
 const SETUP_MIRROR: u8 = 1;
 const SETUP_BOTS: u8 = 1 << 1;
 const SETUP_ITEMS: u8 = 1 << 2;
+/// Issue #122: the mode is the championship.
+const SETUP_CHAMPIONSHIP: u8 = 1 << 3;
+/// The bits of a [`ChampionshipSetup`]'s byte.
+const PLAN_CUSTOM: u8 = 1;
+const PLAN_CHOSEN: u8 = 1 << 1;
+
+/// Issue #122: the most races a championship online has (24 circuits at term, GD § 1: a custom
+/// championship has as many races as circuits at most).
+pub const MAX_PROGRAM: usize = 24;
+
+/// Issue #122: the circuits a championship races, in order (indices of `assets/tracks/index.ron`):
+/// [`MAX_PROGRAM`] at most. A fixed array: the room's settings stay `Copy`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Program {
+    len: u8,
+    circuits: [u8; MAX_PROGRAM],
+}
+
+impl Default for Program {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            circuits: [0; MAX_PROGRAM],
+        }
+    }
+}
+
+impl fmt::Debug for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
+impl Program {
+    /// The circuits `circuits`, in order: the first [`MAX_PROGRAM`] (an index beyond 255 is
+    /// 255: no such circuit).
+    pub fn new(circuits: &[usize]) -> Self {
+        let mut program = Self::default();
+        for (slot, circuit) in program.circuits.iter_mut().zip(circuits) {
+            *slot = (*circuit).min(255) as u8;
+        }
+        program.len = circuits.len().min(MAX_PROGRAM) as u8;
+        program
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.circuits[..usize::from(self.len)]
+    }
+
+    /// The circuits, as indices of the manifest.
+    pub fn circuits(&self) -> Vec<usize> {
+        self.as_slice().iter().map(|c| usize::from(*c)).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// Issue #122: the championship the host chose (`modes::RaceSetup`'s, without the time trial):
+/// a cup of the manifest or a custom one (its circuits chosen one by one, or drawn at random by
+/// the host), and what it races. Every peer shows it; the program is the host's (its draw).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ChampionshipSetup {
+    /// A custom championship (else a cup).
+    pub custom: bool,
+    /// The cup: an index of `modes::cups` (kept while custom).
+    pub cup: u8,
+    /// A custom championship's circuits are chosen one by one (else drawn at random; kept while
+    /// a cup).
+    pub chosen: bool,
+    /// The number of the host's draw (`modes::draw_circuits`).
+    pub draw: u32,
+    /// What it races, in order: the cup's circuits, the chosen ones or the drawn ones.
+    pub program: Program,
+}
 /// The bits of a [`RaceStart`]'s byte of settings.
 const START_MIRROR: u8 = 1;
 const START_ITEMS: u8 = 1 << 1;
@@ -195,7 +289,17 @@ pub struct RaceStart {
     /// The common tick (60 per second on the room's clock) of the race's first tick on the grid:
     /// the countdown follows, the same for everyone.
     pub start_tick: u32,
-    /// The players, in grid order: they start behind the bots (slot `bots`, then `bots + 1`...).
+    /// Issue #122: the race's round in the championship in progress (1 for its first race), 0
+    /// for a race alone.
+    pub round: u8,
+    /// Issue #122: who starts on each grid slot (`lineup[slot]`), as a racer: `r` below `bots` is
+    /// bot `r` (its parts, color and name are bot `r`'s, `bots::bot_loadout`), `bots + i` is
+    /// `players[i]`. Empty: the bots on the front slots, the players behind them in their order
+    /// (every race before #122, and a championship's first). Else as many as the racers, each
+    /// once: in a championship, the reverse of the overall standings (GD § 1).
+    pub lineup: Vec<u8>,
+    /// The players: they start behind the bots (slot `bots`, then `bots + 1`...), or where the
+    /// lineup puts them.
     pub players: Vec<PeerKey>,
 }
 
@@ -205,12 +309,81 @@ impl RaceStart {
         self.players
             .iter()
             .position(|p| *p == peer)
-            .map(|index| self.bots + index as u8)
+            .map(|index| self.slot_of_racer(usize::from(self.bots) + index))
+    }
+
+    /// The grid slot of racer `racer` (see [`RaceStart::lineup`]).
+    pub fn slot_of_racer(&self, racer: usize) -> KartId {
+        self.lineup
+            .iter()
+            .position(|r| usize::from(*r) == racer)
+            .unwrap_or(racer) as KartId
+    }
+
+    /// The racer on grid slot `slot` (see [`RaceStart::lineup`]).
+    pub fn racer_at(&self, slot: usize) -> usize {
+        self.lineup.get(slot).map_or(slot, |r| usize::from(*r))
+    }
+
+    /// The bot on grid slot `slot` (its number: its parts, its color, its name), if a bot starts
+    /// there.
+    pub fn bot_at(&self, slot: usize) -> Option<usize> {
+        let racer = self.racer_at(slot);
+        (racer < usize::from(self.bots) && slot < self.racers()).then_some(racer)
     }
 
     /// The racers: bots and players.
     pub fn racers(&self) -> usize {
         usize::from(self.bots) + self.players.len()
+    }
+}
+
+/// Issue #122: the championship in progress in the room, as its host tells it (when it starts,
+/// after each race scored, at the podium, and to a player seated meanwhile): every peer shows
+/// these standings. **Entrants**: the bots `0..bots` (the same bots from one race to the next,
+/// its seed), then `players` in their order at its start: each keeps its number (and its points)
+/// to the end, a player who left too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChampionshipState {
+    /// What it races (its program), as chosen in the room.
+    pub setup: ChampionshipSetup,
+    /// `RaceGrid::seed` of each of its races: the bots keep their parts (issue #19).
+    pub seed: u64,
+    /// Bots among its entrants (the front of the first race's grid).
+    pub bots: u8,
+    /// Its players, in their order at its start (entrants `bots`, `bots + 1`...).
+    pub players: Vec<PeerKey>,
+    /// Races scored so far.
+    pub scored: u8,
+    /// After its last race: the podium.
+    pub podium: bool,
+    /// Every entrant's total points.
+    pub points: Vec<u16>,
+    /// Every entrant's points in the last race scored.
+    pub last: Vec<u16>,
+    /// The overall standings: entrants, first to last (ties broken by the host, GD § 1).
+    pub standings: Vec<u8>,
+}
+
+impl ChampionshipState {
+    /// Its entrants: bots and players.
+    pub fn entrants(&self) -> usize {
+        usize::from(self.bots) + self.players.len()
+    }
+
+    /// The entrant of `peer`, if it is one of its players.
+    pub fn entrant_of(&self, peer: PeerKey) -> Option<usize> {
+        self.players
+            .iter()
+            .position(|p| *p == peer)
+            .map(|index| usize::from(self.bots) + index)
+    }
+
+    /// The player of entrant `entrant`, if it is not a bot.
+    pub fn player_of(&self, entrant: usize) -> Option<PeerKey> {
+        entrant
+            .checked_sub(usize::from(self.bots))
+            .and_then(|index| self.players.get(index).copied())
     }
 }
 
@@ -818,6 +991,9 @@ pub enum Message {
     FootStates(Vec<(PeerKey, FootState)>),
     /// Issue #101: a paw's strike on foot, told by the striker; its target decides.
     FootStrike(FootStrike),
+    /// Issue #122: the host's championship in progress: its entrants, their points, the
+    /// overall standings, the podium.
+    Championship(ChampionshipState),
 }
 
 /// Kart states in one [`Message::KartStates`] at most: the karts of a grid.
@@ -833,6 +1009,7 @@ const SETUP: u8 = 7;
 const PROGRESS: u8 = 8;
 const RACE_OVER: u8 = 9;
 const RACE_RESULTS: u8 = 11;
+const CHAMPIONSHIP: u8 = 12;
 const STRIKE: u8 = 16;
 const STRIKE_REPLY: u8 = 17;
 const GRAB: u8 = 18;
@@ -911,13 +1088,14 @@ impl Message {
             Message::FootState(_) => FOOT_STATE,
             Message::FootStates(_) => FOOT_STATES,
             Message::FootStrike(_) => FOOT_STRIKE,
+            Message::Championship(_) => CHAMPIONSHIP,
             Message::Relayed { .. } => RELAYED,
         }
     }
 
     /// Issue #63: a message a client tells every peer, which the host relays to the other clients
     /// with its origin ([`Message::Relayed`]). Not the host's own (the seats, the race's start,
-    /// end and results, the verdicts), nor the pings (each link has its own), nor the kart states (the host
+    /// end and results, issue #122 its championship, the verdicts), nor the pings (each link has its own), nor the kart states (the host
     /// bundles them, [`Message::KartStates`]), nor (issue #101) the characters' states on foot
     /// (bundled too, [`Message::FootStates`]).
     pub fn relayable(&self) -> bool {
@@ -929,6 +1107,7 @@ impl Message {
                 | Message::Setup(_)
                 | Message::RaceOver(_)
                 | Message::RaceResults(_)
+                | Message::Championship(_)
                 | Message::Verdict(_)
                 | Message::Ping { .. }
                 | Message::Pong { .. }
@@ -988,6 +1167,11 @@ impl Message {
                 }
                 out.push(settings);
                 put_u32(out, start.start_tick);
+                // Issue #122: its round and its grid, before the players (the last field).
+                out.push(start.round);
+                let lineup = &start.lineup[..start.lineup.len().min(MAX_PLAYERS)];
+                out.push(lineup.len() as u8);
+                out.extend_from_slice(lineup);
                 put_keys(out, &start.players);
             }
             Message::Setup(setup) => {
@@ -996,12 +1180,32 @@ impl Message {
                     (setup.mirror, SETUP_MIRROR),
                     (setup.bots, SETUP_BOTS),
                     (setup.items, SETUP_ITEMS),
+                    (setup.championship, SETUP_CHAMPIONSHIP),
                 ] {
                     if on {
                         bits |= bit;
                     }
                 }
                 out.extend_from_slice(&[setup.track, bits]);
+                put_plan(out, &setup.plan);
+            }
+            Message::Championship(state) => {
+                put_plan(out, &state.setup);
+                out.extend_from_slice(&state.seed.to_le_bytes());
+                out.push(state.bots);
+                put_keys(out, &state.players);
+                out.extend_from_slice(&[state.scored, u8::from(state.podium)]);
+                // One value per entrant each (the count follows from the bots and the players).
+                let entrants = state.entrants().min(MAX_PLAYERS);
+                for list in [&state.points, &state.last] {
+                    for entrant in 0..entrants {
+                        let value = list.get(entrant).copied().unwrap_or(0);
+                        out.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                for place in 0..entrants {
+                    out.push(state.standings.get(place).copied().unwrap_or(0));
+                }
             }
             Message::Progress(progress) => {
                 out.extend_from_slice(&progress.race.to_le_bytes());
@@ -1299,6 +1503,8 @@ impl Message {
                     mirror: settings & START_MIRROR != 0,
                     items: settings & START_ITEMS != 0,
                     start_tick: reader.u32()?,
+                    round: reader.u8()?,
+                    lineup: reader.bytes("a grid longer than the grid")?,
                     players: reader.keys("more racers than players")?,
                 };
                 if start.laps == 0 {
@@ -1313,19 +1519,70 @@ impl Message {
                 if has_duplicates(start.players.iter().map(|p| p.0)) {
                     return Err(DecodeError::Invalid("a player twice on the grid"));
                 }
+                // Issue #122: a grid of every racer, each once.
+                if !start.lineup.is_empty() && !is_permutation(&start.lineup, start.racers()) {
+                    return Err(DecodeError::Invalid("race grid"));
+                }
                 Message::StartRace(start)
             }
             SETUP => {
                 let track = reader.u8()?;
                 let bits = reader.u8()?;
-                if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS) != 0 {
+                if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS | SETUP_CHAMPIONSHIP) != 0 {
                     return Err(DecodeError::Invalid("room settings"));
                 }
-                Message::Setup(RoomSetup {
+                let setup = RoomSetup {
                     track,
                     mirror: bits & SETUP_MIRROR != 0,
                     bots: bits & SETUP_BOTS != 0,
                     items: bits & SETUP_ITEMS != 0,
+                    championship: bits & SETUP_CHAMPIONSHIP != 0,
+                    plan: reader.plan()?,
+                };
+                // Issue #122: a championship races something.
+                if setup.championship && setup.plan.program.is_empty() {
+                    return Err(DecodeError::Invalid("championship without races"));
+                }
+                Message::Setup(setup)
+            }
+            CHAMPIONSHIP => {
+                let setup = reader.plan()?;
+                let seed = u64::from_le_bytes(reader.array()?);
+                let bots = reader.u8()?;
+                let players = reader.keys("more players than seats")?;
+                let entrants = usize::from(bots) + players.len();
+                if entrants > MAX_PLAYERS || entrants == 0 {
+                    return Err(DecodeError::Invalid("championship entrants"));
+                }
+                if has_duplicates(players.iter().map(|p| p.0)) {
+                    return Err(DecodeError::Invalid("a player twice in the championship"));
+                }
+                let scored = reader.u8()?;
+                let podium = reader.bool()?;
+                let mut points = Vec::with_capacity(entrants);
+                let mut last = Vec::with_capacity(entrants);
+                for list in [&mut points, &mut last] {
+                    for _ in 0..entrants {
+                        list.push(reader.u16()?);
+                    }
+                }
+                let standings = reader.array_of(entrants)?;
+                if setup.program.is_empty() || usize::from(scored) > setup.program.len() {
+                    return Err(DecodeError::Invalid("championship races"));
+                }
+                if !is_permutation(&standings, entrants) {
+                    return Err(DecodeError::Invalid("championship standings"));
+                }
+                Message::Championship(ChampionshipState {
+                    setup,
+                    seed,
+                    bots,
+                    players,
+                    scored,
+                    podium,
+                    points,
+                    last,
+                    standings,
                 })
             }
             PROGRESS => {
@@ -1864,6 +2121,38 @@ fn put_keys(out: &mut Vec<u8>, keys: &[PeerKey]) {
 /// The highest bot difficulty on the wire (`bots::BotDifficulty::Hard`).
 const MAX_DIFFICULTY: u8 = 2;
 
+/// Issue #122: a championship chosen: its byte of bits, its cup, its draw, then its program (a
+/// count byte and a byte per circuit, [`MAX_PROGRAM`] at most).
+fn put_plan(out: &mut Vec<u8>, plan: &ChampionshipSetup) {
+    let mut bits = 0;
+    if plan.custom {
+        bits |= PLAN_CUSTOM;
+    }
+    if plan.chosen {
+        bits |= PLAN_CHOSEN;
+    }
+    out.extend_from_slice(&[bits, plan.cup]);
+    put_u32(out, plan.draw);
+    out.push(plan.program.len() as u8);
+    out.extend_from_slice(plan.program.as_slice());
+}
+
+/// Whether `values` holds every number of `0..count` once (and nothing else).
+fn is_permutation(values: &[u8], count: usize) -> bool {
+    if values.len() != count {
+        return false;
+    }
+    let mut seen = [false; 256];
+    for value in values {
+        let value = usize::from(*value);
+        if value >= count || seen[value] {
+            return false;
+        }
+        seen[value] = true;
+    }
+    true
+}
+
 /// Whether a short list (12 at most) holds a value twice.
 fn has_duplicates(values: impl Iterator<Item = u128>) -> bool {
     let mut seen: Vec<u128> = Vec::with_capacity(MAX_PLAYERS);
@@ -1962,6 +2251,50 @@ impl Reader<'_> {
 
     fn u32(&mut self) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.array()?))
+    }
+
+    /// `count` bytes.
+    fn array_of(&mut self, count: usize) -> Result<Vec<u8>, DecodeError> {
+        let (head, rest) = self
+            .0
+            .split_at_checked(count)
+            .ok_or(DecodeError::Truncated)?;
+        self.0 = rest;
+        Ok(head.to_vec())
+    }
+
+    /// Issue #122: a list of bytes (a count byte, then the bytes: [`MAX_PLAYERS`] at most);
+    /// `too_many`: what a longer one is.
+    fn bytes(&mut self, too_many: &'static str) -> Result<Vec<u8>, DecodeError> {
+        let count = usize::from(self.u8()?);
+        if count > MAX_PLAYERS {
+            return Err(DecodeError::Invalid(too_many));
+        }
+        self.array_of(count)
+    }
+
+    /// Issue #122: a championship chosen ([`put_plan`]).
+    fn plan(&mut self) -> Result<ChampionshipSetup, DecodeError> {
+        let bits = self.u8()?;
+        if bits & !(PLAN_CUSTOM | PLAN_CHOSEN) != 0 {
+            return Err(DecodeError::Invalid("championship settings"));
+        }
+        let cup = self.u8()?;
+        let draw = self.u32()?;
+        let count = usize::from(self.u8()?);
+        if count > MAX_PROGRAM {
+            return Err(DecodeError::Invalid(
+                "a championship longer than the protocol allows",
+            ));
+        }
+        let circuits: Vec<usize> = self.array_of(count)?.into_iter().map(usize::from).collect();
+        Ok(ChampionshipSetup {
+            custom: bits & PLAN_CUSTOM != 0,
+            cup,
+            chosen: bits & PLAN_CHOSEN != 0,
+            draw,
+            program: Program::new(&circuits),
+        })
     }
 
     /// A list of peers ([`put_keys`]); `too_many`: what a count beyond [`MAX_PLAYERS`] is.
@@ -2224,6 +2557,8 @@ mod tests {
                 mirror: true,
                 items: false,
                 start_tick: 4_000_000_007,
+                round: 0,
+                lineup: vec![],
                 players: vec![PeerKey(u128::MAX), PeerKey(0x0123_4567_89ab_cdef)],
             }),
             Message::StartRace(RaceStart {
@@ -2236,9 +2571,26 @@ mod tests {
                 mirror: false,
                 items: true,
                 start_tick: 0,
+                round: 0,
+                lineup: vec![],
                 players: (0..MAX_PLAYERS as u128)
                     .map(|i| PeerKey(i << 100))
                     .collect(),
+            }),
+            // Issue #122: a championship's third race, its grid the reverse of the standings.
+            Message::StartRace(RaceStart {
+                race: 9,
+                seed: 0xfeed,
+                track: 5,
+                laps: 3,
+                bots: 9,
+                difficulty: 1,
+                mirror: false,
+                items: true,
+                start_tick: 77,
+                round: 255,
+                lineup: vec![10, 3, 0, 11, 1, 2, 4, 5, 6, 7, 8, 9],
+                players: vec![PeerKey(1), PeerKey(2), PeerKey(3)],
             }),
             Message::Setup(RoomSetup {
                 track: 1,
@@ -2249,12 +2601,96 @@ mod tests {
                 mirror: true,
                 bots: false,
                 items: false,
+                championship: false,
+                plan: ChampionshipSetup::default(),
             }),
             Message::Setup(RoomSetup {
                 track: 3,
                 mirror: false,
                 bots: true,
                 items: false,
+                championship: false,
+                plan: ChampionshipSetup {
+                    custom: true,
+                    cup: 1,
+                    chosen: true,
+                    draw: 7,
+                    program: Program::new(&[2, 2, 0]),
+                },
+            }),
+            // Issue #122: a cup, then a custom championship of the most races, drawn.
+            Message::Setup(RoomSetup {
+                championship: true,
+                plan: ChampionshipSetup {
+                    program: Program::new(&[0, 1, 2, 3]),
+                    ..ChampionshipSetup::default()
+                },
+                ..RoomSetup::default()
+            }),
+            Message::Setup(RoomSetup {
+                track: 2,
+                mirror: true,
+                bots: false,
+                items: true,
+                championship: true,
+                plan: ChampionshipSetup {
+                    custom: true,
+                    cup: 255,
+                    chosen: false,
+                    draw: u32::MAX,
+                    program: Program::new(&(0..MAX_PROGRAM).rev().collect::<Vec<_>>()),
+                },
+            }),
+            // Issue #122: a championship starting (nobody scored), then one of twelve players
+            // at its podium, then one of a player alone.
+            Message::Championship(ChampionshipState {
+                setup: ChampionshipSetup {
+                    program: Program::new(&[0, 1, 2, 3]),
+                    ..ChampionshipSetup::default()
+                },
+                seed: 0xdead_beef,
+                bots: 10,
+                players: vec![PeerKey(1 << 100), PeerKey(2 << 100)],
+                scored: 0,
+                podium: false,
+                points: vec![0; 12],
+                last: vec![0; 12],
+                standings: (0..12).collect(),
+            }),
+            Message::Championship(ChampionshipState {
+                setup: ChampionshipSetup {
+                    custom: true,
+                    cup: 0,
+                    chosen: true,
+                    draw: 3,
+                    program: Program::new(&[5, 4, 3, 2, 1, 0]),
+                },
+                seed: u64::MAX,
+                bots: 0,
+                players: (0..MAX_PLAYERS as u128)
+                    .map(|i| PeerKey(u128::MAX - i))
+                    .collect(),
+                scored: 6,
+                podium: true,
+                points: (0..12).map(|e| 90 - e * 7).collect(),
+                last: (0..12).map(|e| 15 - e).collect(),
+                standings: (0..12).rev().collect(),
+            }),
+            Message::Championship(ChampionshipState {
+                setup: ChampionshipSetup {
+                    custom: true,
+                    chosen: false,
+                    program: Program::new(&[1, 0]),
+                    ..ChampionshipSetup::default()
+                },
+                seed: 0,
+                bots: 0,
+                players: vec![PeerKey(7)],
+                scored: 1,
+                podium: false,
+                points: vec![u16::MAX],
+                last: vec![15],
+                standings: vec![0],
             }),
             Message::Progress(Progress {
                 race: 7,
@@ -2802,8 +3238,8 @@ mod tests {
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
         // bundles of kart states; issue #70 the closed results; issue #21 the thefts and what
         // they took; issue #101 the characters on foot (a state, the host's bundles) and their
-        // strikes.
-        assert_eq!(kinds.len(), 35);
+        // strikes; issue #122 the championship in progress.
+        assert_eq!(kinds.len(), 36);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -2972,9 +3408,28 @@ mod tests {
         for message in every_message() {
             match &message {
                 // Issue #9: a race's start lists its players (16 bytes each); issue #99, one
-                // byte more for its mirror and its items: 214 bytes with 12.
+                // byte more for its mirror and its items; issue #122, its round and its grid (a
+                // count byte, a byte per racer): 216 bytes with 12 players, 228 with a grid.
                 Message::StartRace(start) => {
-                    assert_eq!(message.to_bytes().len(), 22 + 16 * start.players.len());
+                    assert_eq!(
+                        message.to_bytes().len(),
+                        24 + start.lineup.len() + 16 * start.players.len()
+                    );
+                }
+                // Issue #122: the room's settings in 11 bytes, and a byte per race of its
+                // championship; the championship in progress in 21 bytes and a byte per race,
+                // then 16 per player and 5 per entrant (its points, those of the last race, its
+                // place): 297 bytes for 12 players and 24 races.
+                Message::Setup(setup) => {
+                    assert_eq!(message.to_bytes().len(), 11 + setup.plan.program.len());
+                }
+                Message::Championship(state) => {
+                    assert_eq!(
+                        message.to_bytes().len(),
+                        21 + state.setup.program.len()
+                            + 16 * state.players.len()
+                            + 5 * state.entrants()
+                    );
                 }
                 Message::KartStates(_) | Message::FootStates(_) => {}
                 _ => assert!(message.to_bytes().len() <= 200, "{message:?}"),
@@ -3115,6 +3570,8 @@ mod tests {
             mirror: true,
             items: true,
             start_tick: 600,
+            round: 0,
+            lineup: vec![],
             players: vec![PeerKey(1), PeerKey(2)],
         };
         assert!(Message::decode(&Message::StartRace(start.clone()).to_bytes()).is_ok());
@@ -3144,14 +3601,88 @@ mod tests {
         too_many.extend(std::iter::repeat_n(0, 16 * (MAX_PLAYERS - 1)));
         assert!(invalid(&too_many));
         // Issue #99: a setting the protocol does not have, in the room's and in a race's (the
-        // byte after the bots' level).
-        assert!(Message::decode(&[v, SETUP, 2, 0b111]).is_ok());
-        assert!(invalid(&[v, SETUP, 2, 0b1000]));
+        // byte after the bots' level). Issue #122: the room's settings end with the championship
+        // chosen (its bits, its cup, its draw, its program).
+        let no_plan = [0, 0, 0, 0, 0, 0, 0];
+        let setup = |bits: u8, plan: &[u8]| [&[v, SETUP, 2, bits][..], plan].concat();
+        assert!(Message::decode(&setup(0b111, &no_plan)).is_ok());
+        assert!(invalid(&setup(0b1_0000, &no_plan)));
         let mut odd = Message::StartRace(start.clone()).to_bytes();
         let settings_at = 2 + 2 + 8 + 4;
         assert_eq!(odd[settings_at], START_MIRROR | START_ITEMS);
         odd[settings_at] |= 0b100;
         assert!(invalid(&odd));
+        // Issue #122: a championship without races, a championship setting the protocol does not
+        // have, more races than it allows; a race's grid that is not every racer once.
+        assert!(invalid(&setup(0b1000, &no_plan)));
+        assert!(Message::decode(&setup(0b1000, &[0b11, 0, 0, 0, 0, 0, 1, 4])).is_ok());
+        assert!(invalid(&setup(0b1000, &[0b100, 0, 0, 0, 0, 0, 1, 4])));
+        let mut long = setup(0b1000, &[0, 0, 0, 0, 0, 0, MAX_PROGRAM as u8 + 1]);
+        long.extend(std::iter::repeat_n(0, MAX_PROGRAM + 1));
+        assert!(invalid(&long));
+        let grid = RaceStart {
+            round: 2,
+            lineup: (0..12).rev().collect(),
+            ..start.clone()
+        };
+        assert!(Message::decode(&Message::StartRace(grid.clone()).to_bytes()).is_ok());
+        for lineup in [vec![0; 12], (1..13).collect(), (0..11).collect()] {
+            let bad = RaceStart {
+                lineup,
+                ..grid.clone()
+            };
+            assert!(invalid(&Message::StartRace(bad).to_bytes()));
+        }
+        // Issue #122: a championship of no entrant or more than twelve, a player twice, a place
+        // twice in the standings, more races scored than it has.
+        let championship = ChampionshipState {
+            setup: ChampionshipSetup {
+                program: Program::new(&[0, 1]),
+                ..ChampionshipSetup::default()
+            },
+            seed: 1,
+            bots: 2,
+            players: vec![PeerKey(1)],
+            scored: 2,
+            podium: true,
+            points: vec![1, 2, 3],
+            last: vec![1, 2, 3],
+            standings: vec![2, 1, 0],
+        };
+        let ok = Message::Championship(championship.clone());
+        assert!(Message::decode(&ok.to_bytes()).is_ok());
+        for bad in [
+            ChampionshipState {
+                bots: 0,
+                players: vec![],
+                points: vec![],
+                last: vec![],
+                standings: vec![],
+                ..championship.clone()
+            },
+            ChampionshipState {
+                bots: 12,
+                points: vec![0; 13],
+                last: vec![0; 13],
+                standings: (0..13).collect(),
+                ..championship.clone()
+            },
+            ChampionshipState {
+                players: vec![PeerKey(1), PeerKey(1)],
+                bots: 1,
+                ..championship.clone()
+            },
+            ChampionshipState {
+                standings: vec![2, 2, 0],
+                ..championship.clone()
+            },
+            ChampionshipState {
+                scored: 3,
+                ..championship.clone()
+            },
+        ] {
+            assert!(invalid(&Message::Championship(bad).to_bytes()));
+        }
         assert!(invalid(&[v, PROGRESS, 1, 0, 12, 0, 0, 0, 0, 0, 0]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 12]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 3]));

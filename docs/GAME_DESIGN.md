@@ -21,7 +21,7 @@ Les valeurs marquées **(MK8DX)** viennent de sources publiques sur le jeu. Cell
 | Championnat (Grand Prix) | 4 courses pour une coupe (de 2 au nombre de circuits pour un championnat personnalisé, #99) ; points du 1er au 12e : **15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1** (MK8) |
 | Vitesse | **Une seule**, celle des réglages du jeu (§ 2) : pas de classes de vitesse (décision de Max du 2026-10-17, #118). Plus un mode miroir |
 | Départ | Grille en quinconce, compte à rebours « 3, 2, 1, GO » d'une seconde par étape |
-| Modes | **Jouer solo** (#99) : Championnat (une coupe ou un championnat personnalisé), Contre-la-montre (3 piments, fantôme ; voir plus bas), Circuit seul (l'ancienne course libre). En ligne (jusqu'à 12) : l'hôte choisit. **Pas de mode Bataille** (décision de Max du 2026-10-16, #21) |
+| Modes | **Jouer solo** (#99) : Championnat (une coupe ou un championnat personnalisé), Contre-la-montre (3 piments, fantôme ; voir plus bas), Circuit seul (l'ancienne course libre). En ligne (jusqu'à 12) : l'hôte choisit Circuit seul ou Championnat (#122 ; pas de contre-la-montre en ligne). **Pas de mode Bataille** (décision de Max du 2026-10-16, #21) |
 | Réglages de partie (#99) | Le **miroir**, **Bots : oui / non** et **Objets : oui / non**, en solo comme en ligne. Pas de classe de vitesse (#118) |
 
 ### Jouer solo et réglages de partie (#99)
@@ -36,7 +36,7 @@ Demande de Max (2026-10-17) : « Dans solo on a le choix de championnat, contre 
 - **Bots : oui** : ils complètent la grille jusqu'à 12, au niveau choisi (panneau d'admin), comme avant. **Bots : non** : seuls les joueurs courent ; en solo, une course seul, sans fantôme, avec les objets si on les veut (un championnat aussi : le podium n'a que le joueur). Le nombre de bots du joueur est gardé et revient avec « Bots : oui ».
 - **Objets : non** : **aucune boîte à objets sur la piste** (donc aucun objet tiré au hasard) ; les croquettes restent. Le contre-la-montre n'en a jamais et garde ses 3 piments.
 - **Le nombre de tours** reste 3 (`RaceTuning::laps`). Les **circuits « ouverts »** (une longue course sans tours, une par coupe : #119, plus tard) prendront place dans le manifeste et dans les coupes comme les autres.
-- **En ligne** : l'hôte choisit, dans le salon, le circuit, le **miroir**, les **bots** et les **objets** ; chaque joueur voit ses choix, roule librement avec eux et court la course avec eux (sans bots : seuls les joueurs sur la grille). Le **championnat en ligne** (l'hôte porte le classement général et la grille) vient avec #122 : en ligne, on court un circuit à la fois.
+- **En ligne** : l'hôte choisit, dans le salon, le **mode** (Circuit seul ou Championnat, #122), le circuit ou le championnat, le **miroir**, les **bots** et les **objets** ; chaque joueur voit ses choix et court avec eux (sans bots : seuls les joueurs sur la grille). Le championnat en ligne : ci-dessous, « Championnat en ligne (#122) ».
 - Apparence et navigation : `docs/UI_CHARTE.md` § « L'écran Jouer solo (#99) ».
 
 ### Grand Prix (#19)
@@ -51,7 +51,16 @@ Le championnat de #99 (« Championnat » dans les écrans) ; ses règles :
 - **Entre les courses** : le classement de la course, puis le classement général (points de la course et total) ; Entrée lance la suivante.
 - **Podium** : après la dernière course, les trois premiers sur leurs marches, qui dansent, caméra fixe ; Entrée relance le même championnat.
 - **Refaire une course** (un nouveau kart choisi avec G, « Relancer » du panneau d'admin) : la course du Grand Prix repart, ses points sont repris.
-- **En solo pour l'instant**. En ligne, le championnat viendra avec #122 (l'hôte devra porter le classement et la grille).
+- **En ligne** depuis #122 : voir la suite.
+
+### Championnat en ligne (#122)
+
+- **Le choix** : dans le salon, l'hôte choisit le mode, **Circuit seul** ou **Championnat**, puis le championnat comme dans « Jouer solo » : une coupe, ou un championnat personnalisé (le nombre de courses, les circuits au choix ou au hasard). Pas de contre-la-montre en ligne. Au hasard, **c'est l'hôte qui tire** les circuits (la graine de sa partie et le numéro du tirage) : tout le monde voit son tirage, avant le départ, dans le salon (« Au programme »). Le miroir, les bots et les objets valent pour tout le championnat.
+- **Les règles sont celles du solo** (« Grand Prix (#19) ») : les points de chaque course d'après le tableau clos de l'hôte, les égalités (le mieux classé de la dernière course passe devant), la grille de la course suivante dans l'ordre inverse du classement général (le leader en dernier ; la première course part comme une course seule : les bots devant, les joueurs derrière), **les mêmes bots d'une course à l'autre** (animal, pièces, couleur, nom), quelle que soit leur place sur la grille.
+- **Les participants** : les bots qui complètent la grille au départ du championnat (jusqu'à 12, s'il y a des bots), puis les joueurs assis à ce moment-là. **L'hôte porte le championnat** : il note chaque course, calcule le classement général et la grille de la suivante, et les annonce à tous ; chaque joueur voit les mêmes classements et le même podium.
+- **Entre les courses** : le classement de la course, puis le classement général (environ 8 s, à régler), puis la course suivante, **lancée par l'hôte** : automatiquement après ce délai, ou tout de suite s'il appuie sur Entrée (Espace, A). Après la dernière course : le classement général, puis **le podium** (environ 12 s, à régler ; Entrée de l'hôte pour aller plus vite), puis **tout le monde revient au salon**. Un championnat au hasard est retiré au sort pour le suivant.
+- **Un joueur qui part** en cours de championnat garde ses points ; il ne court plus (la grille se resserre) et ne marque plus rien : dernier de chaque course, sans points (celle qu'il a quittée en route aussi : il a abandonné). Le championnat continue pour les autres. Le départ de l'hôte, lui, termine la partie (#63).
+- **Un joueur qui arrive** pendant un championnat le regarde (comme une course en cours) et sera du suivant.
 
 ### Miroir (#19)
 

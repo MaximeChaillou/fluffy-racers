@@ -184,6 +184,9 @@ pub const RESULTS_FOOTER: &str = "Espace ou Entrée (manette : A) : on rejoue";
 pub const RESULTS_FOOTER_GRAND_PRIX: &str = "Espace ou Entrée (manette : A) : classement général";
 /// Online (issue #9): the host starts the next race.
 pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hôte la lance depuis le salon (L)";
+/// Issue #122: online, in a championship: the host's overall standings come after the results.
+pub const RESULTS_FOOTER_ONLINE_CHAMPIONSHIP: &str =
+    "Championnat : le classement général arrive juste après";
 pub const PLAYER_NAME: &str = "Toi";
 /// Issue #70: the results screen, for a racer still on track, one that gave up (online: its
 /// player left), and an estimated time (`ESTIMATE_MARK` before it).
@@ -474,6 +477,7 @@ mod tests {
             RESULTS_FOOTER.to_string(),
             RESULTS_FOOTER_GRAND_PRIX.to_string(),
             RESULTS_FOOTER_ONLINE.to_string(),
+            RESULTS_FOOTER_ONLINE_CHAMPIONSHIP.to_string(),
             PLAYER_NAME.to_string(),
             RESULTS_RACING.to_string(),
             RESULTS_GAVE_UP.to_string(),

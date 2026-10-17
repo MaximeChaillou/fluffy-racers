@@ -36,10 +36,21 @@
 //! gets what is on. Issue #99: with its other settings ([`Lobby::choose_setup`], [`RoomSetup`]:
 //! the mirror, the bots, the items), which every client sees and drives with. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's:
 //! the race's ticks are counted on it.
+//!
+//! **The championship** (issue #122): the host chooses it with the room's settings (the mode,
+//! and the championship's program), starts it ([`Lobby::start_championship`]), scores its races
+//! from its closed results ([`Lobby::score_championship`]) and reaches its podium
+//! ([`Lobby::championship_podium`]): each time, everyone is told its state
+//! ([`Message::Championship`]), and so is a player seated meanwhile (it watches). The room's
+//! settings again (the lobby's) end it.
 
+use super::championship::Championship;
 use super::clock::{PeerClock, RoomClock};
 use super::links::Stuck;
-use super::protocol::{DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceStart, RoomSetup};
+use super::protocol::{
+    ChampionshipState, DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceResults, RaceStart,
+    RoomSetup,
+};
 use crate::kart::{KartColor, resolve_players};
 
 /// A ping to every peer we are linked with this often (ms).
@@ -81,6 +92,8 @@ pub enum LobbyEvent {
     /// The host chose the room's circuit (issue #9): free driving on it. Issue #99: and its
     /// other settings.
     SetupChosen(RoomSetup),
+    /// Issue #122: the host told its championship in progress (its races scored, its podium).
+    ChampionshipTold(u8),
 }
 
 /// Another player of the room (or a peer waiting for its seat), as we know it.
@@ -190,6 +203,10 @@ pub struct Lobby {
     setup: RoomSetup,
     /// The number of the last race announced (0: none yet): the next one counts on.
     last_race: u16,
+    /// Issue #122, the host: the championship in progress (its scoring with it).
+    run: Option<Championship>,
+    /// Issue #122, a client: the championship in progress, as the host told it.
+    told: Option<ChampionshipState>,
     /// The room's clock (issue #9): the host's.
     room: RoomClock,
     outbox: Vec<Outgoing>,
@@ -219,6 +236,8 @@ impl Lobby {
             announced: None,
             setup: RoomSetup::default(),
             last_race: 0,
+            run: None,
+            told: None,
             room,
             outbox: Vec::new(),
             events: if hosting {
@@ -293,6 +312,20 @@ impl Lobby {
     /// [`Lobby::announced`]).
     pub fn setup(&self) -> RoomSetup {
         self.setup
+    }
+
+    /// Issue #122: the championship in progress (the host's, or as it told it), until the room's
+    /// settings come again.
+    pub fn championship(&self) -> Option<&ChampionshipState> {
+        self.run
+            .as_ref()
+            .map(|run| &run.state)
+            .or(self.told.as_ref())
+    }
+
+    /// Issue #122, the host: its championship in progress, with its scoring.
+    pub fn championship_run(&self) -> Option<&Championship> {
+        self.run.as_ref()
     }
 
     /// The number the next race takes: one more than the last one announced.
@@ -427,12 +460,13 @@ impl Lobby {
             Message::StartRace(start) => {
                 if !self.hosting {
                     // Issue #99: the race's settings are the room's (its bots: as many as it has,
-                    // or as the room had).
+                    // or as the room had). Issue #122: the mode and the championship stay.
                     self.setup = RoomSetup {
                         track: start.track,
                         mirror: start.mirror,
                         items: start.items,
                         bots: start.bots > 0 || self.setup.bots,
+                        ..self.setup
                     };
                     self.last_race = start.race;
                     self.announced = Some(start.clone());
@@ -443,7 +477,16 @@ impl Lobby {
                 if !self.hosting {
                     self.setup = setup;
                     self.announced = None;
+                    // Issue #122: the lobby again: the championship is over.
+                    self.told = None;
                     self.events.push(LobbyEvent::SetupChosen(setup));
+                }
+            }
+            Message::Championship(state) => {
+                if !self.hosting {
+                    let scored = state.scored;
+                    self.told = Some(state);
+                    self.events.push(LobbyEvent::ChampionshipTold(scored));
                 }
             }
             Message::Relayed { origin, message } => {
@@ -734,19 +777,73 @@ impl Lobby {
 
     /// Issue #99: the host chooses the room's settings (the circuit, the mirror, the bots, the
     /// items), like its circuit: everyone drives freely with them, the race that was on (or over)
-    /// is gone, and the next race takes them. Only the host may.
+    /// is gone, and the next race takes them. Only the host may. Issue #122: with the mode and the
+    /// championship; the championship in progress (or over) is gone too.
     pub fn choose_setup(&mut self, setup: RoomSetup) -> bool {
         if !self.hosting || self.stopped() {
             return false;
         }
         self.setup = setup;
         self.announced = None;
+        self.run = None;
         self.broadcast(Message::Setup(setup));
         true
     }
 
+    /// Issue #122: the host starts a championship (its first race follows): everyone is told it.
+    /// Only the host may.
+    pub fn start_championship(&mut self, championship: Championship) -> bool {
+        if !self.hosting || self.stopped() {
+            return false;
+        }
+        self.broadcast(Message::Championship(championship.state.clone()));
+        self.run = Some(championship);
+        true
+    }
+
+    /// Issue #122, the host: the race announced closed its results (`results`, its own table):
+    /// if it is the next race of the championship in progress, it is scored (`points`: those of
+    /// each place) and everyone is told the standings. Returns whether it scored.
+    pub fn score_championship(&mut self, results: &RaceResults, points: &[u32]) -> bool {
+        if !self.hosting || self.stopped() {
+            return false;
+        }
+        let (Some(run), Some(start)) = (self.run.as_mut(), self.announced.as_ref()) else {
+            return false;
+        };
+        if !run.score(start, results, points) {
+            return false;
+        }
+        let state = run.state.clone();
+        self.broadcast(Message::Championship(state));
+        true
+    }
+
+    /// Issue #122, the host: after the last race's standings, the podium, for everyone.
+    pub fn championship_podium(&mut self) -> bool {
+        if !self.hosting || self.stopped() {
+            return false;
+        }
+        let Some(run) = self
+            .run
+            .as_mut()
+            .filter(|run| run.finished() && !run.state.podium)
+        else {
+            return false;
+        };
+        run.podium();
+        let state = run.state.clone();
+        self.broadcast(Message::Championship(state));
+        true
+    }
+
     /// What is on in the room, for a client we (the host) just seated: the race, or the settings.
+    /// Issue #122: the championship in progress first (it watches it).
     fn tell_room(&mut self, to: PeerKey) {
+        if let Some(run) = &self.run {
+            let state = run.state.clone();
+            self.send(to, Message::Championship(state));
+        }
         let message = match &self.announced {
             Some(start) => Message::StartRace(start.clone()),
             None => Message::Setup(self.setup),
@@ -1535,6 +1632,8 @@ mod tests {
             mirror: false,
             items: true,
             start_tick: 9_000,
+            round: 0,
+            lineup: Vec::new(),
             players: vec![a, b],
         };
         assert!(!star.lobby(b).announce_race(start.clone()));
@@ -1600,6 +1699,8 @@ mod tests {
             mirror: false,
             items: true,
             start_tick: 12_000,
+            round: 0,
+            lineup: Vec::new(),
             players: vec![a, b],
         };
         assert!(star.lobby(a).announce_race(start.clone()));
@@ -1649,6 +1750,7 @@ mod tests {
             mirror: true,
             bots: false,
             items: false,
+            ..RoomSetup::default()
         };
         assert!(!star.lobby(b).choose_setup(setup));
         assert!(star.lobby(a).choose_setup(setup));
@@ -1680,6 +1782,8 @@ mod tests {
             mirror: true,
             items: false,
             start_tick: 20_000,
+            round: 0,
+            lineup: Vec::new(),
             players: vec![a, b, c],
         };
         assert!(star.lobby(a).announce_race(start.clone()));

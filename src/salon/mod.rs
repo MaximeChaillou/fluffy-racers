@@ -21,9 +21,14 @@
 //!   and everyone sees it fall by its states.
 //! - **The lobby's screen** (`view.rs`, `screen.rs`): over the scene, after the charter: the code
 //!   and the invitation link (« Copier »), the players (pseudo, animal, color, ping, host, ready),
-//!   « Prêt ! » or « Lancer la course » (disabled with its reason), the host's settings (the
-//!   circuit, the mirror, the bots, the items), « Pilote », « Quitter »; the banner of #64 when
-//!   it is closed, and the connection problems of #49. It replaces the egui window.
+//!   « Prêt ! » or « Lancer la course » (disabled with its reason), the host's settings (issue
+//!   #122: the mode, « Circuit seul » or « Championnat » and its lines, a championship's program
+//!   on the right; the mirror, the bots, the items), « Pilote », « Quitter »; the banner of #64
+//!   when it is closed, and the connection problems of #49. It replaces the egui window.
+//! - **The championship online** (issue #122, `online.rs`, `net::championship`): between its
+//!   races, every peer shows the host's standings, then its podium (the screens of
+//!   `crate::modes`); the host moves on after a moment (`SalonTuning::standings_seconds`,
+//!   `podium_seconds`) or at its Entrée; after the podium, everyone is back in the lobby.
 //!
 //! **Only with a renderer** (added by `menu::MainMenuPlugin`), like the other screens: the headless
 //! world of the bot races has none of it (no resource, no system, no component). The tests add
@@ -110,6 +115,12 @@ pub struct SalonTuning {
     /// After a race, once the host closed its results, the room goes back to the lobby this long
     /// after (s; the host says so to everyone).
     pub back_after_results: f32,
+    /// Issue #122, a championship online: its overall standings show this long after each race
+    /// before the host starts the next one, or the podium after the last (s; the host's Entrée
+    /// goes on at once)...
+    pub standings_seconds: f32,
+    /// ...and the podium this long before everyone goes back to the lobby (s).
+    pub podium_seconds: f32,
 }
 
 impl Default for SalonTuning {
@@ -134,6 +145,8 @@ impl Default for SalonTuning {
             camera_follow: 5.0,
             camera_fov: 50.0,
             back_after_results: 6.0,
+            standings_seconds: 8.0,
+            podium_seconds: 12.0,
         }
     }
 }
@@ -189,6 +202,11 @@ impl Plugin for SalonPlugin {
                     online::back_to_the_salon
                         .after(NetSystems)
                         .run_if(online::results_shown),
+                    // Issue #122: the host moves the championship online on.
+                    online::run_the_championship
+                        .after(NetSystems)
+                        .run_if(resource_exists::<crate::net::NetSession>)
+                        .run_if(online::hosting),
                     online::forget_the_room
                         .run_if(resource_exists::<crate::net::FootSync>)
                         .run_if(not(scene::salon_up)),
@@ -221,6 +239,13 @@ impl Plugin for SalonPlugin {
                 ),
             )
             .add_systems(FixedLast, online::send_our_walker.run_if(scene::salon_up))
+            // Issue #122: the championship as the host told it, before the screens of `Update`
+            // (the results, the standings, the podium) look at it: they all change on the same
+            // frame, never one over the other.
+            .add_systems(
+                PreUpdate,
+                online::show_the_championship.run_if(resource_exists::<crate::net::NetSession>),
+            )
             .add_systems(
                 PostUpdate,
                 (

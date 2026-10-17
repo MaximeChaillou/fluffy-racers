@@ -37,11 +37,18 @@ pub struct StandingsLine {
 }
 
 /// The name of an entrant: the player's, or « Kart N » (the bots' numbers, as on the results).
+/// Issue #122: online, ours is « Toi », the others' their pseudo (as the host's entrants).
 pub fn entrant_name(grand_prix: &GrandPrix, entrant: usize) -> String {
-    if entrant == grand_prix.player() {
-        PLAYER_NAME.to_string()
-    } else {
-        format!("Kart {}", entrant + 1)
+    if grand_prix.is_player(entrant) {
+        return PLAYER_NAME.to_string();
+    }
+    match grand_prix
+        .online
+        .as_ref()
+        .and_then(|online| online.names.get(entrant))
+    {
+        Some(name) => name.clone(),
+        None => format!("Kart {}", entrant + 1),
     }
 }
 
@@ -59,7 +66,7 @@ pub fn standings_lines(grand_prix: &GrandPrix) -> Vec<StandingsLine> {
                 name: entrant_name(grand_prix, *entrant),
                 won: format!("+{}", grand_prix.last_points[*entrant]),
                 total: format!("{} pts", grand_prix.points[*entrant]),
-                player: *entrant == grand_prix.player(),
+                player: grand_prix.is_player(*entrant),
             }
         })
         .collect()
@@ -80,20 +87,46 @@ pub fn standings_title(grand_prix: &GrandPrix) -> String {
     )
 }
 
-/// What Entrée does next, under the standings.
+/// What Entrée does next, under the standings. Issue #122: online, the host moves on (after a
+/// moment, or Entrée); the others wait.
 pub fn standings_footer(grand_prix: &GrandPrix) -> String {
-    match grand_prix.cup.get(grand_prix.race + 1) {
-        Some(next) => format!(
+    let next = grand_prix.cup.get(grand_prix.race + 1);
+    match (&grand_prix.online, next) {
+        (None, Some(next)) => format!(
             "Espace ou Entrée (manette : A) : course suivante ({})",
             next.name
         ),
-        None => "Espace ou Entrée (manette : A) : le podium".to_string(),
+        (None, None) => "Espace ou Entrée (manette : A) : le podium".to_string(),
+        (Some(online), Some(next)) => format!(
+            "Course suivante ({}) dans un instant{}",
+            next.name,
+            soon(online.hosting)
+        ),
+        (Some(online), None) => format!("Le podium dans un instant{}", soon(online.hosting)),
+    }
+}
+
+/// Issue #122: what the host's Entrée does online, after « dans un instant ».
+fn soon(hosting: bool) -> &'static str {
+    if hosting { ONLINE_NOW } else { "" }
+}
+
+/// Issue #122: online, the host moves on at once.
+pub const ONLINE_NOW: &str = "  ·  Entrée : tout de suite";
+
+/// Under the podium's names: solo, its keys; issue #122, online, the way back to the lobby.
+pub fn podium_footer(grand_prix: &GrandPrix) -> String {
+    match &grand_prix.online {
+        None => PODIUM_FOOTER.to_string(),
+        Some(online) => format!("{PODIUM_FOOTER_ONLINE}{}", soon(online.hosting)),
     }
 }
 
 pub const STANDINGS_HEADER: &str = "Classement général";
 pub const PODIUM_TITLE: &str = "Podium";
 pub const PODIUM_FOOTER: &str = "Entrée : on recommence  ·  N : changer de mode";
+/// Issue #122: online, after the podium, everyone goes back to the lobby.
+pub const PODIUM_FOOTER_ONLINE: &str = "Retour au salon dans un instant";
 
 /// Shows the screen of the Grand Prix's stage (none while racing), over the results screen (only
 /// there: not on a level being rebuilt).
@@ -276,7 +309,7 @@ fn spawn_podium_names(
                     }
                     panel.spawn((
                         kit::text(
-                            PODIUM_FOOTER,
+                            podium_footer(grand_prix),
                             medium,
                             size::HINT,
                             palette::MYRTILLE.with_alpha(0.75),

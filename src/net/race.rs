@@ -73,8 +73,9 @@ pub struct SharedRace {
 
 impl SharedRace {
     pub fn new(start: RaceStart) -> Self {
-        let bots = (0..start.bots).map(|slot| RaceKart {
-            kart: slot,
+        // Issue #122: on the slots of its grid (a championship's: the reverse of the standings).
+        let bots = (0..usize::from(start.bots)).map(|bot| RaceKart {
+            kart: start.slot_of_racer(bot),
             driver: Driver::Bot,
             checkpoints: Vec::new(),
             finish: None,
@@ -325,6 +326,8 @@ mod tests {
             mirror: false,
             items: true,
             start_tick: 1_000,
+            round: 0,
+            lineup: Vec::new(),
             players: vec![ANA, BOB, CYD],
         });
         race.set_to_finish(64);
