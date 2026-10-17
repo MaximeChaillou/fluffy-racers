@@ -127,6 +127,8 @@ impl Plugin for GamePlugin {
         // background. Only on screen: the headless game (the tests, the bot races) keeps the
         // world it was measured with (`menu`).
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
+            // Issue #98: the « Pilote » screen, its pseudo kept in the browser.
+            app.add_plugins(menu::PilotPlugin { storage: true });
             app.add_plugins(MainMenuPlugin { at_launch: true });
             // Issue #76: the time trial, its records kept in the browser. Only on screen, like
             // the main menu: the bot races' world has none of it (`modes::time_trial`).

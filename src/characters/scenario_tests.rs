@@ -130,15 +130,31 @@ fn the_selection_screen_picks_the_parts_and_restarts_the_race() {
     tap(&mut app, KeyCode::KeyD, Key::Character("d".into()));
     tap(&mut app, KeyCode::KeyS, Key::Character("s".into()));
     tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
-    // Up twice and back: the rows wrap around (wheels → kart → character → color → character;
-    // the color's line, issue #55, is the last one, under the wing's).
+    // Up and back: the rows wrap around (wheels → kart → character → pseudo → color → wing;
+    // the color's line, issue #55, is under the wing's; issue #98: the pseudo's is the last one,
+    // shown above the character's). Left and right do nothing on the pseudo's line (it is
+    // typed).
     tap(&mut app, KeyCode::KeyW, Key::Character("w".into()));
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
+    assert_eq!(screen(&app).row, 0);
+    tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
+    assert!(screen(&app).on_pseudo_row());
+    let before = screen(&app);
+    tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
+    tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
+    assert_eq!(
+        screen(&app),
+        before,
+        "nothing to change on the pseudo's line"
+    );
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     assert!(screen(&app).on_color_row());
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     assert_eq!(screen(&app).kind(), PartKind::Wing);
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    assert!(screen(&app).on_color_row());
+    tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    assert!(screen(&app).on_pseudo_row());
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     assert_eq!(screen(&app).row, 0);
     let choice = screen(&app).choice;
@@ -344,10 +360,13 @@ fn the_color_line_paints_the_kart_and_the_bots_avoid_it() {
     let distinct: ColorSet = by_default.iter().map(|(_, color)| *color).collect();
     assert_eq!(distinct.len(), 12);
 
-    // G, up from the character's line: the color's (the last one); right three times: brown,
-    // white, red. Nothing applied before Entrée.
+    // G, up from the character's line: the pseudo's (issue #98: the last one, shown above the
+    // character's), then the color's; right three times: brown, white, red. Nothing applied
+    // before Entrée.
     tap(&mut app, KeyCode::KeyG, Key::Character("g".into()));
     assert_eq!(screen(&app).color, KartColor::Pink);
+    tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
+    assert!(screen(&app).on_pseudo_row());
     tap(&mut app, KeyCode::ArrowUp, Key::ArrowUp);
     assert!(screen(&app).on_color_row());
     for _ in 0..3 {

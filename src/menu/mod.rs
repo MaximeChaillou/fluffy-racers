@@ -5,7 +5,8 @@
 //! - **The home screen** (issue #89): the game's title, big, and four buttons, in this order:
 //!   « Jouer solo » opens the race menu (N, issue #19; its own screen comes with #99),
 //!   « Multijoueur » the lobby (L, issue #7: create or join a game), « Options » the options menu
-//!   (O, issue #17), « Pilote » the selection screen (G, issue #15; its own screen with #98).
+//!   (O, issue #17), « Pilote » the screen of the pilot and its kart (G, issues #15 and #98:
+//!   `pilot.rs`, `pilot_screen.rs`, `preview.rs`, [`PilotPlugin`]).
 //!   **Behind it, the game runs** (`showcase.rs`): a few karts racing and striking and grabbing
 //!   each other, filmed by a trailer camera (`trailer.rs`), framed on the right of the screen (the
 //!   column of the home stands on the left). No pause there, nor over the screens it opens: their
@@ -43,6 +44,9 @@
 
 mod anim;
 mod nav;
+pub mod pilot;
+mod pilot_screen;
+pub mod preview;
 mod screen;
 mod showcase;
 mod style;
@@ -51,10 +55,21 @@ pub mod trailer;
 #[cfg(test)]
 mod home_tests;
 #[cfg(test)]
+mod pilot_tests;
+#[cfg(test)]
 mod scenario_tests;
 
 pub use anim::ACTIVATE_DELAY;
 pub use nav::{Entry, GAME_ENTRIES, LAUNCH_ENTRIES, StickLatch, enabled, entries, moved};
+pub use pilot_screen::{
+    ColorSwatch, LineValue, PilotArrow, PilotButton, PilotColumn, PilotHint, PilotLine, PilotRoot,
+    PilotStorage, PilotUi, PortraitCell, PreviewFrame, PseudoField, PseudoHint, StatBar, StatValue,
+    TerrainValue,
+};
+pub use preview::{
+    LayerRoot, PilotPreview, PortraitScene, PortraitState, Portraits, PreviewBody, PreviewCamera,
+    PreviewKart, PreviewScene,
+};
 pub use screen::{MainMenuRoot, MenuButton, MenuNode, TitleWord};
 pub use showcase::{HomeTuning, SHOWCASE_LAPS, Showcase, ShowcaseKart, ShowcasePhase, pack_scale};
 pub use style::{ButtonLook, ButtonState, UI_FILES, button_look};
@@ -315,6 +330,11 @@ impl Plugin for MainMenuPlugin {
                         .run_if(showcase::background_running),
                 ),
             );
+        // Issue #98: the « Pilote » screen (the game adds it first, keeping the pseudo in the
+        // browser; the tests' menu without).
+        if !app.is_plugin_added::<PilotPlugin>() {
+            app.add_plugins(PilotPlugin { storage: false });
+        }
         // Its tuning in the admin panel, next to the others (when the panel is there: the game's).
         if let Some(mut tunings) = app.world_mut().get_resource_mut::<Tunings>() {
             tunings.register::<HomeTuning>();
@@ -322,6 +342,72 @@ impl Plugin for MainMenuPlugin {
         if self.at_launch {
             app.add_systems(Update, at_launch.run_if(run_once).before(menu_input));
         }
+    }
+}
+
+/// Issue #98: the « Pilote » screen (`pilot.rs`, `pilot_screen.rs`, `preview.rs`): the view of
+/// `characters::SelectionScreen` with `bevy_ui`, its 3D preview and its portraits, the gamepad, the
+/// mouse and the pseudo's field. With a renderer only, like the menu: nothing of it in the
+/// headless world of the bot races.
+pub struct PilotPlugin {
+    /// Keeps the pseudo typed in the browser (the game), or not (the tests).
+    pub storage: bool,
+}
+
+impl Plugin for PilotPlugin {
+    fn build(&self, app: &mut App) {
+        use bevy::camera::visibility::VisibilitySystems;
+        use bevy::transform::TransformSystems;
+
+        use crate::characters::apply_selection_actions;
+        use crate::interpolation::InterpolationSystems;
+
+        // Nothing else in the world until the screen first opens (its resources come then): the
+        // home's background, which the menu's tests measure, is the same world as before it.
+        if self.storage {
+            app.insert_resource(pilot_screen::PilotStorage(true));
+        }
+        app.add_systems(
+            Update,
+            (
+                pilot_screen::pilot_gamepad.before(apply_selection_actions),
+                (
+                    pilot_screen::sync_pilot_tree,
+                    (
+                        pilot_screen::follow_the_field,
+                        (
+                            pilot_screen::refresh_pilot_tree,
+                            pilot_screen::animate_pilot_tree,
+                            preview::follow_the_choice,
+                        )
+                            .run_if(pilot_screen::pilot_open),
+                    )
+                        .chain()
+                        .run_if(resource_exists::<pilot_screen::PilotUi>),
+                )
+                    .chain()
+                    .run_if(pilot_screen::pilot_open_or_shown)
+                    .after(apply_selection_actions),
+                preview::render_portraits
+                    .after(pilot_screen::sync_pilot_tree)
+                    .run_if(resource_exists::<preview::Portraits>),
+            ),
+        )
+        .add_systems(
+            PostUpdate,
+            (
+                preview::pose_the_preview
+                    .after(InterpolationSystems)
+                    .before(TransformSystems::Propagate)
+                    .run_if(resource_exists::<preview::PilotPreview>),
+                // The 3D of the screen is drawn on its own layers: every entity of its scenes
+                // (the kart visual's children, spawned by the visuals' systems, too).
+                preview::spread_the_layers
+                    .after(TransformSystems::Propagate)
+                    .before(VisibilitySystems::CheckVisibility)
+                    .run_if(preview::layers_to_spread),
+            ),
+        );
     }
 }
 

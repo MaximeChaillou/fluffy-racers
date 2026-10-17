@@ -56,7 +56,7 @@ pub use environment::{
     glide_pitch, glide_pose, glide_speeds, glide_targets, glide_yaw_target, glider_groups,
     groups_meet, next_anti_gravity, next_gliding, next_underwater, water_tuning,
 };
-pub use environment_visual::{Bubble, WaterEffects, Wing};
+pub use environment_visual::{Bubble, WaterEffects, Wing, wing_opening};
 pub use input::{
     DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
     JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
@@ -81,10 +81,10 @@ pub use stats::{
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
 pub use visual::{
-    BodyPaint, BoostFlame, DeflatedScale, DriftSpark, DriverEars, DriverLook, DriverPrimitive,
-    DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets, KartVisualPlugin,
-    StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, pivoted_wheel, shown_while_invincible,
-    shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
+    BodyPaint, BoostFlame, DRIVER_SEAT, DeflatedScale, DriftSpark, DriverEars, DriverLook,
+    DriverPrimitive, DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets,
+    KartVisualPlugin, StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, pivoted_wheel,
+    shown_while_invincible, shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
 
 use bevy::prelude::*;

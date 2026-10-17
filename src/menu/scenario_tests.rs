@@ -167,7 +167,7 @@ fn the_keys_go_through_the_menu_and_each_entry_opens_its_screen() {
     assert_eq!(focused(&app), Entry::Options);
     assert!(!paused(&app), "still running");
 
-    // « Pilote et kart ».
+    // « Pilote ».
     tap(&mut app, KeyCode::ArrowDown);
     choose(&mut app);
     assert!(selection_open(&app) && !menu(&app).open);

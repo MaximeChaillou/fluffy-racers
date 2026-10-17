@@ -79,7 +79,7 @@ impl Animals {
         }
     }
 
-    fn waiting(&self) -> bool {
+    pub fn waiting(&self) -> bool {
         self.0.iter().any(|s| matches!(s, AnimalSlot::Waiting(_)))
     }
 
@@ -357,6 +357,33 @@ fn spawn_animal(
         }
         spawned.push(entity.id());
     }
+}
+
+/// Issue #98: `animal` standing still at `transform` (no clip, no wobble: the portraits of the
+/// « Pilote » screen, rendered once), its nodes' meshes in the models' shared material, `bundle`
+/// on its root. Returns its root.
+pub fn spawn_animal_still(
+    commands: &mut Commands,
+    animal: &AnimalVisual,
+    transform: Transform,
+    bundle: impl Bundle,
+) -> Entity {
+    let root = commands
+        .spawn((transform, Visibility::default(), bundle))
+        .id();
+    let mut spawned: Vec<Entity> = Vec::with_capacity(animal.data.nodes.len());
+    for (i, node) in animal.data.nodes.iter().enumerate() {
+        let parent = node.parent.map_or(root, |p| spawned[p]);
+        let mut entity = commands.spawn((node.local, Visibility::default(), ChildOf(parent)));
+        if let Some(mesh) = &animal.meshes[i] {
+            entity.insert((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(animal.material.clone()),
+            ));
+        }
+        spawned.push(entity.id());
+    }
+    root
 }
 
 /// What each driver plays, from what its kart is going through (`animation.rs`): a new
