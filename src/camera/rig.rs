@@ -472,6 +472,54 @@ mod tests {
         }
     }
 
+    /// Issue #94: a kart rolling over onto a ceiling (its up from the world's to straight down in
+    /// 3 s, through the side), driving upside down, then rolling back. The camera's up follows it
+    /// without a jolt (at 30, 60 and 144 fps), never flips nor loses its length on the way through
+    /// the side; upside down, settled, the camera is behind the kart and "above" it in its frame
+    /// (below it in the world); back on the ground, exactly the world's up.
+    #[test]
+    fn the_camera_rolls_upside_down_with_a_kart_and_back() {
+        let tuning = CameraTuning::default();
+        let up_at = |t: f32| {
+            let roll = |from: f32| ((t - from) / 3.0).clamp(0.0, 1.0);
+            let angle = (roll(1.0) - roll(7.0)) * std::f32::consts::PI;
+            Quat::from_rotation_z(-angle) * Vec3::Y
+        };
+        for fps in [30.0, 60.0, 144.0] {
+            let frames = simulate(fps, 12.0, |t| RigInput {
+                up: up_at(t),
+                ..circling(t, 26.0, 0.0)
+            });
+            let mut previous: Option<(Vec3, Vec3)> = None;
+            for (input, pose) in &frames {
+                let offset = pose.eye - input.position;
+                if let Some((up, eye)) = previous {
+                    assert!(pose.up.angle_between(up) < 0.06, "{fps} fps: the up jumps");
+                    assert!(offset.distance(eye) < 0.5, "{fps} fps: the eye jumps");
+                }
+                assert!((pose.up.length() - 1.0).abs() < 1e-4);
+                // Never more than a little behind the kart's own up (6 rad/s).
+                assert!(
+                    pose.up.dot(input.up) > 0.8,
+                    "{fps} fps: {} {}",
+                    pose.up,
+                    input.up
+                );
+                previous = Some((pose.up, offset));
+            }
+            let (input, pose) = &frames[(6.5 * fps) as usize];
+            let offset = pose.eye - input.position;
+            assert!(pose.up.dot(Vec3::NEG_Y) > 0.999, "{fps} fps: {}", pose.up);
+            assert!((offset.y + tuning.height).abs() < 0.05, "{offset}");
+            assert!(
+                (offset.dot(-input.heading) - tuning.distance).abs() < 0.1,
+                "{offset}"
+            );
+            let (_, pose) = frames.last().unwrap();
+            assert_eq!(pose.up, Vec3::Y, "{fps} fps");
+        }
+    }
+
     #[test]
     fn lean_shifts_the_camera_sideways() {
         let tuning = CameraTuning::default();

@@ -248,9 +248,9 @@ mod tests {
         assert_eq!(bank_slopes(&zigzag.points, &zigzag.anti_gravity)[2], 0.0);
     }
 
-    /// GD § 10: beyond 45°, the road banks only in an anti-gravity zone, 90° at most; the zones
-    /// are apart from each other and from the gaps. Mirrored, a zone stays where it is (along the
-    /// track) and the road banks the other way.
+    /// GD § 10: beyond 45°, the road banks only in an anti-gravity zone, 180° at most (issue #94:
+    /// upside down; 90° before it); the zones are apart from each other and from the gaps.
+    /// Mirrored, a zone stays where it is (along the track) and the road banks the other way.
     #[test]
     fn steep_banking_only_in_a_zone() {
         let data = wall_straight();
@@ -269,7 +269,18 @@ mod tests {
             broken(&|d| d.anti_gravity[0].to = 4.5),
             "the zone ends on the wall"
         );
-        assert!(broken(&|d| d.points[3].bank = 95.0), "beyond a wall");
+        // Issue #94: past the wall, up to the road upside down (a ceiling), and no further.
+        for bank in [95.0, 135.0, 180.0, -180.0] {
+            assert!(
+                !broken(&|d| {
+                    d.points[3].bank = bank;
+                    d.points[4].bank = bank;
+                }),
+                "{bank}°"
+            );
+        }
+        assert!(broken(&|d| d.points[3].bank = 185.0), "beyond upside down");
+        assert!(broken(&|d| d.points[3].bank = -181.0), "beyond upside down");
         assert!(broken(&|d| d.points[3].bank = f32::NAN));
         assert!(broken(&|d| d.anti_gravity[0].to = 1.2), "too short");
         assert!(
@@ -299,5 +310,31 @@ mod tests {
         assert_eq!(mirrored.anti_gravity, data.anti_gravity);
         assert_eq!(mirrored.points[3].bank, -90.0);
         assert_eq!(mirrored.validate(), Ok(()));
+    }
+
+    /// Issue #94: a zone runs straight (seen from above, its heading turns by
+    /// `MAX_ANTI_GRAVITY_TURN` at most: the bots' line is drawn on the ground plane). The same
+    /// wall bent into a turn is refused with its reason, mirrored too; a turn out of the zone, or
+    /// a climb in it, is not a turn of the zone.
+    #[test]
+    fn a_zone_runs_straight() {
+        use crate::track::data::{MAX_ANTI_GRAVITY_TURN, anti_gravity_turn};
+        let data = wall_straight();
+        let center = CenterLine::of(&data);
+        // (Its first sample is still on the curve of the square's corner before the zone.)
+        let straight = anti_gravity_turn(&center, &data.anti_gravity[0]);
+        assert!(straight < 2.0, "{straight}");
+        let mut bent = data.clone();
+        bent.points[4].pos.0 = 8.0;
+        let turn = anti_gravity_turn(&CenterLine::of(&bent), &bent.anti_gravity[0]);
+        assert!(turn > MAX_ANTI_GRAVITY_TURN, "{turn}");
+        let error = bent.validate().unwrap_err();
+        assert!(error.0.contains("turns by"), "{error}");
+        assert!(bent.mirrored().validate().is_err());
+        // The square's corners, out of the zone, turn: not the zone.
+        let mut climbing = data.clone();
+        climbing.points[4].pos.1 = 14.0;
+        assert_eq!(climbing.validate(), Ok(()));
+        assert_eq!(data.mirrored().validate(), Ok(()));
     }
 }

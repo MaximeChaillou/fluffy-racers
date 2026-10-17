@@ -567,6 +567,7 @@ fn update_progress(
                 outside: !environment.gliding
                     && course.outside_walls(&watched, tuning.outside_margin),
                 height: watched.height,
+                upside_down: watched.upside_down,
             };
             if let Some(reason) = tow.observe(&tuning, &observation) {
                 // Picked up: the drift, its charge and any boost are lost.

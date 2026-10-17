@@ -59,7 +59,8 @@ pub struct RaceTuning {
     /// Distance between two drop lanes, as a share of the half road width: karts dropped at the
     /// same point use the centre, left or right lane by grid slot (#6 brings 11 bots).
     pub tow_drop_lane: f32,
-    /// More than this below the road surface: the kart fell, the pelican comes at once.
+    /// More than this below the road surface: the kart fell, the pelican comes at once. Issue
+    /// #94: under a road upside down (a ceiling), more than this away from it, under it.
     pub fall_depth: f32,
     /// Beyond the outer face of the walls by this much, the kart is out of the track...
     pub outside_margin: f32,

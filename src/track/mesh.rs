@@ -178,6 +178,14 @@ const STRIPE_HEIGHT: f32 = 0.02;
 /// A band across the road at each end of a zone (m along the track).
 const STRIPE_BAND: f32 = 1.5;
 
+/// Issue #94: the anti-gravity zones' ribbon is this thick (m): its back, behind the road, is drawn
+/// (the skirts only hang under a road that faces up).
+pub const RIBBON_THICKNESS: f32 = 0.4;
+/// A road faces up while its normal is no more than this below the horizontal (its `y`): a wall
+/// at 90° does (its normal is horizontal, to a rounding), a road banked beyond it does not (issue
+/// #94: no skirt under it; for the race, it is upside down, `race::Projection::upside_down`).
+pub const FACING_UP_TOLERANCE: f32 = 0.01;
+
 /// Lateral distance from the centerline to the inner face of the wall.
 pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
@@ -200,6 +208,10 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         anti_gravity_at(&zones, center, middle).is_some()
     };
     let unzoned = |s0: &TrackSample, s1: &TrackSample| !zoned(s0, s1);
+    // Issue #94: whether the road between two samples faces up (banked to 90° at most).
+    let faces_up = |s0: &TrackSample, s1: &TrackSample| {
+        s0.up.y >= -FACING_UP_TOLERANCE && s1.up.y >= -FACING_UP_TOLERANCE
+    };
     let mut meshes = TrackMeshes::default();
     let (asphalt, grass, sand, skirt) = (
         rgba(palette.asphalt),
@@ -302,22 +314,52 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         wall_strips(&mut meshes.walls, samples, closed, palette);
 
         // Skirts from the wall bottoms down to the ground (or the floor of a lake), so raised
-        // parts do not float.
+        // parts do not float. Issue #94: only under a road that faces up (to the wall, 90°, at
+        // most): under a road upside down, a skirt would hang through the karts driving under it,
+        // and the ribbon has its back instead (below). Out of the zones, every skirt (45° at most).
         let decor = &mut meshes.decor;
-        decor.strip(
+        decor.strip_where(
             samples,
             closed,
             |s| s.point(outer(s), 0.0),
             |s| ground(s.point(outer(s), 0.0)),
             |_| skirt,
+            faces_up,
         );
-        decor.strip(
+        decor.strip_where(
             samples,
             closed,
             |s| ground(s.point(-outer(s), 0.0)),
             |s| s.point(-outer(s), 0.0),
             |_| skirt,
+            faces_up,
         );
+        // Issue #94: in the anti-gravity zones, the ribbon's back, `RIBBON_THICKNESS` behind the
+        // road from one wall's outer face to the other's, and its two edges: seen from outside
+        // (from below a wall, from above a ceiling), the ribbon is solid. Drawn only.
+        decor.strip_where(
+            samples,
+            closed,
+            |s| s.point(outer(s), -RIBBON_THICKNESS),
+            |s| s.point(-outer(s), -RIBBON_THICKNESS),
+            |_| skirt,
+            zoned,
+        );
+        for side in [-1.0f32, 1.0] {
+            let (a, b): (&dyn Fn(&TrackSample) -> Vec3, &dyn Fn(&TrackSample) -> Vec3) =
+                if side > 0.0 {
+                    (
+                        &|s: &TrackSample| s.point(outer(s), 0.0),
+                        &|s: &TrackSample| s.point(outer(s), -RIBBON_THICKNESS),
+                    )
+                } else {
+                    (
+                        &|s: &TrackSample| s.point(-outer(s), -RIBBON_THICKNESS),
+                        &|s: &TrackSample| s.point(-outer(s), 0.0),
+                    )
+                };
+            decor.strip_where(samples, closed, a, b, |_| skirt, zoned);
+        }
     }
     for zone in &data.offroad {
         offroad_patch(&mut meshes.offroad, center, zone, sand);
@@ -667,12 +709,12 @@ mod tests {
         );
     }
 
-    /// Issue #78: on the Ruban Réglisse, the road and the shoulders of its anti-gravity zone are
+    /// Issue #78: on the Ruban Réglisse, the road and the shoulders of its anti-gravity zones are
     /// meshes of their own (the colliders that put a kart in anti-gravity), exactly the quads of
-    /// the zone: with the rest of the road, the whole ribbon, closed, as on any circuit; its curbs
+    /// the zones: with the rest of the road, the whole ribbon, closed, as on any circuit; its curbs
     /// blue and white, two blue stripes along it and a band at each end (drawn only), all of them
-    /// facing the road's normal (up to the wall, 90°). On a circuit without a zone, none of them:
-    /// the meshes of before #78.
+    /// facing the road's normal (up to the wall, 90°, and issue #94 the ceiling, 180°). On a
+    /// circuit without a zone, none of them: the meshes of before #78.
     #[test]
     fn the_anti_gravity_zone_has_its_own_road_and_its_blue_stripes() {
         let empty = generate(
@@ -685,21 +727,29 @@ mod tests {
         let data =
             TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
         let center = CenterLine::of(&data);
-        let zone = AntiGravityZone::new(&center, &data.anti_gravity[0]);
+        let zones: Vec<AntiGravityZone> = data
+            .anti_gravity
+            .iter()
+            .map(|z| AntiGravityZone::new(&center, z))
+            .collect();
+        assert_eq!(zones.len(), 2);
         let meshes = generate(&center, &data, &Palette::default());
         let samples = center.samples();
-        let in_zone = |p: [f32; 3]| {
+        let zone_of = |p: [f32; 3]| {
             let s = &samples[center.nearest_index(Vec3::from_array(p))];
-            zone.contains(&center, s.distance)
+            anti_gravity_at(&zones, &center, s.distance).copied()
         };
+        let in_zone = |p: [f32; 3]| zone_of(p).is_some();
         let n = samples.len();
         let zoned = (0..n)
             .filter(|i| {
                 let (a, b) = (&samples[*i], &samples[(i + 1) % n]);
-                zone.contains(
+                anti_gravity_at(
+                    &zones,
                     &center,
                     a.distance + center.wrap(b.distance - a.distance) / 2.0,
                 )
+                .is_some()
             })
             .count();
         // Asphalt and two curbs per quad, in the zone or out of it.
@@ -725,12 +775,17 @@ mod tests {
                 s.distance
             );
         }
+        let near_an_end = |p: [f32; 3], margin: f32| {
+            let s = &samples[center.nearest_index(Vec3::from_array(p))];
+            // Either side of an end (the nearest sample may be just beyond it).
+            let near = |end: f32| center.wrap(s.distance - end + margin) < 2.0 * margin;
+            zones.iter().any(|zone| near(zone.from) || near(zone.to))
+        };
         assert!(meshes.road.positions.iter().all(|p| !in_zone(*p) || {
             // A vertex at the zone's ends is shared.
-            let s = &samples[center.nearest_index(Vec3::from_array(*p))];
-            center.wrap(s.distance - zone.from) < 1.5 || center.wrap(zone.to - s.distance) < 1.5
+            near_an_end(*p, 1.5)
         }));
-        // On the wall itself, the road faces the side.
+        // On the wall itself, the road faces the side; on the ceiling (issue #94), down.
         let wall = center.at(center.param_to_distance(9.5));
         assert!(wall.up.y.abs() < 0.01);
         assert!(
@@ -739,6 +794,15 @@ mod tests {
                 .normals
                 .iter()
                 .any(|n| n[1].abs() < 0.01)
+        );
+        let ceiling = center.at(center.param_to_distance(39.5));
+        assert!(ceiling.up.y < -0.999);
+        assert!(
+            meshes
+                .anti_gravity_road
+                .normals
+                .iter()
+                .any(|n| n[1] < -0.999)
         );
         // Blue and white curbs, blue stripes: only there, and in the drawn mesh.
         let blue = Color::srgba(
@@ -756,11 +820,7 @@ mod tests {
         for i in &stripes {
             let p = meshes.decor.positions[*i];
             assert!(
-                in_zone(p) || {
-                    let s = &samples[center.nearest_index(Vec3::from_array(p))];
-                    center.wrap(s.distance - zone.from) < 2.0
-                        || center.wrap(zone.to - s.distance) < 2.0
-                },
+                in_zone(p) || near_an_end(p, 2.0),
                 "a stripe out of the zone at {p:?}"
             );
             let s = &samples[center.nearest_index(Vec3::from_array(p))];
@@ -786,6 +846,84 @@ mod tests {
             all.positions[all.positions.len() - meshes.anti_gravity_offroad.positions.len()..],
             meshes.anti_gravity_offroad.positions[..]
         );
+    }
+
+    /// Issue #94: on the Ruban Réglisse, nothing hangs from the road down to the ground where it
+    /// faces down (its ceiling): the skirts hang only under a road that faces up (to the wall,
+    /// 90°), they would hang through the karts driving under it. Each zone's ribbon has its back
+    /// instead, `RIBBON_THICKNESS` behind the road and facing away from it (up, over the ceiling),
+    /// and its edges. On a circuit without a zone, the skirts of before, every one, and no back.
+    #[test]
+    fn nothing_hangs_under_the_ceiling_and_the_ribbon_has_its_back() {
+        let prairie = test_track();
+        let center = CenterLine::of(&prairie);
+        let meshes = generate(&center, &prairie, &Palette::default());
+        // Two skirts per sample, nothing else.
+        assert_eq!(
+            meshes.decor.triangle_count(),
+            2 * 2 * center.samples().len()
+        );
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        for data in [data.clone(), data.mirrored()] {
+            let center = CenterLine::of(&data);
+            let zones: Vec<AntiGravityZone> = data
+                .anti_gravity
+                .iter()
+                .map(|z| AntiGravityZone::new(&center, z))
+                .collect();
+            let meshes = generate(&center, &data, &Palette::default());
+            let samples = center.samples();
+            let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
+            let decor = &meshes.decor;
+            // Every foot of a skirt (on the ground) hangs from an edge of the road right above it,
+            // where the road faces up.
+            let mut feet = 0;
+            for v in decor.positions.iter().map(|p| Vec3::from_array(*p)) {
+                if (v.y - GROUND_HEIGHT).abs() > 1e-4 {
+                    continue;
+                }
+                feet += 1;
+                let (distance, s) = samples
+                    .iter()
+                    .flat_map(|s| [-1.0f32, 1.0].map(|side| (s.point(side * outer(s), 0.0), s)))
+                    .map(|(edge, s)| (edge.xz().distance(v.xz()), s))
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .unwrap();
+                assert!(distance < 1e-3, "a foot under no edge: {v}");
+                assert!(
+                    s.up.y > -0.02,
+                    "a skirt under the road upside down at {:.0} m",
+                    s.distance
+                );
+            }
+            assert!(feet > 2 * samples.len(), "{feet}");
+            // The ribbon's back, all along the zones, facing away from the road; its edges facing
+            // out.
+            let facing = |p: Vec3, toward: Vec3| {
+                decor.positions.iter().zip(&decor.normals).any(|(q, n)| {
+                    Vec3::from_array(*q).distance(p) < 1e-3
+                        && Vec3::from_array(*n).dot(toward) > 0.95
+                })
+            };
+            let mut ceilings = 0;
+            for s in samples
+                .iter()
+                .filter(|s| anti_gravity_at(&zones, &center, s.distance + 0.5).is_some())
+            {
+                for side in [-1.0f32, 1.0] {
+                    let corner = s.point(side * outer(s), -RIBBON_THICKNESS);
+                    assert!(facing(corner, -s.up), "no back at {:.0} m", s.distance);
+                    assert!(
+                        facing(corner, side * s.right),
+                        "no edge at {:.0} m",
+                        s.distance
+                    );
+                }
+                ceilings += usize::from(s.up.y < -0.999);
+            }
+            assert!(ceilings >= 25, "{ceilings}");
+        }
     }
 
     #[test]

@@ -429,11 +429,13 @@ mod tests {
         TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
     }
 
-    /// Issue #78 (GD § 10): the Ruban Réglisse has one anti-gravity zone, its road flat at both
-    /// ends (where the karts go in and out), a wall in the middle (90°, its lower edge above the
-    /// ground); its banking goes beyond 45° only in it; no pelican drops a kart in it (nor 3 m
-    /// before it); the items find the wall's normal over it, and the world's up elsewhere. Its
-    /// mirror image too (the banking the other way, the zone at the same place along the track).
+    /// Issue #78 (GD § 10): the Ruban Réglisse has its wall in its first anti-gravity zone, its
+    /// road flat at both ends (where the karts go in and out), a wall in the middle (90°, its
+    /// lower edge above the ground); its banking goes beyond 45° only in its zones (issue #94: the
+    /// second one is the ceiling, `the_ribbon_has_its_ceiling_in_its_second_zone`); no pelican
+    /// drops a kart in it (nor 3 m before it); the items find the wall's normal over it, and the
+    /// world's up elsewhere. Its mirror image too (the banking the other way, the zone at the same
+    /// place along the track).
     #[test]
     fn the_ribbon_has_its_wall_in_its_zone() {
         let data = every_circuit()
@@ -443,7 +445,7 @@ mod tests {
         for data in [data.clone(), data.mirrored()] {
             let layout = TrackLayout::new(&data);
             let center = &layout.center;
-            assert_eq!(layout.anti_gravity.len(), 1);
+            assert_eq!(layout.anti_gravity.len(), 2, "the wall and the ceiling");
             let zone = layout.anti_gravity[0];
             let flat = |s: &TrackSample| s.up.y > 0.97;
             assert!(flat(&center.at(zone.from)) && flat(&center.at(zone.to)));
@@ -452,16 +454,23 @@ mod tests {
             let mut on_the_wall = 0;
             for s in center.samples() {
                 let zoned = zone.contains(center, s.distance);
+                let in_a_zone = layout
+                    .anti_gravity
+                    .iter()
+                    .any(|z| z.contains(center, s.distance));
                 // A right-handed road frame: right × forward is up.
                 let frame = s.up.angle_between(s.right.cross(s.forward)).to_degrees();
                 assert!(frame < 1.0, "{:.0} m: not a road frame", s.distance);
                 let tilt = s.up.y.clamp(-1.0, 1.0).acos().to_degrees();
-                if !zoned {
+                if !in_a_zone {
                     assert!(tilt <= 46.0, "{:.0} m: {tilt}° out of the zone", s.distance);
                 }
+                if zoned {
+                    assert!(s.up.y > -0.02, "{:.0} m: the wall, 90° at most", s.distance);
+                }
                 if s.up.y.abs() < 0.02 {
-                    assert!(zoned);
-                    on_the_wall += 1;
+                    assert!(in_a_zone);
+                    on_the_wall += u32::from(zoned);
                     // The wall's lower edge, its outer face, above the ground.
                     let low = [-1.0f32, 1.0]
                         .map(|side| s.point(side * (wall_offset(s) + WALL_THICKNESS), 0.0).y)
@@ -472,10 +481,12 @@ mod tests {
             }
             assert!(on_the_wall >= 25, "{on_the_wall} m of wall");
             for drop in &layout.respawns {
-                assert!(
-                    center.wrap(*drop - zone.from + 3.0) > length + 3.0,
-                    "a drop point at {drop} in the zone"
-                );
+                for zone in &layout.anti_gravity {
+                    assert!(
+                        center.wrap(*drop - zone.from + 3.0) > zone.length(center) + 3.0,
+                        "a drop point at {drop} in the zone {zone:?}"
+                    );
+                }
             }
             let course = crate::race::Course::new(&layout, &crate::race::RaceTuning::default());
             let wall = center.at(zone.from + length / 2.0);
@@ -484,6 +495,62 @@ mod tests {
                 course.up_at(center.at(zone.from - 30.0).point(0.0, 0.4)),
                 Vec3::Y
             );
+        }
+    }
+
+    /// Issue #94 (GD § 10): the Ruban Réglisse's second anti-gravity zone rolls its road over onto
+    /// its back: flat at both ends, past the wall (90°, its lower edge above the ground) to upside
+    /// down (180°) for 25 m at least, the karts' room under it (their center 0.55 m under the
+    /// road, 5 m above the ground at least), the road upside down only in that zone. The zone runs
+    /// straight (seen from above); the items find the ceiling's normal (down) under it. Its mirror
+    /// image too.
+    #[test]
+    fn the_ribbon_has_its_ceiling_in_its_second_zone() {
+        let data = every_circuit()
+            .into_iter()
+            .find(|d| d.name == "Ruban Réglisse")
+            .expect("the circuit of issue #78");
+        for data in [data.clone(), data.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            let zone = layout.anti_gravity[1];
+            let flat = |s: &TrackSample| s.up.y > 0.97;
+            assert!(flat(&center.at(zone.from)) && flat(&center.at(zone.to)));
+            let length = zone.length(center);
+            assert!((300.0..420.0).contains(&length), "{length}");
+            assert!(
+                crate::track::data::anti_gravity_turn(center, &data.anti_gravity[1]) < 1.0,
+                "straight"
+            );
+            let mut upside_down = 0;
+            for s in center.samples() {
+                let zoned = zone.contains(center, s.distance);
+                // (The wall, 90°, faces the side: its normal's height is a rounding.)
+                if s.up.y < -0.02 {
+                    assert!(zoned, "{:.0} m: upside down out of the ceiling", s.distance);
+                }
+                if !zoned {
+                    continue;
+                }
+                // The ribbon's edges (their walls' outer faces) and its karts above the ground.
+                let low = [-1.0f32, 1.0]
+                    .map(|side| s.point(side * (wall_offset(s) + WALL_THICKNESS), 0.0).y)
+                    .into_iter()
+                    .fold(f32::MAX, f32::min);
+                assert!(low > GROUND_HEIGHT + 0.2, "{:.0} m: {low}", s.distance);
+                if s.up.y < -0.999 {
+                    upside_down += 1;
+                    let kart = s.point(0.0, GRID_HEIGHT);
+                    assert!(kart.y - GROUND_HEIGHT > 5.0, "{kart}");
+                }
+            }
+            assert!(upside_down >= 25, "{upside_down} m upside down");
+            let course = crate::race::Course::new(&layout, &crate::race::RaceTuning::default());
+            let ceiling = center.at(zone.from + length / 2.0);
+            assert!(ceiling.up.y < -0.999, "{ceiling:?}");
+            assert!(course.up_at(ceiling.point(-2.0, 0.4)).dot(Vec3::NEG_Y) > 0.999);
+            let under = course.project_anywhere(ceiling.point(1.0, GRID_HEIGHT));
+            assert!(under.upside_down && (under.height - GRID_HEIGHT).abs() < 0.05);
         }
     }
 
