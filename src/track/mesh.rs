@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 
+use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
 use super::biome::{Palette, Rgb};
 use super::data::{OffroadZone, TrackData};
 use super::layout::{CenterLine, TrackSample};
@@ -81,11 +82,27 @@ impl MeshData {
         b: impl Fn(&TrackSample) -> Vec3,
         color: impl Fn(usize) -> [f32; 4],
     ) {
+        self.strip_where(samples, closed, a, b, color, |_, _| true);
+    }
+
+    /// The same, only the quads between two samples that `keep` keeps (issue #78: the road of the
+    /// anti-gravity zones in a mesh of its own, the rest in the usual one).
+    pub fn strip_where(
+        &mut self,
+        samples: &[TrackSample],
+        closed: bool,
+        a: impl Fn(&TrackSample) -> Vec3,
+        b: impl Fn(&TrackSample) -> Vec3,
+        color: impl Fn(usize) -> [f32; 4],
+        keep: impl Fn(&TrackSample, &TrackSample) -> bool,
+    ) {
         let n = samples.len();
         let segments = if closed { n } else { n.saturating_sub(1) };
         for i in 0..segments {
             let (s0, s1) = (&samples[i], &samples[(i + 1) % n]);
-            self.quad([a(s0), b(s0), b(s1), a(s1)], color(i));
+            if keep(s0, s1) {
+                self.quad([a(s0), b(s0), b(s1), a(s1)], color(i));
+            }
         }
     }
 
@@ -123,20 +140,43 @@ pub struct TrackMeshes {
     /// Low walls, [`WALL_HEIGHT`] high: drawn, and their collider too, `Surface::Wall` (the same
     /// triangles, issue #47).
     pub walls: MeshData,
-    /// Skirts under raised parts: visual only.
+    /// Skirts under raised parts: visual only. Issue #78: the blue stripes of the anti-gravity
+    /// zones too.
     pub decor: MeshData,
+    /// Issue #78: the asphalt and curbs of the anti-gravity zones (`Surface::Road`, and
+    /// `AntiGravity`), apart from [`road`](Self::road): a wheel on it puts the kart in
+    /// anti-gravity. Empty on a circuit without a zone.
+    pub anti_gravity_road: MeshData,
+    /// The same for their shoulders (`Surface::Offroad`, and `AntiGravity`).
+    pub anti_gravity_offroad: MeshData,
 }
 
 impl TrackMeshes {
-    /// Everything in one mesh, for a single draw call.
+    /// Everything in one mesh, for a single draw call (the anti-gravity zones' road last: without
+    /// a zone, exactly the mesh before issue #78).
     pub fn combined(&self) -> MeshData {
         let mut all = self.road.clone();
         all.append(&self.offroad);
         all.append(&self.walls);
         all.append(&self.decor);
+        all.append(&self.anti_gravity_road);
+        all.append(&self.anti_gravity_offroad);
         all
     }
 }
+
+/// The curbs of the anti-gravity zones (issue #78): cyan blue and white, whatever the biome.
+pub const ANTI_GRAVITY_CURBS: (Rgb, Rgb) = ((0.12, 0.72, 1.0), (0.95, 0.98, 1.0));
+/// Their blue stripes along the road (sRGB), drawn only: the karts' wheels pivot there.
+pub const ANTI_GRAVITY_STRIPE: Rgb = (0.1, 0.6, 1.0);
+/// The stripes: this wide (m)...
+const STRIPE_WIDTH: f32 = 0.35;
+/// ...this far inside the road's edges (m)...
+const STRIPE_INSET: f32 = 1.0;
+/// ...and this much above the road (m), like the start line's band.
+const STRIPE_HEIGHT: f32 = 0.02;
+/// A band across the road at each end of a zone (m along the track).
+const STRIPE_BAND: f32 = 1.5;
 
 /// Lateral distance from the centerline to the inner face of the wall.
 pub fn wall_offset(sample: &TrackSample) -> f32 {
@@ -149,6 +189,17 @@ pub fn wall_offset(sample: &TrackSample) -> f32 {
 pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> TrackMeshes {
     let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(center, g)).collect();
     let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
+    let zones: Vec<AntiGravityZone> = data
+        .anti_gravity
+        .iter()
+        .map(|z| AntiGravityZone::new(center, z))
+        .collect();
+    // Issue #78: whether the quad between two samples is in an anti-gravity zone (its middle).
+    let zoned = |s0: &TrackSample, s1: &TrackSample| {
+        let middle = s0.distance + center.wrap(s1.distance - s0.distance) / 2.0;
+        anti_gravity_at(&zones, center, middle).is_some()
+    };
+    let unzoned = |s0: &TrackSample, s1: &TrackSample| !zoned(s0, s1);
     let mut meshes = TrackMeshes::default();
     let (asphalt, grass, sand, skirt) = (
         rgba(palette.asphalt),
@@ -161,48 +212,91 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     let ground = |p: Vec3| Vec3::new(p.x, ground_height(&lakes, p.xz()), p.z);
 
+    let blue_curbs = [rgba(ANTI_GRAVITY_CURBS.0), rgba(ANTI_GRAVITY_CURBS.1)];
+    let blue_stripe = |i: usize| blue_curbs[(i / CURB_STRIPE) % 2];
     for (samples, closed) in runs(center, &gaps) {
         let (samples, closed) = (&samples[..], closed);
-        // Road and curbs.
-        let road = &mut meshes.road;
-        road.strip(
-            samples,
-            closed,
-            |s| s.point(-s.half_width, 0.0),
-            |s| s.point(s.half_width, 0.0),
-            |_| asphalt,
-        );
-        road.strip(
-            samples,
-            closed,
-            |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
-            |s| s.point(-s.half_width, 0.0),
-            stripe,
-        );
-        road.strip(
-            samples,
-            closed,
-            |s| s.point(s.half_width, 0.0),
-            |s| s.point(s.half_width + CURB_WIDTH, 0.0),
-            stripe,
-        );
+        // Road and curbs; in the anti-gravity zones (issue #78), in their own mesh, the curbs
+        // blue and white.
+        for (road, keep, stripe) in [
+            (
+                &mut meshes.road,
+                &unzoned as &dyn Fn(&TrackSample, &TrackSample) -> bool,
+                &stripe as &dyn Fn(usize) -> [f32; 4],
+            ),
+            (&mut meshes.anti_gravity_road, &zoned, &blue_stripe),
+        ] {
+            road.strip_where(
+                samples,
+                closed,
+                |s| s.point(-s.half_width, 0.0),
+                |s| s.point(s.half_width, 0.0),
+                |_| asphalt,
+                keep,
+            );
+            road.strip_where(
+                samples,
+                closed,
+                |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+                |s| s.point(-s.half_width, 0.0),
+                stripe,
+                keep,
+            );
+            road.strip_where(
+                samples,
+                closed,
+                |s| s.point(s.half_width, 0.0),
+                |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+                stripe,
+                keep,
+            );
+        }
 
         // Grass shoulders.
-        let offroad = &mut meshes.offroad;
-        offroad.strip(
-            samples,
-            closed,
-            |s| s.point(-wall_offset(s), 0.0),
-            |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
-            |_| grass,
-        );
-        offroad.strip(
-            samples,
-            closed,
-            |s| s.point(s.half_width + CURB_WIDTH, 0.0),
-            |s| s.point(wall_offset(s), 0.0),
-            |_| grass,
-        );
+        for (offroad, keep) in [
+            (
+                &mut meshes.offroad,
+                &unzoned as &dyn Fn(&TrackSample, &TrackSample) -> bool,
+            ),
+            (&mut meshes.anti_gravity_offroad, &zoned),
+        ] {
+            offroad.strip_where(
+                samples,
+                closed,
+                |s| s.point(-wall_offset(s), 0.0),
+                |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+                |_| grass,
+                keep,
+            );
+            offroad.strip_where(
+                samples,
+                closed,
+                |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+                |s| s.point(wall_offset(s), 0.0),
+                |_| grass,
+                keep,
+            );
+        }
+
+        // The blue stripes of the anti-gravity zones (drawn only), near both edges of the road.
+        for side in [-1.0f32, 1.0] {
+            let inner = |s: &TrackSample| side * (s.half_width - STRIPE_INSET - STRIPE_WIDTH);
+            let outer = |s: &TrackSample| side * (s.half_width - STRIPE_INSET);
+            let (a, b): (&dyn Fn(&TrackSample) -> f32, &dyn Fn(&TrackSample) -> f32) = if side < 0.0
+            {
+                (&outer, &inner)
+            } else {
+                (&inner, &outer)
+            };
+            meshes.decor.strip_where(
+                samples,
+                closed,
+                |s| s.point(a(s), STRIPE_HEIGHT),
+                |s| s.point(b(s), STRIPE_HEIGHT),
+                |_| rgba(ANTI_GRAVITY_STRIPE),
+                zoned,
+            );
+        }
 
         // Low walls: inner face, top, outer face on each side.
         wall_strips(&mut meshes.walls, samples, closed, palette);
@@ -227,6 +321,19 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
     }
     for zone in &data.offroad {
         offroad_patch(&mut meshes.offroad, center, zone, sand);
+    }
+    // Issue #78: a blue band across the road where each anti-gravity zone starts and ends.
+    for zone in &zones {
+        for at in [zone.from, zone.to - STRIPE_BAND] {
+            let samples = [center.at(at), center.at(at + STRIPE_BAND)];
+            meshes.decor.strip(
+                &samples,
+                false,
+                |s| s.point(-s.half_width, STRIPE_HEIGHT),
+                |s| s.point(s.half_width, STRIPE_HEIGHT),
+                |_| rgba(ANTI_GRAVITY_STRIPE),
+            );
+        }
     }
 
     // Issue #20: each end of the road at a gap is closed, from the top of its walls down to the
@@ -441,7 +548,7 @@ mod tests {
     #[test]
     fn road_ribbon_is_a_closed_loop() {
         let data = test_track();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         let meshes = generate(&center, &data, &Palette::default());
         // Road + curbs welded: a closed ribbon has exactly two boundary loops (outer edges of
         // the two curbs) and no other open edge: no gap, no hole, including at the start line.
@@ -470,7 +577,7 @@ mod tests {
             test_track(),
             TrackData::from_ron(include_str!("../../assets/tracks/anneau.track.ron")).unwrap(),
         ] {
-            let center = CenterLine::new(&data.points, data.sample_step);
+            let center = CenterLine::of(&data);
             let meshes = generate(&center, &data, &Palette::default());
             let samples = center.samples();
             let walls = &meshes.walls;
@@ -510,7 +617,7 @@ mod tests {
     fn the_road_stops_at_the_gaps_and_the_skirts_reach_the_lake_floor() {
         let data =
             TrackData::from_ron(include_str!("../../assets/tracks/lagon.track.ron")).unwrap();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         let gap = Gap::new(&center, &data.gaps[0]);
         let lake = Lake::new(&data.lakes[0]);
         let meshes = generate(&center, &data, &Palette::default());
@@ -560,10 +667,131 @@ mod tests {
         );
     }
 
+    /// Issue #78: on the Ruban Réglisse, the road and the shoulders of its anti-gravity zone are
+    /// meshes of their own (the colliders that put a kart in anti-gravity), exactly the quads of
+    /// the zone: with the rest of the road, the whole ribbon, closed, as on any circuit; its curbs
+    /// blue and white, two blue stripes along it and a band at each end (drawn only), all of them
+    /// facing the road's normal (up to the wall, 90°). On a circuit without a zone, none of them:
+    /// the meshes of before #78.
+    #[test]
+    fn the_anti_gravity_zone_has_its_own_road_and_its_blue_stripes() {
+        let empty = generate(
+            &CenterLine::of(&test_track()),
+            &test_track(),
+            &Palette::default(),
+        );
+        assert!(empty.anti_gravity_road.positions.is_empty());
+        assert!(empty.anti_gravity_offroad.positions.is_empty());
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        let center = CenterLine::of(&data);
+        let zone = AntiGravityZone::new(&center, &data.anti_gravity[0]);
+        let meshes = generate(&center, &data, &Palette::default());
+        let samples = center.samples();
+        let in_zone = |p: [f32; 3]| {
+            let s = &samples[center.nearest_index(Vec3::from_array(p))];
+            zone.contains(&center, s.distance)
+        };
+        let n = samples.len();
+        let zoned = (0..n)
+            .filter(|i| {
+                let (a, b) = (&samples[*i], &samples[(i + 1) % n]);
+                zone.contains(
+                    &center,
+                    a.distance + center.wrap(b.distance - a.distance) / 2.0,
+                )
+            })
+            .count();
+        // Asphalt and two curbs per quad, in the zone or out of it.
+        assert_eq!(meshes.anti_gravity_road.triangle_count(), 3 * 2 * zoned);
+        assert_eq!(meshes.road.triangle_count(), 3 * 2 * (n - zoned));
+        assert_eq!(meshes.anti_gravity_offroad.triangle_count(), 2 * 2 * zoned);
+        let mut both = meshes.road.clone();
+        both.append(&meshes.anti_gravity_road);
+        assert_eq!(
+            count_loops(&boundary_edges(&both)),
+            Some(2),
+            "one closed ribbon"
+        );
+        for (i, p) in meshes.anti_gravity_road.positions.iter().enumerate() {
+            let s = &samples[center.nearest_index(Vec3::from_array(*p))];
+            let normal = Vec3::from_array(meshes.anti_gravity_road.normals[i]);
+            // The twist tilts the surface off the centerline's normal toward its edges (a
+            // helicoid: atan(lateral × roll per meter), about 9° at the curbs).
+            assert!(
+                normal.dot(s.up) > 0.95,
+                "the zone's road faces its normal: {p:?} {normal} {} at {}",
+                s.up,
+                s.distance
+            );
+        }
+        assert!(meshes.road.positions.iter().all(|p| !in_zone(*p) || {
+            // A vertex at the zone's ends is shared.
+            let s = &samples[center.nearest_index(Vec3::from_array(*p))];
+            center.wrap(s.distance - zone.from) < 1.5 || center.wrap(zone.to - s.distance) < 1.5
+        }));
+        // On the wall itself, the road faces the side.
+        let wall = center.at(center.param_to_distance(9.5));
+        assert!(wall.up.y.abs() < 0.01);
+        assert!(
+            meshes
+                .anti_gravity_road
+                .normals
+                .iter()
+                .any(|n| n[1].abs() < 0.01)
+        );
+        // Blue and white curbs, blue stripes: only there, and in the drawn mesh.
+        let blue = Color::srgba(
+            ANTI_GRAVITY_STRIPE.0,
+            ANTI_GRAVITY_STRIPE.1,
+            ANTI_GRAVITY_STRIPE.2,
+            1.0,
+        )
+        .to_linear()
+        .to_f32_array();
+        let stripes: Vec<usize> = (0..meshes.decor.colors.len())
+            .filter(|i| meshes.decor.colors[*i] == blue)
+            .collect();
+        assert!(!stripes.is_empty());
+        for i in &stripes {
+            let p = meshes.decor.positions[*i];
+            assert!(
+                in_zone(p) || {
+                    let s = &samples[center.nearest_index(Vec3::from_array(p))];
+                    center.wrap(s.distance - zone.from) < 2.0
+                        || center.wrap(zone.to - s.distance) < 2.0
+                },
+                "a stripe out of the zone at {p:?}"
+            );
+            let s = &samples[center.nearest_index(Vec3::from_array(p))];
+            let height = (Vec3::from_array(p) - s.position).dot(s.up);
+            assert!(
+                (height - 0.02).abs() < 0.02,
+                "a stripe just above the road: {height}"
+            );
+            assert!(Vec3::from_array(meshes.decor.normals[*i]).dot(s.up) > 0.95);
+        }
+        let curb = Color::srgba(
+            ANTI_GRAVITY_CURBS.0.0,
+            ANTI_GRAVITY_CURBS.0.1,
+            ANTI_GRAVITY_CURBS.0.2,
+            1.0,
+        )
+        .to_linear()
+        .to_f32_array();
+        assert!(meshes.anti_gravity_road.colors.contains(&curb));
+        assert!(!meshes.road.colors.contains(&curb));
+        let all = meshes.combined();
+        assert_eq!(
+            all.positions[all.positions.len() - meshes.anti_gravity_offroad.positions.len()..],
+            meshes.anti_gravity_offroad.positions[..]
+        );
+    }
+
     #[test]
     fn floors_face_up_and_walls_face_the_road() {
         let data = test_track();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         let meshes = generate(&center, &data, &Palette::default());
         assert!(meshes.road.normals.iter().all(|n| n[1] > 0.7));
         assert!(meshes.offroad.normals.iter().all(|n| n[1] > 0.7));

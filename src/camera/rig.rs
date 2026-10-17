@@ -19,6 +19,9 @@ pub struct RigInput {
     pub boosting: bool,
     /// -1 to 1: side shift asked by a drift (positive = camera shifts right).
     pub lean: f32,
+    /// Issue #78: the kart's up (`kart::KartEnvironment::up`): the world's up, or in anti-gravity
+    /// the road's normal under its wheels. The camera turns its own up toward it, smoothly.
+    pub up: Vec3,
 }
 
 /// Camera placement for this frame.
@@ -27,6 +30,8 @@ pub struct RigPose {
     pub eye: Vec3,
     pub look_at: Vec3,
     pub fov_degrees: f32,
+    /// The camera's up (issue #78): the world's up, but in anti-gravity the kart's, smoothed.
+    pub up: Vec3,
 }
 
 /// Smoothed camera state. Every value follows its target through a critically damped spring:
@@ -34,18 +39,25 @@ pub struct RigPose {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CameraRig {
     initialized: bool,
-    /// Horizontal unit direction from the kart to the camera.
+    /// Horizontal unit direction from the kart to the camera (perpendicular to `up`).
     behind: Vec3,
     behind_velocity: Vec3,
-    /// Smoothed kart height: bumps and jumps are softened.
-    height: f32,
+    /// Smoothed kart height: bumps and jumps are softened. Issue #78: the camera's base is
+    /// `height_lag` meters along `up` from the kart (the lag of that spring), its target 0.
+    height_lag: f32,
     height_velocity: f32,
+    /// Where the kart was on the last frame: how far it rose along `up` since.
+    last_position: Vec3,
     /// Look-at point relative to the kart (horizontal position, smoothed height).
     look: Vec3,
     look_velocity: Vec3,
     lean: f32,
     lean_velocity: f32,
     fov: f32,
+    /// Issue #78: the camera's up, following the kart's (`RigInput::up`) through a spring: the
+    /// world's up, except in anti-gravity.
+    up: Vec3,
+    up_velocity: Vec3,
 }
 
 /// One step of a critically damped spring (exact solution, stable for any `dt`).
@@ -91,13 +103,48 @@ pub fn target_fov(tuning: &CameraTuning, speed_ratio: f32, boosting: bool) -> f3
     tuning.base_fov + (tuning.max_speed_fov - tuning.base_fov) * speed + boost
 }
 
+/// `v` without its part along `up` (unit): its projection on the plane across `up`.
+fn level(v: Vec3, up: Vec3) -> Vec3 {
+    v - up * v.dot(up)
+}
+
 impl CameraRig {
-    /// Advances the rig by `dt` seconds and returns the camera pose.
+    /// The camera's up now (issue #78): the world's up, but in anti-gravity the kart's, smoothed.
+    pub fn up(&self) -> Vec3 {
+        if self.initialized { self.up } else { Vec3::Y }
+    }
+
+    /// Advances the rig by `dt` seconds and returns the camera pose. Everything is measured
+    /// across the camera's up (the world's up, or the kart's in anti-gravity, issue #78): its
+    /// heading, its height, its lean.
     pub fn update(&mut self, tuning: &CameraTuning, input: &RigInput, dt: f32) -> RigPose {
-        let ahead = Vec3::new(input.heading.x, 0.0, input.heading.z).normalize_or(Vec3::NEG_Z);
-        let right = ahead.cross(Vec3::Y);
+        let target_up = input.up.normalize_or(Vec3::Y);
+        if !self.initialized {
+            self.up = target_up;
+            self.up_velocity = Vec3::ZERO;
+        } else if dt > 0.0 && (self.up != target_up || self.up_velocity != Vec3::ZERO) {
+            let (up, velocity) = spring(
+                self.up,
+                self.up_velocity,
+                target_up,
+                tuning.up_frequency,
+                dt,
+            );
+            self.up = up.normalize_or(target_up);
+            self.up_velocity = velocity;
+            // Back on the world's up (or settled on the kart's): exactly it, the rig of the other
+            // circuits (a thousandth of a radian away, still: no visible jump).
+            if self.up.distance_squared(target_up) < 1e-6 && velocity.length_squared() < 1e-4 {
+                self.up = target_up;
+                self.up_velocity = Vec3::ZERO;
+            }
+        }
+        let up = self.up;
+        let ahead = level(input.heading, up)
+            .normalize_or(level(Vec3::NEG_Z, up).normalize_or(up.any_orthonormal_vector()));
+        let right = ahead.cross(up);
         let look_offset = ahead * tuning.look_ahead
-            + Vec3::Y * tuning.look_height
+            + up * tuning.look_height
             // Turning right (negative yaw rate) shifts the look-at point to the right.
             - right * input.yaw_rate * tuning.turn_lead;
         let fov = target_fov(tuning, input.speed_ratio, input.boosting);
@@ -106,10 +153,11 @@ impl CameraRig {
             *self = Self {
                 initialized: true,
                 behind: -ahead,
-                height: input.position.y,
+                last_position: input.position,
                 look: look_offset,
                 lean: input.lean,
                 fov,
+                up,
                 ..default()
             };
         } else if dt > 0.0 {
@@ -120,11 +168,14 @@ impl CameraRig {
                 tuning.swing_frequency,
                 dt,
             );
-            self.behind = Vec3::new(self.behind.x, 0.0, self.behind.z).normalize_or(-ahead);
-            (self.height, self.height_velocity) = spring_f32(
-                self.height,
+            self.behind = level(self.behind, up).normalize_or(-ahead);
+            // The smoothed height, as the lag of the camera's base behind the kart along `up`:
+            // the kart rising by `rise` leaves it that much lower, and the spring brings it back.
+            let rise = (input.position - self.last_position).dot(up);
+            (self.height_lag, self.height_velocity) = spring_f32(
+                self.height_lag - rise,
                 self.height_velocity,
-                input.position.y,
+                0.0,
                 tuning.vertical_frequency,
                 dt,
             );
@@ -144,17 +195,24 @@ impl CameraRig {
             );
             self.fov += (fov - self.fov) * (1.0 - (-tuning.fov_response * dt).exp());
         }
+        self.last_position = input.position;
 
-        let base = Vec3::new(input.position.x, self.height, input.position.z);
-        let camera_right = (-self.behind).cross(Vec3::Y);
+        let base = self.base(input);
+        let camera_right = (-self.behind).cross(up);
         RigPose {
             eye: base
                 + self.behind * tuning.distance
-                + Vec3::Y * tuning.height
+                + up * tuning.height
                 + camera_right * self.lean * tuning.drift_side_offset,
             look_at: base + self.look,
             fov_degrees: self.fov,
+            up,
         }
+    }
+
+    /// The camera's base: the kart, at the smoothed height along the camera's up.
+    fn base(&self, input: &RigInput) -> Vec3 {
+        input.position + self.up * self.height_lag
     }
 }
 
@@ -164,12 +222,14 @@ impl CameraRig {
     /// [`CameraRig::update`] of the same frame; it does not touch the rig's springs, so the chase
     /// camera is exactly where it would have been when the button is released.
     pub fn look_back(&self, tuning: &CameraTuning, input: &RigInput) -> RigPose {
-        let ahead = Vec3::new(input.heading.x, 0.0, input.heading.z).normalize_or(Vec3::NEG_Z);
-        let base = Vec3::new(input.position.x, self.height, input.position.z);
+        let up = self.up();
+        let ahead = level(input.heading, up).normalize_or(-self.behind);
+        let base = self.base(input);
         RigPose {
-            eye: base + ahead * tuning.look_back_distance + Vec3::Y * tuning.look_back_height,
-            look_at: base - ahead * tuning.look_back_target + Vec3::Y * tuning.look_height,
+            eye: base + ahead * tuning.look_back_distance + up * tuning.look_back_height,
+            look_at: base - ahead * tuning.look_back_target + up * tuning.look_height,
             fov_degrees: self.fov,
+            up,
         }
     }
 }
@@ -197,6 +257,7 @@ mod tests {
             speed_ratio: speed / 26.0,
             boosting: false,
             lean: 0.0,
+            up: Vec3::Y,
         }
     }
 
@@ -364,6 +425,50 @@ mod tests {
                 assert_eq!(back.fov_degrees, chase.fov_degrees);
                 assert!(back.eye.distance(chase.eye) > 8.0, "a cut, not a pan");
             }
+        }
+    }
+
+    /// Issue #78: a kart driving onto a wall (anti-gravity): its up turns from the world's up to
+    /// the side (+X) in 1.5 s, stays there, then turns back. The camera's up follows it without a
+    /// jolt (no jump from one frame to the next, at 30, 60 and 144 fps), sits behind and above
+    /// the kart in the kart's frame once the turn is over (the same place as on the ground, turned),
+    /// and is exactly the world's up again once the kart is back on the ground.
+    #[test]
+    fn the_camera_rolls_with_a_kart_onto_a_wall_and_back() {
+        let tuning = CameraTuning::default();
+        let wall = Vec3::X;
+        let up_at = |t: f32| {
+            let roll = |from: f32| ((t - from) / 1.5).clamp(0.0, 1.0);
+            let angle = (roll(1.0) - roll(5.0)) * std::f32::consts::FRAC_PI_2;
+            Quat::from_rotation_z(-angle) * Vec3::Y
+        };
+        for fps in [30.0, 60.0, 144.0] {
+            let frames = simulate(fps, 9.0, |t| RigInput {
+                up: up_at(t),
+                ..circling(t, 26.0, 0.0)
+            });
+            let mut previous: Option<(Vec3, Vec3)> = None;
+            for (input, pose) in &frames {
+                let offset = pose.eye - input.position;
+                if let Some((up, eye)) = previous {
+                    assert!(pose.up.angle_between(up) < 0.06, "{fps} fps: the up jumps");
+                    assert!(offset.distance(eye) < 0.5, "{fps} fps: the eye jumps");
+                }
+                assert!((pose.up.length() - 1.0).abs() < 1e-4);
+                previous = Some((pose.up, offset));
+            }
+            // On the wall, settled: behind the kart and above it along the wall's normal.
+            let (input, pose) = &frames[(4.5 * fps) as usize];
+            let offset = pose.eye - input.position;
+            assert!(pose.up.dot(wall) > 0.999, "{fps} fps: {}", pose.up);
+            assert!((offset.dot(wall) - tuning.height).abs() < 0.05, "{offset}");
+            assert!(
+                (offset.dot(-input.heading) - tuning.distance).abs() < 0.1,
+                "{offset}"
+            );
+            // Back on the ground: exactly the world's up, the camera of the other circuits.
+            let (_, pose) = frames.last().unwrap();
+            assert_eq!(pose.up, Vec3::Y, "{fps} fps");
         }
     }
 

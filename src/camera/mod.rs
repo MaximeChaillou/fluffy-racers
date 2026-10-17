@@ -15,6 +15,11 @@
 //!
 //! **Under water** (GD § 10, issue #20): a blue tint covers the screen while the camera is under
 //! the water of a lake (`underwater.rs`).
+//!
+//! **Anti-gravity** (GD § 10, issue #78): the camera's up follows the kart's
+//! (`kart::KartEnvironment::up`, the road's normal on a wall) through a spring
+//! (`CameraTuning::up_frequency`): it rolls with the road, smoothly, and is exactly the world's up
+//! again once out of the zone.
 
 mod rig;
 mod underwater;
@@ -27,7 +32,7 @@ use bevy::transform::TransformSystems;
 use bevy_rapier3d::prelude::*;
 
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::kart::{Boost, KartInput, KartState, KartTuning};
+use crate::kart::{Boost, KartEnvironment, KartInput, KartState, KartTuning};
 
 /// All the camera knobs, with their default values (our own starting points, à régler).
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
@@ -69,6 +74,10 @@ pub struct CameraTuning {
     pub look_back_height: f32,
     /// ...and looks at a point this far behind it (m).
     pub look_back_target: f32,
+    /// Issue #78: stiffness of the spring that turns the camera's up toward the kart's in
+    /// anti-gravity (natural frequency, rad/s): no jolt where the road twists, nor at the start or
+    /// the end of a zone.
+    pub up_frequency: f32,
 }
 
 impl Default for CameraTuning {
@@ -91,6 +100,7 @@ impl Default for CameraTuning {
             look_back_distance: 4.5,
             look_back_height: 2.0,
             look_back_target: 10.0,
+            up_frequency: 6.0,
         }
     }
 }
@@ -220,6 +230,7 @@ fn chase(
         Option<&CameraLean>,
         Option<&KartInput>,
         Option<&CameraShake>,
+        Option<&KartEnvironment>,
     )>,
     mut cameras: Query<(&mut ChaseCamera, &mut Transform, &mut Projection)>,
 ) {
@@ -237,7 +248,8 @@ fn chase(
         let Ok((target, source)) = visuals.get(camera.target) else {
             continue;
         };
-        let Ok((velocity, boost, lean, kart_input, shake)) = bodies.get(source.0) else {
+        let Ok((velocity, boost, lean, kart_input, shake, environment)) = bodies.get(source.0)
+        else {
             continue;
         };
         let input = RigInput {
@@ -247,6 +259,8 @@ fn chase(
             speed_ratio: velocity.linear.length() / kart_tuning.max_speed.max(0.01),
             boosting: boost.is_active(),
             lean: lean.map_or(0.0, |l| l.0),
+            // Issue #78: in anti-gravity, the kart's up (the road's normal).
+            up: environment.map_or(Vec3::Y, |e| e.up),
         };
         let mut pose = camera.rig.update(&tuning, &input, dt);
         // Looking behind: a cut to the front of the kart; the rig above keeps chasing.
@@ -258,7 +272,7 @@ fn chase(
         // kart and the camera, move the camera in front of it.
         let mut eye = pose.eye;
         if let Some(context) = &context {
-            let from = target.translation + Vec3::Y * tuning.look_height;
+            let from = target.translation + pose.up * tuning.look_height;
             let to_eye = eye - from;
             let length = to_eye.length();
             if length > 1e-3 {
@@ -275,7 +289,7 @@ fn chase(
         // A shake (a paw strike received) moves the whole view, on top of the chase.
         let shake = shake.map_or(Vec3::ZERO, |shake| shake.offset(now));
         transform.translation = eye + shake;
-        transform.look_at(pose.look_at + shake, Vec3::Y);
+        transform.look_at(pose.look_at + shake, pose.up);
         if let Projection::Perspective(perspective) = &mut *projection {
             perspective.fov = pose.fov_degrees.to_radians();
         }

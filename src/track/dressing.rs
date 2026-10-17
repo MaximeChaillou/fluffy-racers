@@ -70,7 +70,7 @@ pub fn dress_circuit(
     // Issue #20: never in a lake (the file's).
     let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
     let plan = if layout.mirrored {
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(data);
         place_decor(&center, data.biome(), &data.props, data.decor_seed, &lakes).mirrored()
     } else {
         place_decor(

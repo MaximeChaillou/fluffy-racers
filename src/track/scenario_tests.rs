@@ -392,11 +392,13 @@ fn no_crash_sends_a_kart_over_a_wall() {
 /// is on hide a little more of the next leg, lower down the mountain, than the 2 % of the camera's
 /// test (2.05 % measured, never the road just ahead nor the kart: 0 frames); its walls are the
 /// same as everywhere (`mesh::WALL_HEIGHT`).
-fn circuits() -> [TrackChoice; 3] {
+fn circuits() -> [TrackChoice; 4] {
     [
         TrackChoice::default(),
         TrackChoice::Circuit("tracks/anneau.track.ron".into()),
         TrackChoice::Circuit("tracks/crique.track.ron".into()),
+        // Issue #78: the camera rolls with the kart onto the anti-gravity wall.
+        TrackChoice::Circuit("tracks/ruban.track.ron".into()),
     ]
 }
 
@@ -563,7 +565,9 @@ fn watch_the_view(
     let shake = shakes
         .get(body.0)
         .map_or(Vec3::ZERO, |shake| shake.offset(time.elapsed_secs()));
-    let from = kart.translation + Vec3::Y * tuning.look_height;
+    // Issue #78: from above the kart along the camera's up (the world's, but on an anti-gravity
+    // wall the kart's), as `camera::chase` casts it.
+    let from = kart.translation + camera.rig.up() * tuning.look_height;
     let to_eye = eye.translation - shake - from;
     let length = to_eye.length();
     if length < 1e-3

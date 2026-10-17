@@ -347,7 +347,7 @@ mod tests {
         .unwrap();
         let data = TrackData::from_ron(&text).unwrap();
         data.validate().unwrap();
-        let center = CenterLine::new(&data.points, data.sample_step);
+        let center = CenterLine::of(&data);
         (data, center)
     }
 
@@ -403,19 +403,21 @@ mod tests {
         // The same loop driven the other way round has it on the left.
         let (mut data, _) = circuit("anneau.track.ron");
         data.points.reverse();
-        let reversed = CenterLine::new(&data.points, data.sample_step);
+        let reversed = CenterLine::of(&data);
         assert_eq!(inside_sign(&reversed), -1.0);
         // Issue #19: the Crique Câline turns right, the Col des Moufles left; their mirror
-        // images the other way. Issue #20: the Lagon Duvet turns right.
+        // images the other way. Issue #20: the Lagon Duvet turns right; issue #78: the Ruban
+        // Réglisse too.
         for (file, sign) in [
             ("crique.track.ron", 1.0),
             ("col.track.ron", -1.0),
             ("lagon.track.ron", 1.0),
+            ("ruban.track.ron", 1.0),
         ] {
             let (data, center) = circuit(file);
             assert_eq!(inside_sign(&center), sign, "{file}");
             let mirrored = data.mirrored();
-            let center = CenterLine::new(&mirrored.points, mirrored.sample_step);
+            let center = CenterLine::of(&mirrored);
             assert_eq!(inside_sign(&center), -sign, "{file} (mirror)");
         }
     }
@@ -433,6 +435,7 @@ mod tests {
             "crique.track.ron",
             "col.track.ron",
             "lagon.track.ron",
+            "ruban.track.ron",
         ] {
             let (data, _, plan) = plan_of(file);
             let mirrored = plan.clone().mirrored();
@@ -448,7 +451,7 @@ mod tests {
                 );
             }
             let data = data.mirrored();
-            let center = CenterLine::new(&data.points, data.sample_step);
+            let center = CenterLine::of(&data);
             let samples = center.samples();
             let step = center.length() / samples.len() as f32;
             let dense: Vec<TrackSample> = (0..samples.len() * 4)
@@ -479,11 +482,12 @@ mod tests {
             "crique.track.ron",
             "col.track.ron",
             "lagon.track.ron",
+            "ruban.track.ron",
         ] {
             let (data, center, plan) = plan_of(file);
             assert!(plan.left_out.is_empty(), "{file}: {:?}", plan.left_out);
             let mirrored = data.mirrored();
-            let mirrored_center = CenterLine::new(&mirrored.points, mirrored.sample_step);
+            let mirrored_center = CenterLine::of(&mirrored);
             for (center, plan, side) in [
                 (&center, plan.clone(), ""),
                 (&mirrored_center, plan.clone().mirrored(), " (mirror)"),
@@ -517,6 +521,7 @@ mod tests {
             ("crique.track.ron", "Plage"),
             ("col.track.ron", "Neige"),
             ("lagon.track.ron", "Lagon"),
+            ("ruban.track.ron", "Guimauve"),
         ] {
             let (data, center, plan) = plan_of(file);
             assert_eq!(data.biome.as_deref(), Some(biome));

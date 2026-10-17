@@ -230,6 +230,18 @@ pub fn flame_size(tuning: &KartTuning, boost: &Boost) -> f32 {
 pub struct WheelVisual {
     pub index: usize,
     pub radius: f32,
+    /// Its rotation on the kart, upright (the primitive's, or the model's hub).
+    pub rest: Quat,
+    /// Issue #78: how far it has pivoted flat (0: upright, 1: flat, in anti-gravity), shown only.
+    pub pivot: f32,
+}
+
+/// Issue #78 (GD § 10: « les roues pivotent »): the rotation of a wheel `pivot` of the way (0 to 1)
+/// from upright (`rest`) to flat under the kart, its outer face down: around the kart's length,
+/// the wheels of each side the other way (`side`: the sign of its anchor's x).
+pub fn pivoted_wheel(rest: Quat, side: f32, pivot: f32) -> Quat {
+    let angle = -side.signum() * pivot.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2;
+    Quat::from_rotation_z(angle) * rest
 }
 
 /// On the pivot of a kart visual dressed with the kart model (issue #11).
@@ -551,8 +563,13 @@ fn dress_kart_visuals(
                 mesh.0 = set.mesh.clone();
                 material.0 = model.material.clone();
                 wheel.radius = wheel_radius(set.radii, wheel.index);
+                wheel.rest = body.turns[wheel.index];
                 *transform = Transform::from_translation(body.hubs[wheel.index])
-                    .with_rotation(body.turns[wheel.index])
+                    .with_rotation(if wheel.pivot > 0.0 {
+                        pivoted_wheel(wheel.rest, WHEEL_ANCHORS[wheel.index].x, wheel.pivot)
+                    } else {
+                        wheel.rest
+                    })
                     .with_scale(Vec3::splat(wheel_scale(set.radii, wheel.index)));
             } else if let Ok(mut transform) = drivers.get_mut(child) {
                 transform.translation = body.seat;
@@ -698,15 +715,18 @@ pub fn spawn_kart_visual_with_driver(
                         }
                     });
                 for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
+                    let rest = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
                     pivot.spawn((
                         WheelVisual {
                             index: i,
                             radius: WHEEL_RADIUS,
+                            rest,
+                            pivot: 0.0,
                         },
                         Mesh3d(assets.wheel.clone()),
                         MeshMaterial3d(assets.wheel_material.clone()),
                         Transform::from_xyz(anchor.x.signum() * WHEEL_X, anchor.y, anchor.z)
-                            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                            .with_rotation(rest),
                     ));
                 }
                 for x in [-EXHAUST_X, EXHAUST_X] {
@@ -766,19 +786,33 @@ fn repaint_bodies(
 }
 
 /// Puts each wheel where its suspension ray touches the ground (fully extended in the air).
+/// Issue #78: in anti-gravity, the wheels pivot flat (shown only), in
+/// `EnvironmentTuning::wheel_pivot_seconds`, and back out of it; upright, they are never turned.
 fn place_wheels(
+    time: Res<Time>,
     tuning: Res<KartTuning>,
-    karts: Query<&KartWheels>,
+    karts: Query<(&KartWheels, Option<&KartEnvironment>)>,
     pivots: Query<&KartBodyPivot>,
-    mut wheels: Query<(&WheelVisual, &ChildOf, &mut Transform)>,
+    mut wheels: Query<(&mut WheelVisual, &ChildOf, &mut Transform)>,
 ) {
-    for (wheel, child_of, mut transform) in &mut wheels {
+    let step = time.delta_secs() / tuning.environment.wheel_pivot_seconds.max(1e-3);
+    for (mut wheel, child_of, mut transform) in &mut wheels {
         let Ok(pivot) = pivots.get(child_of.parent()) else {
             continue;
         };
-        let Ok(state) = karts.get(pivot.body) else {
+        let Ok((state, environment)) = karts.get(pivot.body) else {
             continue;
         };
+        let flat = environment.is_some_and(|e| e.anti_gravity);
+        if flat || wheel.pivot > 0.0 {
+            let target = if flat { 1.0 } else { 0.0 };
+            let pivot = super::approach(wheel.pivot, target, step);
+            if pivot != wheel.pivot {
+                wheel.pivot = pivot;
+                transform.rotation =
+                    pivoted_wheel(wheel.rest, WHEEL_ANCHORS[wheel.index].x, wheel.pivot);
+            }
+        }
         let extension = tuning.suspension_rest_length - state.compression[wheel.index];
         let anchor = WHEEL_ANCHORS[wheel.index];
         let y = if state.on_ground[wheel.index] {

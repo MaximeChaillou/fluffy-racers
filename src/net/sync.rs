@@ -1003,11 +1003,18 @@ fn show_remote_karts(
         if let Some(mut item_effects) = item_effects {
             show_effects(&mut item_effects, &look);
         }
-        // Issue #20: its wing and its bubbles.
+        // Issue #20: its wing and its bubbles; issue #78: in anti-gravity (its wheels pivot, the
+        // spin boost when it bumps into ours, no paw on it), its up its body's.
         if let Some(mut environment) = environment {
             let shown = KartEnvironment {
                 gliding: look.gliding,
                 underwater: look.underwater,
+                anti_gravity: look.anti_gravity,
+                up: if look.anti_gravity {
+                    pose.rotation * Vec3::Y
+                } else {
+                    Vec3::Y
+                },
                 ..*environment
             };
             environment.set_if_neq(shown);

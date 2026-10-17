@@ -108,6 +108,9 @@ pub struct KartLook {
     /// flags.
     pub gliding: bool,
     pub underwater: bool,
+    /// Issue #78: in anti-gravity (its wheels pivot; a bump with it gives the spin boost; no paw
+    /// reaches it): bit 7 of the flags, the last one.
+    pub anti_gravity: bool,
     /// Issue #21: the piñata's items left around it (one bit each, `items::PINATA_ITEMS`; 0
     /// without a piñata out); it holds an item a pie voleuse can take
     /// (`ItemSlots::stealable`); it is invisible (a pie voleuse).
@@ -270,6 +273,7 @@ impl KartLook {
             deflated: parts.effects.deflated > 0.0,
             gliding: parts.environment.gliding,
             underwater: parts.environment.underwater,
+            anti_gravity: parts.environment.anti_gravity,
             hidden: parts.effects.hidden(),
             ..Default::default()
         };
@@ -398,7 +402,8 @@ impl KartSnapshot {
                 | u8::from(look.rocket) << 3
                 | u8::from(look.deflated) << 4
                 | u8::from(look.gliding) << 5
-                | u8::from(look.underwater) << 6,
+                | u8::from(look.underwater) << 6
+                | u8::from(look.anti_gravity) << 7,
             hit: [
                 look.hit_elapsed.min(255) as u8,
                 look.hit_duration.min(255) as u8,
@@ -453,6 +458,7 @@ impl KartSnapshot {
             deflated: self.flags & 0b1_0000 != 0,
             gliding: self.flags & 0b10_0000 != 0,
             underwater: self.flags & 0b100_0000 != 0,
+            anti_gravity: self.flags & 0b1000_0000 != 0,
             pinata: self.pinata,
             stealable: self.items & ITEMS_STEALABLE != 0,
             hidden: self.items & ITEMS_HIDDEN != 0,
@@ -593,6 +599,7 @@ pub(crate) mod tests {
             deflated: true,
             gliding: true,
             underwater: false,
+            anti_gravity: false,
             pinata: 0,
             stealable: true,
             hidden: true,
@@ -706,7 +713,7 @@ pub(crate) mod tests {
                 (calin, rocket, deflated)
             );
             assert!(back.stalled && !back.invincible);
-            assert!(wire.flags <= crate::net::protocol::KART_FLAGS);
+            assert_eq!(wire.flags & 0b1000_0000, 0, "not in anti-gravity (bit 7)");
         }
         assert!((back.slipstream.unwrap() - 0.4).abs() < 0.003);
         assert!((back.slip + 0.21).abs() <= SLIP_STEP / 2.0 + 1e-6);
@@ -956,6 +963,71 @@ pub(crate) mod tests {
             KartLook::of(&towed).kart_state(&tuning),
             KartState::Respawning
         );
+    }
+
+    /// Issue #78: a kart in anti-gravity (its `KartEnvironment`) is so in its look, which sets
+    /// bit 7 of the flags, the last free one, and only it: read back, the same look, the other
+    /// flags untouched.
+    #[test]
+    fn the_anti_gravity_travels_in_bit_7_of_the_flags() {
+        let tuning = KartTuning::default();
+        let parts = |environment: &KartEnvironment| {
+            KartLook::of(&LookParts {
+                state: &KartState::Grounded,
+                sparks: None,
+                motion: &DriftMotion::default(),
+                boost: &Boost::default(),
+                stall: &Stall { remaining: 0.5 },
+                invincibility: &Invincibility::default(),
+                slipstream: &Slipstream::default(),
+                slipstream_fill: 0.0,
+                wheels: &KartWheels::default(),
+                effects: &ItemEffects::default(),
+                environment,
+            })
+        };
+        let walled = parts(&KartEnvironment {
+            anti_gravity: true,
+            up: Vec3::X,
+            ..Default::default()
+        });
+        assert!(walled.anti_gravity && walled.stalled);
+        assert!(!parts(&KartEnvironment::default()).anti_gravity);
+        for anti_gravity in [false, true] {
+            let look = KartLook {
+                anti_gravity,
+                ..look()
+            };
+            let wire = KartSnapshot::quantize(
+                0,
+                &KartPose {
+                    look,
+                    ..Default::default()
+                },
+            );
+            let without = KartSnapshot::quantize(
+                0,
+                &KartPose {
+                    look: KartLook {
+                        anti_gravity: false,
+                        ..look
+                    },
+                    ..Default::default()
+                },
+            );
+            assert_eq!(wire.flags & 0x80 != 0, anti_gravity);
+            assert_eq!(wire.flags & 0x7f, without.flags);
+            let back = wire.pose().look;
+            assert_eq!(back.anti_gravity, anti_gravity);
+            assert_eq!(
+                KartLook {
+                    anti_gravity: false,
+                    ..back
+                },
+                without.pose().look
+            );
+            assert_eq!(back.kart_state(&tuning), look.kart_state(&tuning));
+        }
     }
 
     /// Any 48 bits give a unit rotation, never a panic nor a NaN; a rotation and its opposite

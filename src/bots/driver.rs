@@ -121,6 +121,9 @@ pub struct Senses<'a> {
     /// The kart's heading (its local -Z) and right.
     pub forward: Vec3,
     pub right: Vec3,
+    /// Its up (issue #78, `kart::KartEnvironment::up`): the world's up, or in anti-gravity the
+    /// road's normal. The other karts' heights are measured along it.
+    pub up: Vec3,
     pub velocity: Vec3,
     /// The kart's yaw rate (rad/s, right turns positive): the bot feels its rotation.
     pub yaw_rate: f32,
@@ -437,8 +440,7 @@ pub fn kart_ahead(
     tuning: &BotTuning,
     me: Entity,
     position: Vec3,
-    forward: Vec3,
-    right: Vec3,
+    (forward, right, up): (Vec3, Vec3, Vec3),
     velocity: Vec3,
     neighbors: &[Neighbor],
 ) -> Option<(f32, f32, f32)> {
@@ -448,7 +450,8 @@ pub fn kart_ahead(
             continue;
         }
         let rel = other.position - position;
-        if rel.y.abs() > NEIGHBOUR_HEIGHT {
+        // Above or below it (along its up: on a wall too, issue #78): another part of the track.
+        if rel.dot(up).abs() > NEIGHBOUR_HEIGHT {
             continue;
         }
         let (ahead, side) = (rel.dot(forward), rel.dot(right));
@@ -595,8 +598,7 @@ pub fn drive(
         tuning,
         senses.entity,
         senses.position,
-        senses.forward,
-        senses.right,
+        (senses.forward, senses.right, senses.up),
         senses.velocity,
         senses.neighbors,
     );
@@ -1258,7 +1260,7 @@ mod tests {
             neighbor(4, Vec3::new(0.0, 0.0, -40.0), fwd * 10.0),
         ];
         let (ahead, side, other_speed) =
-            kart_ahead(&t, me, Vec3::ZERO, fwd, right, v, &others).unwrap();
+            kart_ahead(&t, me, Vec3::ZERO, (fwd, right, Vec3::Y), v, &others).unwrap();
         assert_eq!((ahead, side, other_speed), (8.0, 0.5, 18.0));
         // It is slightly right of the bot's lane: pass on the left.
         let limits = [-5.0, 5.0];
@@ -1276,10 +1278,16 @@ mod tests {
         assert_eq!(passing_lane(&t, 3.0, 0.5, limits, 0.0), Some(3.0));
         // A kart pulling away, or the same speed, is not a threat.
         let faster = [neighbor(2, Vec3::new(0.5, 0.0, -8.0), fwd * 26.0)];
-        assert_eq!(kart_ahead(&t, me, Vec3::ZERO, fwd, right, v, &faster), None);
+        assert_eq!(
+            kart_ahead(&t, me, Vec3::ZERO, (fwd, right, Vec3::Y), v, &faster),
+            None
+        );
         // Beside the path (another lane): not in the way.
         let aside = [neighbor(2, Vec3::new(4.0, 0.0, -8.0), fwd * 18.0)];
-        assert_eq!(kart_ahead(&t, me, Vec3::ZERO, fwd, right, v, &aside), None);
+        assert_eq!(
+            kart_ahead(&t, me, Vec3::ZERO, (fwd, right, Vec3::Y), v, &aside),
+            None
+        );
     }
 
     /// A kart on the centerline of Prairie Pompon at `distance`, facing the track.
@@ -1298,6 +1306,7 @@ mod tests {
             position: t.translation,
             forward: *t.forward(),
             right: *t.right(),
+            up: Vec3::Y,
             velocity: *t.forward() * speed,
             yaw_rate: 0.0,
             boost_left: 0.0,

@@ -45,6 +45,12 @@ pub struct TrackData {
     /// below the ground into a lake only.
     #[serde(default)]
     pub lakes: Vec<LakeData>,
+    /// Anti-gravity zones (GD § 10, issue #78): stretches of the centerline where the karts'
+    /// gravity follows the road's normal, so that they drive on walls. Only there may the road
+    /// bank beyond 45° (up to [`MAX_ANTI_GRAVITY_BANK`]); the zone must begin and end where the
+    /// road is still flat enough to drive on without it.
+    #[serde(default)]
+    pub anti_gravity: Vec<AntiGravityData>,
     /// Boost pads on the ground (GD § 2, issue #13).
     #[serde(default)]
     pub boost_pads: Vec<Spot>,
@@ -161,6 +167,21 @@ pub struct GapData {
     pub from: f32,
     pub to: f32,
 }
+
+/// An anti-gravity zone (issue #78), between two spline parameters.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AntiGravityData {
+    pub from: f32,
+    pub to: f32,
+}
+
+/// The steepest banking outside the anti-gravity zones (degrees): the karts drive there with the
+/// world's gravity.
+pub const MAX_BANK: f32 = 45.0;
+/// The steepest banking in an anti-gravity zone (degrees, issue #78): a wall. Beyond, a road upside
+/// down (a tube) is for a later issue (its skirts, its camera).
+pub const MAX_ANTI_GRAVITY_BANK: f32 = 90.0;
 
 /// A lake (issue #20): a rectangle of the ground plane, dug down to `floor` and full of water up
 /// to `level` (m). `level` is below the ground (`mesh::GROUND_HEIGHT`): the water stays in its
@@ -280,7 +301,11 @@ impl TrackData {
             ));
         }
         for (i, point) in self.points.iter().enumerate() {
-            if point.width < 4.0 || point.shoulder < 0.0 || point.bank.abs() > 45.0 {
+            if point.width < 4.0
+                || point.shoulder < 0.0
+                || !point.bank.is_finite()
+                || point.bank.abs() > MAX_ANTI_GRAVITY_BANK
+            {
                 return fail(format!(
                     "point {i}: width {} / shoulder {} / bank {}",
                     point.width, point.shoulder, point.bank
@@ -322,6 +347,48 @@ impl TrackData {
                     ));
                 }
             }
+        }
+        // Issue #78: the anti-gravity zones, apart from each other and from the gaps, half the
+        // circuit at most; beyond 45°, the road banks only in one of them.
+        let within = |zone: &AntiGravityData, p: f32| {
+            (p - zone.from).rem_euclid(n) <= (zone.to - zone.from).rem_euclid(n)
+        };
+        for zone in &self.anti_gravity {
+            let length = (zone.to - zone.from).rem_euclid(n);
+            if !(zone.from.is_finite() && zone.to.is_finite()) || length < 0.5 || length > n / 2.0 {
+                return fail(format!(
+                    "anti-gravity zone {}..{}: shorter than half a segment, or more than half \
+                     the circuit",
+                    zone.from, zone.to
+                ));
+            }
+            let in_gap =
+                |g: &GapData, p: f32| (p - g.from).rem_euclid(n) < (g.to - g.from).rem_euclid(n);
+            if let Some(gap) = self
+                .gaps
+                .iter()
+                .find(|g| within(zone, g.from) || in_gap(g, zone.from))
+            {
+                return fail(format!(
+                    "anti-gravity zone {}..{} on the gap {}..{}",
+                    zone.from, zone.to, gap.from, gap.to
+                ));
+            }
+        }
+        for (i, a) in self.anti_gravity.iter().enumerate() {
+            for b in &self.anti_gravity[i + 1..] {
+                if within(a, b.from) || within(b, a.from) {
+                    return fail(format!(
+                        "anti-gravity zones {}..{} and {}..{} overlap",
+                        a.from, a.to, b.from, b.to
+                    ));
+                }
+            }
+        }
+        if let Some(param) = self.steep_banking_outside_the_zones() {
+            return fail(format!(
+                "banked beyond {MAX_BANK}° at {param}, out of an anti-gravity zone"
+            ));
         }
         for lake in &self.lakes {
             let ground = super::mesh::GROUND_HEIGHT;
@@ -368,6 +435,27 @@ impl TrackData {
         Ok(())
     }
 
+    /// Issue #78: the first spline parameter (in steps of 1/16) where the road banks beyond
+    /// [`MAX_BANK`] out of every anti-gravity zone, if there is one. The banking blends between
+    /// two control points (`layout::bank_between`), so a steep point banks its neighbouring
+    /// segments too.
+    pub fn steep_banking_outside_the_zones(&self) -> Option<f32> {
+        const STEPS: usize = 16;
+        let n = self.points.len();
+        let slopes = super::layout::bank_slopes(&self.points, &self.anti_gravity);
+        (0..n * STEPS).find_map(|k| {
+            let (i, t) = (k / STEPS, (k % STEPS) as f32 / STEPS as f32);
+            let (a, b) = (self.points[i].bank, self.points[(i + 1) % n].bank);
+            let bank = super::layout::bank_between(a, b, (slopes[i], slopes[(i + 1) % n]), t);
+            let param = k as f32 / STEPS as f32;
+            let zoned = self.anti_gravity.iter().any(|zone| {
+                let n = n as f32;
+                (param - zone.from).rem_euclid(n) <= (zone.to - zone.from).rem_euclid(n)
+            });
+            (bank.abs() > MAX_BANK + 1e-3 && !zoned).then_some(param)
+        })
+    }
+
     /// The circuit's biome (None: no biome, or one the game does not have, which `validate`
     /// refuses).
     pub fn biome(&self) -> Option<&'static BiomeData> {
@@ -378,7 +466,7 @@ impl TrackData {
     /// swapped: every control point mirrored across the X = 0 plane (x → -x), its banking turned
     /// the other way, everything placed across the road on the other side (offsets, sand patches),
     /// the props on the other side, the lakes across the X = 0 plane (issue #20; the gaps are
-    /// along the track: they do not move). The centerline of the mirror is exactly the mirror image of
+    /// along the track: they do not move, nor do the anti-gravity zones of issue #78). The centerline of the mirror is exactly the mirror image of
     /// the original (Catmull-Rom is linear in its points), the same length: a point `offset`
     /// across the road at the same spline parameter is the mirror image of the original's at
     /// `-offset`. Mirrored twice, the file comes back.

@@ -1,7 +1,9 @@
 //! Tracks and terrain: circuits generated from data files (`assets/tracks/*.track.ron`,
 //! issue #3), dressed after their biome (issue #11: colors, decor of 3D models), with their start
-//! line and its arch (issue #79), and the flat test ground of issue #1.
+//! line and its arch (issue #79), its anti-gravity zones (issue #78), and the flat test ground of
+//! issue #1.
 
+pub mod anti_gravity;
 pub mod biome;
 pub mod circuit;
 pub mod data;
@@ -18,6 +20,7 @@ use bevy_rapier3d::prelude::*;
 
 use crate::level::LevelScoped;
 
+pub use anti_gravity::{AntiGravity, AntiGravityZone, anti_gravity_at};
 pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, GlideRamp, ITEM_BOX_HEIGHT,
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,
