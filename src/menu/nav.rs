@@ -9,7 +9,8 @@ use crate::kart::KeyboardLayout;
 pub enum Entry {
     /// Back to the race (only when the menu was opened from the game).
     Resume,
-    /// « Course solo »: the race menu of issue #19 (N): free race or Grand Prix, circuit, class.
+    /// « Course solo »: the race menu of issue #19 (N): free race, Grand Prix or (issue #76) time
+    /// trial, circuit, class.
     Solo,
     /// « En ligne »: the lobby of issue #7 (L): create or join a game.
     Online,
@@ -34,7 +35,8 @@ impl Entry {
     pub fn caption(self) -> &'static str {
         match self {
             Entry::Resume => "Le kart t'attend, moteur chaud.",
-            Entry::Solo => "Course libre ou Grand Prix, contre les bots",
+            // Issue #76: and the time trial (≤ 48 characters: the test below).
+            Entry::Solo => "Course libre, Grand Prix ou contre-la-montre",
             Entry::Online => "Créer ou rejoindre une partie entre amis",
             Entry::Options => "Clavier, noms au-dessus des karts",
             Entry::Garage => "Ton animal, ton kart, tes roues, ton aile",

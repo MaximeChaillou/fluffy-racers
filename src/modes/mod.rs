@@ -1,34 +1,56 @@
-//! Game modes (GD § 1, issue #19): the race menu, and the run of a Grand Prix.
+//! Game modes (GD § 1, issue #19): the race menu, the run of a Grand Prix, and (issue #76) the
+//! time trial.
 //!
 //! - **Race menu** ([`RaceMenu`]): **N** (« nouvelle course »: the same letter at the same place
 //!   in AZERTY and QWERTY, free in the game's controls, no Fn on a Mac) opens and closes it, from
-//!   the race or from the selection screen (which it replaces). Its lines: the **mode** (free race
-//!   or Grand Prix), the **circuit** (a free race; a Grand Prix races the cup, the first four
-//!   circuits of `assets/tracks/index.ron`), the **speed class** (`kart::SpeedClass`, 150cc by
-//!   default) and the **mirror** (`track::MirrorMode`). Up and down (arrows, or the player's
-//!   layout's letters): the line; left and right: change it; **Entrée** starts the race (or the
-//!   Grand Prix) with that choice; **Échap** or N closes it unchanged. The game is paused while
-//!   it is open, like the other menus. Not online: there, the room chooses (150cc, no mirror).
+//!   the race or from the selection screen (which it replaces). Its lines: the **mode** (free race,
+//!   Grand Prix or time trial), the **circuit** (a free race or a time trial; a Grand Prix races
+//!   the cup, the first four circuits of `assets/tracks/index.ron`), the **speed class**
+//!   (`kart::SpeedClass`, 150cc by default) and the **mirror** (`track::MirrorMode`). Up and down
+//!   (arrows, or the player's layout's letters): the line; left and right: change it; **Entrée**
+//!   starts the race (or the Grand Prix, or the time trial) with that choice; **Échap** or N
+//!   closes it unchanged. The game is paused while it is open, like the other menus. Not online:
+//!   there, the room chooses (150cc, no mirror).
 //! - **Grand Prix** (`race::GrandPrix`, pure): the races of the cup one after the other, in the
 //!   class and mirror chosen. When a race's results close (issue #70; Entrée closes them at once
 //!   in a Grand Prix), the race is scored; Entrée shows the overall standings (`screens.rs`), then
 //!   starts the next race (`LoadLevel`), its grid the reverse of the standings
 //!   (`RaceGrid::lineup`). After the last race, the **podium** (`podium.rs`): the three first on
 //!   their steps, dancing, a still camera on them; Entrée starts a new Grand Prix.
+//! - **Time trial** (issue #76, `time_trial.rs`): alone (no bot, no item box), three piments, the
+//!   clock and the record of the circuit, class and mirror, and the ghost of the record
+//!   (`ghost.rs`, `trial.rs`). The menu starts it ([`TimeTrial`]); the rest is
+//!   [`TimeTrialPlugin`], only with a renderer.
 //!
 //! This plugin is the logic, headless (the tests drive it with keys and actions). The menu's egui
-//! window (`ui.rs`) only comes with a renderer; the standings and the podium's texts are the
-//! HUD's `bevy_ui` (ASCII only: its font has no accents).
+//! window (`ui.rs`) and the time trial (`time_trial.rs`) only come with a renderer: the headless
+//! world, the bot races', keeps the archetypes and the systems it was measured with. The
+//! standings, the podium's texts and the time trial's HUD are the HUD's `bevy_ui` (ASCII only:
+//! its font has no accents).
 
+mod ghost;
 mod podium;
 mod screens;
+mod time_trial;
+mod trial;
 mod ui;
 
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod time_trial_tests;
 
+pub use ghost::{GHOST_MAX_TICKS, GhostRecorder, GhostTrack, decode_frames, encode_frames};
 pub use podium::{PODIUM_AHEAD, PodiumScene, podium_place};
 pub use screens::{GrandPrixScreen, StandingsLine, standings_lines};
+pub use time_trial::{
+    GHOST_ALPHA, GhostKart, GhostMaterials, GhostVisual, TimeTrial, TimeTrialPlugin,
+    TimeTrialState, TrialHud, TrialRun, TrialText, records_from_text,
+};
+pub use trial::{
+    GAME_VERSION, RECORDS_FORMAT, TIME_TRIAL_STORAGE_KEY, TrialKey, TrialRecord, TrialRecords,
+    Verdict,
+};
 pub use ui::ModesUiPlugin;
 
 use bevy::prelude::*;
@@ -51,7 +73,7 @@ pub const RACE_MENU_KEY: KeyCode = KeyCode::KeyN;
 const CONFIRM_KEYS: [KeyCode; 2] = [KeyCode::Enter, KeyCode::NumpadEnter];
 const CLOSE_KEYS: [KeyCode; 2] = [KeyCode::Escape, RACE_MENU_KEY];
 
-/// What to race (GD § 1: « Modes »). The time trial comes later (issue of its own).
+/// What to race (GD § 1: « Modes »).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum GameMode {
     /// One race on the circuit chosen.
@@ -59,16 +81,24 @@ pub enum GameMode {
     FreeRace,
     /// Four races on the cup's circuits, with points.
     GrandPrix,
+    /// Issue #76: alone on the circuit chosen, against the clock and the record's ghost.
+    TimeTrial,
 }
 
 impl GameMode {
-    pub const ALL: [Self; 2] = [GameMode::FreeRace, GameMode::GrandPrix];
+    pub const ALL: [Self; 3] = [GameMode::FreeRace, GameMode::GrandPrix, GameMode::TimeTrial];
 
     pub fn label(self) -> &'static str {
         match self {
             GameMode::FreeRace => "Course libre",
             GameMode::GrandPrix => "Grand Prix",
+            GameMode::TimeTrial => "Contre-la-montre",
         }
+    }
+
+    /// Whether it races the circuit chosen (a Grand Prix races the cup).
+    pub fn picks_a_circuit(self) -> bool {
+        self != GameMode::GrandPrix
     }
 }
 
@@ -76,7 +106,8 @@ impl GameMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RaceSetup {
     pub mode: GameMode,
-    /// The circuit of a free race: an index of the manifest (`assets/tracks/index.ron`).
+    /// The circuit of a free race or a time trial: an index of the manifest
+    /// (`assets/tracks/index.ron`).
     pub circuit: usize,
     pub class: SpeedClass,
     pub mirror: bool,
@@ -111,7 +142,7 @@ impl MenuRow {
 
 impl RaceSetup {
     /// The choice with the line `row` changed by `step` values (around). The circuit line of a
-    /// Grand Prix does not change (it races the cup).
+    /// Grand Prix does not change (it races the cup); a time trial's does, like a free race's.
     pub fn changed(mut self, row: MenuRow, step: i32, circuits: usize) -> Self {
         match row {
             MenuRow::Mode => {
@@ -119,7 +150,7 @@ impl RaceSetup {
                 let at = all.iter().position(|m| *m == self.mode).unwrap_or(0) as i32;
                 self.mode = all[(at + step).rem_euclid(all.len() as i32) as usize];
             }
-            MenuRow::Circuit if self.mode == GameMode::FreeRace && circuits > 0 => {
+            MenuRow::Circuit if self.mode.picks_a_circuit() && circuits > 0 => {
                 self.circuit = (self.circuit as i32 + step).rem_euclid(circuits as i32) as usize;
             }
             MenuRow::Circuit => {}
@@ -138,7 +169,7 @@ impl RaceSetup {
         match row {
             MenuRow::Mode => self.mode.label().to_string(),
             MenuRow::Circuit => match self.mode {
-                GameMode::FreeRace => circuits
+                GameMode::FreeRace | GameMode::TimeTrial => circuits
                     .get(self.circuit)
                     .map_or_else(String::new, |entry| entry.name.clone()),
                 GameMode::GrandPrix => cup_of(circuits, races)
@@ -291,7 +322,7 @@ fn current_setup(
     circuits: &[TrackEntry],
     class: SpeedClass,
     mirror: bool,
-    grand_prix: bool,
+    mode: GameMode,
 ) -> RaceSetup {
     let circuit = match choice {
         TrackChoice::Circuit(path) => circuits
@@ -301,11 +332,7 @@ fn current_setup(
         TrackChoice::TestGround => 0,
     };
     RaceSetup {
-        mode: if grand_prix {
-            GameMode::GrandPrix
-        } else {
-            GameMode::FreeRace
-        },
+        mode,
         circuit,
         class,
         mirror,
@@ -313,17 +340,20 @@ fn current_setup(
 }
 
 /// Applies the menu's actions. « Entrée » starts the choice: the class and the mirror, then a
-/// free race on its circuit (a Grand Prix in progress ends) or a new Grand Prix on the cup.
+/// free race on its circuit (a Grand Prix in progress ends), a new Grand Prix on the cup, or
+/// (issue #76) a time trial on its circuit: alone, the player's bots kept for later
+/// ([`TimeTrial::solo_bots`]: given back by the next choice).
 #[allow(clippy::too_many_arguments)]
 fn apply_menu_actions(
     mut commands: Commands,
     mut actions: MessageReader<RaceMenuAction>,
     mut menu: ResMut<RaceMenu>,
     (choice, mut class, mut mirror): (Res<TrackChoice>, ResMut<RaceClass>, ResMut<MirrorMode>),
-    (mut grid, gp_tuning, grand_prix): (
+    (mut grid, gp_tuning, grand_prix, time_trial): (
         ResMut<RaceGrid>,
         Res<GrandPrixTuning>,
         Option<Res<GrandPrix>>,
+        Option<Res<TimeTrial>>,
     ),
     selection: Option<Res<SelectionScreen>>,
     mut selection_actions: MessageWriter<SelectionAction>,
@@ -342,7 +372,13 @@ fn apply_menu_actions(
                         &circuits,
                         class.0,
                         mirror.0,
-                        grand_prix.is_some(),
+                        if time_trial.is_some() {
+                            GameMode::TimeTrial
+                        } else if grand_prix.is_some() {
+                            GameMode::GrandPrix
+                        } else {
+                            GameMode::FreeRace
+                        },
                     ),
                 };
                 // It takes the selection screen's place.
@@ -369,8 +405,19 @@ fn apply_menu_actions(
                 class.set_if_neq(RaceClass(setup.class));
                 mirror.set_if_neq(MirrorMode(setup.mirror));
                 grid.lineup = None;
+                // Issue #76: the player's bots, kept while a time trial lasts.
+                if setup.mode == GameMode::TimeTrial {
+                    let solo_bots = time_trial
+                        .as_ref()
+                        .map_or(grid.bots, |trial| trial.solo_bots);
+                    commands.insert_resource(TimeTrial { solo_bots });
+                    grid.bots = 0;
+                } else if let Some(trial) = &time_trial {
+                    commands.remove_resource::<TimeTrial>();
+                    grid.bots = trial.solo_bots;
+                }
                 match setup.mode {
-                    GameMode::FreeRace => {
+                    GameMode::FreeRace | GameMode::TimeTrial => {
                         commands.remove_resource::<GrandPrix>();
                         let track = circuits
                             .get(setup.circuit)

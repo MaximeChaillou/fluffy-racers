@@ -40,7 +40,7 @@ use kart::{
 use level::LevelPlugin;
 use menu::MainMenuPlugin;
 use models::ModelPlugin;
-use modes::ModesPlugin;
+use modes::{ModesPlugin, TimeTrialPlugin};
 use net::{KartId, KartSyncPlugin, NetKart, NetPlugin, OnlineSlot};
 use options::OptionsPlugin;
 use race::{PelicanPlugin, RaceGrid, RaceMode, RacePlugin, Racer};
@@ -73,8 +73,8 @@ impl Plugin for SimulationPlugin {
 /// rooms and lobby (issue #7; the egui parts only with a renderer), the other players' karts
 /// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room), and the game modes
 /// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix), and with a renderer the main
-/// menu (issue #56, `menu::MainMenuPlugin`). `LevelPlugin` restarts the level or switches tracks
-/// (issue #36).
+/// menu (issue #56, `menu::MainMenuPlugin`) and the time trial (issue #76,
+/// `modes::TimeTrialPlugin`). `LevelPlugin` restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
 /// without a countdown. It only starts on a circuit, not on the flat test ground. On a circuit,
@@ -126,6 +126,9 @@ impl Plugin for GamePlugin {
         // (the tests, the bot races) keeps the world it was measured with (`menu`).
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
             app.add_plugins(MainMenuPlugin { at_launch: true });
+            // Issue #76: the time trial, its records kept in the browser. Only on screen, like
+            // the main menu: the bot races' world has none of it (`modes::time_trial`).
+            app.add_plugins(TimeTrialPlugin { storage: true });
         }
     }
 }

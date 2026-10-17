@@ -21,7 +21,7 @@ Les valeurs marquées **(MK8DX)** viennent de sources publiques sur le jeu. Cell
 | Grand Prix | 4 courses ; points du 1er au 12e : **15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1** (MK8) |
 | Classes de vitesse | 50cc, 100cc, **150cc (par défaut)**, 200cc, plus un mode miroir. Multiplicateurs de vitesse max : 0,75 / 0,87 / 1,0 / 1,25 (à régler) |
 | Départ | Grille en quinconce, compte à rebours « 3, 2, 1, GO » d'une seconde par étape |
-| Modes | Course libre, Grand Prix, Contre-la-montre (3 piments, fantôme), En ligne (jusqu'à 12). **Pas de mode Bataille** (décision de Max du 2026-10-16, #21) |
+| Modes | Course libre, Grand Prix, Contre-la-montre (3 piments, fantôme ; voir plus bas), En ligne (jusqu'à 12). **Pas de mode Bataille** (décision de Max du 2026-10-16, #21) |
 
 ### Grand Prix (#19)
 
@@ -41,6 +41,14 @@ Les valeurs marquées **(MK8DX)** viennent de sources publiques sur le jeu. Cell
 - **200cc** (§ 3, point 7) : freiner en drift ralentit doucement (12 m/s², à régler), jamais sous 12 m/s (à régler, au-dessus de la vitesse qui casse un drift), et resserre la courbe de 15 % (à régler) ; le drift et sa charge continuent. Dans les autres classes, le frein casse le drift comme avant.
 - **Miroir** : le circuit est inversé gauche-droite (tracé, dévers, bonus sur la route, sable, décor, grille : la pole passe de l'autre côté). Les modèles du décor ne sont pas retournés.
 - **En ligne** : 150cc et sans miroir pour l'instant.
+
+### Contre-la-montre (#76)
+
+- **Les mêmes choix que la course libre** : le circuit, la classe et le miroir (menu de course, N). Pas en ligne : entrer dans une partie termine le contre-la-montre.
+- **Seul** : aucun bot, aucune boîte à objets (donc aucun objet tiré au hasard) et, sans personne, aucune interaction. Les croquettes restent (comme MK8DX).
+- **3 piments** (à régler) : un « x3 » en main au départ de chaque course, un piment par appui, et rien d'autre.
+- **Le chrono** : le temps total et le temps de chaque tour. Le **record** est gardé par circuit, par classe et selon le miroir, dans le navigateur ; il s'affiche au départ et à l'arrivée, avec « RECORD ! » quand il est battu. Un temps égal ne bat pas le record.
+- **Le fantôme** : la course du record, rejouée par un kart translucide, avec l'animal, les pièces et la couleur de cette course. Il **ne touche rien** : pas de collision, pas de cible pour les objets, et **pas d'aspiration** derrière lui (notre choix, comme les fantômes du contre-la-montre de MK8DX). Il disparaît une fois la ligne passée. Le fantôme rejoue les positions enregistrées, pas les commandes : il reste juste quand le jeu change de version.
 
 ## 2. Conduite de base
 
