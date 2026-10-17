@@ -10,7 +10,7 @@ pub enum Entry {
     /// Back to the race (only when the menu was opened from the game).
     Resume,
     /// « Jouer solo »: the race menu of issue #19 (N): free race, Grand Prix or (issue #76) time
-    /// trial, circuit, class. Its own screen comes with issue #99.
+    /// trial, circuit, mirror. Its own screen comes with issue #99.
     Solo,
     /// « Multijoueur »: the lobby of issue #7 (L): create or join a game.
     Online,

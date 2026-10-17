@@ -10,7 +10,7 @@ use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContext
 
 use super::{GameMode, MenuRow, RaceMenu, RaceMenuAction};
 use crate::admin::{keep_focus_for_text_only, tracks};
-use crate::kart::{KeyboardLayout, SpeedClass};
+use crate::kart::KeyboardLayout;
 use crate::race::GrandPrixTuning;
 
 /// The line being changed.
@@ -44,10 +44,6 @@ fn help(row: MenuRow) -> &'static str {
              chrono, trois piments en main, et le fantôme de ton record."
         }
         MenuRow::Circuit => "Le Grand Prix court les quatre circuits, dans cet ordre.",
-        MenuRow::Class => {
-            "La vitesse de pointe de tous les karts. En 200cc, freiner en drift resserre la \
-             courbe sans casser le drift."
-        }
         MenuRow::Mirror => "Le circuit inversé gauche-droite.",
     }
 }
@@ -107,17 +103,6 @@ fn race_menu_window(
                         }
                         MenuRow::Circuit => {
                             ui.label(setup.value(row, &circuits, gp_tuning.races as usize));
-                        }
-                        MenuRow::Class => {
-                            for class in SpeedClass::ALL {
-                                let text = RichText::new(class.label()).strong();
-                                if ui.selectable_label(setup.class == class, text).clicked() {
-                                    actions.write(RaceMenuAction::Set(super::RaceSetup {
-                                        class,
-                                        ..setup
-                                    }));
-                                }
-                            }
                         }
                         MenuRow::Mirror => {
                             for (mirror, name) in [(false, "Non"), (true, "Oui")] {

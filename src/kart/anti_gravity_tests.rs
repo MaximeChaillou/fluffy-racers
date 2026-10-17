@@ -1,7 +1,8 @@
 //! Headless scenarios of the anti-gravity (GD § 10, issue #78) on the Ruban Réglisse: the whole
 //! game (`GamePlugin`) with `MinimalPlugins`, its race started, one fixed tick per `app.update()`.
 //! The acceptance criteria: the way onto the wall and back down, never through the road, at
-//! several speeds, in every class, drifting, on the mirror image too; the spin boost of two karts
+//! several speeds (issue #118: from the default kart to the fastest one, boosted or not),
+//! drifting, on the mirror image too; the spin boost of two karts
 //! bumping into each other there, and its pads. Issue #94: the same under the ceiling (the road
 //! upside down, the Ruban's second zone), and a kart that comes off it falls.
 
@@ -10,6 +11,8 @@ use bevy_rapier3d::prelude::{GravityScale, Velocity};
 use super::*;
 use crate::admin::skip_countdown_now;
 use crate::bots::Bot;
+use crate::characters::{Loadout, PartKind, PlayerLoadout, Roster};
+use crate::croquettes::{CroquetteTuning, Croquettes};
 use crate::interpolation::PhysicsPose;
 use crate::race::{Course, Race, RaceProgress};
 use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
@@ -17,11 +20,56 @@ use crate::track::{AntiGravityZone, MirrorMode, TrackChoice, TrackLayout};
 
 const RIBBON: &str = "tracks/ruban.track.ron";
 
+/// The player's kart of the runs. Issue #118: the game has a single speed (no more speed classes);
+/// the runs that went through issue #19's classes go from the default kart to the fastest one the
+/// game has in anti-gravity, boosted or not (`Driving`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pace {
+    /// The default kart, no croquette: 28.5 m/s at full throttle, 37 m/s boosted (more with the
+    /// croquettes it picks up on the way).
+    Default,
+    /// The kart fastest in anti-gravity ([`fastest_in_anti_gravity`]) with 10 croquettes: the
+    /// fastest the game goes there (32.6 m/s at full throttle, 42.4 m/s boosted).
+    Fastest,
+}
+
+/// The loadout of the highest Speed « anti-gravité » (the first one found, in the roster's order).
+fn fastest_in_anti_gravity(roster: &Roster) -> Loadout {
+    let tuning = StatsTuning::default();
+    let speed = |loadout: &Loadout| {
+        StatEffects::new(&roster.stats(loadout), &tuning)
+            .on(Terrain::AntiGravity)
+            .top_speed
+    };
+    let count = |kind| roster.count(kind);
+    let mut best = roster.default_loadout();
+    for character in 0..count(PartKind::Character) {
+        for kart in 0..count(PartKind::Kart) {
+            for wheels in 0..count(PartKind::Wheels) {
+                for wing in 0..count(PartKind::Wing) {
+                    let loadout = Loadout {
+                        character,
+                        kart,
+                        wheels,
+                        wing,
+                    };
+                    if speed(&loadout) > speed(&best) {
+                        best = loadout;
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 /// The Ruban Réglisse, the player (and `others` more karts, bots no longer driven by their
 /// brains), its race started; the zone its runs drive through ([`WALL`], [`CEILING`] or [`TURN`]).
 struct Ribbon {
     app: App,
     kart: Entity,
+    /// Issue #118: the player's kart.
+    pace: Pace,
     others: Vec<Entity>,
     layout: TrackLayout,
     course: Course,
@@ -78,15 +126,18 @@ struct Log {
 }
 
 impl Ribbon {
-    fn new(class: SpeedClass, mirrored: bool, others: usize) -> Self {
-        Self::at(class, mirrored, others, WALL)
+    fn new(pace: Pace, mirrored: bool, others: usize) -> Self {
+        Self::at(pace, mirrored, others, WALL)
     }
 
     /// The same, its runs through the zone `which` ([`WALL`], [`CEILING`] or [`TURN`]).
-    fn at(class: SpeedClass, mirrored: bool, others: usize, which: usize) -> Self {
+    fn at(pace: Pace, mirrored: bool, others: usize, which: usize) -> Self {
         let mut app = game_app_unloaded(TrackChoice::Circuit(RIBBON.into()), others);
-        app.insert_resource(RaceClass(class))
-            .insert_resource(MirrorMode(mirrored));
+        app.insert_resource(MirrorMode(mirrored));
+        if pace == Pace::Fastest {
+            let loadout = fastest_in_anti_gravity(&Roster::embedded());
+            app.insert_resource(PlayerLoadout(loadout));
+        }
         single_threaded(&mut app);
         wait_for_the_player(&mut app);
         let kart = player(&mut app);
@@ -127,6 +178,7 @@ impl Ribbon {
         Self {
             app,
             kart,
+            pace,
             others,
             layout,
             course,
@@ -173,6 +225,11 @@ impl Ribbon {
         let mut progress = world.get_mut::<RaceProgress>(kart).unwrap();
         progress.passed = passed;
         progress.distance = distance;
+        // Issue #118: the fastest kart holds every croquette.
+        if kart == self.kart && self.pace == Pace::Fastest {
+            let max = world.resource::<CroquetteTuning>().max_held;
+            world.get_mut::<Croquettes>(kart).unwrap().count = max;
+        }
     }
 
     fn environment(&self, kart: Entity) -> KartEnvironment {
@@ -368,8 +425,8 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
             // side.
             // Reaching the wall (70°; issue #94: the ceiling, 160°), a fresh drift, whatever the
             // timing of those before it: let go for a tick (unless in the middle of a hop), then
-            // hop again. It lands on the wall itself (90°; the ceiling, 180°) and drifts there, in
-            // every class.
+            // hop again. It lands on the wall itself (90°; the ceiling, 180°) and drifts there,
+            // whatever the kart.
             if !at_the_wall && ribbon.bank(kart) >= fresh_drift_bank {
                 at_the_wall = true;
                 if !matches!(ribbon.state(kart), KartState::Hop { .. }) {
@@ -407,20 +464,18 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
 /// stats « anti-gravité », its up follows the road's normal on the ground (through the twist up
 /// to 90° and back), its wheels stay on the wall (but for the hops of the drifts), it never goes
 /// through the road (its center never below 0.2 m above it, as on the Lagon Duvet) and the
-/// pelican never comes. In 50cc, 100cc, 150cc and 200cc, on
-/// the mirror image too, slow, at its top speed and boosted, on three lanes, and drifting.
+/// pelican never comes. With the default kart and the fastest one ([`Pace`]), on the mirror image
+/// too, slow, at its top speed and boosted, on three lanes, and drifting.
 #[test]
 fn karts_drive_onto_the_wall_and_back_down() {
     let mut failures = Vec::new();
-    for (class, mirrored) in [
-        (SpeedClass::Cc50, false),
-        (SpeedClass::Cc100, true),
-        (SpeedClass::Cc150, false),
-        (SpeedClass::Cc150, true),
-        (SpeedClass::Cc200, false),
-        (SpeedClass::Cc200, true),
+    for (pace, mirrored) in [
+        (Pace::Default, false),
+        (Pace::Default, true),
+        (Pace::Fastest, false),
+        (Pace::Fastest, true),
     ] {
-        let mut ribbon = Ribbon::new(class, mirrored, 0);
+        let mut ribbon = Ribbon::new(pace, mirrored, 0);
         let center = ribbon.layout.center.clone();
         let zone = ribbon.zone;
         let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
@@ -447,7 +502,7 @@ fn karts_drive_onto_the_wall_and_back_down() {
         for driving in runs {
             let log = run_through(&mut ribbon, driving);
             let label = format!(
-                "{class:?}{}, {driving:?}",
+                "{pace:?}{}, {driving:?}",
                 if mirrored { " (mirror)" } else { "" }
             );
             println!(
@@ -531,21 +586,19 @@ fn karts_drive_onto_the_wall_and_back_down() {
 /// gravity pulls it up to the road over it (the world's off), its up follows the road's normal
 /// on the ground (down under the ceiling), its wheels stay on the road upside down (but for the
 /// hops of the drifts), it never goes through the road nor falls off it (its center never below
-/// 0.2 m from it, the pelican never comes), with its stats « anti-gravité », its speed kept. In
-/// 50cc, 100cc, 150cc and 200cc, on the mirror image too, slow, at its top speed and boosted, on
-/// three lanes, and drifting under the ceiling.
+/// 0.2 m from it, the pelican never comes), with its stats « anti-gravité », its speed kept. With
+/// the default kart and the fastest one ([`Pace`]), on the mirror image too, slow, at its top
+/// speed and boosted, on three lanes, and drifting under the ceiling.
 #[test]
 fn karts_drive_under_the_ceiling_and_back() {
     let mut failures = Vec::new();
-    for (class, mirrored) in [
-        (SpeedClass::Cc50, false),
-        (SpeedClass::Cc100, true),
-        (SpeedClass::Cc150, false),
-        (SpeedClass::Cc150, true),
-        (SpeedClass::Cc200, false),
-        (SpeedClass::Cc200, true),
+    for (pace, mirrored) in [
+        (Pace::Default, false),
+        (Pace::Default, true),
+        (Pace::Fastest, false),
+        (Pace::Fastest, true),
     ] {
-        let mut ribbon = Ribbon::at(class, mirrored, 0, CEILING);
+        let mut ribbon = Ribbon::at(pace, mirrored, 0, CEILING);
         let center = ribbon.layout.center.clone();
         let zone = ribbon.zone;
         let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
@@ -572,7 +625,7 @@ fn karts_drive_under_the_ceiling_and_back() {
         for driving in runs {
             let log = run_through(&mut ribbon, driving);
             let label = format!(
-                "{class:?}{}, {driving:?}",
+                "{pace:?}{}, {driving:?}",
                 if mirrored { " (mirror)" } else { "" }
             );
             println!(
@@ -668,21 +721,19 @@ fn karts_drive_under_the_ceiling_and_back() {
 /// never goes through the road, the pelican never comes, with its stats « anti-gravité » and its
 /// speed kept. **It goes round without steering**: on the wall (80° and more), the turn is a
 /// straight line in the road's plane, and the test's autopilot (toward its lane ahead, in the
-/// kart's frame) hardly touches the stick (flat, the same turn takes about a third of it). In
-/// 50cc, 100cc, 150cc and 200cc, on the mirror image too (a right turn), slow, at its top speed and
-/// boosted, on three lanes, and drifting (up to 150cc).
+/// kart's frame) hardly touches the stick (flat, the same turn takes about a third of it). With
+/// the default kart and the fastest one ([`Pace`]), on the mirror image too (a right turn), slow,
+/// at its top speed and boosted, on three lanes, and drifting.
 #[test]
 fn karts_go_round_the_banked_turn_without_steering() {
     let mut failures = Vec::new();
-    for (class, mirrored) in [
-        (SpeedClass::Cc50, false),
-        (SpeedClass::Cc100, true),
-        (SpeedClass::Cc150, false),
-        (SpeedClass::Cc150, true),
-        (SpeedClass::Cc200, false),
-        (SpeedClass::Cc200, true),
+    for (pace, mirrored) in [
+        (Pace::Default, false),
+        (Pace::Default, true),
+        (Pace::Fastest, false),
+        (Pace::Fastest, true),
     ] {
-        let mut ribbon = Ribbon::at(class, mirrored, 0, TURN);
+        let mut ribbon = Ribbon::at(pace, mirrored, 0, TURN);
         let center = ribbon.layout.center.clone();
         let zone = ribbon.zone;
         let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
@@ -707,15 +758,9 @@ fn karts_go_round_the_banked_turn_without_steering() {
             Driving::Drift,
         ];
         for driving in runs {
-            // In 200cc, the test's drift from one edge to the other (held until 3 m off its lane)
-            // ends in a wall at 30 m/s and more, where the turn twists back (a crash a pilot
-            // backs out of, the test's autopilot does not): not a check of the turn.
-            if driving == Driving::Drift && class == SpeedClass::Cc200 {
-                continue;
-            }
             let log = run_through(&mut ribbon, driving);
             let label = format!(
-                "{class:?}{}, {driving:?}",
+                "{pace:?}{}, {driving:?}",
                 if mirrored { " (mirror)" } else { "" }
             );
             let steering = log.steer_on_the_wall / log.on_the_wall.max(1) as f32;
@@ -801,7 +846,7 @@ fn karts_go_round_the_banked_turn_without_steering() {
 /// it drives off again from there.
 #[test]
 fn a_kart_stopped_under_the_ceiling_stays_on_it() {
-    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, CEILING);
+    let mut ribbon = Ribbon::at(Pace::Default, false, 0, CEILING);
     let kart = ribbon.kart;
     let ceiling = ribbon.zone.from + ribbon.zone.length(&ribbon.layout.center) / 2.0;
     assert!(ribbon.layout.center.at(ceiling).up.y < -0.999);
@@ -841,7 +886,7 @@ fn a_kart_stopped_under_the_ceiling_stays_on_it() {
 /// from it, is picked up at once.
 #[test]
 fn a_kart_off_the_ceiling_falls_and_the_pelican_comes() {
-    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, CEILING);
+    let mut ribbon = Ribbon::at(Pace::Default, false, 0, CEILING);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
     let gravity = ribbon.app.world().resource::<KartTuning>().gravity_scale;
@@ -967,7 +1012,7 @@ fn rear_end(ribbon: &mut Ribbon, at: f32, lateral: f32) -> (f32, f32, bool) {
 #[test]
 fn a_bump_in_anti_gravity_boosts_both_karts() {
     for mirrored in [false, true] {
-        let mut ribbon = Ribbon::new(SpeedClass::Cc150, mirrored, 1);
+        let mut ribbon = Ribbon::new(Pace::Default, mirrored, 1);
         let tuning = ribbon
             .app
             .world()
@@ -1006,7 +1051,7 @@ fn a_bump_in_anti_gravity_boosts_both_karts() {
 #[test]
 fn a_bump_under_the_ceiling_boosts_both_karts() {
     for mirrored in [false, true] {
-        let mut ribbon = Ribbon::at(SpeedClass::Cc150, mirrored, 1, CEILING);
+        let mut ribbon = Ribbon::at(Pace::Default, mirrored, 1, CEILING);
         let strength = ribbon
             .app
             .world()
@@ -1045,7 +1090,7 @@ fn the_pads_on_the_ceiling_boost() {
 /// The two pads of the zone `which` (`mine` tells them from the others): a kart driving over each
 /// one, on its lane, gets the pads' boost, in anti-gravity.
 fn pads_boost(which: usize, mine: impl Fn(&Transform) -> bool, what: &str) {
-    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
+    let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
     let tuning = ribbon.app.world().resource::<KartTuning>().clone();
@@ -1099,7 +1144,7 @@ fn items_roll_and_lie_under_the_ceiling() {
 /// its radius above it, never falling off; the pelure lies on it, just above it.
 fn items_roll_and_lie_on(which: usize, at: f32, facing: impl Fn(Vec3) -> bool) {
     use crate::items::{ItemKind, ItemObject, ItemSlots, Motion};
-    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
+    let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
     let wall = center.param_to_distance(at);
@@ -1250,7 +1295,7 @@ fn throw_at(ribbon: &mut Ribbon, at: f32, item: crate::items::ItemKind, count: u
 fn a_bomb_lobbed_ahead_lands_on_the_wall_and_on_the_ceiling() {
     use crate::items::{Blast, ItemKind, ItemObject};
     for (which, at) in [(WALL, 9.4), (CEILING, 39.2)] {
-        let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
+        let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let mut blasts = ribbon
             .app
@@ -1303,7 +1348,7 @@ fn a_bomb_lobbed_ahead_lands_on_the_wall_and_on_the_ceiling() {
 fn a_boomerang_flies_along_the_wall_and_the_ceiling_and_comes_back() {
     use crate::items::{ItemKind, ItemObject, Motion};
     for (which, at) in [(WALL, 9.0), (CEILING, 38.6)] {
-        let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
+        let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let boomerang = throw_at(&mut ribbon, at, ItemKind::Boomerang, 3);
         let first = *ribbon.app.world().get::<ItemObject>(boomerang).unwrap();
@@ -1353,7 +1398,7 @@ fn a_boomerang_flies_along_the_wall_and_the_ceiling_and_comes_back() {
 fn the_pillow_drops_on_the_leader_on_the_wall_and_under_the_ceiling() {
     use crate::items::{ItemKind, ItemObject, Motion, PillowFlight};
     for (which, at) in [(WALL, 10.0), (CEILING, 39.5)] {
-        let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 1, which);
+        let mut ribbon = Ribbon::at(Pace::Default, false, 1, which);
         let center = ribbon.layout.center.clone();
         let leader = ribbon.others[0];
         let spot = center.param_to_distance(at);
@@ -1419,7 +1464,7 @@ fn lost_croquettes_land_on_the_wall_and_on_the_ceiling() {
         CroquetteTuning, Croquettes, LooseCroquette, LoseCroquettes, LossCause,
     };
     for (which, at) in [(WALL, 9.8), (CEILING, 39.5)] {
-        let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, which);
+        let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let kart = ribbon.kart;
         let spot = center.param_to_distance(at);
@@ -1465,7 +1510,7 @@ fn lost_croquettes_land_on_the_wall_and_on_the_ceiling() {
 /// beside the ribbon first, then up: the kart never goes up through the road over it.
 #[test]
 fn the_pelican_takes_a_kart_out_from_under_the_ceiling() {
-    let mut ribbon = Ribbon::at(SpeedClass::Cc150, false, 0, CEILING);
+    let mut ribbon = Ribbon::at(Pace::Default, false, 0, CEILING);
     let kart = ribbon.kart;
     let center = ribbon.layout.center.clone();
     let ceiling = ribbon.zone.from + ribbon.zone.length(&center) / 2.0;

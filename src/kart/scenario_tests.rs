@@ -2057,53 +2057,25 @@ fn ramming_a_kart_in_the_flank_never_climbs_onto_it() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-// --- Issue #19: the speed classes ----------------------------------------------------------------
+// --- Issue #118: a single speed (issue #19's default class, the game as it is) -------------------
 
-impl Scenario {
-    fn set_class(&mut self, class: SpeedClass) {
-        self.app.insert_resource(RaceClass(class));
-    }
-}
-
-/// Issue #19 (GD § 1): the class multiplies the top speed: 0.75, 0.87, 1.0 and 1.25 of
-/// `max_speed`, reached in about the same time (the engine's curve follows the top speed). At
-/// 150cc, the class's factor is exactly 1, never written: the top speed scale and the product of
-/// the factors are those from before the classes, to the bit.
+/// Issue #118 (once issue #19's default class): the game's top speed is `KartTuning::max_speed`,
+/// reached in about 2.5 s; a kart drives on with the top speed factors it spawned with (all 1)
+/// and a top speed scale of exactly 1, steering and drifting: nothing writes them in plain
+/// driving. The product of the factors is the one of its sources, the environment's 1 on the
+/// ground leaving it to the bit.
 #[test]
-fn the_classes_scale_the_top_speed_and_150cc_is_the_game() {
-    let tuning = SpeedClassTuning::default();
-    for class in SpeedClass::ALL {
-        let mut scenario = Scenario::flat(Surface::Road);
-        scenario.set_class(class);
-        let max = scenario.tuning().max_speed;
-        let factor = tuning.speed(class);
-        scenario.run(2.5, FULL_THROTTLE);
-        let at_2_5 = scenario.forward_speed();
-        assert!(
-            at_2_5 > 0.93 * factor * max,
-            "{class:?}: {at_2_5} m/s after 2.5 s"
-        );
-        scenario.run(2.5, FULL_THROTTLE);
-        let top = scenario.forward_speed();
-        assert!(
-            (top - factor * max).abs() < 0.05,
-            "{class:?}: {top} vs {}",
-            factor * max
-        );
-        let factors = *scenario
-            .app
-            .world()
-            .get::<MaxSpeedFactors>(scenario.kart)
-            .unwrap();
-        assert_eq!(factors.class, factor);
-    }
+fn plain_driving_keeps_the_top_speed_factors_at_one() {
+    let mut scenario = Scenario::flat(Surface::Road);
+    let max = scenario.tuning().max_speed;
+    scenario.run(2.5, FULL_THROTTLE);
+    let at_2_5 = scenario.forward_speed();
+    assert!(at_2_5 > 0.93 * max, "{at_2_5} m/s after 2.5 s");
+    scenario.run(2.5, FULL_THROTTLE);
+    let top = scenario.forward_speed();
+    assert!((top - max).abs() < 0.05, "{top} vs {max}");
 
-    // 150cc: the class's factor is the one a kart spawns with (1, never written), its top
-    // speed scale exactly 1, steering and drifting: what drives the kart is what it was before
-    // the classes (the kart scenarios and the bot races above check that driving to the
-    // number).
     let mut classic = Scenario::flat(Surface::Road);
-    classic.set_class(SpeedClass::Cc150);
     let inputs = [
         (2.5, FULL_THROTTLE),
         (
@@ -2134,22 +2106,20 @@ fn the_classes_scale_the_top_speed_and_150cc_is_the_game() {
         stats: 0.96,
         tether: 0.9,
         items: 1.2,
-        class: 1.0,
         environment: 1.0,
     };
     assert_eq!(
         factors.product(),
         product(&factors),
-        "150cc on the ground (issue #20): the product as before"
+        "on the ground (issue #20): the product as before"
     );
 }
 
-/// GD § 3 point 7 (issue #19): in 200cc, braking in a drift slows the kart down without breaking
-/// the drift, never under its floor, and tightens the curve (a smaller radius than the same drift
-/// unbraked); the charge goes on. In 150cc the same brake breaks the drift (as always: too slow).
+/// Issue #118 (once issue #19's default class): the brake in a drift, the throttle held, breaks it
+/// (too slow: under `drift_exit_speed`) within two seconds, as without the throttle
+/// (`braking_hard_breaks_the_drift_and_loses_the_charge`).
 #[test]
-fn braking_in_a_drift_tightens_it_in_200cc_and_breaks_it_in_150cc() {
-    let class_tuning = SpeedClassTuning::default();
+fn braking_in_a_drift_breaks_it_even_at_full_throttle() {
     let brake_in_drift = KartInput {
         throttle: 1.0,
         brake: 1.0,
@@ -2157,55 +2127,12 @@ fn braking_in_a_drift_tightens_it_in_200cc_and_breaks_it_in_150cc() {
         jump_drift: true,
         ..default()
     };
-    let radius = |s: &Scenario| s.forward_speed() / s.velocity().angular.y.abs();
-
-    let (mut braked, mut unbraked) = (Scenario::flat(Surface::Road), Scenario::flat(Surface::Road));
-    for scenario in [&mut braked, &mut unbraked] {
-        scenario.set_class(SpeedClass::Cc200);
-        scenario.enter_right_drift(1.0);
-        scenario.run(0.6, drifting(1.0));
-    }
-    let entry = braked.forward_speed();
-    assert!(
-        entry > 1.2 * braked.tuning().max_speed,
-        "200cc: {entry} m/s"
-    );
-    let charge = |s: &Scenario| match s.state() {
-        KartState::Drifting { charge, .. } => charge,
-        other => panic!("not drifting: {other:?}"),
-    };
-    let before = charge(&braked);
-    let mut lowest = f32::MAX;
-    braked.run_with(2.0, brake_in_drift, |s| {
-        assert!(
-            matches!(s.state(), KartState::Drifting { .. }),
-            "200cc: the brake broke the drift at {} m/s",
-            s.forward_speed()
-        );
-        lowest = lowest.min(s.forward_speed());
-    });
-    unbraked.run(2.0, drifting(1.0));
-    let speed = braked.forward_speed();
-    assert!(
-        speed < entry - 10.0 && lowest >= class_tuning.drift_brake_min_speed - 0.3,
-        "200cc: {entry} → {speed} m/s (lowest {lowest})"
-    );
-    assert!(charge(&braked) > before, "the charge goes on");
-    let (tight, loose) = (radius(&braked), radius(&unbraked));
-    assert!(
-        tight < 0.6 * loose,
-        "200cc: braked radius {tight} m, unbraked {loose} m"
-    );
-    // Released, the drift fires its mini-turbo.
-    braked.tick(FULL_THROTTLE);
-    assert!(braked.boost().is_active());
-
     let mut classic = Scenario::flat(Surface::Road);
     classic.enter_right_drift(1.0);
     classic.run(0.6, drifting(1.0));
     let mut ticks = 0;
     while matches!(classic.state(), KartState::Drifting { .. }) {
-        assert!(ticks < 120, "150cc: the brake never broke the drift");
+        assert!(ticks < 120, "the brake never broke the drift");
         classic.tick(brake_in_drift);
         ticks += 1;
     }

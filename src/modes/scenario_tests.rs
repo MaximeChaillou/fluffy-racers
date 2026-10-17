@@ -14,9 +14,7 @@ use crate::camera::FixedView;
 use crate::characters::PlayerColor;
 use crate::interactions::InteractionTuning;
 use crate::items::ItemTuning;
-use crate::kart::{
-    ColorSet, KartPaint, KartWheels, MaxSpeedFactors, PlayerKart, SpeedClassTuning, bot_colors,
-};
+use crate::kart::{ColorSet, KartPaint, KartWheels, PlayerKart, bot_colors};
 use crate::race::{GrandPrixStage, OnPodium, Parked, RaceTuning, RacerName, ResultTime};
 use crate::tests::{game_app_unloaded, single_threaded, wait_for_the_player};
 use crate::track::TrackLayout;
@@ -121,8 +119,8 @@ fn racers(app: &mut App) -> Vec<(Entity, usize)> {
     all
 }
 
-/// Issue #19 acceptance, from end to end: the race menu (N) starts a Grand Prix in 200cc,
-/// mirrored; it races the four circuits of the cup in order; each race's results give the points
+/// Issue #19 acceptance, from end to end: the race menu (N) starts a Grand Prix, mirrored; it
+/// races the four circuits of the cup in order; each race's results give the points
 /// of GD § 1 (Entrée closes them at once); Entrée shows the overall standings, then starts the
 /// next race on its grid: the reverse of the standings, the leader last, each bot the same bot
 /// (its color and its name follow it); after the fourth race, the podium: the three first on
@@ -133,7 +131,7 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
     let mut app = quick_game(bots);
     let circuits = tracks::circuits();
 
-    // N, then the mode (Grand Prix), the class (200cc, two lines down) and the mirror.
+    // N, then the mode (Grand Prix) and the mirror (two lines down: issue #118, no class).
     tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
     assert!(app.world().resource::<RaceMenu>().open);
     assert!(app.world().resource::<Time<Virtual>>().is_paused());
@@ -141,15 +139,13 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
-    tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
-    tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
     let menu = *app.world().resource::<RaceMenu>();
+    assert_eq!(menu.row(), MenuRow::Mirror);
     assert_eq!(
         menu.setup,
         RaceSetup {
             mode: GameMode::GrandPrix,
             circuit: 0,
-            class: SpeedClass::Cc200,
             mirror: true,
         }
     );
@@ -174,8 +170,7 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
         assert_eq!((gp.race, gp.stage), (race, GrandPrixStage::Racing));
         assert_eq!(gp.cup, cup);
         assert_eq!(gp.entrants, bots + 1);
-        // The class and the mirror hold for the whole Grand Prix.
-        assert_eq!(app.world().resource::<RaceClass>().0, SpeedClass::Cc200);
+        // The mirror holds for the whole Grand Prix.
         assert!(app.world().resource::<TrackLayout>().mirrored);
         let grid = *app.world().resource::<RaceGrid>();
         let all = racers(&mut app);
@@ -191,15 +186,10 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
             }
         }
         let player = player_becomes_a_bot(&mut app);
-        // A tick of the karts' rules: the class's factor on the new karts.
-        app.update();
         let world = app.world();
         let player_slot = world.get::<Racer>(player).unwrap().grid_slot;
         assert_eq!(grid.entrant_at(player_slot), player_entrant);
-        let class = SpeedClassTuning::default().speed_200cc;
         for (kart, slot) in &all {
-            let factors = world.get::<MaxSpeedFactors>(*kart).unwrap();
-            assert_eq!(factors.class, class, "race {race}, slot {slot}");
             let entrant = grid.entrant_at(*slot);
             if entrant == player_entrant {
                 continue;
@@ -329,8 +319,8 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
     assert_eq!(world.query::<&PodiumScene>().iter(world).count(), 0);
 }
 
-/// Issue #19: the race menu starts a free race on the circuit chosen, in its class, and ends a
-/// Grand Prix in progress (its grid order with it); Échap closes it unchanged; online, N does
+/// Issue #19: the race menu starts a free race on the circuit chosen, in its mirror mode, and ends
+/// a Grand Prix in progress (its grid order with it); Échap closes it unchanged; online, N does
 /// nothing (the room chooses).
 #[test]
 fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
@@ -355,7 +345,8 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     assert!(!app.world().resource::<RaceMenu>().open);
     assert!(app.world().contains_resource::<GrandPrix>());
 
-    // Free race, Col des Moufles, 50cc, not mirrored.
+    // Free race, Col des Moufles, not mirrored (the mirror line, the last one, set and unset:
+    // around).
     tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
     tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
@@ -365,12 +356,13 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
     tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
+    let menu = *app.world().resource::<RaceMenu>();
+    assert_eq!(menu.row(), MenuRow::Mirror);
     assert_eq!(
-        app.world().resource::<RaceMenu>().setup,
+        menu.setup,
         RaceSetup {
             mode: GameMode::FreeRace,
             circuit: col,
-            class: SpeedClass::Cc50,
             mirror: false,
         }
     );
@@ -378,26 +370,7 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     wait_for_the_level(&mut app, "Col des Moufles");
     assert!(!app.world().contains_resource::<GrandPrix>());
     assert_eq!(app.world().resource::<RaceGrid>().lineup, None);
-    assert_eq!(app.world().resource::<RaceClass>().0, SpeedClass::Cc50);
     assert!(!app.world().resource::<TrackLayout>().mirrored);
-    let world = app.world_mut();
-    let factors: Vec<f32> = world
-        .query::<&MaxSpeedFactors>()
-        .iter(world)
-        .map(|f| f.class)
-        .collect();
-    app.update();
-    let world = app.world_mut();
-    let after: Vec<f32> = world
-        .query::<&MaxSpeedFactors>()
-        .iter(world)
-        .map(|f| f.class)
-        .collect();
-    assert_eq!(after.len(), 3);
-    assert!(
-        after.iter().all(|f| *f == 0.75),
-        "{factors:?} then {after:?}"
-    );
 
     // Online, N does nothing.
     app.insert_resource(crate::level::Online);
@@ -406,14 +379,17 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
 }
 
 /// The lines of the race menu: the mode (issue #76: free race, Grand Prix, time trial), the
-/// circuit (a free race or a time trial: a Grand Prix races the cup), the class and the mirror,
-/// each one around.
+/// circuit (a free race or a time trial: a Grand Prix races the cup) and the mirror, each one
+/// around; issue #118: no class line (the game has a single speed).
 #[test]
 fn the_menu_lines_go_around() {
     let circuits = tracks::circuits();
     let n = circuits.len();
+    assert_eq!(
+        MenuRow::ALL.map(MenuRow::label),
+        ["Mode", "Circuit", "Miroir"]
+    );
     let setup = RaceSetup::default();
-    assert_eq!(setup.class, SpeedClass::Cc150);
     assert_eq!(setup.mode, GameMode::FreeRace);
     let gp = setup.changed(MenuRow::Mode, 1, n);
     assert_eq!(gp.mode, GameMode::GrandPrix);
@@ -431,7 +407,6 @@ fn the_menu_lines_go_around() {
             .value(MenuRow::Circuit, &circuits, 4),
         circuits[1 % n].name
     );
-    assert_eq!(setup.changed(MenuRow::Class, 1, n).class, SpeedClass::Cc200);
     assert!(setup.changed(MenuRow::Mirror, 1, n).mirror);
     assert!(!setup.changed(MenuRow::Mirror, 2, n).mirror);
     assert_eq!(

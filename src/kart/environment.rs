@@ -67,7 +67,7 @@ pub struct EnvironmentTuning {
     /// takeoff).
     pub glide_open_ticks: u32,
     /// Forward speed of a level glide, as a share of the kart's top speed (its Speed « air »,
-    /// its class, its croquettes, a boost): 0.95.
+    /// its croquettes, a boost): 0.95.
     pub glide_speed: f32,
     /// The same diving (Up held): 1.2, faster.
     pub glide_dive_speed: f32,
@@ -76,8 +76,8 @@ pub struct EnvironmentTuning {
     /// How fast the forward speed reaches the glide's (m/s²): even a kart that rolled off the
     /// ramp slowly flies on.
     pub glide_accel: f32,
-    /// Slope of a level glide: meters down per meter ahead (0.1: a slow descent, the same in
-    /// every class, whatever the speed).
+    /// Slope of a level glide: meters down per meter ahead (0.1: a slow descent, the same
+    /// whatever the speed).
     pub glide_slope: f32,
     /// The same diving: steeper.
     pub glide_dive_slope: f32,
@@ -121,8 +121,8 @@ pub struct EnvironmentTuning {
     /// Issue #96: on the ground in anti-gravity, where the zone's road bends along it (a turn
     /// banked like a wall), the kart's velocity turns with it ([`anti_gravity_guide`]): the road
     /// guides it like a rail, and its springs only hold its gravity. Off, its springs alone turn
-    /// it, pressed into the road by the curve (in 200cc round the Ruban's banked turn, down to its
-    /// bump stops). A straight zone, however it twists, does not bend: nothing changes there.
+    /// it, pressed into the road by the curve (boosted to 50 m/s round the Ruban's banked turn,
+    /// down to its bump stops). A straight zone, however it twists, does not bend: nothing changes there.
     pub anti_gravity_guide: bool,
     /// Two karts in anti-gravity that bump into each other this fast (closing speed, m/s) both get
     /// the spin boost (GD § 10, MK8DX)...
@@ -362,7 +362,7 @@ pub fn glide_targets(tuning: &EnvironmentTuning, pitch: f32) -> (f32, f32) {
 /// One tick of `dt` of the glide: the new forward (level) and vertical speeds (m/s). The forward
 /// speed moves toward its share of `top_speed` at `glide_accel`; the vertical speed fades toward
 /// the glide's slope times the forward speed, `glide_min_sink` at least (the jump off the ramp
-/// turns into the glide's slow descent, at the same angle in every class).
+/// turns into the glide's slow descent, at the same angle at every speed).
 pub fn glide_speeds(
     tuning: &EnvironmentTuning,
     top_speed: f32,
@@ -722,7 +722,8 @@ mod tests {
         assert!(dive > level && level > climb);
         assert!(dive_slope > level_slope && level_slope > climb_slope && climb_slope > 0.0);
         // A flight from a lip 11.7 m above the landing, off a 12° ramp at `speed`, with a top
-        // speed of `top` (the class): how far, at what speeds, and how high after 61 m.
+        // speed of `top` (the kart's: its Speed « air », its croquettes, a boost): how far, at
+        // what speeds, and how high after 61 m.
         let flight = |pitch: f32, speed: f32, top: f32| {
             let (mut forward, mut vertical) = (speed, speed * 12f32.to_radians().sin());
             let (mut height, mut distance, mut ticks) = (11.7f32, 0.0f32, 0u32);
@@ -752,7 +753,7 @@ mod tests {
             assert!((dive_vertical + dive_slope * dive_speed).abs() < 0.3);
             let level_sink = (level_slope * level_speed).max(t.glide_min_sink);
             assert!((level_vertical + level_sink).abs() < 0.3);
-            // Even a full dive off the ramp at 20 m/s, in any class, is still 3 m up after the
+            // Even a full dive off the ramp at 20 m/s, at any top speed, is still 3 m up after the
             // 61 m of the lagoon's gap; a level glide lands within 200 m, a climb within 280 m.
             assert!(cleared > 3.0, "{top}: {cleared}");
             assert!(level_distance < 200.0, "{top}: {level_distance}");
@@ -761,6 +762,19 @@ mod tests {
             let (slow_distance, slow_speed, ..) = flight(0.0, 6.0, top);
             assert!(slow_distance > 61.0 && (slow_speed - top * level).abs() < 0.5);
         }
+        // Issue #118: the fastest a kart can glide (the highest Speed « air » of the stats, 1.08,
+        // 10 croquettes, a purple mini-turbo: 28.5 × 1.08 × 1.1 × 1.3 = 44 m/s) still clears the
+        // gap diving off the ramp at 20 m/s (too short a flight to reach its diving speed), lands
+        // within 200 m gliding level and within 280 m climbing.
+        let top = 44.0;
+        let (dive_distance, _, _, cleared) = flight(1.0, 20.0, top);
+        let (level_distance, level_speed, ..) = flight(0.0, top, top);
+        let (climb_distance, ..) = flight(-1.0, top, top);
+        assert!(dive_distance < level_distance && level_distance < climb_distance);
+        assert!((level_speed - top * level).abs() < 0.5, "{level_speed}");
+        assert!(cleared > 3.0, "{top}: {cleared}");
+        assert!(level_distance < 200.0, "{top}: {level_distance}");
+        assert!(climb_distance < 280.0, "{top}: {climb_distance}");
         // However slow, a glide comes down.
         let (_, vertical) = glide_speeds(&t, 5.0, 2.0, -0.1, -1.0, 10.0);
         assert!((vertical + t.glide_min_sink).abs() < 1e-3, "{vertical}");

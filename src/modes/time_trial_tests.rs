@@ -501,7 +501,6 @@ fn the_ghost_wears_the_parts_of_its_run_in_translucent_materials() {
     assert_ne!(color, app.world().resource::<PlayerColor>().0);
     let key = TrialKey {
         circuit: "tracks/prairie.track.ron".into(),
-        class: crate::kart::SpeedClass::Cc150,
         mirror: false,
     };
     let frames = super::ghost::tests::run(600);
@@ -643,7 +642,6 @@ fn an_unreadable_stored_text_gives_no_record() {
     records.insert(TrialRecord {
         key: TrialKey {
             circuit: "tracks/col.track.ron".into(),
-            class: crate::kart::SpeedClass::Cc50,
             mirror: true,
         },
         time: 9000,

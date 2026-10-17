@@ -5,20 +5,19 @@
 //!   in AZERTY and QWERTY, free in the game's controls, no Fn on a Mac) opens and closes it, from
 //!   the race or from the selection screen (which it replaces). Its lines: the **mode** (free race,
 //!   Grand Prix or time trial), the **circuit** (a free race or a time trial; a Grand Prix races
-//!   the cup, the first four circuits of `assets/tracks/index.ron`), the **speed class**
-//!   (`kart::SpeedClass`, 150cc by default) and the **mirror** (`track::MirrorMode`). Up and down
-//!   (arrows, or the player's layout's letters): the line; left and right: change it; **Entrée**
-//!   starts the race (or the Grand Prix, or the time trial) with that choice; **Échap** or N
-//!   closes it unchanged. The game is paused while it is open, like the other menus. Not online:
-//!   there, the room chooses (150cc, no mirror).
+//!   the cup, the first four circuits of `assets/tracks/index.ron`) and the **mirror**
+//!   (`track::MirrorMode`). Up and down (arrows, or the player's layout's letters): the line; left
+//!   and right: change it; **Entrée** starts the race (or the Grand Prix, or the time trial) with
+//!   that choice; **Échap** or N closes it unchanged. The game is paused while it is open, like
+//!   the other menus. Not online: there, the room chooses (no mirror).
 //! - **Grand Prix** (`race::GrandPrix`, pure): the races of the cup one after the other, in the
-//!   class and mirror chosen. When a race's results close (issue #70; Entrée closes them at once
+//!   mirror mode chosen. When a race's results close (issue #70; Entrée closes them at once
 //!   in a Grand Prix), the race is scored; Entrée shows the overall standings (`screens.rs`), then
 //!   starts the next race (`LoadLevel`), its grid the reverse of the standings
 //!   (`RaceGrid::lineup`). After the last race, the **podium** (`podium.rs`): the three first on
 //!   their steps, dancing, a still camera on them; Entrée starts a new Grand Prix.
 //! - **Time trial** (issue #76, `time_trial.rs`): alone (no bot, no item box), three piments, the
-//!   clock and the record of the circuit, class and mirror, and the ghost of the record
+//!   clock and the record of the circuit and mirror, and the ghost of the record
 //!   (`ghost.rs`, `trial.rs`). The menu starts it ([`TimeTrial`]); the rest is
 //!   [`TimeTrialPlugin`], only with a renderer.
 //!
@@ -57,7 +56,7 @@ use bevy::prelude::*;
 
 use crate::admin::tracks::{self, TrackEntry};
 use crate::characters::{SelectionAction, SelectionScreen};
-use crate::kart::{KeyboardLayout, RaceClass, SpeedClass};
+use crate::kart::KeyboardLayout;
 use crate::level::{LoadLevel, Online};
 use crate::options::{OptionsMenu, OptionsSystems};
 use crate::race::{
@@ -109,7 +108,6 @@ pub struct RaceSetup {
     /// The circuit of a free race or a time trial: an index of the manifest
     /// (`assets/tracks/index.ron`).
     pub circuit: usize,
-    pub class: SpeedClass,
     pub mirror: bool,
 }
 
@@ -118,23 +116,16 @@ pub struct RaceSetup {
 pub enum MenuRow {
     Mode,
     Circuit,
-    Class,
     Mirror,
 }
 
 impl MenuRow {
-    pub const ALL: [Self; 4] = [
-        MenuRow::Mode,
-        MenuRow::Circuit,
-        MenuRow::Class,
-        MenuRow::Mirror,
-    ];
+    pub const ALL: [Self; 3] = [MenuRow::Mode, MenuRow::Circuit, MenuRow::Mirror];
 
     pub fn label(self) -> &'static str {
         match self {
             MenuRow::Mode => "Mode",
             MenuRow::Circuit => "Circuit",
-            MenuRow::Class => "Classe",
             MenuRow::Mirror => "Miroir",
         }
     }
@@ -154,7 +145,6 @@ impl RaceSetup {
                 self.circuit = (self.circuit as i32 + step).rem_euclid(circuits as i32) as usize;
             }
             MenuRow::Circuit => {}
-            MenuRow::Class => self.class = self.class.cycled(step),
             MenuRow::Mirror => {
                 if step % 2 != 0 {
                     self.mirror = !self.mirror;
@@ -178,7 +168,6 @@ impl RaceSetup {
                     .collect::<Vec<_>>()
                     .join(" · "),
             },
-            MenuRow::Class => self.class.label().to_string(),
             MenuRow::Mirror => if self.mirror { "Oui" } else { "Non" }.to_string(),
         }
     }
@@ -320,7 +309,6 @@ fn menu_keys(
 fn current_setup(
     choice: &TrackChoice,
     circuits: &[TrackEntry],
-    class: SpeedClass,
     mirror: bool,
     mode: GameMode,
 ) -> RaceSetup {
@@ -334,12 +322,11 @@ fn current_setup(
     RaceSetup {
         mode,
         circuit,
-        class,
         mirror,
     }
 }
 
-/// Applies the menu's actions. « Entrée » starts the choice: the class and the mirror, then a
+/// Applies the menu's actions. « Entrée » starts the choice: the mirror, then a
 /// free race on its circuit (a Grand Prix in progress ends), a new Grand Prix on the cup, or
 /// (issue #76) a time trial on its circuit: alone, the player's bots kept for later
 /// ([`TimeTrial::solo_bots`]: given back by the next choice).
@@ -348,7 +335,7 @@ fn apply_menu_actions(
     mut commands: Commands,
     mut actions: MessageReader<RaceMenuAction>,
     mut menu: ResMut<RaceMenu>,
-    (choice, mut class, mut mirror): (Res<TrackChoice>, ResMut<RaceClass>, ResMut<MirrorMode>),
+    (choice, mut mirror): (Res<TrackChoice>, ResMut<MirrorMode>),
     (mut grid, gp_tuning, grand_prix, time_trial): (
         ResMut<RaceGrid>,
         Res<GrandPrixTuning>,
@@ -370,7 +357,6 @@ fn apply_menu_actions(
                     setup: current_setup(
                         &choice,
                         &circuits,
-                        class.0,
                         mirror.0,
                         if time_trial.is_some() {
                             GameMode::TimeTrial
@@ -402,7 +388,6 @@ fn apply_menu_actions(
             RaceMenuAction::Confirm => {
                 menu.open = false;
                 let setup = menu.setup;
-                class.set_if_neq(RaceClass(setup.class));
                 mirror.set_if_neq(MirrorMode(setup.mirror));
                 grid.lineup = None;
                 // Issue #76: the player's bots, kept while a time trial lasts.
@@ -536,7 +521,7 @@ fn apply_grand_prix_actions(
                 }
             }
             (GrandPrixAction::Continue, GrandPrixStage::Podium) => {
-                // A new Grand Prix on the same cup, the same class and mirror.
+                // A new Grand Prix on the same cup, the same mirror.
                 let cup = grand_prix.cup.clone();
                 let bots = grand_prix.entrants - 1;
                 *grand_prix = GrandPrix::new(cup, bots);

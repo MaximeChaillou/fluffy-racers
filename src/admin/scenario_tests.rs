@@ -530,7 +530,6 @@ fn every_tuning_resource_is_in_the_panel() {
             "NetTuning",
             "DriverTuning",
             "WobbleTuning",
-            "SpeedClassTuning",
             "GrandPrixTuning"
         ]
     );
