@@ -36,9 +36,9 @@ use crate::menu::style::{palette, size, u};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use crate::track::GRID_SLOTS;
 use format::{
-    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_GRAND_PRIX, RESULTS_FOOTER_ONLINE, RESULTS_TITLE,
-    ResultsTime, write_best_lap, write_croquettes, write_lap, write_ordinal, write_racer_count,
-    write_racer_name, write_time,
+    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_GRAND_PRIX, RESULTS_FOOTER_ONLINE,
+    RESULTS_FOOTER_ONLINE_CHAMPIONSHIP, RESULTS_TITLE, ResultsTime, write_best_lap,
+    write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
 };
 
 /// Root of the in-race HUD.
@@ -904,12 +904,12 @@ fn show_results(
     .min(GRID_SLOTS);
     *shown = ResultsShown { rows, ..default() };
     let (medium, semibold) = kit::faces(assets.as_deref());
-    let footer = if online.is_some() {
-        RESULTS_FOOTER_ONLINE
-    } else if grand_prix.is_some() {
-        RESULTS_FOOTER_GRAND_PRIX
-    } else {
-        RESULTS_FOOTER
+    let footer = match (online.is_some(), grand_prix.is_some()) {
+        // Issue #122: the championship online: the host's standings come after.
+        (true, true) => RESULTS_FOOTER_ONLINE_CHAMPIONSHIP,
+        (true, false) => RESULTS_FOOTER_ONLINE,
+        (false, true) => RESULTS_FOOTER_GRAND_PRIX,
+        (false, false) => RESULTS_FOOTER,
     };
     let mut rank = String::new();
     commands

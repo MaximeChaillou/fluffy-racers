@@ -631,6 +631,7 @@ fn the_roster_keeps_the_karts_by_id_and_authority() {
         loadout: Some([1, 0, 0, 0]),
         color: bot_color(usize::from(kart)),
         name: None,
+        bot: None,
         racer: true,
         left: false,
     };

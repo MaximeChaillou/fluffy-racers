@@ -36,6 +36,7 @@
 
 use bevy::prelude::*;
 
+use super::championship::{Championship, grid_lineup};
 use super::interp::TICK_MS;
 use super::items_online::OnlineItems;
 use super::protocol::{
@@ -76,18 +77,23 @@ pub struct OnlineRace {
     pub racing: bool,
     /// Its bots are driven here: we host it (`bots::BotPlugin` spawned them).
     pub bots_here: bool,
-    /// The bots' parts (`bots::bot_loadout`), by grid slot: their animals on our screen.
-    bot_parts: Vec<[u8; 4]>,
+    /// The bots' parts (`bots::bot_loadout`: their number's, issue #122), by grid slot: their
+    /// animals on our screen.
+    bot_parts: Vec<Option<[u8; 4]>>,
     /// The events to tell every peer: our karts' checkpoints, the end (the host).
     outbox: Vec<Message>,
 }
 
 impl OnlineRace {
     pub fn new(start: RaceStart, me: PeerKey, hosting: bool, roster: &Roster) -> Self {
-        let bot_parts = (0..usize::from(start.bots))
+        // Issue #122: a bot is its number wherever it starts (a championship's grid).
+        let bot_parts = (0..start.racers())
             .map(|slot| {
-                let parts = bot_loadout(roster, start.seed, slot);
-                [parts.character, parts.kart, parts.wheels, parts.wing].map(|p| p.min(255) as u8)
+                let parts = bot_loadout(roster, start.seed, start.bot_at(slot)?);
+                Some(
+                    [parts.character, parts.kart, parts.wheels, parts.wing]
+                        .map(|p| p.min(255) as u8),
+                )
             })
             .collect();
         let racing = start.slot_of(me).is_some();
@@ -113,7 +119,9 @@ pub fn session_of(race: u16) -> u8 {
 
 /// The host starts a race now, at our `now_ms`: the room's circuit, a fresh seed, the seated
 /// players behind the bots that fill the grid (issue #99: if the room has bots), the room's mirror
-/// and items. `None` when we do not host, or do not know the room's clock yet.
+/// and items. Issue #122: in a championship, its next race (`Lobby::championship_run`): its
+/// circuit, its seed, its bots, its players still seated and its grid (the reverse of the
+/// standings). `None` when we do not host, or do not know the room's clock yet.
 pub fn race_to_start(
     lobby: &Lobby,
     now_ms: u64,
@@ -126,33 +134,67 @@ pub fn race_to_start(
         return None;
     }
     let room_ms = lobby.room_time_ms(now_ms)?;
-    let players: Vec<PeerKey> = lobby.seats().iter().take(GRID_SLOTS).copied().collect();
     let lead_ms = f64::from(tuning.start_lead_ms.max(0.0));
-    // Issue #99: the room's settings: without bots, the players only.
     let setup = lobby.setup();
+    let mut start = RaceStart {
+        race: lobby.next_race(),
+        seed,
+        track: setup.track,
+        laps: laps.clamp(1, 255) as u8,
+        bots: 0,
+        difficulty: difficulty.index() as u8,
+        mirror: setup.mirror,
+        items: setup.items,
+        start_tick: ((room_ms as f64 + lead_ms) / TICK_MS).ceil() as u32,
+        round: 0,
+        lineup: Vec::new(),
+        players: Vec::new(),
+    };
+    if let Some(run) = lobby.championship_run().filter(|run| !run.finished()) {
+        let (players, lineup) = run.next_grid(lobby.seats());
+        start.seed = run.state.seed;
+        start.track = run.next_track()?;
+        start.bots = run.state.bots;
+        start.round = run.next_round()?;
+        start.lineup = lineup;
+        start.players = players;
+        return Some(start);
+    }
+    start.players = lobby.seats().iter().take(GRID_SLOTS).copied().collect();
+    // Issue #99: the room's settings: without bots, the players only.
+    if setup.bots {
+        start.bots = (GRID_SLOTS - start.players.len()) as u8;
+    }
+    Some(start)
+}
+
+/// Issue #122: the championship the host starts with its next race, when the room's mode is the
+/// championship and none is in progress (or the last one is over): the room's program, `seed`
+/// (the seed of its bots, for every race), the bots that fill the grid (if the room has bots) and
+/// the players seated now, in their order.
+pub fn championship_to_start(lobby: &Lobby, seed: u64) -> Option<Championship> {
+    let setup = lobby.setup();
+    if !lobby.is_host()
+        || !setup.championship
+        || setup.plan.program.is_empty()
+        || lobby.championship_run().is_some_and(|run| !run.finished())
+    {
+        return None;
+    }
+    let players: Vec<PeerKey> = lobby.seats().iter().take(GRID_SLOTS).copied().collect();
     let bots = if setup.bots {
         GRID_SLOTS - players.len()
     } else {
         0
     };
-    Some(RaceStart {
-        race: lobby.next_race(),
-        seed,
-        track: setup.track,
-        laps: laps.clamp(1, 255) as u8,
-        bots: bots as u8,
-        difficulty: difficulty.index() as u8,
-        mirror: setup.mirror,
-        items: setup.items,
-        start_tick: ((room_ms as f64 + lead_ms) / TICK_MS).ceil() as u32,
-        players,
-    })
+    Some(Championship::new(setup.plan, seed, bots as u8, players))
 }
 
 /// The color of every kart of the race `start` (issue #55), by grid slot: each player's, as the
 /// lobby says (`Lobby::color_of`; a player who left: its slot's bot color, it is hidden), and the
-/// bots', which avoid the players' (`kart::bot_colors`). With the colors the players wear. The
-/// same on every peer that knows the same `Hello`s; nothing allocated.
+/// bots', which avoid the players' (`kart::bot_colors`): issue #122, each bot its number's,
+/// wherever it starts. With the colors the players wear. The same on every peer that knows the
+/// same `Hello`s; nothing allocated.
 pub fn race_colors(lobby: &Lobby, start: &RaceStart) -> ([KartColor; PALETTE_SIZE], ColorSet) {
     let players: ColorSet = start
         .players
@@ -160,9 +202,17 @@ pub fn race_colors(lobby: &Lobby, start: &RaceStart) -> ([KartColor; PALETTE_SIZ
         .filter_map(|peer| lobby.color_of(*peer))
         .collect();
     let bots = usize::from(start.bots);
-    let mut colors = bot_colors(bots, players);
-    for (index, peer) in start.players.iter().enumerate() {
-        if let (Some(color), Some(kart)) = (lobby.color_of(*peer), colors.get_mut(bots + index)) {
+    let of_bots = bot_colors(bots, players);
+    let mut colors = of_bots;
+    for (slot, kart) in colors.iter_mut().enumerate().take(start.racers()) {
+        let racer = start.racer_at(slot);
+        if racer < bots {
+            *kart = of_bots[racer % PALETTE_SIZE];
+        } else if let Some(color) = start
+            .players
+            .get(racer - bots)
+            .and_then(|peer| lobby.color_of(*peer))
+        {
             *kart = color;
         }
     }
@@ -317,6 +367,8 @@ fn online_mode(
             commands.remove_resource::<OnlineFlow>();
             commands.remove_resource::<Online>();
             commands.remove_resource::<OnlinePlayerColors>();
+            // Issue #122: a championship online is the room's (a solo one ended on arriving).
+            commands.remove_resource::<GrandPrix>();
             if let Some(clock) = interaction_clock.as_mut() {
                 clock.set_if_neq(InteractionClock::default());
             }
@@ -382,9 +434,12 @@ fn online_mode(
                 Some(start) => Showing::Race(start.race),
                 // Issue #101: with the lobby in 3D (a renderer), its own scene.
                 None if salon.is_some() => Showing::Salon,
-                // The bots do not change free driving (it has none): no other level for them.
+                // The bots do not change free driving (it has none): no other level for them;
+                // issue #122, nor the mode (free driving is on the room's circuit).
                 None => Showing::Free(RoomSetup {
                     bots: true,
+                    championship: false,
+                    plan: Default::default(),
                     ..lobby.setup()
                 }),
             };
@@ -397,7 +452,11 @@ fn online_mode(
                         commands.insert_resource(OnlineSlot(seat));
                         commands.remove_resource::<OnlineRace>();
                         commands.remove_resource::<OnlineFlow>();
-                        *grid = RaceGrid { bots: 0, ..*grid };
+                        *grid = RaceGrid {
+                            bots: 0,
+                            lineup: None,
+                            ..*grid
+                        };
                         sync.set_session(0);
                         sync.set_kart(seat as KartId);
                         levels.write(LoadLevel::on(TrackChoice::Salon, RaceMode::FreeRoam));
@@ -414,7 +473,11 @@ fn online_mode(
                         commands.insert_resource(OnlineSlot(seat));
                         commands.remove_resource::<OnlineRace>();
                         commands.remove_resource::<OnlineFlow>();
-                        *grid = RaceGrid { bots: 0, ..*grid };
+                        *grid = RaceGrid {
+                            bots: 0,
+                            lineup: None,
+                            ..*grid
+                        };
                         sync.set_session(0);
                         sync.set_kart(seat as KartId);
                         levels.write(LoadLevel::on(circuit(lobby.circuit()), RaceMode::FreeRoam));
@@ -429,6 +492,12 @@ fn online_mode(
                         mirror.set_if_neq(MirrorMode(start.mirror));
                         items_on(&mut commands, start.items);
                         let slot = race.shared.slot_of(lobby.me());
+                        // Issue #122: a race of the championship: its entrant on each slot (the
+                        // host's bots spawn on theirs, the podium finds its three).
+                        let lineup = lobby
+                            .championship()
+                            .filter(|_| start.round > 0)
+                            .map(|state| grid_lineup(state, start));
                         *grid = RaceGrid {
                             bots: if lobby.is_host() {
                                 usize::from(start.bots)
@@ -436,7 +505,7 @@ fn online_mode(
                                 0
                             },
                             seed: start.seed,
-                            lineup: None,
+                            lineup,
                         };
                         sync.set_session(session_of(start.race));
                         match slot {
@@ -525,14 +594,22 @@ fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
                 .map_or((None, None), |profile| {
                     (Some(profile.loadout), Some(profile.name.as_str()))
                 }),
-            Driver::Bot => (race.bot_parts.get(usize::from(kart.kart)).copied(), None),
+            Driver::Bot => (
+                race.bot_parts
+                    .get(usize::from(kart.kart))
+                    .copied()
+                    .flatten(),
+                None,
+            ),
         };
+        let bot = race.shared.start.bot_at(usize::from(kart.kart));
         Some(RosterEntry {
             kart: kart.kart,
             peer,
             loadout,
             color: colors[usize::from(kart.kart) % PALETTE_SIZE],
             name,
+            bot: bot.map(|bot| bot as u8),
             racer: race.racing,
             left: kart.left,
         })

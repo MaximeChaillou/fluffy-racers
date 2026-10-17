@@ -635,6 +635,7 @@ mod tests {
             mirror: true,
             bots: false,
             items: false,
+            ..RoomSetup::default()
         };
         assert_eq!(
             settings_line(all_off),
@@ -650,6 +651,8 @@ mod tests {
             mirror: false,
             items: true,
             start_tick: 0,
+            round: 0,
+            lineup: Vec::new(),
             players: Vec::new(),
         };
         assert_eq!(race_line(&start), "3 tours, 9 bots");

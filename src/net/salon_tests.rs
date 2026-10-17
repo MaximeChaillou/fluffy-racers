@@ -16,7 +16,7 @@ use crate::track::{TrackChoice, TrackLayout};
 
 /// A room of `players` in the lobby in 3D: seated, on foot in its scene, each seeing every other
 /// one's character; the lobby's screen closed (its keys walk).
-fn salon(players: &[(PeerKey, &str)]) -> Room {
+pub(super) fn salon(players: &[(PeerKey, &str)]) -> Room {
     let mut room = Room::new(players);
     for (_, app) in &mut room.games {
         app.add_plugins(SalonPlugin);
@@ -310,7 +310,7 @@ fn twelve_players_in_the_lobby_see_each_other() {
 }
 
 /// What the lobby's screen of `app` shows, while its panel is there.
-fn panel(app: &App) -> Option<crate::salon::SalonView> {
+pub(super) fn panel(app: &App) -> Option<crate::salon::SalonView> {
     let shown = app
         .world()
         .iter_entities()
@@ -343,7 +343,7 @@ fn tap(room: &mut Room, key: PeerKey, key_code: KeyCode) {
     }
 }
 
-fn act_on_panel(room: &mut Room, key: PeerKey, action: crate::salon::SalonAction) {
+pub(super) fn act_on_panel(room: &mut Room, key: PeerKey, action: crate::salon::SalonAction) {
     room.app(key).world_mut().write_message(action);
     room.frame();
 }

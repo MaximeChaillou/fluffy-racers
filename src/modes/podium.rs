@@ -4,13 +4,18 @@
 //! kart goes back to its grid slot, hidden; all of them are parked (`race::Parked`: their engine
 //! off). The steps are part of the level (`LevelScoped`): the next level removes them, and the
 //! chase camera comes back ([`release_the_view`]).
+//!
+//! Issue #122: online, every peer builds the same podium from the host's standings: it puts
+//! **its own** karts (its player's, the host's bots) on their steps or back on their slots, the
+//! other peers' karts come there by their states (`net`), and those off the steps are hidden here
+//! too (those on them dance).
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
 
 use crate::camera::FixedView;
 use crate::interpolation::{InterpolatedFrom, PhysicsPose};
-use crate::kart::{Boost, Kart, KartState};
+use crate::kart::{Boost, Kart, KartState, Remote};
 use crate::level::LevelScoped;
 use crate::race::{
     GrandPrix, GrandPrixStage, OnPodium, Parked, Race, RaceGrid, RacePhase, Racer, Tow,
@@ -88,6 +93,7 @@ pub(super) fn set_up_podium(
         With<Kart>,
     >,
     visuals: Query<(Entity, &InterpolatedFrom)>,
+    remotes: Query<(Entity, &Racer), (With<Remote>, Without<Kart>)>,
     hud: Query<Entity, With<HudRoot>>,
 ) {
     let (Some(grand_prix), Some(layout), Some(race)) = (grand_prix, layout, race) else {
@@ -128,26 +134,40 @@ pub(super) fn set_up_podium(
             ));
         }
     }
+    let place_of = |racer: &Racer| {
+        let entrant = grid.entrant_at(racer.grid_slot);
+        standings
+            .iter()
+            .position(|e| *e == entrant)
+            .filter(|place| *place < STEPS.len())
+    };
+    let hide = |commands: &mut Commands, entity: Entity| {
+        for (visual, from) in &visuals {
+            if from.0 == entity {
+                commands.entity(visual).insert(Visibility::Hidden);
+            }
+        }
+    };
+    // Issue #122: online, the other peers' karts off the steps are out of sight too.
+    for (entity, racer) in &remotes {
+        match place_of(racer) {
+            Some(place) => {
+                commands.entity(entity).insert(OnPodium(place));
+            }
+            None => hide(&mut commands, entity),
+        }
+    }
     for (entity, racer, mut transform, mut velocity, mut state, mut boost, mut pose, mut tow) in
         &mut karts
     {
-        let entrant = grid.entrant_at(racer.grid_slot);
-        let place = standings
-            .iter()
-            .position(|e| *e == entrant)
-            .filter(|place| *place < STEPS.len());
-        let spot = match place {
+        let spot = match place_of(racer) {
             Some(place) => {
                 commands.entity(entity).insert(OnPodium(place));
                 podium_place(&layout, place)
             }
             None => {
                 // Back to its slot, out of sight.
-                for (visual, from) in &visuals {
-                    if from.0 == entity {
-                        commands.entity(visual).insert(Visibility::Hidden);
-                    }
-                }
+                hide(&mut commands, entity);
                 layout.grid[racer.grid_slot.min(layout.grid.len() - 1)]
             }
         };

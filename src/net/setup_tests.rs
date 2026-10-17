@@ -41,6 +41,7 @@ fn the_hosts_settings_are_everyones() {
         mirror: true,
         bots: false,
         items: false,
+        ..RoomSetup::default()
     };
     // A guest cannot choose.
     room.act(BOB, NetAction::ChooseSetup(setup));

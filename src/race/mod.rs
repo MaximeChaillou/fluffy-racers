@@ -37,7 +37,7 @@ pub(crate) use course::tests::prairie as course_for_tests;
 pub use course::{Course, Projection, drop_point};
 pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
 pub use grand_prix::{
-    CHAMPIONSHIP, CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, points_for,
+    CHAMPIONSHIP, CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, OnlineStandings, points_for,
 };
 pub use pelican::{PelicanPlugin, PelicanVisual};
 pub use progress::{ProgressEvent, RaceProgress};
@@ -160,10 +160,11 @@ impl RaceGrid {
         }
     }
 
-    /// The bots on the grid: (grid slot, entrant), by slot.
+    /// The bots on the grid: (grid slot, entrant), by slot. Issue #122: on every slot of the grid
+    /// (online, several players start among them); solo, the slots past the bots and the player
+    /// hold none.
     pub fn bots_on_grid(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let racers = self.bot_count() + 1;
-        (0..racers)
+        (0..crate::track::GRID_SLOTS)
             .map(|slot| (slot, self.entrant_at(slot)))
             .filter(|(_, entrant)| *entrant < self.bot_count())
     }

@@ -5,18 +5,34 @@
 //! (`screen.rs`) only draws it. The texts are those of the egui window before (issues #7, #49,
 //! #63, #64, #80, #99), after the charter's tone: short, « tu », no jargon.
 
-use crate::admin::tracks::TrackEntry;
+use std::borrow::Cow;
+
 use crate::characters::{PartKind, Roster};
 use crate::kart::KartColor;
+use crate::modes::{Catalog, MenuRow};
+use crate::net::championship::{self, race_setup_of, title_of};
 use crate::net::{
     Diagnosis, MAX_PLAYERS, NetSession, NetStatus, OnlineRace, RaceStage, RoomFacts, RoomSetup,
     RowLink, Seated, Stage, Stuck, color_notice, settings_line,
 };
 
-/// A setting of the room, chosen by the host (issue #99). Issue #122 will add the mode (a race,
-/// a championship) at the top: one more line of the same kind.
+/// A setting of the room, chosen by the host (issue #99). Issue #122: the mode at the top, and
+/// the championship's lines: those of « Jouer solo » (`modes::MenuRow`, `modes::RaceSetup`),
+/// without the time trial (`net::championship`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SalonRow {
+    /// « Circuit seul » or « Championnat ».
+    Mode,
+    /// A championship: a cup or a custom one.
+    Formula,
+    Cup,
+    /// A custom championship: its number of races...
+    Races,
+    /// ...drawn or chosen...
+    Pick,
+    /// ...and, chosen, the circuit of each race (0 = the first): on the right, with the program.
+    Race(usize),
+    /// The circuit of a race alone.
     Circuit,
     Mirror,
     Bots,
@@ -24,61 +40,111 @@ pub enum SalonRow {
 }
 
 impl SalonRow {
-    pub const ALL: [Self; 4] = [
-        SalonRow::Circuit,
-        SalonRow::Mirror,
-        SalonRow::Bots,
-        SalonRow::Items,
-    ];
+    /// The lines of `setup`, in order: the mode, what it needs, the mirror, the bots, the items,
+    /// and a custom championship's races when chosen one by one (`net::championship::rows`).
+    pub fn rows(setup: &RoomSetup) -> Vec<Self> {
+        championship::rows(setup)
+            .into_iter()
+            .map(Self::of)
+            .collect()
+    }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            SalonRow::Circuit => "Circuit",
-            SalonRow::Mirror => "Miroir",
-            SalonRow::Bots => "Bots",
-            SalonRow::Items => "Objets",
+    fn of(row: MenuRow) -> Self {
+        match row {
+            MenuRow::Mode => SalonRow::Mode,
+            MenuRow::Formula => SalonRow::Formula,
+            MenuRow::Cup => SalonRow::Cup,
+            MenuRow::Races => SalonRow::Races,
+            MenuRow::Pick => SalonRow::Pick,
+            MenuRow::Race(race) => SalonRow::Race(race),
+            MenuRow::Circuit => SalonRow::Circuit,
+            MenuRow::Mirror => SalonRow::Mirror,
+            MenuRow::Bots => SalonRow::Bots,
+            MenuRow::Items => SalonRow::Items,
         }
+    }
+
+    /// The line of « Jouer solo » it is.
+    pub fn menu(self) -> MenuRow {
+        match self {
+            SalonRow::Mode => MenuRow::Mode,
+            SalonRow::Formula => MenuRow::Formula,
+            SalonRow::Cup => MenuRow::Cup,
+            SalonRow::Races => MenuRow::Races,
+            SalonRow::Pick => MenuRow::Pick,
+            SalonRow::Race(race) => MenuRow::Race(race),
+            SalonRow::Circuit => MenuRow::Circuit,
+            SalonRow::Mirror => MenuRow::Mirror,
+            SalonRow::Bots => MenuRow::Bots,
+            SalonRow::Items => MenuRow::Items,
+        }
+    }
+
+    /// One of a custom championship's races (on the right, with the program).
+    pub fn is_race(self) -> bool {
+        matches!(self, SalonRow::Race(_))
+    }
+
+    pub fn label(self) -> Cow<'static, str> {
+        self.menu().label()
     }
 
     /// Its value in `setup`, written.
-    pub fn value(self, setup: RoomSetup, circuits: &[TrackEntry]) -> String {
-        let yes_no = |on: bool| if on { "Oui" } else { "Non" }.to_string();
+    pub fn value(self, setup: RoomSetup, catalog: &Catalog) -> String {
         match self {
-            SalonRow::Circuit => circuits
+            SalonRow::Circuit => catalog
+                .circuits
                 .get(usize::from(setup.track))
                 .map_or_else(|| "?".to_string(), |entry| entry.name.clone()),
-            SalonRow::Mirror => yes_no(setup.mirror),
-            SalonRow::Bots => yes_no(setup.bots),
-            SalonRow::Items => yes_no(setup.items),
+            row => race_setup_of(&setup).value(row.menu(), catalog),
         }
     }
 
-    /// `setup` with this setting `step` further (the circuits around; the others switch).
-    pub fn changed(self, setup: RoomSetup, step: i32, circuits: usize) -> RoomSetup {
-        let mut next = setup;
-        match self {
-            SalonRow::Circuit => {
-                let count = circuits.max(1) as i32;
-                next.track = (i32::from(setup.track) + step).rem_euclid(count) as u8;
-            }
-            SalonRow::Mirror => next.mirror = !setup.mirror,
-            SalonRow::Bots => next.bots = !setup.bots,
-            SalonRow::Items => next.items = !setup.items,
-        }
-        next
+    /// `setup` with this setting `step` further (the circuits, the cups, the races around; the
+    /// others switch); issue #122, a championship drawn at random from `seed` (the room's).
+    pub fn changed(self, setup: RoomSetup, step: i32, seed: u64, catalog: &Catalog) -> RoomSetup {
+        championship::changed(setup, self.menu(), step, seed, catalog)
     }
 
     /// What it is for (the help under the lines, for the host).
-    pub fn help(self, setup: RoomSetup) -> &'static str {
+    pub fn help(self, setup: RoomSetup, catalog: &Catalog) -> String {
         match self {
-            SalonRow::Circuit => "La prochaine course, pour tout le monde.",
-            SalonRow::Mirror => "Le circuit à l'envers, gauche et droite.",
-            SalonRow::Bots if setup.bots => "Des bots complètent la grille de 12.",
-            SalonRow::Bots => "Seuls les joueurs courent.",
-            SalonRow::Items if setup.items => "Les boîtes à objets sur la piste.",
-            SalonRow::Items => "Aucune boîte ; les croquettes restent.",
+            SalonRow::Mode if setup.championship => {
+                "Des courses, des points, puis le podium.".to_string()
+            }
+            SalonRow::Mode => "Une course, sur le circuit de ton choix.".to_string(),
+            SalonRow::Circuit => "La prochaine course, pour tout le monde.".to_string(),
+            SalonRow::Mirror => "Le circuit à l'envers, gauche et droite.".to_string(),
+            SalonRow::Bots if setup.bots => "Des bots complètent la grille de 12.".to_string(),
+            SalonRow::Bots => "Seuls les joueurs courent.".to_string(),
+            SalonRow::Items if setup.items => "Les boîtes à objets sur la piste.".to_string(),
+            SalonRow::Items => "Aucune boîte ; les croquettes restent.".to_string(),
+            SalonRow::Pick if !setup.plan.chosen => {
+                "Tirés au sort par l'hôte, chacun une fois.".to_string()
+            }
+            row => race_setup_of(&setup).help(row.menu(), catalog),
         }
     }
+}
+
+/// Issue #122: what a championship of the room races, for the right column: its title and its
+/// circuits in order (« 1 · Prairie Pompon »...).
+fn program_of(setup: &RoomSetup, catalog: &Catalog) -> (String, Vec<String>) {
+    if !setup.championship {
+        return (String::new(), Vec::new());
+    }
+    let races = setup.plan.program.as_slice();
+    let title = format!(
+        "Au programme · {} course{}",
+        races.len(),
+        plural(races.len())
+    );
+    let lines = races
+        .iter()
+        .enumerate()
+        .map(|(race, circuit)| format!("{} · {}", race + 1, catalog.name(usize::from(*circuit))))
+        .collect();
+    (title, lines)
 }
 
 /// What a button of the lobby does.
@@ -148,7 +214,8 @@ pub struct ViewInput<'a> {
     pub session: Option<&'a NetSession>,
     pub race: Option<&'a OnlineRace>,
     pub roster: Option<&'a Roster>,
-    pub circuits: &'a [TrackEntry],
+    /// The circuits and the cups (issue #122) the host chooses from.
+    pub catalog: &'a Catalog,
     /// Our pseudo, as the others see it.
     pub pseudo: &'a str,
     /// The invitation (the page's link, or natively the command line).
@@ -167,10 +234,39 @@ pub struct ViewInput<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seat {
     pub setup: RoomSetup,
+    /// Issue #122: its lines, in order (`SalonRow::rows`), their values and what they are for
+    /// (the same order).
+    pub rows: Vec<SalonRow>,
+    pub values: Vec<String>,
+    pub helps: Vec<String>,
     /// We host the room and no race runs: the settings change.
     pub editable: bool,
     /// Why they cannot be changed (a client, a race on).
     pub locked: Option<&'static str>,
+    /// Issue #122: a championship's program, for the right column: its header (empty: not a
+    /// championship) and its races (« 1 · Prairie Pompon »).
+    pub program_title: String,
+    pub program: Vec<String>,
+}
+
+impl Seat {
+    /// The value of its line `row`, written (empty: not one of its lines).
+    pub fn value(&self, row: SalonRow) -> &str {
+        self.rows
+            .iter()
+            .position(|r| *r == row)
+            .and_then(|index| self.values.get(index))
+            .map_or("", String::as_str)
+    }
+
+    /// What its line `row` is for.
+    pub fn help(&self, row: SalonRow) -> &str {
+        self.rows
+            .iter()
+            .position(|r| *r == row)
+            .and_then(|index| self.helps.get(index))
+            .map_or("", String::as_str)
+    }
 }
 
 /// The lobby's screen (see the module's documentation).
@@ -361,21 +457,32 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
     view.lines.push(seated.role());
     let name = |track: u8| {
         input
+            .catalog
             .circuits
             .get(usize::from(track))
             .map_or("?", |entry| entry.name.as_str())
     };
+    // Issue #122: a championship in progress (we watch it if we came meanwhile).
+    let championship = lobby.championship();
     match (lobby.announced(), seated.race) {
         (Some(start), RaceStage::Racing | RaceStage::Watching) => {
+            let race = match (championship, start.round) {
+                (Some(state), round) if round > 0 => {
+                    format!("Championnat, course {round}/{}", state.setup.program.len())
+                }
+                _ => format!("Course n° {}", start.race),
+            };
             view.lines.push(format!(
-                "Course n° {} en cours sur {} : {}.",
-                start.race,
+                "{race} en cours sur {} : {}.",
                 name(start.track),
                 crate::net::race_line(start)
             ));
             if seated.race == RaceStage::Watching {
-                view.lines
-                    .push("Tu es arrivé pendant la course : tu seras de la prochaine.".to_string());
+                view.lines.push(if championship.is_some() {
+                    "Tu es arrivé pendant le championnat : tu seras du prochain.".to_string()
+                } else {
+                    "Tu es arrivé pendant la course : tu seras de la prochaine.".to_string()
+                });
             }
         }
         (Some(start), _) => {
@@ -390,8 +497,15 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
     }
     let racing = matches!(seated.race, RaceStage::Racing | RaceStage::Watching);
     let setup = lobby.setup();
+    let (program_title, program) = program_of(&setup, input.catalog);
+    let rows = SalonRow::rows(&setup);
     view.seat = Some(Seat {
         setup,
+        values: rows.iter().map(|r| r.value(setup, input.catalog)).collect(),
+        helps: rows.iter().map(|r| r.help(setup, input.catalog)).collect(),
+        rows,
+        program_title,
+        program,
         editable: seated.hosting && !racing,
         locked: if !seated.hosting {
             Some("En ligne, c'est l'hôte qui choisit la course.")
@@ -402,20 +516,37 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
         },
     });
     if !seated.hosting {
-        view.lines.push(format!(
-            "Réglages de l'hôte : {} · {}",
-            name(setup.track),
-            settings_line(setup)
-        ));
+        // Issue #122: a championship's name and its races (its lines say the rest: the panel
+        // has no room for more), or the circuit of a race alone and its settings.
+        view.lines.push(if setup.championship {
+            let races = setup.plan.program.len();
+            format!(
+                "Réglages de l'hôte : {}, {races} course{}.",
+                title_of(&setup.plan, input.catalog),
+                plural(races)
+            )
+        } else {
+            format!(
+                "Réglages de l'hôte : {} · {}",
+                name(setup.track),
+                settings_line(setup)
+            )
+        });
     }
     if seated.hosting {
         let blocker = seated.start_blocker();
+        let ready = if setup.championship {
+            format!(
+                "Tout le monde est prêt : {} courses !",
+                setup.plan.program.len()
+            )
+        } else {
+            "Tout le monde est prêt !".to_string()
+        };
         view.buttons.push(ButtonView {
             kind: ButtonKind::StartRace,
             label: "Lancer la course".to_string(),
-            caption: blocker
-                .clone()
-                .unwrap_or_else(|| "Tout le monde est prêt !".to_string()),
+            caption: blocker.clone().unwrap_or(ready),
             enabled: blocker.is_none(),
         });
     } else if seated.ready {
@@ -562,16 +693,17 @@ mod tests {
 
     const ANA: PeerKey = PeerKey(1 << 100);
 
-    fn circuits() -> Vec<TrackEntry> {
-        crate::admin::tracks::circuits()
+    /// The game's circuits and cups (issue #122: the lobby chooses among them).
+    fn circuits() -> Catalog {
+        Catalog::game(4)
     }
 
-    fn input<'a>(session: Option<&'a NetSession>, circuits: &'a [TrackEntry]) -> ViewInput<'a> {
+    fn input<'a>(session: Option<&'a NetSession>, catalog: &'a Catalog) -> ViewInput<'a> {
         ViewInput {
             session,
             race: None,
             roster: None,
-            circuits,
+            catalog,
             pseudo: "Ana",
             link: Some("https://example.org/?room=ABCDE"),
             copied: false,
@@ -583,6 +715,8 @@ mod tests {
     }
 
     fn session(status: NetStatus, hosting: bool) -> NetSession {
+        // The in-memory socket runs on the I/O pool (alone, these tests start it themselves).
+        bevy::tasks::IoTaskPool::get_or_init(Default::default);
         let mut session = session_for_tests("ABCDE", ANA, hosting);
         session.status = status;
         session
@@ -600,23 +734,29 @@ mod tests {
                 button.caption.chars().count()
             );
         }
-        for row in SalonRow::ALL {
-            assert!(row.label().chars().count() <= 16);
+        // Every line of every mode (issue #122: the championship's too).
+        let catalog = circuits();
+        let single = RoomSetup::default();
+        let cup = SalonRow::Mode.changed(single, 1, 7, &catalog);
+        let custom = SalonRow::Formula.changed(cup, 1, 7, &catalog);
+        let chosen = SalonRow::Pick.changed(custom, 1, 7, &catalog);
+        for setup in [single, cup, custom, chosen] {
             for setup in [
-                RoomSetup::default(),
+                setup,
                 RoomSetup {
                     bots: false,
                     items: false,
-                    ..default()
+                    ..setup
                 },
             ] {
-                assert!(row.help(setup).chars().count() < 48, "{row:?}");
+                for row in SalonRow::rows(&setup) {
+                    assert!(row.label().chars().count() <= 16, "{row:?}");
+                    let help = row.help(setup, &catalog);
+                    assert!(help.chars().count() < 48, "{row:?}: {help}");
+                    assert!(!row.value(setup, &catalog).is_empty(), "{row:?}");
+                }
             }
         }
-    }
-
-    fn default<T: Default>() -> T {
-        T::default()
     }
 
     /// Out of a room: « Multijoueur », create a game or go back, how to join, the signaling
@@ -747,6 +887,8 @@ mod tests {
             mirror: false,
             items: true,
             start_tick: 100,
+            round: 0,
+            lineup: Vec::new(),
             players: vec![ANA],
         });
         let racing = salon_view(&input(Some(&session), &circuits));
@@ -756,29 +898,113 @@ mod tests {
     }
 
     /// The settings' lines: their values written, a step changes them (the circuits around),
-    /// each says what it is for.
+    /// each says what it is for. Issue #122: the values and the steps come with the cups
+    /// (`Catalog`) and the room's seed (a championship drawn at random).
     #[test]
     fn the_settings_change_around() {
-        let circuits = circuits();
+        let catalog = circuits();
+        let circuits = &catalog.circuits;
         let setup = RoomSetup::default();
-        assert_eq!(SalonRow::Circuit.value(setup, &circuits), circuits[0].name);
-        assert_eq!(SalonRow::Mirror.value(setup, &circuits), "Non");
-        assert_eq!(SalonRow::Bots.value(setup, &circuits), "Oui");
-        let back = SalonRow::Circuit.changed(setup, -1, circuits.len());
+        assert_eq!(SalonRow::Circuit.value(setup, &catalog), circuits[0].name);
+        assert_eq!(SalonRow::Mirror.value(setup, &catalog), "Non");
+        assert_eq!(SalonRow::Bots.value(setup, &catalog), "Oui");
+        let back = SalonRow::Circuit.changed(setup, -1, 7, &catalog);
         assert_eq!(usize::from(back.track), circuits.len() - 1);
         assert_eq!(
-            SalonRow::Circuit.changed(back, 1, circuits.len()).track,
+            SalonRow::Circuit.changed(back, 1, 7, &catalog).track,
             setup.track
         );
-        assert!(SalonRow::Mirror.changed(setup, 1, circuits.len()).mirror);
-        assert!(!SalonRow::Bots.changed(setup, -1, circuits.len()).bots);
-        assert!(!SalonRow::Items.changed(setup, 1, circuits.len()).items);
+        assert!(SalonRow::Mirror.changed(setup, 1, 7, &catalog).mirror);
+        assert!(!SalonRow::Bots.changed(setup, -1, 7, &catalog).bots);
+        assert!(!SalonRow::Items.changed(setup, 1, 7, &catalog).items);
         assert_ne!(
-            SalonRow::Bots.help(setup),
-            SalonRow::Bots.help(RoomSetup {
-                bots: false,
-                ..setup
-            })
+            SalonRow::Bots.help(setup, &catalog),
+            SalonRow::Bots.help(
+                RoomSetup {
+                    bots: false,
+                    ..setup
+                },
+                &catalog
+            )
         );
+    }
+
+    /// Issue #122: the mode at the top of the host's lines: « Circuit seul » (the circuit, as
+    /// before) or « Championnat » (a cup of the manifest, or a custom one: its races, drawn by the
+    /// host or chosen one by one, on the right with the program); everyone sees the host's
+    /// choice, the program and its name; the time trial is not offered.
+    #[test]
+    fn the_host_chooses_a_championship_and_everyone_sees_its_program() {
+        let catalog = circuits();
+        let single = RoomSetup::default();
+        assert_eq!(
+            SalonRow::rows(&single),
+            [
+                SalonRow::Mode,
+                SalonRow::Circuit,
+                SalonRow::Mirror,
+                SalonRow::Bots,
+                SalonRow::Items
+            ]
+        );
+        assert_eq!(SalonRow::Mode.value(single, &catalog), "Circuit seul");
+        let cup = SalonRow::Mode.changed(single, 1, 7, &catalog);
+        assert_eq!(SalonRow::Mode.value(cup, &catalog), "Championnat");
+        assert_eq!(SalonRow::Formula.value(cup, &catalog), "Une coupe");
+        assert_eq!(SalonRow::Cup.value(cup, &catalog), "Coupe Doudou");
+        assert!(
+            !SalonRow::Mode.changed(cup, 1, 7, &catalog).championship,
+            "Championnat → Circuit seul: never the time trial"
+        );
+        let custom = SalonRow::Formula.changed(cup, 1, 7, &catalog);
+        assert_eq!(SalonRow::Pick.value(custom, &catalog), "Au hasard");
+        assert!(SalonRow::Pick.help(custom, &catalog).contains("l'hôte"));
+        let chosen = SalonRow::Pick.changed(custom, 1, 7, &catalog);
+        let rows = SalonRow::rows(&chosen);
+        let races: Vec<SalonRow> = rows.iter().copied().filter(|r| r.is_race()).collect();
+        assert_eq!(races.len(), chosen.plan.program.len());
+        assert_eq!(
+            SalonRow::Race(0).value(chosen, &catalog),
+            catalog.name(usize::from(chosen.plan.program.as_slice()[0]))
+        );
+
+        // The host's view: its lines and the program on the right.
+        let mut host = session(NetStatus::InRoom, true);
+        host.lobby = Some(Lobby::new(ANA, Profile::default(), 0, true));
+        host.lobby.as_mut().unwrap().choose_setup(cup);
+        let view = salon_view(&input(Some(&host), &catalog));
+        let seat = view.seat.as_ref().unwrap();
+        assert_eq!(seat.rows, SalonRow::rows(&cup));
+        assert_eq!(seat.program_title, "Au programme · 4 courses");
+        assert_eq!(seat.program[0], format!("1 · {}", catalog.name(0)));
+        assert_eq!(seat.program.len(), 4);
+        assert_short(&view);
+        // A guest sees them too, and the championship in its line.
+        let mut guest = session(NetStatus::InRoom, false);
+        let mut lobby = Lobby::new(PeerKey(9), Profile::default(), 0, false);
+        lobby.connect(ANA, 0);
+        lobby.receive(ANA, crate::net::Message::Seats(vec![ANA, PeerKey(9)]), 0);
+        lobby.receive(ANA, crate::net::Message::Setup(custom), 0);
+        assert!(lobby.seated());
+        guest.lobby = Some(lobby);
+        let view = salon_view(&input(Some(&guest), &catalog));
+        let seat = view.seat.as_ref().unwrap();
+        assert!(!seat.editable);
+        assert_eq!(seat.setup, custom);
+        assert_eq!(seat.program.len(), custom.plan.program.len());
+        let line = view
+            .lines
+            .iter()
+            .find(|l| l.starts_with("Réglages de l'hôte"))
+            .unwrap();
+        assert!(
+            line.contains(&format!(
+                "Championnat, {} courses",
+                custom.plan.program.len()
+            )),
+            "{line}"
+        );
+        // A race alone has no program.
+        assert!(program_of(&single, &catalog).1.is_empty());
     }
 }
