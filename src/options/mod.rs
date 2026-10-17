@@ -302,7 +302,8 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
         // Issue #99: « Jouer solo ».
         ("Jouer solo", "N".to_string()),
         ("Options", "O".to_string()),
-        ("Multijoueur (le salon)", "L".to_string()),
+        // Issue #101: the lobby in 3D: on a gamepad too.
+        ("Multijoueur (le salon)", "L ; manette : Select".to_string()),
         ("Panneau d'admin", "P".to_string()),
     ]
 }
@@ -410,7 +411,8 @@ mod tests {
     /// Issue #17: in both layouts, no key does two things: the driving keys, the item, look
     /// behind, the Interaction keys of GD § 15 (X, F, issue #34), and the keys of the menus and
     /// of debugging (issue #56: Échap, the main menu's). The menu keys are the same letter at the
-    /// same place in AZERTY and QWERTY.
+    /// same place in AZERTY and QWERTY. Issue #101: the lobby on foot uses the race's keys, and
+    /// only them; its gamepad button is free.
     #[test]
     fn no_key_does_two_things_in_either_layout() {
         // Issue #34: the keys the game reads for the Interaction button, X and F (GD § 13).
@@ -463,6 +465,53 @@ mod tests {
         assert_eq!(
             controls(KeyboardLayout::Qwerty)[2].1,
             "Gauche / Droite, ou A / D"
+        );
+        // Issue #101: on foot in the lobby, the race's keys and no other: up, down, left and
+        // right walk, Espace jumps, X or F give the paw; every other key (the item, looking
+        // behind, the menus') does nothing to the character. On a gamepad, « Select » opens the
+        // lobby's screen: a button the race does not use.
+        for layout in KeyboardLayout::ALL {
+            let walking: Vec<KeyCode> = [
+                layout.up_keys(),
+                layout.down_keys(),
+                layout.left_keys(),
+                layout.right_keys(),
+                &JUMP_KEYS,
+                &INTERACT_KEYS,
+            ]
+            .concat();
+            for key in walking
+                .iter()
+                .chain(&ITEM_KEYS)
+                .chain(&LOOK_BACK_KEYS)
+                .chain(&menus)
+            {
+                let mut keys = ButtonInput::<KeyCode>::default();
+                keys.press(*key);
+                let foot = crate::salon::walk::foot_input(
+                    &crate::kart::keyboard_input(&keys, layout),
+                    0.0,
+                );
+                assert_eq!(
+                    foot != crate::salon::FootInput::default(),
+                    walking.contains(key),
+                    "{key:?} in {layout:?}"
+                );
+            }
+        }
+        assert!(
+            ![
+                crate::kart::JUMP_BUTTON,
+                crate::kart::INTERACT_BUTTON,
+                GamepadButton::South,
+                GamepadButton::East,
+                GamepadButton::West,
+                GamepadButton::North,
+                GamepadButton::LeftTrigger,
+                GamepadButton::LeftTrigger2,
+                crate::menu::MAIN_MENU_BUTTON,
+            ]
+            .contains(&crate::salon::SALON_BUTTON)
         );
         // Issue #34: the menu shows the Interaction keys; issue #56, the main menu's (issue #100:
         // the pause).

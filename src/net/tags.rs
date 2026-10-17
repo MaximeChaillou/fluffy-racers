@@ -87,7 +87,8 @@ pub fn tag_corner(over: Vec2) -> Vec2 {
     over - Vec2::new(TAG_WIDTH / 2.0, TAG_HEIGHT)
 }
 
-fn border_of(color: KartColor) -> BorderColor {
+/// A tag's border: its kart's color.
+pub fn border_of(color: KartColor) -> BorderColor {
     let [r, g, b] = color.rgb();
     BorderColor::all(Color::srgb_u8(r, g, b))
 }
@@ -197,6 +198,35 @@ fn spawn_tag(
     color: KartColor,
     face: &Handle<Font>,
 ) {
+    let nodes = spawn_tag_nodes(commands, name, color, face);
+    commands.entity(nodes.root).insert((
+        Name::new(format!("Étiquette {kart}")),
+        NameTag {
+            kart,
+            name: name.to_string(),
+            color,
+            pill: nodes.pill,
+            text: nodes.text,
+        },
+    ));
+}
+
+/// The nodes of a tag: its box (placed by its `UiTransform`), its pill, its text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TagNodes {
+    pub root: Entity,
+    pub pill: Entity,
+    pub text: Entity,
+}
+
+/// A tag's nodes, hidden until it is placed: `name` in Fredoka (`face`), on a dark pill edged
+/// with `color`. Issue #101: the lobby's characters wear the same.
+pub fn spawn_tag_nodes(
+    commands: &mut Commands,
+    name: &str,
+    color: KartColor,
+    face: &Handle<Font>,
+) -> TagNodes {
     let mut letters = String::new();
     write_tag_text(&mut letters, name);
     let text = commands
@@ -223,16 +253,8 @@ fn spawn_tag(
         ))
         .add_child(text)
         .id();
-    commands
+    let root = commands
         .spawn((
-            Name::new(format!("Étiquette {kart}")),
-            NameTag {
-                kart,
-                name: name.to_string(),
-                color,
-                pill,
-                text,
-            },
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
@@ -248,7 +270,9 @@ fn spawn_tag(
             GlobalZIndex(-1),
             Visibility::Hidden,
         ))
-        .add_child(pill);
+        .add_child(pill)
+        .id();
+    TagNodes { root, pill, text }
 }
 
 #[cfg(test)]

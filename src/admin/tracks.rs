@@ -88,6 +88,7 @@ pub fn circuits() -> Vec<TrackEntry> {
 pub fn label(choice: &TrackChoice, circuits: &[TrackEntry]) -> String {
     match choice {
         TrackChoice::TestGround => TEST_GROUND_LABEL.to_string(),
+        TrackChoice::Salon => SALON_LABEL.to_string(),
         TrackChoice::Circuit(path) => circuits
             .iter()
             .find(|entry| entry.asset_path() == *path)
@@ -97,6 +98,8 @@ pub fn label(choice: &TrackChoice, circuits: &[TrackEntry]) -> String {
 
 /// The flat physics test ground of issue #1, last in the panel's list.
 pub const TEST_GROUND_LABEL: &str = "Terrain de test (physique)";
+/// Issue #101: the lobby in 3D (online only: not in the panel's list).
+pub const SALON_LABEL: &str = "Salon";
 
 #[cfg(test)]
 mod tests {

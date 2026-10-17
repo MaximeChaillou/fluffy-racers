@@ -39,7 +39,7 @@ mod rng;
 mod tuning;
 
 #[cfg(test)]
-mod scenario_tests;
+pub(crate) mod scenario_tests;
 
 pub use driver::{BotBrain, DriftPlan, Neighbor, Senses, catch_up_scale, charge_per_radian, drive};
 pub use interactions::{BotPawBrain, PawButtons, PawSenses, ReachKart, paw_buttons};

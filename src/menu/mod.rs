@@ -43,7 +43,7 @@
 //! Bevy 0.20, and one more archetype before the grid changes every bot race: `STATUS.md`). The
 //! tests add [`MainMenuPlugin`] to a headless game themselves; everything in it runs headless.
 
-mod anim;
+pub mod anim;
 pub mod kit;
 mod nav;
 mod options_screen;
@@ -356,6 +356,10 @@ impl Plugin for MainMenuPlugin {
         }
         // Issue #99: the « Jouer solo » screen.
         app.add_plugins(SoloPlugin);
+        // Issue #101: the lobby in 3D and its screen (the « Multijoueur » of the home).
+        if !app.is_plugin_added::<crate::salon::SalonPlugin>() {
+            app.add_plugins(crate::salon::SalonPlugin);
+        }
         // Its tuning in the admin panel, next to the others (when the panel is there: the game's).
         if let Some(mut tunings) = app.world_mut().get_resource_mut::<Tunings>() {
             tunings.register::<HomeTuning>();

@@ -50,7 +50,10 @@
 //! (`KART_FLAGS`). Version 14 (issue #99): the host's settings of the room ([`RoomSetup`]: the
 //! circuit, the mirror, the bots and the items, [`Message::Setup`] instead of the circuit alone),
 //! and in the race's start, its mirror and its items ([`RaceStart::mirror`],
-//! [`RaceStart::items`]; without bots, [`RaceStart::bots`] is 0).
+//! [`RaceStart::items`]; without bots, [`RaceStart::bots`] is 0). Version 15 (issue #101): the
+//! lobby in 3D: each player's character on foot ([`FootState`], 33 bytes, on the unreliable
+//! channel; the host bundles them, [`Message::FootStates`]) and a paw's strike on foot
+//! ([`FootStrike`]: the victim decides whether it falls over).
 
 use std::fmt;
 
@@ -60,7 +63,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 14;
+pub const PROTOCOL_VERSION: u8 = 15;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -287,6 +290,53 @@ pub struct TetherBreak {
     pub grabber: KartId,
     pub target: KartId,
     pub reason: TetherEnd,
+}
+
+/// Issue #101: a player's character on foot in the lobby, at a tick: its peer has authority over
+/// it and sends it 30 times a second, on the unreliable channel (a client to the host; the host
+/// bundles them, [`Message::FootStates`]). Quantized by `net::foot` (`FootState::quantize`,
+/// `FootState::pose`): every field is the integer that travels. 33 bytes with the version and
+/// the kind. The character is its peer's (one per peer): no id of its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FootState {
+    /// Tick of the room's common clock.
+    pub tick: u32,
+    /// Position (cm: ±327 m, the lobby is a few dozen meters wide).
+    pub position: [i16; 3],
+    /// Rotation, « smallest three » on 48 bits (`snapshot::pack_rotation`), the last bit 0: a
+    /// character tumbling turns every way.
+    pub rotation: [u8; 6],
+    /// Linear velocity (cm/s) and angular velocity (mrad/s): the curve between two states, and
+    /// the tumble carried on past the newest.
+    pub velocity: [i16; 3],
+    pub spin: [i16; 3],
+    /// Bits 0-1: its ragdoll (0 upright, 1 tumbling, 2 getting up); 2: in the air; 3: its paw
+    /// swings; 4: on its right (else its left); the others are 0.
+    pub pose: u8,
+    /// Ticks since its ragdoll's phase began (to 255).
+    pub pose_ticks: u8,
+    /// Ticks since its paw's swing began (to 255; 0 without a swing).
+    pub paw_ticks: u8,
+}
+
+/// The bits of [`FootState::pose`] that mean something.
+pub const FOOT_POSE_BITS: u8 = 0b1_1111;
+
+/// Issue #101: a paw's strike on foot, in the lobby. The striker tells the target's peer (every
+/// peer: the host relays it), which decides: in reach of where it was at the tick the striker
+/// saw, and not down or protected, it falls over (`characters::Ragdoll`); everyone sees it by its
+/// states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FootStrike {
+    /// The target's peer (its character).
+    pub target: PeerKey,
+    /// The common tick of the strike, and of the target's state the striker saw (`tick_vu`).
+    pub tick: u32,
+    pub seen: u32,
+    /// Where the striker was (cm).
+    pub position: [i16; 3],
+    /// Horizontal direction of the push (x, z of the world, × 127).
+    pub direction: [i8; 2],
 }
 
 /// A kart's state at a tick (issue #8, `docs/ARCHITECTURE.md` § « Synchronisation »): the peer
@@ -759,6 +809,15 @@ pub enum Message {
     /// does not drive (the host's, its bots', the other clients'), each with the peer that drives
     /// it. Grouped on the wire by that peer: the states of one peer follow each other here.
     KartStates(Vec<(PeerKey, KartSnapshot)>),
+    /// Issue #101: the state of the sender's character on foot (the lobby), 30 times a second:
+    /// from a client to the host (the host sends [`Message::FootStates`]).
+    FootState(FootState),
+    /// Issue #101: from the host to a client, 30 times a second, the newest state of every
+    /// character it does not have (the host's, the other clients'), each with its peer; a peer at
+    /// most once.
+    FootStates(Vec<(PeerKey, FootState)>),
+    /// Issue #101: a paw's strike on foot, told by the striker; its target decides.
+    FootStrike(FootStrike),
 }
 
 /// Kart states in one [`Message::KartStates`] at most: the karts of a grid.
@@ -795,6 +854,9 @@ const STEAL: u8 = 37;
 const STOLEN: u8 = 38;
 const KART_STATE: u8 = 40;
 const KART_STATES: u8 = 41;
+const FOOT_STATE: u8 = 42;
+const FOOT_STATES: u8 = 43;
+const FOOT_STRIKE: u8 = 44;
 const RELAYED: u8 = 10;
 
 /// The reasons a tether ends, in their wire order.
@@ -846,6 +908,9 @@ impl Message {
             Message::Pong { .. } => PONG,
             Message::KartState(_) => KART_STATE,
             Message::KartStates(_) => KART_STATES,
+            Message::FootState(_) => FOOT_STATE,
+            Message::FootStates(_) => FOOT_STATES,
+            Message::FootStrike(_) => FOOT_STRIKE,
             Message::Relayed { .. } => RELAYED,
         }
     }
@@ -853,7 +918,8 @@ impl Message {
     /// Issue #63: a message a client tells every peer, which the host relays to the other clients
     /// with its origin ([`Message::Relayed`]). Not the host's own (the seats, the race's start,
     /// end and results, the verdicts), nor the pings (each link has its own), nor the kart states (the host
-    /// bundles them, [`Message::KartStates`]).
+    /// bundles them, [`Message::KartStates`]), nor (issue #101) the characters' states on foot
+    /// (bundled too, [`Message::FootStates`]).
     pub fn relayable(&self) -> bool {
         !matches!(
             self,
@@ -868,6 +934,8 @@ impl Message {
                 | Message::Pong { .. }
                 | Message::KartState(_)
                 | Message::KartStates(_)
+                | Message::FootState(_)
+                | Message::FootStates(_)
                 | Message::Relayed { .. }
         )
     }
@@ -878,7 +946,9 @@ impl Message {
             Message::Ping { .. }
             | Message::Pong { .. }
             | Message::KartState(_)
-            | Message::KartStates(_) => Channel::Unreliable,
+            | Message::KartStates(_)
+            | Message::FootState(_)
+            | Message::FootStates(_) => Channel::Unreliable,
             Message::Relayed { message, .. } => message.channel(),
             _ => Channel::Reliable,
         }
@@ -1143,6 +1213,24 @@ impl Message {
                         put_snapshot(out, kart);
                     }
                 }
+            }
+            Message::FootState(state) => put_foot(out, state),
+            Message::FootStates(states) => {
+                let states = &states[..states.len().min(MAX_PLAYERS)];
+                out.push(states.len() as u8);
+                for (origin, state) in states {
+                    out.extend_from_slice(&origin.0.to_le_bytes());
+                    put_foot(out, state);
+                }
+            }
+            Message::FootStrike(strike) => {
+                out.extend_from_slice(&strike.target.0.to_le_bytes());
+                put_u32(out, strike.tick);
+                put_u32(out, strike.seen);
+                for value in strike.position {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&strike.direction.map(|d| d as u8));
             }
             Message::Relayed { origin, message } => {
                 out.extend_from_slice(&origin.0.to_le_bytes());
@@ -1637,6 +1725,43 @@ impl Message {
                 }
                 Message::KartStates(states)
             }
+            FOOT_STATE => Message::FootState(reader.foot()?),
+            FOOT_STATES => {
+                let count = usize::from(reader.u8()?);
+                if count == 0 {
+                    return Err(DecodeError::Invalid("no character's state"));
+                }
+                if count > MAX_PLAYERS {
+                    return Err(DecodeError::Invalid("more characters than players"));
+                }
+                let mut states: Vec<(PeerKey, FootState)> = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let origin = PeerKey(u128::from_le_bytes(reader.array()?));
+                    if states.iter().any(|(peer, _)| *peer == origin) {
+                        return Err(DecodeError::Invalid(
+                            "a peer twice in the characters' states",
+                        ));
+                    }
+                    states.push((origin, reader.foot()?));
+                }
+                Message::FootStates(states)
+            }
+            FOOT_STRIKE => {
+                let strike = FootStrike {
+                    target: PeerKey(u128::from_le_bytes(reader.array()?)),
+                    tick: reader.u32()?,
+                    seen: reader.u32()?,
+                    position: [reader.i16()?, reader.i16()?, reader.i16()?],
+                    direction: reader.array::<2>()?.map(|b| b as i8),
+                };
+                if strike.direction == [0, 0] {
+                    return Err(DecodeError::Invalid("strike's direction"));
+                }
+                if strike.seen > strike.tick {
+                    return Err(DecodeError::Invalid("strike seen after it"));
+                }
+                Message::FootStrike(strike)
+            }
             RELAYED => {
                 let origin = PeerKey(u128::from_le_bytes(reader.array()?));
                 let message = Self::decode_body(reader.0)?;
@@ -1712,6 +1837,19 @@ fn put_snapshot(out: &mut Vec<u8>, kart: &KartSnapshot) {
     out.push(kart.slipstream);
     out.extend_from_slice(&kart.wheels.to_le_bytes());
     out.extend_from_slice(&[kart.items, kart.pinata]);
+}
+
+/// A character's state on foot (issue #101): 31 bytes.
+fn put_foot(out: &mut Vec<u8>, state: &FootState) {
+    put_u32(out, state.tick);
+    for value in state.position {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&state.rotation);
+    for value in state.velocity.iter().chain(&state.spin) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&[state.pose, state.pose_ticks, state.paw_ticks]);
 }
 
 /// A list of peers: a count byte, then 16 bytes each ([`MAX_PLAYERS`] at most).
@@ -1942,6 +2080,28 @@ impl Reader<'_> {
         Ok(kart)
     }
 
+    /// A character's state on foot ([`put_foot`], issue #101), its impossible values refused.
+    fn foot(&mut self) -> Result<FootState, DecodeError> {
+        let state = FootState {
+            tick: self.u32()?,
+            position: [self.i16()?, self.i16()?, self.i16()?],
+            rotation: self.array()?,
+            velocity: [self.i16()?, self.i16()?, self.i16()?],
+            spin: [self.i16()?, self.i16()?, self.i16()?],
+            pose: self.u8()?,
+            pose_ticks: self.u8()?,
+            paw_ticks: self.u8()?,
+        };
+        if state.rotation[5] & 0x80 != 0 {
+            return Err(DecodeError::Invalid("character's rotation"));
+        }
+        // Ragdoll 3 does not exist; bits 5 to 7 are free.
+        if state.pose & 0b11 == 0b11 || state.pose & !FOOT_POSE_BITS != 0 {
+            return Err(DecodeError::Invalid("character's pose"));
+        }
+        Ok(state)
+    }
+
     fn i32(&mut self) -> Result<i32, DecodeError> {
         Ok(i32::from_le_bytes(self.array()?))
     }
@@ -2005,6 +2165,20 @@ mod tests {
             wheels: 0xfedc,
             items: 0b1_0110,
             pinata: 0,
+        }
+    }
+
+    /// Issue #101: a character's state on foot, its values on every byte.
+    fn foot_state(tick: u32) -> FootState {
+        FootState {
+            tick,
+            position: [-12_345, 89, i16::MAX],
+            rotation: [9, 8, 7, 6, 5, 0x46],
+            velocity: [-450, 12, i16::MIN],
+            spin: [i16::MAX, 0, -77],
+            pose: 0b1_1101,
+            pose_ticks: 255,
+            paw_ticks: 9,
         }
     }
 
@@ -2559,6 +2733,32 @@ mod tests {
                 })),
             },
             Message::KartStates(vec![(PeerKey(u128::MAX), bundled_state(3, 9))]),
+            // Issue #101: the characters on foot of the lobby.
+            Message::FootState(foot_state(4_000_000_001)),
+            Message::FootState(FootState::default()),
+            Message::FootStates(vec![(PeerKey(u128::MAX), foot_state(17))]),
+            Message::FootStates(
+                (0..MAX_PLAYERS as u128)
+                    .map(|i| (PeerKey(i << 100 | 7), foot_state(i as u32)))
+                    .collect(),
+            ),
+            Message::FootStrike(FootStrike {
+                target: PeerKey(u128::MAX - 3),
+                tick: 4_000_000_000,
+                seen: 3_999_999_990,
+                position: [i16::MIN, 120, i16::MAX],
+                direction: [-127, 3],
+            }),
+            Message::Relayed {
+                origin: PeerKey(9 << 64),
+                message: Box::new(Message::FootStrike(FootStrike {
+                    target: PeerKey(1),
+                    tick: 12,
+                    seen: 12,
+                    position: [0, 0, 0],
+                    direction: [0, 127],
+                })),
+            },
             Message::KartStates(
                 (0..MAX_BUNDLED_STATES)
                     .map(|i| {
@@ -2601,8 +2801,9 @@ mod tests {
         // croquettes; issue #18 the explosions and the klaxons; issue #61 the effects, the karts
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
         // bundles of kart states; issue #70 the closed results; issue #21 the thefts and what
-        // they took.
-        assert_eq!(kinds.len(), 32);
+        // they took; issue #101 the characters on foot (a state, the host's bundles) and their
+        // strikes.
+        assert_eq!(kinds.len(), 35);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -2612,6 +2813,7 @@ mod tests {
 
     /// The pings and the kart states (issue #8; issue #63: bundled by the host too) go on the
     /// unreliable channel, everything else on the reliable one (a relayed message on its own's).
+    /// Issue #101: the characters' states on foot too (and their bundles), not their strikes.
     #[test]
     fn only_the_pings_and_the_kart_states_are_unreliable() {
         for message in every_message() {
@@ -2621,6 +2823,8 @@ mod tests {
                     | Message::Pong { .. }
                     | Message::KartState(_)
                     | Message::KartStates(_)
+                    | Message::FootState(_)
+                    | Message::FootStates(_)
             );
             assert_eq!(
                 message.channel() == Channel::Unreliable,
@@ -2747,6 +2951,24 @@ mod tests {
                 .collect(),
         );
         assert_eq!(twelve.to_bytes().len(), 783);
+        // Issue #101: a character's state on foot in 33 bytes (positions to the cm on 16 bits);
+        // the host's bundle 3 bytes, then 16 + 31 per character: 567 bytes for 12, one packet; a
+        // strike on foot in 34.
+        for message in every_message() {
+            let length = message.to_bytes().len();
+            match &message {
+                Message::FootState(_) => assert_eq!(length, 33),
+                Message::FootStates(states) => assert_eq!(length, 3 + 47 * states.len()),
+                Message::FootStrike(_) => assert_eq!(length, 34),
+                _ => {}
+            }
+        }
+        let twelve = Message::FootStates(
+            (0..MAX_PLAYERS as u128)
+                .map(|i| (PeerKey(i), FootState::default()))
+                .collect(),
+        );
+        assert_eq!(twelve.to_bytes().len(), 567);
         for message in every_message() {
             match &message {
                 // Issue #9: a race's start lists its players (16 bytes each); issue #99, one
@@ -2754,7 +2976,7 @@ mod tests {
                 Message::StartRace(start) => {
                     assert_eq!(message.to_bytes().len(), 22 + 16 * start.players.len());
                 }
-                Message::KartStates(_) => {}
+                Message::KartStates(_) | Message::FootStates(_) => {}
                 _ => assert!(message.to_bytes().len() <= 200, "{message:?}"),
             }
         }
@@ -3362,6 +3584,73 @@ mod tests {
         let mut bad = one.clone();
         bad[20 + 4 + 2 + 12 + 6 + 12] = 0x07;
         assert!(invalid(&bad), "phase 7 in a bundle");
+        // Issue #101: a character's state with ragdoll 3, a free bit of its pose, its rotation's
+        // last bit; a bundle of none, of 13, with a peer twice; a strike without a direction or
+        // seen after it; never relayed: a state on foot, nor a bundle of them.
+        let foot = Message::FootState(FootState::default()).to_bytes();
+        assert!(Message::decode(&foot).is_ok());
+        // Version, kind, tick (4), position (6), rotation (6: its last byte at 17), velocities
+        // (12), then the pose at 30.
+        for (at, value) in [(30, 0b11), (30, 0b10_0000), (30, 0x80), (17, 0x80)] {
+            let mut bad = foot.clone();
+            bad[at] = value;
+            assert!(invalid(&bad), "foot state: byte {at} = {value}");
+        }
+        let mut fine = foot.clone();
+        fine[30] = 0b1_1110;
+        assert!(
+            Message::decode(&fine).is_ok(),
+            "getting up, in the air, its paw on the right"
+        );
+        assert!(invalid(&[v, FOOT_STATES, 0]));
+        let one = Message::FootStates(vec![(PeerKey(3), FootState::default())]).to_bytes();
+        assert!(Message::decode(&one).is_ok());
+        let mut thirteen = one.clone();
+        thirteen[2] = MAX_PLAYERS as u8 + 1;
+        for peer in 0..MAX_PLAYERS as u128 {
+            thirteen.extend_from_slice(&(peer + 10).to_le_bytes());
+            thirteen.extend_from_slice(&foot[2..]);
+        }
+        assert!(invalid(&thirteen), "13 characters");
+        let mut twice = one.clone();
+        twice[2] = 2;
+        twice.extend_from_slice(&one[3..]);
+        assert!(invalid(&twice), "a peer twice");
+        let mut two = twice.clone();
+        two[3 + 47] = 4;
+        assert!(Message::decode(&two).is_ok(), "two peers");
+        let strike = Message::FootStrike(FootStrike {
+            target: PeerKey(5),
+            tick: 10,
+            seen: 4,
+            position: [0; 3],
+            direction: [1, 0],
+        })
+        .to_bytes();
+        assert!(Message::decode(&strike).is_ok());
+        let mut still = strike.clone();
+        still[32] = 0;
+        assert!(invalid(&still), "no direction");
+        let mut later = strike.clone();
+        later[22] = 11;
+        assert!(invalid(&later), "seen after the strike");
+        for refused in [
+            Message::FootState(FootState::default()),
+            Message::FootStates(vec![(PeerKey(1), FootState::default())]),
+        ] {
+            assert!(invalid(&relay(refused.clone())), "{refused:?} relayed");
+        }
+        assert!(
+            Message::decode(&relay(Message::FootStrike(FootStrike {
+                target: PeerKey(5),
+                tick: 10,
+                seen: 4,
+                position: [0; 3],
+                direction: [1, 0],
+            })))
+            .is_ok(),
+            "a strike on foot is relayed"
+        );
     }
 
     /// Random bytes, and every message with each of its bytes changed: refused or read, never a

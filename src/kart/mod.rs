@@ -55,7 +55,7 @@ pub use environment_visual::{Bubble, WaterEffects, Wing, wing_opening};
 pub use input::{
     DEBUG_BOOST_KEY, DEBUG_RESET_KEY, INTERACT_BUTTON, INTERACT_KEYS, ITEM_KEYS, JUMP_BUTTON,
     JUMP_KEYS, KartInputPlugin, KeyboardLayout, LOOK_BACK_KEYS, PlayerInputMuted, PlayerKart,
-    SpawnPoint, gamepad_input, keyboard_input,
+    SpawnPoint, combine, gamepad_input, keyboard_input,
 };
 pub use palette::{
     BOT_COLORS, ColorSet, KartColor, KartPaint, OnlinePlayerColors, PALETTE_SIZE, bot_color,

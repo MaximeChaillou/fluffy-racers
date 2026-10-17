@@ -17,6 +17,7 @@ pub mod modes;
 pub mod net;
 pub mod options;
 pub mod race;
+pub mod salon;
 pub mod track;
 pub mod ui;
 

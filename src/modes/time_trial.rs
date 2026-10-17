@@ -323,7 +323,7 @@ fn run_time_trial(
                 circuit: path.clone(),
                 mirror: mirror.0,
             }),
-            TrackChoice::TestGround => None,
+            TrackChoice::TestGround | TrackChoice::Salon => None,
         };
         let record = key.as_ref().and_then(|key| state.records.get(key));
         state.run = TrialRun {

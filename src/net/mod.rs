@@ -50,6 +50,7 @@
 
 mod browser;
 mod clock;
+pub mod foot;
 mod guide;
 mod ice;
 pub mod interactions;
@@ -86,6 +87,8 @@ mod pseudo_tests;
 #[cfg(test)]
 mod race_tests;
 #[cfg(test)]
+mod salon_tests;
+#[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
 mod setup_tests;
@@ -95,8 +98,12 @@ mod star_tests;
 mod sync_tests;
 
 pub use clock::{PeerClock, RoomClock};
+pub use foot::{
+    FootLook, FootPose, FootRelay, FootSync, LookTrack, RemoteWalker, WalkerEntry, strike_lands,
+};
 pub use guide::{
-    Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, race_line, race_now, settings_line,
+    Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, color_notice, race_line, race_now,
+    settings_line,
 };
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{
@@ -115,12 +122,12 @@ pub use netsim::{NetSim, NetSimTuning};
 pub use online::{OnlineRace, OnlineRacePlugin, OnlineSystems, race_to_start, session_of};
 pub use pickups::{Arbiter, ClaimKey, Pillow, PillowRules};
 pub use protocol::{
-    BlastOut, Channel, Claim, DecodeError, EFFECT_ITEMS, EffectOut, Grab, HELD_ITEMS, Honk,
-    ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES,
-    MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
-    OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Progress, RAM_ITEMS,
-    RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter, Spot, Strike,
-    StrikeReply, TetherBreak, Verdict,
+    BlastOut, Channel, Claim, DecodeError, EFFECT_ITEMS, EffectOut, FOOT_POSE_BITS, FootState,
+    FootStrike, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId, ItemOut, KartId, KartSnapshot, LooseId,
+    MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES, MAX_NAME_CHARS, MAX_PLAYERS, MAX_SCATTER, Message,
+    OUT_ITEMS, OutMotion, OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile,
+    Progress, RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter,
+    Spot, Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
@@ -142,7 +149,7 @@ pub use sync::{
 };
 pub use tags::NameTagPlugin;
 pub use tuning::NetTuning;
-pub use ui::NetUiPlugin;
+pub use ui::{NetUiPlugin, invitation, loopback_page};
 
 use bevy::prelude::*;
 
@@ -364,6 +371,21 @@ impl NetSession {
                 lobby.host().is_none() && now_ms >= lobby.joined_ms() + NO_HOST_MS
             })
     }
+}
+
+/// Issue #101: a session in a room for the tests of other modules (an in-memory socket, alone).
+#[cfg(test)]
+pub(crate) fn session_for_tests(room: &str, me: PeerKey, hosting: bool) -> NetSession {
+    let hub = socket::memory::Hub::default();
+    let signal = DEFAULT_SIGNAL_URL.to_string();
+    let ice = IceServers::choose(&StunChoice::Auto, None, &signal);
+    NetSession::new(
+        RoomCode::parse(room).expect("a room code"),
+        signal,
+        ice,
+        NetSocket::memory(&hub, me, hosting),
+        hosting,
+    )
 }
 
 /// Sockets that left their room, until their message loop ends (their `Bye` sent).
@@ -662,6 +684,7 @@ fn to_the_game(
     sync: Option<&mut KartSync>,
     race: Option<&mut OnlineRace>,
     items: Option<&mut OnlineItems>,
+    foot: Option<&mut FootSync>,
     tuning: Option<&NetTuning>,
 ) {
     match message {
@@ -675,8 +698,28 @@ fn to_the_game(
                 sync,
                 race,
                 items,
+                foot,
                 tuning,
             );
+        }
+        // Issue #101: the characters on foot of the lobby: a client's (to us, the host), our
+        // host's bundle of every other one, a strike on foot.
+        Message::FootState(state) => {
+            if let (Some(foot), Some(tuning)) = (foot, tuning) {
+                foot.receive(from, *state, game_ms, tuning);
+            }
+        }
+        Message::FootStates(states) if !hosting && Some(from) == host => {
+            if let (Some(foot), Some(tuning)) = (foot, tuning) {
+                for (origin, state) in states {
+                    foot.receive(*origin, *state, game_ms, tuning);
+                }
+            }
+        }
+        Message::FootStrike(strike) => {
+            if let Some(foot) = foot {
+                foot.receive_strike(from, *strike);
+            }
         }
         // Issue #63: our host's bundle: every kart's state, from the peer that drives it.
         Message::KartStates(states) if !hosting && Some(from) == host => {
@@ -762,7 +805,7 @@ fn poll_session(
     game_time: Res<Time<Virtual>>,
     mut sync: Option<ResMut<KartSync>>,
     mut race: Option<ResMut<OnlineRace>>,
-    mut items: Option<ResMut<OnlineItems>>,
+    (mut items, mut foot): (Option<ResMut<OnlineItems>>, Option<ResMut<FootSync>>),
     tuning: Option<Res<NetTuning>>,
     mut window: ResMut<LobbyWindow>,
 ) {
@@ -802,6 +845,9 @@ fn poll_session(
         SocketEvent::Disconnected(peer) => {
             links.disconnected(peer);
             relay.forget(peer);
+            if let Some(foot) = foot.as_deref_mut() {
+                foot.relay.forget(peer);
+            }
             if let Some(lobby) = lobby.as_mut() {
                 lobby.disconnect(peer);
             }
@@ -828,6 +874,14 @@ fn poll_session(
                         {
                             relay.push(peer, *state);
                         }
+                        // Issue #101: and its character on foot, in the lobby.
+                        if let (Message::FootState(state), Some(foot)) =
+                            (&message, foot.as_deref_mut())
+                            && hosting
+                            && lobby.seats().contains(&peer)
+                        {
+                            foot.relay.push(peer, *state);
+                        }
                         to_the_game(
                             peer,
                             &message,
@@ -836,6 +890,7 @@ fn poll_session(
                             sync.as_deref_mut(),
                             race.as_deref_mut(),
                             items.as_deref_mut(),
+                            foot.as_deref_mut(),
                             tuning.as_deref(),
                         );
                         lobby.receive(peer, message, now);
@@ -933,6 +988,33 @@ fn poll_session(
         if let Some(race) = race.as_deref_mut() {
             for message in race.drain_outbox() {
                 to_everyone(socket, &message);
+            }
+        }
+        // Issue #101: our character on foot (a client, to the host; the host, one bundle to each
+        // client with every other character) and its paw's strikes, in the lobby.
+        if let Some(foot) = foot.as_deref_mut() {
+            if hosting {
+                let own = foot.newest_outgoing();
+                foot.drain_outgoing().for_each(drop);
+                let interval = tuning
+                    .as_deref()
+                    .map_or(2, |t| t.send_interval_ticks.max(1));
+                let interval_ms = (f64::from(interval) * TICK_MS).round() as u64;
+                if foot.relay.due(now, own.is_some(), interval_ms) {
+                    for client in targets {
+                        if let Some(bundle) = foot.relay.bundle_for(*client, me, own) {
+                            socket.send(*client, &bundle);
+                        }
+                    }
+                    foot.relay.sent(now);
+                }
+            } else {
+                for state in foot.drain_outgoing() {
+                    to_everyone(socket, &Message::FootState(state));
+                }
+            }
+            for strike in foot.drain_strikes_out() {
+                to_everyone(socket, &Message::FootStrike(strike));
             }
         }
         if let Some(items) = items.as_deref_mut() {

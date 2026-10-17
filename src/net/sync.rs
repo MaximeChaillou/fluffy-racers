@@ -82,6 +82,9 @@ pub enum Showing {
     Free(super::protocol::RoomSetup),
     /// The race of this number: on its grid, or watching it (not on it: free driving there).
     Race(u16),
+    /// Issue #101: the lobby in 3D (`crate::salon`, with a renderer): its own scene, everyone on
+    /// foot, instead of free driving on the room's circuit.
+    Salon,
 }
 
 impl Showing {

@@ -11,6 +11,8 @@
 //!   [`DriverTuning::finish_nod_seconds`]; then idle.
 //! - **On the podium** of a Grand Prix (issue #19): the three of them dance, whatever their last
 //!   race.
+//! - **On foot** (issue #101, the lobby: `crate::salon`): **walk** and **run** (`walk`, `run`),
+//!   never in a kart; the lobby plays them at the pace of the animal's steps.
 //!
 //! Online, the other players' karts play the same from what their states say (their
 //! `KartState`, their paw's strikes and their finish, which already come over the network): no
@@ -26,14 +28,19 @@ pub enum AnimalAnimation {
     Dance,
     Nod,
     Shake,
+    /// Issue #101: on foot (the lobby), never in a kart.
+    Walk,
+    Run,
 }
 
 impl AnimalAnimation {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         AnimalAnimation::Idle,
         AnimalAnimation::Dance,
         AnimalAnimation::Nod,
         AnimalAnimation::Shake,
+        AnimalAnimation::Walk,
+        AnimalAnimation::Run,
     ];
 
     /// Its clip's name in the file.
@@ -43,6 +50,8 @@ impl AnimalAnimation {
             AnimalAnimation::Dance => "dance",
             AnimalAnimation::Nod => "gesture-positive",
             AnimalAnimation::Shake => "gesture-negative",
+            AnimalAnimation::Walk => "walk",
+            AnimalAnimation::Run => "run",
         }
     }
 
@@ -57,6 +66,8 @@ impl AnimalAnimation {
             AnimalAnimation::Dance => tuning.dance_speed,
             AnimalAnimation::Nod => tuning.nod_speed,
             AnimalAnimation::Shake => tuning.shake_speed,
+            // Issue #101: the lobby sets their pace from the animal's speed.
+            AnimalAnimation::Walk | AnimalAnimation::Run => 1.0,
         }
     }
 }
@@ -224,14 +235,23 @@ mod tests {
         );
     }
 
-    /// The clips of the Cube Pets' files, one per animation, each with its speed.
+    /// The clips of the Cube Pets' files, one per animation, each with its speed. Issue #101:
+    /// two more, on foot (`walk`, `run`); a driver never plays them.
     #[test]
     fn every_animation_has_its_clip() {
         let clips: Vec<&str> = AnimalAnimation::ALL.iter().map(|a| a.clip()).collect();
         assert_eq!(
             clips,
-            ["idle", "dance", "gesture-positive", "gesture-negative"]
+            [
+                "idle",
+                "dance",
+                "gesture-positive",
+                "gesture-negative",
+                "walk",
+                "run"
+            ]
         );
+        assert_eq!(AnimalAnimation::Walk.speed(&DriverTuning::default()), 1.0);
         for (i, animation) in AnimalAnimation::ALL.iter().enumerate() {
             assert_eq!(animation.index(), i);
         }

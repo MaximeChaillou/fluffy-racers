@@ -198,7 +198,7 @@ fn step_wobbles(
 }
 
 /// Lays each driver's pose over its parts: over what their clip wrote this frame, or their rest.
-fn lay_wobbles(
+pub(crate) fn lay_wobbles(
     drivers: Query<&DriverWobble>,
     mut layers: Query<(&mut WobbleLayer, &mut Transform)>,
 ) {

@@ -35,7 +35,6 @@ use crate::kart::{
     KartWheels, MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
 };
 use crate::level::LoadLevel;
-use crate::net::LobbyWindow;
 use crate::options::OptionsMenu;
 use crate::race::{Race, RaceGrid, RaceMode};
 use crate::track::{GRID_SLOTS, TrackChoice};
@@ -102,7 +101,6 @@ impl Plugin for AdminUiPlugin {
                     resource_changed::<AdminPanel>
                         .or_else(resource_exists_and_changed::<SelectionScreen>)
                         .or_else(resource_exists_and_changed::<OptionsMenu>)
-                        .or_else(resource_exists_and_changed::<LobbyWindow>)
                         // Issue #99: « Jouer solo » (`bevy_ui`, no egui) holds the game too.
                         .or_else(resource_exists_and_changed::<crate::modes::RaceMenu>)
                         .or_else(any_match_filter::<Added<ChaseCamera>>),
@@ -215,14 +213,13 @@ fn open_if_asked(mut panel: ResMut<AdminPanel>) {
 
 /// Puts the egui context on the game's camera when the panel opens, removes it (with every egui
 /// component and the font texture) when it closes. Closing also gives the game back its normal
-/// speed and the keyboard. The lobby of issue #7 (`net`) is egui too: the context stays while it
-/// is open. The game stays paused while the options (issue #100: `bevy_ui`, no egui any more),
-/// the « Pilote » screen (issue #98) or « Jouer solo » (issue #99) is open (not the lobby).
+/// speed and the keyboard. The game stays paused while the options (issue #100: `bevy_ui`, no
+/// egui any more), the « Pilote » screen (issue #98) or « Jouer solo » (issue #99) is open (not
+/// the lobby). Issue #101: the lobby's window and its banner are `bevy_ui` too, no egui.
 pub(super) fn attach_egui_context(
     panel: Res<AdminPanel>,
     selection: Option<Res<SelectionScreen>>,
     options: Option<Res<OptionsMenu>>,
-    lobby: Option<Res<LobbyWindow>>,
     race_menu: Option<Res<crate::modes::RaceMenu>>,
     main_menu: Option<Res<crate::menu::MainMenu>>,
     mut commands: Commands,
@@ -238,8 +235,9 @@ pub(super) fn attach_egui_context(
     let solo = race_menu.is_some_and(|menu| menu.open);
     let typing = pilot_typing(selection.as_deref());
     let choosing = options || pilot || solo;
-    // Issue #64: the room's banner too (`LobbyWindow::banner`: in a room, out of a race).
-    let wanted = panel.open || lobby.is_some_and(|window| window.open || window.banner);
+    // Issue #101: the lobby's window and its banner are `bevy_ui` now (`crate::salon`): only the
+    // panel needs egui.
+    let wanted = panel.open;
     for (camera, attached) in &cameras {
         if wanted && !attached {
             commands.entity(camera).insert(PrimaryEguiContext);

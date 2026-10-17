@@ -211,7 +211,7 @@ pub(super) fn want_the_background(
     grid.lineup = None;
     let track = match &*choice {
         TrackChoice::Circuit(_) => choice.clone(),
-        TrackChoice::TestGround => TrackChoice::default(),
+        TrackChoice::TestGround | TrackChoice::Salon => TrackChoice::default(),
     };
     let own = grid.bots;
     grid.bots = karts - 1;

@@ -45,7 +45,7 @@ fn animal_models() -> Vec<String> {
 }
 
 /// Every model the game names: the kart's, its parts' (issue #73), every biome's, every
-/// circuit's props, every character's (issue #69).
+/// circuit's props, every character's (issue #69), the lobby's (issue #101).
 fn named_models() -> BTreeSet<String> {
     let mut all: BTreeSet<String> = BTreeSet::new();
     all.insert(KART_MODEL.to_string());
@@ -57,6 +57,8 @@ fn named_models() -> BTreeSet<String> {
     for data in circuit_files() {
         all.extend(decor_models(data.biome(), &data.props));
     }
+    // Issue #101: the lobby's clearing.
+    all.extend(crate::salon::SALON_MODELS.map(str::to_string));
     all
 }
 

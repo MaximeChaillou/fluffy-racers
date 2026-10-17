@@ -46,9 +46,13 @@ pub struct AnimalVisual {
     pub meshes: Vec<Option<Handle<Mesh>>>,
     /// Each node's name for the clips.
     pub targets: Vec<AnimationTargetId>,
+    /// Issue #101: each leg's mesh and name for the clips (`AnimalModelData::legs`): only an
+    /// animal on foot spawns them.
+    pub leg_meshes: Vec<Option<Handle<Mesh>>>,
+    pub leg_targets: Vec<AnimationTargetId>,
     /// Its graph and the node of each animation in it (`AnimalAnimation::index`); None: the
     /// file has no idle, or the game no animation plugin (it sits still).
-    pub graph: Option<(Handle<AnimationGraph>, [AnimationNodeIndex; 4])>,
+    pub graph: Option<(Handle<AnimationGraph>, AnimationNodes)>,
     /// How long its idle lasts (s): each kart starts it at its own moment.
     pub idle_seconds: f32,
     pub material: Handle<StandardMaterial>,
@@ -100,8 +104,11 @@ pub struct AnimalRoot {
     pub kart: Entity,
     pub character: usize,
     pub playing: AnimalAnimation,
-    pub nodes: Option<[AnimationNodeIndex; 4]>,
+    pub nodes: Option<AnimationNodes>,
 }
+
+/// The node of each animation in an animal's graph (`AnimalAnimation::index`).
+pub type AnimationNodes = [AnimationNodeIndex; AnimalAnimation::ALL.len()];
 
 pub struct AnimalVisualPlugin;
 
@@ -201,7 +208,7 @@ fn prepare_animals(
                 let handles =
                     AnimalAnimation::ALL.map(|animation| clip(animation).unwrap_or(idle.clone()));
                 let (graph, nodes) = AnimationGraph::from_clips(handles);
-                <[AnimationNodeIndex; 4]>::try_from(nodes)
+                <AnimationNodes>::try_from(nodes)
                     .ok()
                     .map(|nodes| (graphs.add(graph), nodes))
             }
@@ -223,6 +230,16 @@ fn prepare_animals(
                 .collect(),
             targets: data
                 .nodes
+                .iter()
+                .map(|node| AnimationTargetId::from_iter(&node.path))
+                .collect(),
+            leg_meshes: data
+                .legs
+                .iter()
+                .map(|node| node.mesh.as_ref().map(|m| meshes.add(to_mesh(m))))
+                .collect(),
+            leg_targets: data
+                .legs
                 .iter()
                 .map(|node| AnimationTargetId::from_iter(&node.path))
                 .collect(),
@@ -287,28 +304,9 @@ fn spawn_animal(
     let placement = animal.data.placement(tuning);
     // From the wobble's frame (the kart's) into the animal's (its file's), and the other way.
     let to_file = placement.rotation.inverse();
-    let mut tail = None;
-    let mut wings = [None; 2];
-    for node in &animal.data.nodes {
-        let lever = placement.rotation * node.lever();
-        match node.part {
-            Some(AnimalPart::Tail) => tail = Some(lever),
-            Some(AnimalPart::LeftWing) => wings[0] = Some(lever),
-            Some(AnimalPart::RightWing) => wings[1] = Some(lever),
-            _ => {}
-        }
-    }
-    // In the kart, the animal's left (+X in its file) is the kart's left (-X).
-    let levers = WobbleLevers {
-        tail,
-        wings: wings
-            .iter()
-            .any(Option::is_some)
-            .then(|| [wings[0].unwrap_or(Vec3::NEG_X), wings[1].unwrap_or(Vec3::X)]),
-    };
     commands
         .entity(driver)
-        .insert(DriverWobble(WobbleState::new(levers)));
+        .insert(DriverWobble(WobbleState::new(levers(animal, &placement))));
     let mut root = commands.spawn((
         AnimalRoot {
             kart,
@@ -357,6 +355,107 @@ fn spawn_animal(
         }
         spawned.push(entity.id());
     }
+}
+
+/// Where the tail and the wings of `animal` hang once placed by `placement`, in its wobble's
+/// frame (the kart's, or the walker's: its front toward -Z): the animal's left (+X in its file)
+/// is on that frame's left (-X).
+fn levers(animal: &AnimalVisual, placement: &Transform) -> WobbleLevers {
+    let mut tail = None;
+    let mut wings = [None; 2];
+    for node in &animal.data.nodes {
+        let lever = placement.rotation * node.lever();
+        match node.part {
+            Some(AnimalPart::Tail) => tail = Some(lever),
+            Some(AnimalPart::LeftWing) => wings[0] = Some(lever),
+            Some(AnimalPart::RightWing) => wings[1] = Some(lever),
+            _ => {}
+        }
+    }
+    WobbleLevers {
+        tail,
+        wings: wings
+            .iter()
+            .any(Option::is_some)
+            .then(|| [wings[0].unwrap_or(Vec3::NEG_X), wings[1].unwrap_or(Vec3::X)]),
+    }
+}
+
+/// Issue #101: `animal` on its legs under `parent` (a walker of the lobby, its front toward
+/// -Z), placed by `placement` (turned toward -Z, scaled, its feet where the walker's are), with
+/// `bundle` on its root. Its nodes and its legs are animated by its root's `AnimationPlayer`
+/// (its graph: idle at first, from a moment of its own given by `phase`, 0 to 1); its body,
+/// tail and wings get their wobble's layer, moved by the [`DriverWobble`] given to `wobbler`
+/// (with where they hang). Returns its root, and its nodes (in `AnimalModelData::nodes`' order).
+pub fn spawn_animal_on_foot(
+    commands: &mut Commands,
+    animal: &AnimalVisual,
+    placement: Transform,
+    parent: Entity,
+    wobbler: Entity,
+    phase: f32,
+    bundle: impl Bundle,
+) -> (Entity, Vec<Entity>) {
+    let to_file = placement.rotation.inverse();
+    commands
+        .entity(wobbler)
+        .insert(DriverWobble(WobbleState::new(levers(animal, &placement))));
+    let mut root = commands.spawn((placement, Visibility::default(), ChildOf(parent), bundle));
+    if let Some((graph, nodes)) = &animal.graph {
+        let mut player = AnimationPlayer::default();
+        let mut transitions = AnimationTransitions::new();
+        transitions
+            .play(
+                &mut player,
+                nodes[AnimalAnimation::Idle.index()],
+                Duration::ZERO,
+            )
+            .seek_to(phase.clamp(0.0, 1.0) * animal.idle_seconds)
+            .repeat();
+        root.insert((player, transitions, AnimationGraphHandle(graph.clone())));
+    }
+    let root = root.id();
+    let mut spawned: Vec<Entity> = Vec::with_capacity(animal.data.nodes.len());
+    for (i, node) in animal.data.nodes.iter().enumerate() {
+        let parent = node.parent.map_or(root, |p| spawned[p]);
+        let mut entity = commands.spawn((
+            node.local,
+            Visibility::default(),
+            animal.targets[i],
+            AnimatedBy(root),
+            ChildOf(parent),
+        ));
+        if let Some(mesh) = &animal.meshes[i] {
+            entity.insert((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(animal.material.clone()),
+            ));
+        }
+        if let Some(part) = node.part {
+            entity.insert((
+                part,
+                WobbleLayer::new(wobbler, part.into(), LayerPivot::Own, to_file),
+            ));
+        }
+        spawned.push(entity.id());
+    }
+    for (i, leg) in animal.data.legs.iter().enumerate() {
+        let parent = leg.parent.map_or(root, |p| spawned[p]);
+        let mut entity = commands.spawn((
+            leg.local,
+            Visibility::default(),
+            animal.leg_targets[i],
+            AnimatedBy(root),
+            ChildOf(parent),
+        ));
+        if let Some(mesh) = &animal.leg_meshes[i] {
+            entity.insert((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(animal.material.clone()),
+            ));
+        }
+    }
+    (root, spawned)
 }
 
 /// Issue #98: `animal` standing still at `transform` (no clip, no wobble: the portraits of the

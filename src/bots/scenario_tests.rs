@@ -54,7 +54,7 @@ const RACE_SEEDS: [u64; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 const SEEDS_VARIABLE: &str = "FLUFFY_RACE_SEEDS";
 
 /// The seeds the race tests run: [`RACE_SEEDS`], or those of [`SEEDS_VARIABLE`].
-fn race_seeds() -> Vec<u64> {
+pub(crate) fn race_seeds() -> Vec<u64> {
     let Ok(spec) = std::env::var(SEEDS_VARIABLE) else {
         return RACE_SEEDS.to_vec();
     };
@@ -76,7 +76,7 @@ fn race_seeds() -> Vec<u64> {
 
 /// Runs `race` once per seed, each in its own thread with its own App, side by side; the
 /// results come back in the order of `seeds`.
-fn for_each_seed<T: Send>(seeds: &[u64], race: impl Fn(u64) -> T + Sync) -> Vec<T> {
+pub(crate) fn for_each_seed<T: Send>(seeds: &[u64], race: impl Fn(u64) -> T + Sync) -> Vec<T> {
     let race = &race;
     std::thread::scope(|scope| {
         let runs: Vec<_> = seeds

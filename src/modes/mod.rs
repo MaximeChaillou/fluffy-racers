@@ -228,7 +228,7 @@ fn circuit_index(choice: &TrackChoice, circuits: &[TrackEntry]) -> usize {
             .iter()
             .position(|entry| entry.asset_path() == *path)
             .unwrap_or(0),
-        TrackChoice::TestGround => 0,
+        TrackChoice::TestGround | TrackChoice::Salon => 0,
     }
 }
 
