@@ -2,9 +2,9 @@
 
 Cette charte décrit l'apparence et le comportement des écrans du jeu : accueil, menus, salon, choix du kart, pause, résultats. Elle est née avec #56 (étape 1 : la charte et un premier menu pour la rendre concrète).
 
-> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Les écrans suivants ont chacun leur issue : Pilote (#98), Jouer solo et les réglages de partie (#99), options, pause, résultats, podium et HUD en Fredoka (#100), le salon en 3D (#101).
+> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Puis **l'écran Pilote** (#98, plus bas). Les écrans suivants ont chacun leur issue : Jouer solo et les réglages de partie (#99), options, pause, résultats, podium et HUD en Fredoka (#100), le salon en 3D (#101).
 
-Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte.
+Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra) ; l'écran Pilote `pilot.rs` (ses lignes, ses textes, sa boucle molle), `pilot_screen.rs` (son arbre, la souris, la manette, le champ du pseudo) et `preview.rs` (sa 3D). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte.
 
 ## L'esprit
 
@@ -90,7 +90,7 @@ Pourquoi elle :
   - fond Guimauve, coins de 36 px, marge intérieure de 20 px, 12 px entre deux boutons ;
   - une ombre portée nette : Myrtille à 45 %, décalée de 10 px vers le bas, sans flou ;
   - centré, 520 px de large.
-- **Les écrans plus riches de l'étape 2** (salon, choix du kart) gardent le même panneau, en plus large : entre 720 et 900 px, à fixer avec eux.
+- **Les écrans plus riches de l'étape 2** (salon, choix du kart) gardent le même panneau, en plus large : entre 720 et 900 px, à fixer avec eux. L'écran Pilote (#98) : 900 px.
 - **Le titre** : blanc, avec une ombre Fraise décalée vers le bas. On dirait des lettres en guimauve. Sur l'accueil, il est en grand, avec dessous une phrase en blanc (voir « L'écran d'accueil »).
 - **Les touches** sont rappelées en bas de l'écran, en blanc sur le voile, avec les lettres du clavier choisi.
 - Les fenêtres ne se superposent pas : un écran ouvert depuis le menu prend sa place.
@@ -130,6 +130,7 @@ Les tailles sont données pour une fenêtre de **720 px de haut** et dessinées 
 | Pastille / icône | 52 / 40 |
 | Panneau | 520 de large, marge de 20, rayon de 36, 12 entre deux boutons |
 | Colonne de l'accueil | à 64 du bord gauche ; voile plein jusqu'à 640, effacé à 1 000 |
+| Écran Pilote (#98) | panneau de 900 (deux colonnes, 380 et 460, 20 entre elles), titre de 48 ; aperçu 380 × 236, rayon 28 ; une ligne 46 de haut (profondeur 5, libellé 21, 8 entre deux) ; portrait 52, son nom 14, case de 96 ; pastille de couleur 22 ; une stat 20 de haut (texte 15, barre 10) ; boutons 56 |
 
 ## Animations « molles »
 
@@ -144,6 +145,7 @@ Elles tournent en **temps réel** : en solo, le jeu est en pause derrière l'éc
 | Appui (squash) | Le bouton s'écrase à 86 % de sa hauteur, posé sur son bas, et s'élargit de la moitié de ce qu'il perd. Sa profondeur passe de 7 à 2 px. | environ 0,1 s |
 | Relâché (stretch) | Il remonte, s'étire d'environ 5 % en s'amincissant, puis revient. | 0,5 s ; l'action part à 0,12 s |
 | Titre de l'accueil (#89) | Chaque mot penche de son côté (« Fluffy » vers le haut à droite, « Racers » un peu vers le bas), monte et descend de 4 px et oscille de ±0,03 rad, lentement, le 2ᵉ en décalé d'une demi-période : de la guimauve sur de la gelée. | en boucle, 2,8 s |
+| Pilote de l'aperçu (#98) | Il saute sur son siège (7 cm pour un moyen), s'écrase de 16 % en retombant, s'étire de 7 % en l'air (son volume gardé) et se dandine d'un côté puis de l'autre (0,13 rad) ; le kart se balance (±0,12 rad) ; sur la ligne de l'aile, elle s'ouvre (0,3 s) et la caméra recule | en boucle : 0,9 s un saut, 5 s le balancement |
 | Fermeture | Aucune animation : le jeu reprend tout de suite. | 0 s |
 
 ## Navigation
@@ -168,7 +170,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 ![L'accueil et son fond](img/accueil.png)
 
 - **La colonne à gauche**, à 64 px du bord : le titre en grand, la phrase « Des karts tout doux, des virages tout fous. », le panneau et les touches (alignées à gauche, sur quatre lignes). **Le fond se voit à droite.**
-- **Quatre boutons, dans cet ordre** : Jouer solo (Lagon), Multijoueur (Fraise), Options (Prune), Pilote (Carotte). En attendant leurs écrans (#98, #99), Jouer solo ouvre le menu de course (N) et Pilote l'écran de sélection (G) ; Multijoueur ouvre le salon (L), Options les options (O).
+- **Quatre boutons, dans cet ordre** : Jouer solo (Lagon), Multijoueur (Fraise), Options (Prune), Pilote (Carotte). En attendant son écran (#99), Jouer solo ouvre le menu de course (N) ; Pilote ouvre l'écran Pilote (#98, G), Multijoueur le salon (L), Options les options (O).
 - **Le titre** : « Fluffy » et « Racers » sur deux lignes, en Fredoka demi-gras de 88 px, blanc à l'ombre Fraise (7 px), vivant (voir « Animations molles »).
 - **Le voile** : la Myrtille à 55 % derrière la colonne, jusqu'à 640 px du bord gauche, puis il s'efface jusqu'à 1 000 px. Les textes blancs gardent leur contraste ; les karts, à droite, se voient tels quels. Pas de flou : il coûterait une passe de rendu.
 - **Le fond, c'est le jeu** : une vraie course de bots sur le circuit du moment (Prairie Pompon au lancement), sans écran de course (ni HUD, ni son de course). Ses réglages sont dans le panneau d'admin (`HomeTuning`) :
@@ -178,6 +180,46 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
   - **une course sans fin**, partie de GO ;
   - **une caméra de bande-annonce** : un plan toutes les 6 s (de derrière, au ras des roues, de côté, de face, en tournant autour, du ciel ; en miroir une boucle sur deux), chacun en léger mouvement, et 2 s pour passer au suivant en tournant autour des karts. **Jamais de coupe.** Elle suit les deux karts les plus proches l'un de l'autre (là où les pattes volent) et ceux qui les entourent, et les montre à droite de l'écran (à 38 % de la moitié droite) ; un muret ou une colline entre eux et elle la font passer devant.
 - **Rien n'en reste** quand une course démarre : le fond est un niveau, la course en construit un autre.
+
+## L'écran Pilote (#98)
+
+« Dans pilote on peut choisir son pseudo, son kart, ses pièces et son personnage. On voit le kart en 3/4 face avec les stats à côté et le personnage dedans. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Pilote »), le menu en course et avec G ; il revient à l'écran qui l'a ouvert.
+
+![L'écran Pilote : l'aperçu et ses stats](img/pilote.png)
+
+- **Le panneau** : 900 px de large, au milieu, sur le voile ; au-dessus, le titre « Pilote » (48 px : le panneau est haut), dessous, les touches sur deux lignes.
+- **À gauche, l'aperçu** : le kart du choix vu de 3/4 face, en 3D, dans un cadre arrondi (Coton en haut, Lilas en bas : le kart y pose). Il se balance doucement (±0,12 rad en 5 s). **Le personnage est dedans et fait une boucle molle** : il saute sur son siège (7 cm pour un moyen), s'écrase de 16 % en retombant, s'étire de 7 % en l'air, son volume gardé, et se dandine d'un côté puis de l'autre (0,13 rad, un côté par saut de 0,9 s). Sur la ligne de l'aile, l'aile s'ouvre et la caméra recule pour la montrer. Ce sont des constantes d'animation (`pilot.rs`), comme les autres.
+- **Sous l'aperçu, les stats** : les sept barres `(niveau + 3) / 4` (GD § 9), chacune de sa couleur de la palette (Vitesse Fraise, Accélération Carotte, Poids Prune, Maniabilité Lagon, Adhérence Menthe, Mini-turbo Mangue, Invincibilité Lilas) sur un rail Brume, la valeur écrite à la française (« 3,25 ») ; puis la Vitesse et la Maniabilité sur chaque terrain (Sol, Eau, Air, Anti-gravité). **Tout suit le choix à l'instant où il change.** Enfin « Valider » et « Retour ».
+- **À droite, les lignes**, de haut en bas : **Pseudo** (le champ), **Personnage** (la grille), **Kart**, **Roues**, **Aile** (« < », le nom, « > »), **Couleur** (son nom sous l'étiquette, les 12 pastilles, un anneau Myrtille autour de la sienne). Chaque ligne est une pilule avec sa profondeur, comme un bouton : **la ligne qui a le focus est Mangue**, et grossit de 5 % avec le rebond du focus (la grille, haute, prend seulement la couleur). On en fait le tour : au-dessus du personnage, le pseudo.
+- **La grille des personnages** : une ligne par gabarit (Légers, Moyens, Lourds), trois animaux chacune, chacun avec **son portrait de 3/4 face** (52 px) et son nom ; le choisi se détache sur une case Coton. Gauche / Droite passent d'un animal au suivant, d'une ligne de la grille à l'autre ; Haut / Bas quittent la grille (on ne change pas d'animal en la traversant).
+- **Le champ du pseudo** : un puits Coton bordé de Lilas dans sa pilule, le texte en Fredoka demi-gras, et vide, le nom de l'animal en Cendre. Entrée sur sa ligne ou un clic dedans : on écrit (le curseur clignote) ; Entrée, Échap ou un clic ailleurs : c'est bon. Les touches le disent : « Tape ton pseudo (12 lettres au plus) · Entrée ou Échap : c'est bon ».
+- **Navigation** :
+
+| | Clavier | Souris | Manette |
+|---|---|---|---|
+| La ligne | Haut / Bas, ou Z / S (AZERTY), W / S (QWERTY) | survol | croix, stick (un pas par poussée) |
+| Changer | Gauche / Droite, ou Q / D (AZERTY), A / D (QWERTY) | « < », « > », un portrait, une pastille | croix, stick |
+| Garder le choix | Entrée (sur le pseudo : écrire) | « Valider » | A |
+| Revenir sans rien changer | Échap, G | « Retour » | B, Start |
+
+- **Garder le choix** : depuis le jeu en solo, la course repart avec lui ; depuis l'accueil, on y revient (son fond roule toujours) ; en ligne, il part chez les autres et sert à la course suivante. **Pas de pause** sur l'accueil ni en ligne (le kart roule sur son élan, seules ses commandes sont inactives) ; en solo depuis le jeu, le jeu attend.
+- **Avec `?room=…`**, l'écran s'ouvre au lancement ; le salon et son bandeau (egui, dessinés par-dessus `bevy_ui`) s'effacent tant qu'il est ouvert : un écran à la fois.
+
+**Choix technique de l'aperçu** : une caméra rend la scène dans une image que l'arbre montre (`ViewportNode` de Bevy 0.20 : l'image suit la taille du cadre). La scène est **le vrai kart du jeu** (`kart::spawn_kart_visual_with_driver`, habillé par les mêmes systèmes : le modèle, ses pièces, sa couleur, l'animal et son idle), sur un corps à lui, sans physique. Elle est à 3 km sous les circuits, sur un calque de rendu à elle (`RenderLayers`), avec sa lumière sans ombre et sa lumière ambiante : la caméra du jeu ne la voit pas, la sienne ne voit pas le jeu, et le soleil du jeu ne calcule aucune ombre pour elle. **Fermé, il n'en reste rien** : caméra, lumière, kart et image partent avec l'écran.
+
+**Choix technique des portraits** : les neuf animaux debout dans une petite scène (une grille de 3 × 3, à côté de celle de l'aperçu, sur son calque), filmés par une caméra orthographique dans **une seule image** (384 × 384 px, 128 par portrait), **rendue une fois** (8 images, la première fois que l'écran s'ouvre, une fois les animaux chargés), puis la scène et sa caméra s'en vont ; l'image reste (chaque case en montre sa part, `ImageNode::rect`). Ouvert de nouveau, l'écran ne rend rien. Un animal sans modèle : une boule de sa couleur.
+
+**Choix technique du champ du pseudo : `EditableText` de Bevy 0.20** (`bevy_ui_widgets::TextInput`), plutôt qu'un petit champ egui :
+
+| Critère | `EditableText` (choisi) | Champ egui |
+|---|---|---|
+| Fidélité à la charte | Un nœud de l'arbre : Fredoka, palette, coins ronds ; il apparaît et rebondit avec le panneau | Dessiné par-dessus `bevy_ui`, dans sa police ; il ne suivrait pas les animations du panneau |
+| Coût | Aucun contexte egui pour l'écran | Un contexte egui (et sa passe à chaque image) tant que l'écran est ouvert |
+| Saisie | Curseur, sélection, copier-coller, méthodes de saisie ; filtre (`EditableTextFilter` : les caractères du HUD) et 12 caractères (`max_characters`) | Les mêmes, éprouvés depuis #80 |
+| Focus | Celui de Bevy (`InputFocus`), accordé à la ligne de l'écran ; `admin::KeyboardCapture` tant qu'il a le clavier | Celui d'egui, à accorder à l'écran |
+| Tests | Headless (le texte, le focus et les touches de Bevy, sans fenêtre : la saisie, le filtre, la longueur, Entrée, Échap) | Dans egui lui-même, à part de l'écran |
+
+**Aucune crate ajoutée.**
 
 ## Ton des textes
 
@@ -206,7 +248,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 | Maintenance | Plus verbeux : un petit kit (panneau, bouton) dans `src/menu/` le compense, et chaque écran se teste headless (l'arbre existe sans rendu) | Très court à écrire, mais il ne se teste qu'en partie sans rendu |
 | Déjà là | Oui (HUD, étiquettes des pseudos) | Oui (panneau d'admin, fenêtres actuelles) |
 
-**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P). Pour le champ du pseudo, il reste en attendant l'étape 2, qui choisira entre `EditableText` de Bevy 0.20 (`bevy_ui_widgets::text_input`) et un petit champ egui.
+**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P) et, en attendant leurs écrans, les options (O), le menu de course (N) et le salon (L). Le champ du pseudo : `EditableText` de Bevy 0.20 (#98, voir « L'écran Pilote »).
 
 **Pas de 9-slice pour l'instant.** Le UI Pack de Kenney (CC0) a des boutons prêts à découper, mais avec de petits coins et des couleurs figées. Les formes natives sont plus rondes, se recolorent avec la palette et restent nettes à toute taille, sans aucun fichier. Le 9-slice resservira si on veut une texture (papier, tissu).
 
@@ -215,6 +257,8 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 ## Captures de référence
 
 Elles ont été prises dans Chromium headless, sur un build trunk de debug avec WebGL logiciel, en 1280 × 720. Ce navigateur dessine environ une image par seconde.
+
+**L'écran Pilote (#98)** : captures dans le scratchpad de la session (`shots98/`, `shots98b/`, `shots98c/`), l'une d'elles dans le dépôt (`docs/img/pilote.png` : l'écran ouvert depuis l'accueil, le choix par défaut). Elles montrent l'aperçu de 3/4 face (le chat dans la caisse à savon ; le cochon dans la baignoire, l'aile ouverte sur sa ligne ; le chat dans le panier en osier sur ses bobines de fil ; le lapin rouge), la grille des portraits, les stats et les terrains, le focus au clavier et à la souris, le champ du pseudo pendant la saisie (« Loéa », le « é » envoyé comme un clavier AZERTY, puis Retour arrière), et l'écran ouvert par G en course, le jeu en pause derrière.
 
 **L'accueil (#89)** : captures dans le scratchpad de la session (`shots89/`), deux d'entre elles dans le dépôt (`docs/img/accueil.png`, et `docs/img/accueil-focus.png` avec « Options » en focus). Les captures du menu de #56 qui suivent montrent l'ancien menu au lancement et ses anciens libellés (« Course solo », « En ligne », « Pilote et kart ») ; les états des boutons n'ont pas changé.
 

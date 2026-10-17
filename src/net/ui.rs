@@ -11,11 +11,12 @@
 //! accents (the HUD's font has none); no room, no banner, no context. The window puts the main
 //! action first: the host's « Lancer la course », with why it waits, a client's « Prêt ! ».
 //!
-//! Issue #80: the window starts with the player's **pseudo**, a text field (`super::pseudo`: 12
-//! characters, those the HUD's font writes; empty: the character's name, shown as its hint). Each
-//! change goes to the others at once (the `Hello`) and is kept in the browser (read before
-//! anything is built; `?pseudo=` wins over it). While the field has the keyboard, the game gets
-//! no key (`admin::KeyboardCapture`): typing neither drives the kart nor triggers a shortcut.
+//! Issue #80: the window starts with the player's **pseudo** (`super::pseudo`: 12 characters,
+//! those the HUD's font writes; empty: the character's name), kept in the browser (read here
+//! before anything is built; `?pseudo=` wins over it). Issue #98: it is typed in the « Pilote »
+//! screen (`menu::pilot`, G), which also stores it; each change goes to the others at once (the
+//! `Hello`). While the « Pilote » screen is open, the window and the banner step aside: the
+//! screen is in the middle of the window, one at a time.
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Color32, RichText};
@@ -24,7 +25,7 @@ use bevy_egui::{EguiContexts, EguiGlobalSettings, EguiPlugin, EguiPrimaryContext
 #[cfg(target_arch = "wasm32")]
 use super::NetSystems;
 use super::ice::{is_loopback_host, signal_host};
-use super::pseudo::{self, PSEUDO_MAX_CHARS, PSEUDO_STORAGE_KEY};
+use super::pseudo::{self, PSEUDO_STORAGE_KEY};
 use super::{
     Diagnosis, LobbyWindow, MAX_PLAYERS, NetAction, NetSession, NetSettings, NetStatus, NetTuning,
     OnlineRace, RaceStage, RoomFacts, RowLink, Seated, Stage, Stuck, default_signal, invite_link,
@@ -32,7 +33,7 @@ use super::{
 };
 use crate::admin::tracks::{TrackEntry, circuits};
 use crate::admin::{keep_focus_for_text_only, storage};
-use crate::characters::{PartKind, PlayerLoadout, Roster};
+use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::kart::KartColor;
 
 const GOOD: Color32 = Color32::from_rgb(110, 210, 120);
@@ -62,7 +63,6 @@ impl Plugin for NetUiPlugin {
         .insert_resource(LobbyUiState {
             copied_at: None,
             circuits: circuits(),
-            pseudo: String::new(),
         })
         .add_systems(PreStartup, load_stored_pseudo)
         .add_systems(Startup, join_launch_room)
@@ -71,7 +71,9 @@ impl Plugin for NetUiPlugin {
             (
                 room_banner.run_if(|window: Res<LobbyWindow>| window.banner),
                 lobby_window.run_if(|window: Res<LobbyWindow>| window.open),
-            ),
+            )
+                // Issue #98: not over the « Pilote » screen (`bevy_ui`, under egui).
+                .run_if(|screen: Option<Res<SelectionScreen>>| !screen.is_some_and(|s| s.open)),
         );
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Update, page_address.after(NetSystems));
@@ -84,9 +86,6 @@ struct LobbyUiState {
     copied_at: Option<f64>,
     /// The circuits the host can choose (issue #9): `assets/tracks/index.ron`.
     circuits: Vec<TrackEntry>,
-    /// Issue #80: the pseudo's field as typed (spaces at its ends included); the pseudo itself
-    /// is `NetSettings::pseudo`, which it follows while the field does not have the keyboard.
-    pseudo: String,
 }
 
 /// Issue #80: the pseudo kept from the previous sessions, before anything is built (the `Hello`
@@ -273,7 +272,7 @@ fn room_banner(
 fn lobby_window(
     mut contexts: EguiContexts,
     session: Option<Res<NetSession>>,
-    mut settings: ResMut<NetSettings>,
+    settings: Res<NetSettings>,
     roster: Option<Res<Roster>>,
     loadout: Option<Res<PlayerLoadout>>,
     race: Option<Res<OnlineRace>>,
@@ -284,9 +283,7 @@ fn lobby_window(
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
-    // The game's keys (Espace, the arrows) must not click or move through the window's buttons:
-    // no widget keeps the keyboard focus but the pseudo's field (issue #80), which takes the keys
-    // from the game while it has it.
+    // The game's keys (Espace, the arrows) must not click or move through the window's buttons.
     keep_focus_for_text_only(ctx);
     let now = time.elapsed_secs_f64();
     egui::Window::new("En ligne")
@@ -296,21 +293,15 @@ fn lobby_window(
         .resizable(false)
         .default_width(340.0)
         .show(ctx, |ui| {
-            // Issue #80: who we are, first.
-            let hint = super::character_name(loadout.as_deref().map(|l| &l.0), roster.as_deref());
-            if !ui.memory(|m| m.has_focus(egui::Id::new(PSEUDO_FIELD))) {
-                let pseudo = settings.pseudo.as_deref().unwrap_or("");
-                if state.pseudo != pseudo {
-                    state.pseudo.clear();
-                    state.pseudo.push_str(pseudo);
-                }
-            }
-            if let Some(pseudo) = pseudo_field(ui, &mut state.pseudo, &hint)
-                && settings.pseudo != pseudo
-            {
-                storage::save_key(PSEUDO_STORAGE_KEY, &pseudo::to_stored(pseudo.as_deref()));
-                settings.pseudo = pseudo;
-            }
+            // Issue #80: who we are, first; issue #98: typed in the « Pilote » screen.
+            let name = settings.pseudo.clone().unwrap_or_else(|| {
+                super::character_name(loadout.as_deref().map(|l| &l.0), roster.as_deref())
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Ton pseudo").strong());
+                ui.label(RichText::new(name).strong().color(HOST));
+            });
+            ui.small("Change-le dans Pilote (G).");
             ui.separator();
             match session.as_deref() {
                 None => offline(ui, &settings, &mut actions),
@@ -333,35 +324,6 @@ fn lobby_window(
                 ui.small("L : ouvrir / fermer");
             });
         });
-}
-
-/// The id of the pseudo's field (issue #80).
-const PSEUDO_FIELD: &str = "fluffy-pseudo";
-
-/// Issue #80: the pseudo's line: a text field of [`PSEUDO_MAX_CHARS`] characters, those the HUD
-/// writes (`pseudo::typed`: an emoji or a tab is left out as it is typed), `hint` (the character's
-/// name) when empty. Returns the new pseudo (`None`: the character's name) when the text changed.
-fn pseudo_field(ui: &mut egui::Ui, text: &mut String, hint: &str) -> Option<Option<String>> {
-    let response = ui
-        .horizontal(|ui| {
-            ui.label(RichText::new("Ton pseudo").strong());
-            ui.add(
-                egui::TextEdit::singleline(text)
-                    .id(egui::Id::new(PSEUDO_FIELD))
-                    .char_limit(PSEUDO_MAX_CHARS)
-                    .hint_text(hint)
-                    .desired_width(150.0),
-            )
-        })
-        .inner;
-    if !response.changed() {
-        return None;
-    }
-    let kept = pseudo::typed(text);
-    if kept != *text {
-        *text = kept;
-    }
-    Some(pseudo::clean(text))
 }
 
 /// No room yet.
@@ -757,7 +719,7 @@ fn player_list(ui: &mut egui::Ui, session: &NetSession, roster: Option<&Roster>,
     }
     if let Some(notice) = color_notice(&rows) {
         ui.label(RichText::new(notice).color(HOST));
-        ui.small("Change de couleur avec G (Pilote et kart).");
+        ui.small("Change de couleur dans Pilote (G).");
     }
     connections(ui, session, now_ms);
 }
@@ -844,82 +806,6 @@ fn plural(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// One pass of egui with the pseudo's field (hint « Chat »), its `events` typed: what the
-    /// field gave back.
-    fn field_pass(
-        ctx: &egui::Context,
-        text: &mut String,
-        events: Vec<egui::Event>,
-    ) -> Option<Option<String>> {
-        let input = egui::RawInput {
-            events,
-            ..Default::default()
-        };
-        let mut given = None;
-        let mut output = ctx.run_ui(input, |ui| {
-            given = pseudo_field(ui, text, "Chat");
-        });
-        // No renderer to take the font's texture.
-        output.textures_delta.clear();
-        given
-    }
-
-    fn key(key: egui::Key) -> egui::Event {
-        egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::default(),
-        }
-    }
-
-    /// Issue #80: the pseudo's field, in egui itself. Given the focus (a click), it has the
-    /// keyboard (`text_edit_focused`: the game then gets no key, `admin::KeyboardCapture`);
-    /// typed, it keeps what the HUD's font writes (the emoji is left out, 12 characters at most)
-    /// and gives the cleaned pseudo; emptied, no pseudo (the character's name); Entrée gives the
-    /// keyboard back to the game.
-    #[test]
-    fn the_pseudo_field_keeps_what_the_hud_writes() {
-        let ctx = egui::Context::default();
-        let mut text = String::new();
-        assert_eq!(field_pass(&ctx, &mut text, vec![]), None);
-        assert!(!ctx.text_edit_focused(), "nobody typing yet");
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(PSEUDO_FIELD)));
-        assert_eq!(field_pass(&ctx, &mut text, vec![]), None);
-        assert!(ctx.text_edit_focused(), "the field has the keyboard");
-
-        let typed = egui::Event::Text("Zoé😀 42".into());
-        assert_eq!(
-            field_pass(&ctx, &mut text, vec![typed]),
-            Some(Some("Zoé 42".into()))
-        );
-        assert_eq!(text, "Zoé 42");
-        // A space at the end stays in the field while one types (not in the pseudo).
-        let space = egui::Event::Text(" ".into());
-        assert_eq!(
-            field_pass(&ctx, &mut text, vec![space]),
-            Some(Some("Zoé 42".into()))
-        );
-        assert_eq!(text, "Zoé 42 ");
-        let more = egui::Event::Text("abcdefghij".into());
-        assert_eq!(
-            field_pass(&ctx, &mut text, vec![more]),
-            Some(Some("Zoé 42 abcde".into())),
-            "12 characters at most"
-        );
-        assert_eq!(text.chars().count(), PSEUDO_MAX_CHARS);
-        let erase = vec![key(egui::Key::Backspace); 20];
-        assert_eq!(field_pass(&ctx, &mut text, erase), Some(None));
-        assert!(text.is_empty());
-        assert!(ctx.text_edit_focused());
-        field_pass(&ctx, &mut text, vec![key(egui::Key::Enter)]);
-        assert!(
-            !ctx.text_edit_focused(),
-            "Entrée: the game has the keys again"
-        );
-    }
 
     /// Natively, the invitation is the command line (no page address).
     #[test]

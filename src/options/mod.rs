@@ -286,7 +286,7 @@ pub fn controls(layout: KeyboardLayout) -> [(&'static str, String); 13] {
             "Menu principal (pause en solo)",
             "Échap ; manette : Start".to_string(),
         ),
-        ("Pilote et kart", "G".to_string()),
+        ("Pilote (pseudo, animal, kart, couleur)", "G".to_string()),
         (
             "Nouvelle course (circuit, Grand Prix, contre-la-montre, classe, miroir)",
             "N".to_string(),

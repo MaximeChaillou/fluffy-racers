@@ -114,7 +114,7 @@ Quand un champ de texte a le clavier (ceux du panneau d'admin, et depuis #80 le 
   - `anim.rs` : les ressorts amortis, en logique pure ;
   - `nav.rs` : les entrées de l'accueil et du menu en course, le focus et le stick ;
   - `trailer.rs` (#89) : la caméra de bande-annonce de l'accueil, en logique pure ; `showcase.rs` : le fond de l'accueil.
-- **`bevy_ui`, pas egui**, pour les écrans de jeu. egui reste pour le panneau d'admin et, en attendant leurs issues (#98 à #101), pour les fenêtres actuelles (G, O, L, N).
+- **`bevy_ui`, pas egui**, pour les écrans de jeu. egui reste pour le panneau d'admin et, en attendant leurs issues (#99 à #101), pour les fenêtres actuelles (O, L, N).
 - **Coût** :
   - un écran est un arbre de nœuds créé à son ouverture et détruit à sa fermeture : rien n'en reste, observateurs compris ;
   - ses systèmes d'animation ne tournent que s'il est ouvert ;
@@ -128,6 +128,12 @@ Quand un champ de texte a le clavier (ceux du panneau d'admin, et depuis #80 le 
   - il lit leur état (`OptionsMenu`, `SelectionScreen`, `RaceMenu`, `LobbyWindow`) ;
   - il les ouvre par leurs actions habituelles ;
   - en fin d'image (`follow_the_screens`), il voit si l'écran qu'il a ouvert s'est refermé sans `LoadLevel` ; et si l'on vient de quitter une room (l'accueil revient).
+- **L'écran Pilote** (#98) : son état et ses touches sont ceux de `characters::SelectionScreen` (headless, testés : les lignes, dont celle du pseudo, `selection_action`, ce que garde Entrée) ; sa vue est dans `src/menu/` (`pilot.rs` : la logique pure, ses textes, la grille, la boucle molle du pilote, la caméra de l'aperçu ; `pilot_screen.rs` : l'arbre, la souris, la manette, le champ du pseudo ; `preview.rs` : la 3D), dans `PilotPlugin`, ajouté avec un rendu seulement (par `GamePlugin`, ou par `MainMenuPlugin` dans les tests) :
+  - **rien avant sa première ouverture** : ses Resources (`PilotUi`, `Portraits`) arrivent avec elle, aucun observateur global (les calques se posent par un système, `spread_the_layers`) : le monde du fond de l'accueil, que ses tests mesurent, est celui d'avant ;
+  - **l'aperçu** : une caméra (`RenderTarget::Image`, montrée par un `ViewportNode`) filme un vrai visuel de kart (`spawn_kart_visual_with_driver`) sur un corps à lui (`PreviewBody` : `KartPaint`, `KartEnvironment` pour l'aile ; aucune physique, pas de `Kart`), habillé par les systèmes du jeu ; à 3 km sous les circuits, sur le calque `PREVIEW_LAYER`, avec sa lumière sans ombre et son `AmbientLight`. Un autre choix : un autre visuel, à la même image. Le jeu en pause derrière (solo), l'aile s'ouvre quand même (sur le temps réel) ;
+  - **les portraits** : neuf animaux immobiles (`characters::spawn_animal_still`), une caméra orthographique, une image de 3 × 3 cases, rendue quelques images puis plus jamais (`Portraits`, `PortraitState`) ;
+  - **le champ du pseudo** : `EditableText` de Bevy (`TextInput`, `EditableTextFilter`, `max_characters`) ; `InputFocus` accordé à `SelectionScreen::typing` (`follow_the_field`), et `admin::KeyboardCapture` tant qu'il a le clavier ; chaque changement est `NetSettings::pseudo` (le `Hello` en ligne), gardé dans le navigateur (`PilotStorage`, le jeu seulement) ;
+  - **fermé, rien ne reste** : l'arbre, ses observateurs, la caméra, la lumière, le kart et l'image de l'aperçu (la feuille des portraits reste).
 - **Le fond de l'accueil** (#89, `menu::showcase`) est **la vraie simulation** : un niveau comme un autre, une course de bots sur le circuit du moment. Ce qui le distingue d'une course, tout dans le plugin du menu (donc rien dans le monde headless des courses de bots) :
   - il est demandé par un `LoadLevel` dont il garde l'id (`MessageId`) : avant la construction du niveau (`PreUpdate`, avant `LevelSystems`), si le dernier `LoadLevel` de l'image est le sien, son niveau se construit ; sinon, il s'en va avec l'ancien niveau. Tout autre niveau (une course lancée depuis l'accueil, « Relancer », une room) le remplace donc, sans rien laisser ;
   - **peu de karts** : `RaceGrid::bots` vaut les siens le temps qu'ils apparaissent, puis la grille du joueur est rendue (le menu de course, le Grand Prix et le réseau la lisent ensuite comme avant). Le kart du joueur devient un bot (`bots::bot`), comme dans les courses de bots des tests ;

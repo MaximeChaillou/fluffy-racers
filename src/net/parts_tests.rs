@@ -92,10 +92,19 @@ fn the_other_players_and_the_bots_show_the_same_parts_on_every_screen() {
 
     // A race with 4 bots: the host's bots and those the guest shows wear the same parts.
     let start = start_race(&mut room, ANA, 4, 1);
-    room.until(3.0, "the bots shown", |app| {
+    let bob_slot = start.slot_of(BOB).unwrap();
+    let ana_slot = start.slot_of(ANA).unwrap();
+    // Issue #98: every kart shown before it is looked at: the host's bots on the guest's screen,
+    // and each player's race kart on the other's (under load, the host could be checked before
+    // the first state of the guest's new kart came: it once failed in a full `cargo test`).
+    room.until(3.0, "the bots and the players shown", |app| {
         let sync = app.world().resource::<KartSync>();
-        lobby(app).is_host()
-            || (0..4).all(|kart| sync.remote_kart(kart).is_some_and(|r| r.proxy.is_some()))
+        let shown = |kart| sync.remote_kart(kart).is_some_and(|r| r.proxy.is_some());
+        if lobby(app).is_host() {
+            shown(bob_slot)
+        } else {
+            (0..4).all(shown) && shown(ana_slot)
+        }
     });
     room.frame();
     let host = room.app(ANA);
@@ -126,8 +135,6 @@ fn the_other_players_and_the_bots_show_the_same_parts_on_every_screen() {
         "{on_host:?}"
     );
     // The players keep their parts in the race, on both screens.
-    let bob_slot = start.slot_of(BOB).unwrap();
-    let ana_slot = start.slot_of(ANA).unwrap();
     assert_eq!(remote_looks(room.app(ANA), bob_slot), Some(bob_looks));
     assert_eq!(own_looks(room.app(BOB)), Some(bob_looks));
     assert_eq!(

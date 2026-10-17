@@ -56,7 +56,7 @@ pub mod palette {
     pub const MENTHE: Color = hex(0x36C98B);
     /// « Options ». #9B6BE8.
     pub const PRUNE: Color = hex(0x9B6BE8);
-    /// « Pilote et kart ». #F08A3C.
+    /// « Pilote ». #F08A3C.
     pub const CAROTTE: Color = hex(0xF08A3C);
     /// A disabled button. #E6E0F0.
     pub const BRUME: Color = hex(0xE6E0F0);
@@ -119,6 +119,46 @@ pub mod size {
     /// the karts on the right are seen as they are.
     pub const HOME_VEIL_FULL: f32 = 640.0;
     pub const HOME_VEIL_END: f32 = 1000.0;
+
+    /// Issue #98: the « Pilote » screen. Its title (smaller than the menu's: the panel is tall)...
+    pub const PILOT_TITLE: f32 = 48.0;
+    /// ...its panel (wider than the menu's, the charter's 720 to 900 px), the gap between its two
+    /// columns, the left one's width (the preview, the stats, the buttons)...
+    pub const PILOT_WIDTH: f32 = 900.0;
+    pub const PILOT_GAP: f32 = 20.0;
+    pub const PILOT_LEFT: f32 = 380.0;
+    /// ...the preview's frame (its height: `pilot::PREVIEW_SIZE`)...
+    pub const PREVIEW_RADIUS: f32 = 28.0;
+    /// ...a line of choices: a pill with a depth, its label and value, the gap between two...
+    pub const LINE_HEIGHT: f32 = 46.0;
+    pub const LINE_DEPTH: f32 = 5.0;
+    pub const LINE_TEXT: f32 = 21.0;
+    pub const LINE_GAP: f32 = 8.0;
+    pub const LINE_LABEL_WIDTH: f32 = 112.0;
+    /// ...the round buttons « < » and « > » of a line...
+    pub const ARROW: f32 = 34.0;
+    /// ...the character grid: a portrait, its name under it, a cell's width, the gap between two
+    /// lines of the grid, the width of a line's weight class...
+    pub const PORTRAIT: f32 = 52.0;
+    pub const PORTRAIT_NAME: f32 = 14.0;
+    pub const PORTRAIT_CELL: f32 = 96.0;
+    pub const GRID_GAP: f32 = 4.0;
+    pub const CLASS_WIDTH: f32 = 72.0;
+    /// ...a color's swatch and the gap between two...
+    pub const SWATCH: f32 = 22.0;
+    pub const SWATCH_GAP: f32 = 4.0;
+    /// ...a stat's line: its text, its height, its bar's height, its label's and value's widths...
+    pub const STAT_TEXT: f32 = 15.0;
+    pub const STAT_LINE: f32 = 20.0;
+    pub const STAT_BAR: f32 = 10.0;
+    pub const STAT_LABEL_WIDTH: f32 = 112.0;
+    pub const STAT_VALUE_WIDTH: f32 = 44.0;
+    /// ...the table of the terrains: its labels' width, and the least width of its last column
+    /// (« Anti-gravité » on one line)...
+    pub const TERRAIN_LABEL_WIDTH: f32 = 84.0;
+    pub const TERRAIN_WIDE: f32 = 88.0;
+    /// ...and its two buttons (« Valider », « Retour »).
+    pub const PILOT_BUTTON_HEIGHT: f32 = 56.0;
 }
 
 /// What a button shows (`docs/UI_CHARTE.md` « Boutons »). The pointer over a button gives it the

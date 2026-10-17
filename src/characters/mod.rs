@@ -19,16 +19,23 @@
 //!   (`kart::KartColor`), pink until it chooses. Kept between sessions like the options
 //!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
 //!   players of the same color: the first seat keeps it (`net`).
-//! - **Selection screen** ([`SelectionScreen`]): character, kart, wheels and wing, with the stat
-//!   bars `(level + 3) / 4`, then the color. It opens from the main menu (« Pilote et kart »,
-//!   issue #56), when the game starts with a room in its address (with a renderer: not in the
-//!   headless tests) and with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a
-//!   Mac). Arrows (or the player's layout's letters: Z/S and Q/D in AZERTY, W/S and A/D in
-//!   QWERTY, issue #17) move through it, **Entrée** races with the choice (the level is rebuilt
-//!   by `LoadLevel`), **Échap** or G closes it unchanged. While it is open the game is paused (as
-//!   while the options menu of issue #17 is: `crate::options`, which takes the keys while open).
-//!   Its egui interface (`ui.rs`) only exists with a renderer; the keys and the actions
-//!   ([`SelectionAction`]) are headless and tested.
+//! - **Selection screen** ([`SelectionScreen`]): the « Pilote » screen (issue #98, drawn by
+//!   `menu::pilot` with `bevy_ui`): the pseudo, the character, the kart, the wheels, the wing and
+//!   the color, the kart seen from 3/4 front with its stat bars `(level + 3) / 4`. It opens from
+//!   the home screen and the menu opened from the game (« Pilote », issues #56 and #89), when the
+//!   game starts with a room in its address (with a renderer: not in the headless tests) and
+//!   with **G** (« garage »: same letter and place in AZERTY and QWERTY, no Fn on a Mac). Its
+//!   logic is here, headless and tested: up and down (or the player's layout's letters: Z/S in
+//!   AZERTY, W/S in QWERTY, issue #17) go through its lines, around ([`SelectionScreen::row`]:
+//!   the pseudo's line is above the character's), left and right (Q/D or A/D) change the line's
+//!   choice ([`selection_action`]), **Entrée** keeps the choice (on the pseudo's line: types in
+//!   it), **Échap** or G closes it unchanged. Kept: from the game in solo, the race starts over
+//!   with it (the level is rebuilt by `LoadLevel`); from the home screen, back to it (issue
+//!   #98); online, for the next race (the others see it at once). While it is open the game is
+//!   paused (as while the options menu of issue #17 is: `crate::options`, which takes the keys
+//!   while open); online and on the home screen, never. Its view, its 3D preview, the mouse and
+//!   the gamepad are `menu::pilot`'s (with a renderer only); the keys and the actions
+//!   ([`SelectionAction`]) are headless.
 
 mod animation;
 mod model;
@@ -52,6 +59,7 @@ pub use roster::{
 pub use ui::CharacterUiPlugin;
 pub use visual::{
     AnimalRoot, AnimalSlot, AnimalVisual, AnimalVisualPlugin, Animals, DriverDressed,
+    spawn_animal_still,
 };
 pub use wobble::{
     LayerPivot, SpringTuning, WobbleInput, WobbleLevers, WobblePose, WobbleState, WobbleTuning,
@@ -112,9 +120,10 @@ impl DriverLooks {
     }
 }
 
-/// The selection screen: whether it is open, the line being changed (0 = character, 1 = kart,
-/// 2 = wheels, 3 = wing, 4 = color) and the parts and color chosen on it (applied by
-/// « Course ! »).
+/// The selection screen (issue #98: the « Pilote » screen): whether it is open, the line being
+/// changed (0 = character, 1 = kart, 2 = wheels, 3 = wing, 4 = color, 5 = pseudo: shown above the
+/// character's, the lines go around), the parts and color chosen on it (kept by
+/// [`SelectionAction::Confirm`]), and whether the pseudo's field has the keyboard.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SelectionScreen {
     pub open: bool,
@@ -122,33 +131,53 @@ pub struct SelectionScreen {
     pub choice: Loadout,
     /// Issue #55.
     pub color: KartColor,
+    /// Issue #98: the pseudo's field has the keyboard (Entrée on its line, a click in it): the
+    /// game sees no key (`admin::KeyboardCapture`) until Entrée, Échap or a click elsewhere.
+    pub typing: bool,
 }
 
 impl SelectionScreen {
     /// The color's line (issue #55), after the parts.
     pub const COLOR_ROW: usize = PartKind::ALL.len();
+    /// Issue #98: the pseudo's line, last: on screen above the character's (the lines go around).
+    pub const PSEUDO_ROW: usize = Self::COLOR_ROW + 1;
     /// Lines of the screen.
-    pub const ROWS: usize = Self::COLOR_ROW + 1;
+    pub const ROWS: usize = Self::PSEUDO_ROW + 1;
+    /// Issue #98: the lines from the top of the screen down.
+    pub const SHOWN: [usize; Self::ROWS] = [Self::PSEUDO_ROW, 0, 1, 2, 3, Self::COLOR_ROW];
 
-    /// The part of the line being changed (the wing's on the color's line: see
-    /// [`SelectionScreen::on_color_row`]).
+    /// The part of the line being changed (the wing's on the color's and the pseudo's lines: see
+    /// [`SelectionScreen::on_color_row`], [`SelectionScreen::on_pseudo_row`]).
     pub fn kind(&self) -> PartKind {
         PartKind::ALL[self.row.min(PartKind::ALL.len() - 1)]
+    }
+
+    /// The part of the line being changed, if it is a part's.
+    pub fn part(&self) -> Option<PartKind> {
+        PartKind::ALL.get(self.row).copied()
     }
 
     /// The line being changed is the color's.
     pub fn on_color_row(&self) -> bool {
         self.row == Self::COLOR_ROW
     }
+
+    /// Issue #98: the line being changed is the pseudo's.
+    pub fn on_pseudo_row(&self) -> bool {
+        self.row == Self::PSEUDO_ROW
+    }
 }
 
-/// What the player does on the selection screen, from the keyboard or from the egui buttons.
+/// What the player does on the selection screen, from the keyboard, the gamepad or the mouse
+/// (`menu::pilot`).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionAction {
     /// Opens it on the current loadout.
     Open,
     /// Moves to the line above (-1) or below (+1).
     Row(i32),
+    /// Issue #98: this line has the focus (the pointer over it).
+    Focus(usize),
     /// Picks the previous (-1) or next (+1) entry of a part.
     Change(PartKind, i32),
     /// Picks this entry of a part.
@@ -157,10 +186,54 @@ pub enum SelectionAction {
     Color(i32),
     /// Picks this color.
     PickColor(KartColor),
-    /// « Course ! »: the choice becomes the player's loadout and the race starts over with it.
+    /// Issue #98: the pseudo's field takes the keyboard...
+    Type,
+    /// ...and gives it back.
+    Typed,
+    /// Keeps the choice: it becomes the player's loadout and color (the race starts over with it
+    /// from the game in solo).
     Confirm,
     /// Closes it, the loadout unchanged.
     Cancel,
+}
+
+/// Issue #98: what the player asks the selection screen, whatever the device (the keys, the
+/// gamepad's cross and stick, A, B).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionInput {
+    Up,
+    Down,
+    Left,
+    Right,
+    Confirm,
+    Back,
+}
+
+/// What `input` does on `screen` (issue #98): up and down go through the lines, left and right
+/// change the choice of the line (nothing on the pseudo's: it is typed), Entrée keeps the choice
+/// (on the pseudo's line: types in it), Échap leaves.
+pub fn selection_action(
+    screen: &SelectionScreen,
+    input: SelectionInput,
+) -> Option<SelectionAction> {
+    let change = |step| {
+        if screen.on_pseudo_row() {
+            None
+        } else if screen.on_color_row() {
+            Some(SelectionAction::Color(step))
+        } else {
+            Some(SelectionAction::Change(screen.kind(), step))
+        }
+    };
+    match input {
+        SelectionInput::Up => Some(SelectionAction::Row(-1)),
+        SelectionInput::Down => Some(SelectionAction::Row(1)),
+        SelectionInput::Left => change(-1),
+        SelectionInput::Right => change(1),
+        SelectionInput::Confirm if screen.on_pseudo_row() => Some(SelectionAction::Type),
+        SelectionInput::Confirm => Some(SelectionAction::Confirm),
+        SelectionInput::Back => Some(SelectionAction::Cancel),
+    }
 }
 
 pub struct CharacterPlugin;
@@ -241,41 +314,40 @@ fn selection_keys(
         }
         return;
     }
-    let kind = screen.kind();
-    let change = |step| {
-        if screen.on_color_row() {
-            SelectionAction::Color(step)
-        } else {
-            SelectionAction::Change(kind, step)
-        }
-    };
     let pressed = |set: &[KeyCode]| keys.any_just_pressed(set.iter().copied());
-    if pressed(&CONFIRM_KEYS) {
-        actions.write(SelectionAction::Confirm);
+    let input = if pressed(&CONFIRM_KEYS) {
+        SelectionInput::Confirm
     } else if pressed(&CANCEL_KEYS) {
-        actions.write(SelectionAction::Cancel);
+        SelectionInput::Back
     } else if pressed(layout.up_keys()) {
-        actions.write(SelectionAction::Row(-1));
+        SelectionInput::Up
     } else if pressed(layout.down_keys()) {
-        actions.write(SelectionAction::Row(1));
+        SelectionInput::Down
     } else if pressed(layout.left_keys()) {
-        actions.write(change(-1));
+        SelectionInput::Left
     } else if pressed(layout.right_keys()) {
-        actions.write(change(1));
+        SelectionInput::Right
+    } else {
+        return;
+    };
+    if let Some(action) = selection_action(&screen, input) {
+        actions.write(action);
     }
 }
 
-/// Applies the actions of this frame. « Course ! » rebuilds the level (`LoadLevel`) with the new
-/// loadout and color: every kart spawns again, the race starts over from the grid.
+/// Applies the actions of this frame. « Course ! » (Entrée) rebuilds the level (`LoadLevel`) with
+/// the new loadout and color: every kart spawns again, the race starts over from the grid. Issue
+/// #98: not from the home screen (its background races on; the screen goes back to it), nor
+/// online in a race (the next one has it).
 #[allow(clippy::too_many_arguments)]
-fn apply_selection_actions(
+pub fn apply_selection_actions(
     mut actions: MessageReader<SelectionAction>,
     roster: Res<Roster>,
     mode: Res<RaceMode>,
     mut screen: ResMut<SelectionScreen>,
     mut loadout: ResMut<PlayerLoadout>,
     mut color: ResMut<PlayerColor>,
-    online: Option<Res<Online>>,
+    (online, main_menu): (Option<Res<Online>>, Option<Res<MainMenu>>),
     mut levels: MessageWriter<LoadLevel>,
 ) {
     for action in actions.read() {
@@ -286,12 +358,19 @@ fn apply_selection_actions(
                     row: 0,
                     choice: loadout.0,
                     color: color.0,
+                    typing: false,
                 };
             }
             _ if !screen.open => {}
             SelectionAction::Row(step) => {
                 let rows = SelectionScreen::ROWS as i32;
                 screen.row = (screen.row as i32 + step).rem_euclid(rows) as usize;
+            }
+            SelectionAction::Focus(row) => {
+                // The pointer passing over a line does not take the keyboard from the field.
+                if row < SelectionScreen::ROWS && !screen.typing {
+                    screen.row = row;
+                }
             }
             SelectionAction::Color(step) => {
                 screen.color = screen.color.cycled(step);
@@ -311,18 +390,29 @@ fn apply_selection_actions(
                     screen.row = kind.index();
                 }
             }
+            SelectionAction::Type => {
+                screen.typing = true;
+                screen.row = SelectionScreen::PSEUDO_ROW;
+            }
+            SelectionAction::Typed => screen.typing = false,
             SelectionAction::Confirm => {
                 loadout.set_if_neq(PlayerLoadout(screen.choice));
                 color.set_if_neq(PlayerColor(screen.color));
                 screen.open = false;
+                screen.typing = false;
                 // Online (issue #9), the race goes on: the new kart comes with the next level
                 // (the others already see it in the lobby), the new color at once (issue #55,
-                // the same on every screen). Free driving restarts at once.
-                if online.is_none() || *mode == RaceMode::FreeRoam {
+                // the same on every screen). Free driving restarts at once. Issue #98: on the home
+                // screen, its background races on.
+                let home = main_menu.as_ref().is_some_and(|menu| menu.on_home());
+                if !home && (online.is_none() || *mode == RaceMode::FreeRoam) {
                     levels.write(LoadLevel::restart(*mode));
                 }
             }
-            SelectionAction::Cancel => screen.open = false,
+            SelectionAction::Cancel => {
+                screen.open = false;
+                screen.typing = false;
+            }
         }
     }
 }

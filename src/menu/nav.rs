@@ -16,7 +16,7 @@ pub enum Entry {
     Online,
     /// « Options »: the options menu of issue #17 (O).
     Options,
-    /// « Pilote »: the selection screen of issue #15 (G). Its own screen comes with issue #98.
+    /// « Pilote »: the screen of the pilot and its kart (issue #98; issue #15's selection, G).
     Garage,
     /// Issue #89: « Quitter », back to the home screen (only from the game; online, out of the
     /// room too).
@@ -43,7 +43,7 @@ impl Entry {
             Entry::Solo => "Course libre, Grand Prix ou contre-la-montre",
             Entry::Online => "Créer ou rejoindre une partie entre amis",
             Entry::Options => "Clavier, noms au-dessus des karts",
-            Entry::Garage => "Ton animal, ton kart, tes roues, ton aile",
+            Entry::Garage => "Ton pseudo, ton animal, ton kart, tes pièces",
             Entry::Quit => "Retour à l'accueil",
         }
     }

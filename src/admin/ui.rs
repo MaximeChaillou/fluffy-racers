@@ -216,10 +216,10 @@ fn open_if_asked(mut panel: ResMut<AdminPanel>) {
 
 /// Puts the egui context on the game's camera when the panel opens, removes it (with every egui
 /// component and the font texture) when it closes. Closing also gives the game back its normal
-/// speed and the keyboard. The selection screen of issue #15 (`characters`), the options menu
-/// of issue #17 (`options`) and the lobby of issue #7 (`net`) are egui too: the context stays
-/// while any of them is open, and the game stays paused while the selection screen or the
-/// options menu is (not the lobby).
+/// speed and the keyboard. The options menu of issue #17 (`options`), the race menu of issue #19
+/// and the lobby of issue #7 (`net`) are egui too: the context stays while any of them is open,
+/// and the game stays paused while the options menu, the race menu or (issue #98: `bevy_ui`, no
+/// egui) the « Pilote » screen is (not the lobby).
 pub(super) fn attach_egui_context(
     panel: Res<AdminPanel>,
     selection: Option<Res<SelectionScreen>>,
@@ -235,11 +235,14 @@ pub(super) fn attach_egui_context(
     mut state: Option<ResMut<PanelState>>,
     mut time: Option<ResMut<Time<Virtual>>>,
 ) {
-    let choosing = selection.is_some_and(|screen| screen.open)
-        || options.is_some_and(|menu| menu.open)
-        || race_menu.is_some_and(|menu| menu.open);
+    let egui_screens =
+        options.is_some_and(|menu| menu.open) || race_menu.is_some_and(|menu| menu.open);
+    let pilot = selection.as_deref().is_some_and(|screen| screen.open);
+    let typing = pilot_typing(selection.as_deref());
+    let choosing = egui_screens || pilot;
     // Issue #64: the room's banner too (`LobbyWindow::banner`: in a room, out of a race).
-    let wanted = panel.open || choosing || lobby.is_some_and(|window| window.open || window.banner);
+    let wanted =
+        panel.open || egui_screens || lobby.is_some_and(|window| window.open || window.banner);
     for (camera, attached) in &cameras {
         if wanted && !attached {
             commands.entity(camera).insert(PrimaryEguiContext);
@@ -260,10 +263,11 @@ pub(super) fn attach_egui_context(
             }
         }
     }
-    // No egui at all: no text field has the keyboard. Otherwise the panel (open) or
-    // `capture_for_text_fields` (closed) says whether one has it.
+    // No egui at all: no egui text field has the keyboard (issue #98: the « Pilote » screen's
+    // may). Otherwise the panel (open) or `capture_for_text_fields` (closed) says whether one has
+    // it.
     if !wanted {
-        capture.set_if_neq(KeyboardCapture(false));
+        capture.set_if_neq(KeyboardCapture(typing));
     }
     if !panel.open {
         if let Some(state) = state.as_mut() {
@@ -309,8 +313,7 @@ fn browser_keys_while_typing() {}
 /// No widget keeps the keyboard focus but a text field: buttons, sliders, check boxes and lists
 /// would otherwise be clicked or moved by the game's keys (the arrows, Espace, Entrée). Every egui
 /// window calls it at the start of its pass. A text field keeps it, even one of another window
-/// (issue #80: the lobby's pseudo, typed while the selection screen is open): the game then sees
-/// no key ([`KeyboardCapture`]).
+/// (the panel's): the game then sees no key ([`KeyboardCapture`]).
 pub fn keep_focus_for_text_only(ctx: &egui::Context) {
     if let Some(focused) = ctx.memory(|m| m.focused())
         && !ctx.text_edit_focused()
@@ -319,12 +322,22 @@ pub fn keep_focus_for_text_only(ctx: &egui::Context) {
     }
 }
 
+/// Issue #98: the « Pilote » screen's pseudo field (`bevy_ui`, `menu::pilot`) has the keyboard.
+fn pilot_typing(selection: Option<&SelectionScreen>) -> bool {
+    selection.is_some_and(|screen| screen.open && screen.typing)
+}
+
 /// Issue #80: while the panel is closed (open, it decides: its fields and its lists), a text
-/// field of any other window (the lobby's pseudo) takes the keyboard the same way: the game sees
-/// no key while one is typed in. After egui's pass: its focus as the frame leaves it. No egui
-/// context (no window open): no field.
-fn capture_for_text_fields(mut contexts: EguiContexts, mut capture: ResMut<KeyboardCapture>) {
-    let typing = contexts.ctx_mut().is_ok_and(|ctx| ctx.text_edit_focused());
+/// field of any other window takes the keyboard the same way: the game sees no key while one is
+/// typed in. After egui's pass: its focus as the frame leaves it. No egui context (no window
+/// open): no egui field. Issue #98: nor while the « Pilote » screen's field has it.
+fn capture_for_text_fields(
+    mut contexts: EguiContexts,
+    selection: Option<Res<SelectionScreen>>,
+    mut capture: ResMut<KeyboardCapture>,
+) {
+    let typing = contexts.ctx_mut().is_ok_and(|ctx| ctx.text_edit_focused())
+        || pilot_typing(selection.as_deref());
     capture.set_if_neq(KeyboardCapture(typing));
 }
 
@@ -403,7 +416,9 @@ fn panel(world: &mut World) {
             draw(&ctx, world, &mut state, &tunings);
         });
     });
-    let capture = ctx.text_edit_focused() || ctx.any_popup_open();
+    let capture = ctx.text_edit_focused()
+        || ctx.any_popup_open()
+        || pilot_typing(world.get_resource::<SelectionScreen>());
     world
         .resource_mut::<KeyboardCapture>()
         .set_if_neq(KeyboardCapture(capture));
@@ -778,7 +793,7 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
                 format!("{:5.1} km/h  (×{:.3})", kmh(top), scale.0),
             );
             if let Some(loadout) = &loadout {
-                row("Pilote et kart", loadout.clone());
+                row("Pilote", loadout.clone());
             }
             row(
                 "Stats (niveaux)",
