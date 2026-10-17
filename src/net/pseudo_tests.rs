@@ -75,9 +75,10 @@ fn pair(name: &str, text: &str) -> (String, String) {
 
 /// Issue #80 acceptance (in memory, a star of three): every game tags the other players' karts
 /// (never the bots'), their pseudos in the HUD's letters. Bob, a client, types a new pseudo in the
-/// lobby: it reaches the host and, relayed by it, the other client, in the lobby (accents
-/// included), on its tag (without them) and, after the race, on the results screen; a new pseudo
-/// while the results are shown changes them at once. His kart is renamed where it is, not
+/// lobby: it reaches the host and, relayed by it, the other client, in the lobby, on its tag and,
+/// after the race, on the results screen, its accents included everywhere (issue #100: the HUD
+/// writes in Fredoka; they were dropped on the tag and the results before); a new pseudo while
+/// the results are shown changes them at once. His kart is renamed where it is, not
 /// spawned again.
 #[test]
 fn a_new_pseudo_reaches_everyone_in_the_lobby_on_the_results_and_over_the_karts() {
@@ -113,12 +114,12 @@ fn a_new_pseudo_reaches_everyone_in_the_lobby_on_the_results_and_over_the_karts(
     });
     // Bob has no tag of his own.
     room.until(1.0, "Bob's new pseudo over his kart", |app| {
-        lobby(app).me() == BOB || tags(app).contains(&pair("Éloïse 2", "Eloise 2"))
+        lobby(app).me() == BOB || tags(app).contains(&pair("Éloïse 2", "Éloïse 2"))
     });
     for (key, other) in [(ANA, "Cyd"), (CYD, "Ana")] {
         assert_eq!(
             tags(room.view(key)),
-            [pair(other, other), pair("Éloïse 2", "Eloise 2")],
+            [pair(other, other), pair("Éloïse 2", "Éloïse 2")],
             "{key:?}"
         );
     }
@@ -137,7 +138,7 @@ fn a_new_pseudo_reaches_everyone_in_the_lobby_on_the_results_and_over_the_karts(
     for key in [ANA, CYD] {
         let names = results_names(room.app(key));
         assert!(
-            names.contains(&"Eloise 2".to_string()),
+            names.contains(&"Éloïse 2".to_string()),
             "{key:?}: {names:?}"
         );
         assert!(!names.iter().any(|name| name.contains("Bob")), "{names:?}");
@@ -161,13 +162,13 @@ fn a_new_pseudo_reaches_everyone_in_the_lobby_on_the_results_and_over_the_karts(
     }
     for key in [ANA, CYD] {
         let names = results_names(room.app(key));
-        assert!(names.contains(&"Zoe".to_string()), "{key:?}: {names:?}");
+        assert!(names.contains(&"Zoé".to_string()), "{key:?}: {names:?}");
         assert!(
-            !names.iter().any(|name| name.contains("Eloise")),
+            !names.iter().any(|name| name.contains("Éloïse")),
             "{names:?}"
         );
         assert!(
-            tags(room.view(key)).contains(&pair("Zoé", "Zoe")),
+            tags(room.view(key)).contains(&pair("Zoé", "Zoé")),
             "{key:?}"
         );
     }

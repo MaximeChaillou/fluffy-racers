@@ -1,6 +1,7 @@
-//! The entries of the home screen and of the menu opened from the game (issues #56 and #89), and
-//! their navigation, pure: what each entry is, which entries a menu has, how the focus moves
-//! (around, over the disabled entries), and the gamepad's stick turned into single steps.
+//! The entries of the home screen and of the menu opened from the game (issues #56 and #89; issue
+//! #100: the pause), and their navigation, pure: what each entry is, which entries a menu has, how
+//! the focus moves (around, over the disabled entries), and the gamepad's stick turned into single
+//! steps.
 
 use crate::kart::KeyboardLayout;
 
@@ -9,6 +10,10 @@ use crate::kart::KeyboardLayout;
 pub enum Entry {
     /// Back to the race (only when the menu was opened from the game).
     Resume,
+    /// Issue #100: « Recommencer »: the race again, from its grid (the level rebuilt, as « Relancer »
+    /// in the admin panel; in a championship, its points taken back). Only from the game, not
+    /// online (the host starts the races).
+    Restart,
     /// « Jouer solo » (issue #99, N): the championship (a cup or a custom one), the time trial
     /// (issue #76) or a circuit alone, with the mirror, the bots and the items.
     Solo,
@@ -27,6 +32,7 @@ impl Entry {
     pub fn label(self) -> &'static str {
         match self {
             Entry::Resume => "Reprendre",
+            Entry::Restart => "Recommencer",
             Entry::Solo => "Jouer solo",
             Entry::Online => "Multijoueur",
             Entry::Options => "Options",
@@ -39,18 +45,21 @@ impl Entry {
     pub fn caption(self) -> &'static str {
         match self {
             Entry::Resume => "Le kart t'attend, moteur chaud.",
+            Entry::Restart => "Retour sur la grille, chrono à zéro.",
             // Issue #99: its three modes (≤ 48 characters: the test below).
             Entry::Solo => "Championnat, contre-la-montre ou circuit seul",
             Entry::Online => "Créer ou rejoindre une partie entre amis",
-            Entry::Options => "Clavier, noms au-dessus des karts",
+            Entry::Options => "Clavier, noms des joueurs, commandes",
             Entry::Garage => "Ton pseudo, ton animal, ton kart, tes pièces",
             Entry::Quit => "Retour à l'accueil",
         }
     }
 
-    /// The small line online, when it says something else: « Quitter » leaves the room too.
+    /// The small line online, when it says something else: « Quitter » leaves the room too; issue
+    /// #100: nothing waits online (Max's decision, issue #9), the kart rolls on.
     pub fn caption_online(self) -> &'static str {
         match self {
+            Entry::Resume => "Ton kart roule tout seul : file !",
             Entry::Quit => "Retour à l'accueil : tu quittes la partie.",
             _ => self.caption(),
         }
@@ -60,6 +69,7 @@ impl Entry {
     pub fn why_disabled(self) -> &'static str {
         match self {
             Entry::Solo => "En ligne, c'est l'hôte qui choisit la course.",
+            Entry::Restart => "En ligne, c'est l'hôte qui lance la course.",
             _ => "",
         }
     }
@@ -67,7 +77,7 @@ impl Entry {
     /// The shortcut that opens the same screen during the game, shown in the options' list.
     pub fn shortcut(self) -> Option<&'static str> {
         match self {
-            Entry::Resume | Entry::Quit => None,
+            Entry::Resume | Entry::Restart | Entry::Quit => None,
             Entry::Solo => Some("N"),
             Entry::Online => Some("L"),
             Entry::Options => Some("O"),
@@ -78,16 +88,10 @@ impl Entry {
 
 /// The entries of the home screen (issue #89), in this order: what to play first.
 pub const LAUNCH_ENTRIES: [Entry; 4] = [Entry::Solo, Entry::Online, Entry::Options, Entry::Garage];
-/// The entries of the menu opened from the game (Échap, Start): « Reprendre » first, the home's
-/// entries, then « Quitter » (back to the home screen).
-pub const GAME_ENTRIES: [Entry; 6] = [
-    Entry::Resume,
-    Entry::Solo,
-    Entry::Online,
-    Entry::Options,
-    Entry::Garage,
-    Entry::Quit,
-];
+/// Issue #100: the entries of the menu opened from the game (Échap, Start), the pause screen:
+/// « Reprendre », « Recommencer », « Options », « Quitter » (back to the home screen). The other
+/// screens keep their shortcuts there (N, L, G), and the home has them all.
+pub const GAME_ENTRIES: [Entry; 4] = [Entry::Resume, Entry::Restart, Entry::Options, Entry::Quit];
 
 /// The entries of the home screen, or of the menu opened from the game.
 pub fn entries(in_game: bool) -> &'static [Entry] {
@@ -99,9 +103,15 @@ pub fn entries(in_game: bool) -> &'static [Entry] {
 }
 
 /// Whether `entry` can be used: online, the host chooses the race (the race menu does nothing
-/// there, `modes`).
+/// there, `modes`) and starts it (issue #100: no « Recommencer »).
 pub fn enabled(entry: Entry, online: bool) -> bool {
-    !(entry == Entry::Solo && online)
+    !(online && matches!(entry, Entry::Solo | Entry::Restart))
+}
+
+/// Issue #100: the title of the menu opened from the game: the pause in solo; online, nothing
+/// waits (Max's decision, issue #9).
+pub fn game_title(online: bool) -> &'static str {
+    if online { "Pas de pause !" } else { "Pause" }
 }
 
 /// The first entry that can be used (0 if none can).
@@ -186,18 +196,20 @@ mod tests {
     use super::*;
 
     /// Issue #89: the home screen has its four buttons in this order (Jouer solo, Multijoueur,
-    /// Options, Pilote); the menu opened from the game has « Reprendre » first, the same four,
-    /// then « Quitter » last.
+    /// Options, Pilote). Issue #100: the menu opened from the game is the pause: « Reprendre »
+    /// first, « Recommencer », « Options », then « Quitter » last.
     #[test]
     fn the_menu_has_reprendre_only_from_the_game() {
         assert_eq!(entries(false), &LAUNCH_ENTRIES);
         let labels: Vec<&str> = LAUNCH_ENTRIES.iter().map(|e| e.label()).collect();
         assert_eq!(labels, ["Jouer solo", "Multijoueur", "Options", "Pilote"]);
+        let labels: Vec<&str> = entries(true).iter().map(|e| e.label()).collect();
+        assert_eq!(labels, ["Reprendre", "Recommencer", "Options", "Quitter"]);
         assert_eq!(entries(true)[0], Entry::Resume);
-        assert_eq!(&entries(true)[1..5], &LAUNCH_ENTRIES);
         assert_eq!(entries(true).last(), Some(&Entry::Quit));
         assert!(!LAUNCH_ENTRIES.contains(&Entry::Quit) && !LAUNCH_ENTRIES.contains(&Entry::Resume));
-        for entry in GAME_ENTRIES {
+        assert!(!LAUNCH_ENTRIES.contains(&Entry::Restart));
+        for entry in GAME_ENTRIES.into_iter().chain(LAUNCH_ENTRIES) {
             assert!(!entry.label().is_empty() && !entry.caption().is_empty());
             assert!(
                 entry.label().chars().count() <= 16,
@@ -208,8 +220,12 @@ mod tests {
                 assert!(caption.chars().count() <= 48, "short: {caption}");
             }
         }
-        // Online, « Quitter » says it leaves the room too; the others say the same as solo.
+        // Online, « Quitter » says it leaves the room too, « Reprendre » that nothing waited; the
+        // others say the same as solo.
         assert_ne!(Entry::Quit.caption_online(), Entry::Quit.caption());
+        assert_ne!(Entry::Resume.caption_online(), Entry::Resume.caption());
+        assert_eq!(Entry::Restart.shortcut(), None);
+        assert_ne!(game_title(true), game_title(false));
         assert_eq!(Entry::Options.caption_online(), Entry::Options.caption());
         assert_eq!(Entry::Quit.shortcut(), None);
         // The shortcuts are those of the screens they open.
@@ -236,11 +252,15 @@ mod tests {
         assert_eq!(first_enabled(menu, true), 1);
         assert_eq!(moved(menu, 3, 1, true), 1);
         assert_eq!(moved(menu, 1, -1, true), 3);
+        // Issue #100: online, « Recommencer » is skipped in the pause.
         let game = entries(true);
+        assert!(!enabled(Entry::Restart, true) && enabled(Entry::Restart, false));
         assert_eq!(first_enabled(game, true), 0);
-        assert_eq!(moved(game, 0, 1, true), 2, "over « Course solo »");
+        assert_eq!(moved(game, 0, 1, true), 2, "over « Recommencer »");
         assert_eq!(moved(game, 2, -1, true), 0);
+        assert_eq!(moved(game, 0, 1, false), 1);
         assert!(!Entry::Solo.why_disabled().is_empty());
+        assert!(!Entry::Restart.why_disabled().is_empty());
 
         // Nothing else to go to: it stays.
         assert_eq!(moved(&[Entry::Options], 0, 1, false), 0);

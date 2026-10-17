@@ -50,6 +50,9 @@ use crate::kart::{
     StatEffects, StatsTuning, spawn_kart_visual_with_driver,
 };
 use crate::level::{LevelScoped, Online};
+use crate::menu::MenuAssets;
+use crate::menu::kit;
+use crate::menu::style::palette;
 use crate::net::{KartLook, KartPose, KartSnapshot, LookParts, NetTuning};
 use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceSystems, RaceTuning, Racer};
 use crate::track::{ItemBoxSpot, MirrorMode, TrackChoice};
@@ -645,18 +648,24 @@ struct TrialHudValues {
     laps: [Option<u32>; LAP_LINES],
 }
 
+/// Issue #100: the HUD's colors and font (the charter's: `ui`).
 const TEXT_COLOR: Color = Color::WHITE;
-const GOLD: Color = Color::srgb(1.0, 0.85, 0.25);
-const PANEL_COLOR: Color = Color::srgba(0.08, 0.06, 0.16, 0.6);
+const GOLD: Color = palette::MANGUE;
+const PANEL_COLOR: Color = Color::srgba(0.227, 0.173, 0.431, 0.6);
+const TEXT_SHADOW: Color = Color::srgba(0.141, 0.102, 0.290, 0.85);
 
-fn text(size: f32, color: Color) -> impl Bundle {
+fn text(face: &Handle<Font>, size: f32, color: Color) -> impl Bundle {
     (
         Text::new(""),
-        TextFont::from_font_size(size),
+        TextFont {
+            font: bevy::text::FontSource::from(face),
+            font_size: size.into(),
+            ..default()
+        },
         TextColor(color),
         TextShadow {
-            offset: Vec2::splat(2.0),
-            ..default()
+            offset: Vec2::new(2.0, 3.0),
+            color: TEXT_SHADOW,
         },
     )
 }
@@ -665,6 +674,7 @@ fn text(size: f32, color: Color) -> impl Bundle {
 fn spawn_trial_hud(
     mut commands: Commands,
     course: Option<Res<Course>>,
+    assets: Option<Res<MenuAssets>>,
     huds: Query<(), With<TrialHud>>,
 ) {
     let Some(course) = course else {
@@ -673,6 +683,7 @@ fn spawn_trial_hud(
     if !huds.is_empty() {
         return;
     }
+    let (_, face) = kit::faces(assets.as_deref());
     commands
         .spawn((
             Name::new("Contre-la-montre"),
@@ -696,8 +707,8 @@ fn spawn_trial_hud(
                 ..default()
             })
             .with_children(|top| {
-                top.spawn((TrialText::Record, text(34.0, GOLD)));
-                top.spawn((TrialText::Verdict, text(22.0, TEXT_COLOR)));
+                top.spawn((TrialText::Record, text(&face, 34.0, GOLD)));
+                top.spawn((TrialText::Verdict, text(&face, 22.0, TEXT_COLOR)));
             });
             hud.spawn((
                 Node {
@@ -715,7 +726,7 @@ fn spawn_trial_hud(
             ))
             .with_children(|laps| {
                 for lap in 0..(course.laps as usize).clamp(1, LAP_LINES) {
-                    laps.spawn((TrialText::Lap(lap), text(20.0, TEXT_COLOR)));
+                    laps.spawn((TrialText::Lap(lap), text(&face, 20.0, TEXT_COLOR)));
                 }
             });
         });
@@ -814,7 +825,8 @@ fn update_trial_hud(
                     }
                 }
                 None if values.starting && run.ghost.is_some() => {
-                    out.push_str("LE FANTOME DU RECORD COURT AVEC TOI");
+                    // Issue #100: with its accent (Fredoka).
+                    out.push_str("LE FANTÔME DU RECORD COURT AVEC TOI");
                 }
                 None => {}
             },

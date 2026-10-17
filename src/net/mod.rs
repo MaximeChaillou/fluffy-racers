@@ -147,7 +147,7 @@ pub use ui::NetUiPlugin;
 use bevy::prelude::*;
 
 use crate::bots::BotTuning;
-use crate::characters::{Loadout, PartKind, PlayerColor, PlayerLoadout, Roster};
+use crate::characters::{Loadout, PartKind, PlayerColor, PlayerLoadout, Roster, SelectionScreen};
 use crate::kart::KartColor;
 use crate::options::OptionsMenu;
 use crate::race::RaceTuning;
@@ -155,6 +155,8 @@ use crate::race::RaceTuning;
 /// Opens and closes the lobby window: « L » for « en ligne », a letter at the same place and
 /// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
 pub const LOBBY_KEY: KeyCode = KeyCode::KeyL;
+/// Issue #100: Échap closes the lobby too (the charter's « Revenir »).
+pub const LOBBY_ESCAPE_KEY: KeyCode = KeyCode::Escape;
 
 /// A departing socket gets this long to send its `Bye` before it is dropped (s).
 const DEPARTURE_SECONDS: f64 = 2.0;
@@ -440,14 +442,28 @@ pub fn now_ms(time: &Time<Real>) -> u64 {
     time.elapsed().as_millis() as u64
 }
 
-/// L opens and closes the window; not while the options menu has the keys.
+/// L opens and closes the window; not while the options menu has the keys. Issue #100: Échap
+/// closes it too, like every other screen (back to the screen it was opened from: the home's
+/// `menu::follow_the_screens`), unless a screen over it has the keys (the options, « Pilote »,
+/// which Échap closes first: that frame, or a frame where it closed).
 fn lobby_key(
     keys: Res<ButtonInput<KeyCode>>,
     options: Option<Res<OptionsMenu>>,
+    selection: Option<Res<SelectionScreen>>,
+    window: Res<LobbyWindow>,
     mut actions: MessageWriter<NetAction>,
 ) {
-    if keys.just_pressed(LOBBY_KEY) && !options.is_some_and(|menu| menu.open) {
+    let options_open = options.as_ref().is_some_and(|menu| menu.open);
+    if keys.just_pressed(LOBBY_KEY) && !options_open {
         actions.write(NetAction::Toggle);
+    }
+    let over = options_open
+        || options.as_ref().is_some_and(|menu| menu.is_changed())
+        || selection
+            .as_ref()
+            .is_some_and(|screen| screen.open || screen.is_changed());
+    if window.open && keys.just_pressed(LOBBY_ESCAPE_KEY) && !over {
+        actions.write(NetAction::Close);
     }
 }
 

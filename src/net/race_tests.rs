@@ -571,7 +571,7 @@ fn online_the_results_close_with_the_hosts_table_for_everyone() {
         panic!("{:?}", ana.1);
     };
     assert!(ana.2[row][2].starts_with('~'), "{:?}", ana.2[row]);
-    assert_eq!(ana.2[row][3], "Temps estime");
+    assert_eq!(ana.2[row][3], "Temps estimé");
     for time in &ana.1[..row] {
         assert!(time.ticks().unwrap() <= estimate);
     }

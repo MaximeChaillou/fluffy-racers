@@ -22,6 +22,10 @@ use bevy::text::{FontSource, Justify};
 
 use super::anim;
 use super::nav::StickLatch;
+use super::options_screen::{
+    OptionsAnimate, OptionsGamepad, OptionsRefresh, OptionsRoot, OptionsSync, OptionsUi,
+    options_open_or_shown,
+};
 use super::screen::{MenuAssets, MenuNode};
 use super::solo;
 use super::style::{self, ButtonState, font, palette, size, u};
@@ -224,7 +228,10 @@ pub(super) fn sync_solo_tree(
     (server, tracks): (Option<Res<AssetServer>>, Option<Res<Assets<TrackData>>>),
     trial: Option<Res<TimeTrialState>>,
     cameras: Query<(), With<Camera>>,
+    mut options_screen: OptionsSync,
 ) {
+    // Issue #100: the options screen's step (`super::SoloPlugin`: no system of its own).
+    options_screen.run();
     if !menu.open {
         for (entity, _) in &roots {
             commands.entity(entity).despawn();
@@ -941,14 +948,21 @@ fn spawn_vignette(parent: &mut ChildSpawnerCommands, tree: &Tree, circuit: usize
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_solo_tree(
     menu: Res<RaceMenu>,
-    ui: Res<SoloUi>,
+    ui: Option<Res<SoloUi>>,
     roots: Query<(), Added<SoloRoot>>,
     mut texts: ParamSet<(
         Query<(&SoloValue, &mut Text)>,
         Query<&mut Text, With<SoloHelp>>,
         Query<&mut Text, With<SoloHeader>>,
     )>,
+    mut options_screen: OptionsRefresh,
 ) {
+    // Issue #100: the options screen's step too (`super::SoloPlugin`): this system runs while
+    // either screen is open.
+    options_screen.run();
+    let (Some(ui), true) = (ui, menu.open) else {
+        return;
+    };
     if !menu.is_changed() && roots.is_empty() {
         return;
     }
@@ -979,7 +993,7 @@ pub(super) fn refresh_solo_tree(
 #[allow(clippy::type_complexity)]
 pub(super) fn animate_solo_tree(
     menu: Res<RaceMenu>,
-    mut ui: ResMut<SoloUi>,
+    ui: Option<ResMut<SoloUi>>,
     time: Res<Time<Real>>,
     mut veils: Query<&mut BackgroundColor, With<SoloRoot>>,
     mut columns: Query<&mut UiTransform, (With<SoloColumn>, Without<SoloLine>)>,
@@ -996,7 +1010,13 @@ pub(super) fn animate_solo_tree(
         (&SoloButton, &mut BackgroundColor, &mut BorderColor),
         (Without<SoloRoot>, Without<SoloLine>),
     >,
+    mut options_screen: OptionsAnimate,
 ) {
+    // Issue #100: the options screen's step too (`super::SoloPlugin`); each only while open.
+    options_screen.run();
+    let (Some(mut ui), true) = (ui, menu.open) else {
+        return;
+    };
     let now = now(&time);
     if ui.focus != menu.row {
         ui.unfocused = Some(ui.focus);
@@ -1044,7 +1064,10 @@ pub(super) fn solo_gamepad(
     options: Option<Res<OptionsMenu>>,
     mut latches: Local<[StickLatch; 2]>,
     mut actions: MessageWriter<RaceMenuAction>,
+    mut options_screen: OptionsGamepad,
 ) {
+    // Issue #100: the options screen's gamepad too (`super::SoloPlugin`).
+    options_screen.run(&gamepads);
     let (y, x) = gamepads.iter().fold((0.0f32, 0.0f32), |(y, x), gamepad| {
         let stick = |axis| gamepad.get(axis).unwrap_or(0.0);
         let (sy, sx) = (
@@ -1082,11 +1105,23 @@ pub(super) fn solo_gamepad(
 }
 
 /// The screen is open (its systems run).
-pub(super) fn solo_open(menu: Res<RaceMenu>) -> bool {
-    menu.open
+/// Issue #100: or the options screen (its steps are in this screen's systems).
+pub(super) fn solo_open(menu: Res<RaceMenu>, options: Option<Res<OptionsMenu>>) -> bool {
+    menu.open || options.is_some_and(|options| options.open)
 }
 
-/// The screen's tree must be built, rebuilt or removed.
-pub(super) fn solo_open_or_shown(menu: Res<RaceMenu>, roots: Query<(), With<SoloRoot>>) -> bool {
-    menu.open || !roots.is_empty()
+/// The screen's tree must be built, rebuilt or removed; issue #100: or the options screen's.
+pub(super) fn solo_open_or_shown(
+    menu: Res<RaceMenu>,
+    roots: Query<(), With<SoloRoot>>,
+    options: Option<Res<OptionsMenu>>,
+    options_roots: Query<(), With<OptionsRoot>>,
+) -> bool {
+    menu.open || !roots.is_empty() || options_open_or_shown(options, options_roots)
+}
+
+/// Issue #100: the solo screen's resource or the options screen's is there (each step checks its
+/// own).
+pub(super) fn screens_ui_exist(solo: Option<Res<SoloUi>>, options: Option<Res<OptionsUi>>) -> bool {
+    solo.is_some() || options.is_some()
 }

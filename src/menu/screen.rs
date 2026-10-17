@@ -87,7 +87,7 @@ pub struct MenuText {
 pub struct MenuAssets {
     pub medium: Handle<Font>,
     pub semibold: Handle<Font>,
-    pub icons: [Handle<Image>; 6],
+    pub icons: [Handle<Image>; 7],
     /// Issue #99: the cups' icons, in the order of `CupIcon::ALL`.
     pub cups: [Handle<Image>; 5],
 }
@@ -112,6 +112,7 @@ fn icon_index(entry: Entry) -> usize {
         Entry::Options => 3,
         Entry::Garage => 4,
         Entry::Quit => 5,
+        Entry::Restart => 6,
     }
 }
 
@@ -125,6 +126,8 @@ pub fn accent(entry: Entry) -> Color {
         Entry::Garage => palette::CAROTTE,
         // Issue #89: the ink, home.
         Entry::Quit => palette::MYRTILLE,
+        // Issue #100: the blue of « Jouer solo »: the race again.
+        Entry::Restart => palette::LAGON,
     }
 }
 
@@ -148,6 +151,7 @@ pub(super) fn load_menu_assets(
             style::ICON_OPTIONS,
             style::ICON_GARAGE,
             style::ICON_QUIT,
+            style::ICON_RESTART,
         ]
         .map(|path| server.load(path)),
         cups: CupIcon::ALL.map(|icon| server.load(style::cup_icon(icon))),
@@ -274,7 +278,8 @@ fn spawn_hints(
     }
 }
 
-/// The menu opened from the game: in the middle, over the veil.
+/// The menu opened from the game, the pause (issue #100): in the middle, over the veil, its title
+/// « Pause » (online, « Pas de pause ! »: the game goes on).
 fn spawn_game_menu(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
     commands
         .spawn((
@@ -306,7 +311,7 @@ fn spawn_game_menu(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
             .with_children(|column| {
                 column.spawn((
                     text(
-                        "Fluffy Racers",
+                        nav::game_title(key.online),
                         &assets.semibold,
                         size::TITLE,
                         palette::NEIGE,

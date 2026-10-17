@@ -2,9 +2,9 @@
 
 Cette charte décrit l'apparence et le comportement des écrans du jeu : accueil, menus, salon, choix du kart, pause, résultats. Elle est née avec #56 (étape 1 : la charte et un premier menu pour la rendre concrète).
 
-> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Puis **l'écran Pilote** (#98, plus bas) et **l'écran Jouer solo** (#99, plus bas). Les écrans suivants ont chacun leur issue : options, pause, résultats, podium et HUD en Fredoka (#100), le salon en 3D (#101).
+> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Puis **l'écran Pilote** (#98, plus bas) et **l'écran Jouer solo** (#99, plus bas). Étape 3 (#100) : **les options**, **la pause**, **le classement d'une course**, **le classement général et le podium** du championnat, et **le HUD en Fredoka** (plus bas). Reste le salon en 3D (#101).
 
-Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra) ; l'écran Pilote `pilot.rs` (ses lignes, ses textes, sa boucle molle), `pilot_screen.rs` (son arbre, la souris, la manette, le champ du pseudo) et `preview.rs` (sa 3D) ; l'écran Jouer solo `solo.rs` (ses textes, ses vignettes) et `solo_screen.rs` (son arbre, la souris, la manette). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte.
+Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra) ; l'écran Pilote `pilot.rs` (ses lignes, ses textes, sa boucle molle), `pilot_screen.rs` (son arbre, la souris, la manette, le champ du pseudo) et `preview.rs` (sa 3D) ; l'écran Jouer solo `solo.rs` (ses textes, ses vignettes) et `solo_screen.rs` (son arbre, la souris, la manette) ; l'écran des options `options_screen.rs` (#100) ; les écrans dessinés avec le HUD (le classement d'une course dans `src/ui/`, le classement général et le podium dans `src/modes/screens.rs`) prennent leurs morceaux dans `kit.rs` (#100). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte. Le salon (L) reste une fenêtre egui jusqu'à #101.
 
 ## L'esprit
 
@@ -22,14 +22,14 @@ Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, 
 | Guimauve | `#FFF5E6` | Fond des panneaux (crème) |
 | Coton | `#FFFFFF` | Bouton au repos |
 | Lilas | `#CBBBEF` | Profondeur d'un bouton au repos |
-| Mangue | `#FFC83D` | Bouton qui a le focus |
+| Mangue | `#FFC83D` | Bouton qui a le focus ; la ligne du joueur dans un classement, la 1ʳᵉ place (l'or), le rang dans le HUD (#100) |
 | Abricot | `#E9932B` | Profondeur du bouton qui a le focus |
 | Fraise | `#FF5C8D` | Ombre du titre, pastille « Multijoueur » |
-| Lagon | `#3FB4F0` | Pastille « Jouer solo » |
+| Lagon | `#3FB4F0` | Pastille « Jouer solo », « Recommencer » (#100 : on rejoue) ; la place d'un coureur à partir de la 4ᵉ |
 | Menthe | `#36C98B` | Pastille « Reprendre » (ce qui continue) |
 | Prune | `#9B6BE8` | Pastille « Options » |
-| Carotte | `#F08A3C` | Pastille « Pilote » |
-| Brume | `#E6E0F0` | Bouton désactivé (sa profondeur : `#D3CBE3`) |
+| Carotte | `#F08A3C` | Pastille « Pilote » ; la 3ᵉ place (le bronze, #100) |
+| Brume | `#E6E0F0` | Bouton désactivé (sa profondeur : `#D3CBE3`, aussi la 2ᵉ place, l'argent, #100) |
 | Cendre | `#8E86A8` | Textes d'un bouton désactivé |
 | Neige | `#FFFFFF` | Textes sur le voile |
 | Voile | Myrtille à 55 % | Par-dessus le jeu, derrière un écran ; sur l'accueil, il s'efface vers la droite |
@@ -57,7 +57,8 @@ Pourquoi elle :
 
 - **Kenney Future** (CC0, livrée avec l'UI Pack) est géométrique et futuriste, pas ronde.
 - **Nunito** et **Baloo 2** sont plus sages.
-- Le HUD garde pour l'instant la police par défaut de Bevy, sans accents. Il passera à Fredoka avec #100 : on aura alors les accents partout, par exemple « Éloïse » au classement.
+- **Le HUD aussi, depuis #100** : les accents sont partout, par exemple « Éloïse » au classement et au-dessus de son kart, « Entrée », « Temps estimé », « Crique Câline ». Voir « Le HUD » plus bas.
+- **Ce qu'elle sait écrire** : le latin de base, le latin-1 (tout le français), quelques lettres du latin étendu (Œ, Š, Ž…), l'hébreu, les tirets, guillemets et points de suspension, « € ». Un test relit son `cmap` (`ui::format::writable`) ; un pseudo ne garde que ces caractères (un emoji serait une case vide).
 
 ## Boutons
 
@@ -107,12 +108,13 @@ Le pack **Game Icons** de Kenney (CC0, licence dans `assets/ui/icons/License.txt
 | Options | `gear.png` | Prune |
 | Pilote | `wrench.png` (le garage) | Carotte |
 | Quitter (#89) | `home.png` (la maison : l'accueil) | Myrtille |
+| Recommencer (#100) | `return.png` (une flèche qui fait le tour) | Lagon |
 | Les coupes du championnat (#99) | `trophy.png`, `medal1.png`, `medal2.png`, `target.png`, `leaderboardsComplex.png` (le manifeste dit laquelle : `Trophy`, `Medal`, `Rosette`, `Target`, `Podium`) | Mangue |
 
 Pour les écrans suivants, le même pack a d'autres icônes utiles :
 
 - flèches ;
-- son et musique (`audioOn`, `musicOn`…) ;
+- son et musique (`audioOn`, `musicOn`…), pour les lignes des volumes des options (#103, #104) ;
 - `trophy`, `medal1`, `star` pour les résultats ;
 - `buttonA`, `buttonB`, `buttonStart` pour les aides à la manette.
 
@@ -122,7 +124,7 @@ Les tailles sont données pour une fenêtre de **720 px de haut** et dessinées 
 
 | Élément | Taille (px à 720 px de haut) |
 |---|---|
-| Titre (menu en course) | 64 |
+| Titre de la pause (#100 : « Pause ») | 64 |
 | Titre de l'accueil | 88, sur deux lignes (« Fluffy », « Racers »), interligne de 0,9, la 2ᵉ décalée de 36 vers la droite |
 | Phrase sous le titre | 21 |
 | Libellé d'un bouton | 29 |
@@ -133,12 +135,14 @@ Les tailles sont données pour une fenêtre de **720 px de haut** et dessinées 
 | Colonne de l'accueil | à 64 du bord gauche ; voile plein jusqu'à 640, effacé à 1 000 |
 | Écran Pilote (#98) | panneau de 900 (deux colonnes, 380 et 460, 20 entre elles), titre de 48 ; aperçu 380 × 236, rayon 28 ; une ligne 46 de haut (profondeur 5, libellé 21, 8 entre deux) ; portrait 52, son nom 14, case de 96 ; pastille de couleur 22 ; une stat 20 de haut (texte 15, barre 10) ; boutons 56 |
 | Écran Jouer solo (#99) | panneau de 900 (deux colonnes, 430 et 410, 20 entre elles), titre de 48 ; les lignes de l'écran Pilote (46, libellé 21) ; la petite ligne d'aide 16 ; l'en-tête des courses 24 ; une course 46 de haut (son numéro sur une pastille de 28, sa vignette 64 × 38, rayon 10, son nom 19) ; la grande vignette 400 × 226, rayon 24 ; la pastille d'une coupe 30, son icône 24 ; boutons 56 |
+| Écran des options (#100) | le panneau de Jouer solo (900, colonnes de 430 et de 410), titre de 48 ; les lignes de l'écran Pilote (46, libellé 21 sur 190 de large) ; l'aide 16 ; « Retour » 56 ; les commandes : en-tête 22, textes 15, touches sur 200, 3 entre deux lignes ; la place pour six lignes d'options |
+| Classement, classement général, podium (#100) | titre de 44 au-dessus du panneau ; panneau de 720 (le classement), 600 (le classement général), 470 (le podium) ; une ligne 34 de haut (profondeur 4 comprise), 5 entre deux, 14 entre deux cases ; la place sur une pastille de 28 (texte 14), le nom et le temps 19, les détails 16 ; colonnes du classement : 180 (nom), 120 (temps), 260 (détails) ; du classement général : 220 (nom), 90 (points de la course), 120 (total) |
 
 ## Animations « molles »
 
 Chaque animation est un **ressort amorti** qui part du repos : il dépasse sa cible puis revient, comme de la gelée. Les courbes sont des fonctions pures, testées (`menu::anim::tests`).
 
-Elles tournent en **temps réel** : en solo, le jeu est en pause derrière l'écran. Ce sont des constantes d'animation, comme celles du HUD, et non des réglages de gameplay.
+Elles tournent en **temps réel** : en solo, le jeu est en pause derrière l'écran. Ce sont des constantes d'animation, comme celles du HUD, et non des réglages de gameplay. **Elles restent ainsi** (#100) : Max n'a pas demandé de les changer (la question 3 de #56 : trop molles, pas assez, l'action 0,12 s après le relâchement).
 
 | Moment | Ce qui bouge | Durée |
 |---|---|---|
@@ -158,16 +162,17 @@ Elles tournent en **temps réel** : en solo, le jeu est en pause derrière l'éc
 | Valider | Entrée, Espace | clic | A |
 | Revenir | Échap | — | B, Start |
 | Sur l'accueil : rouler tout de suite (#89) | Échap | — | B, Start |
-| Ouvrir le menu en course | Échap | — | Start |
+| Ouvrir la pause (le menu en course) | Échap | — | Start |
 
 - **Les touches sont des positions physiques.** Elles sont les mêmes sous les doigts en AZERTY et en QWERTY, et aucune ne demande Fn sur Mac. Échap, Entrée, Espace et les flèches ne demandent rien.
 - **Échap revient en arrière partout.** En course, il n'ouvre le menu que si aucun autre écran n'est ouvert : sinon, il ferme d'abord cet écran-là. Sur l'écran des résultats, Start relance la course comme avant ; c'est Échap qui ouvre le menu. **Sur l'accueil**, il n'y a pas d'arrière : Échap lance tout de suite une course sur le circuit du fond, comme le faisait le menu au lancement avant l'accueil.
-- **Un écran ouvert depuis un menu y revient** quand on le ferme sans lancer de course. Par exemple, Échap dans les options ramène à l'accueil, et « Course ! » lance la course.
-- **La pause** : en solo, le jeu attend tant que le menu en course est ouvert. **En ligne, jamais** (décision de Max) : le kart roule sur son élan et seules ses commandes sont inactives. **L'accueil ne met jamais en pause**, ni les écrans qu'il ouvre : son fond continue.
+- **Un écran ouvert depuis un menu y revient** quand on le ferme sans lancer de course. Par exemple, Échap dans les options ramène à l'accueil (ou à la pause), et « Course ! » lance la course.
+- **Échap dans le salon le ferme** (#100), comme les autres écrans : on revient à l'accueil s'il l'a ouvert, au jeu sinon. L (ou « Fermer ») le ferme toujours.
+- **La pause** : en solo, le jeu attend tant que la pause (le menu en course) est ouverte. **En ligne, jamais** (décision de Max) : le kart roule sur son élan et seules ses commandes sont inactives. **L'accueil ne met jamais en pause**, ni les écrans qu'il ouvre : son fond continue.
 
 ## L'écran d'accueil (#89)
 
-On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, comme avant), quand on quitte une course (« Quitter » dans le menu en course) et quand on quitte un salon.
+On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, comme avant), quand on quitte une course (« Quitter » dans la pause) et quand on quitte un salon.
 
 ![L'accueil et son fond](img/accueil.png)
 
@@ -185,7 +190,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 
 ## L'écran Pilote (#98)
 
-« Dans pilote on peut choisir son pseudo, son kart, ses pièces et son personnage. On voit le kart en 3/4 face avec les stats à côté et le personnage dedans. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Pilote »), le menu en course et avec G ; il revient à l'écran qui l'a ouvert.
+« Dans pilote on peut choisir son pseudo, son kart, ses pièces et son personnage. On voit le kart en 3/4 face avec les stats à côté et le personnage dedans. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Pilote ») et avec G (en course aussi, par-dessus la pause ; #100 : il n'est plus dans la pause) ; il revient à l'écran qui l'a ouvert.
 
 ![L'écran Pilote : l'aperçu et ses stats](img/pilote.png)
 
@@ -225,7 +230,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 
 ## L'écran Jouer solo (#99)
 
-« Dans solo on a le choix de championnat, contre la montre, circuit seul. Le championnat peut être une coupe déjà définie ou un championnat custom avec un certain nombre de circuits définis ou aléatoire. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Jouer solo »), le menu en course et avec N ; il revient à l'écran qui l'a ouvert. Il remplace le menu de course de #19 (une fenêtre egui).
+« Dans solo on a le choix de championnat, contre la montre, circuit seul. Le championnat peut être une coupe déjà définie ou un championnat custom avec un certain nombre de circuits définis ou aléatoire. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Jouer solo ») et avec N (en course aussi, par-dessus la pause ; #100 : il n'est plus dans la pause) ; il revient à l'écran qui l'a ouvert. Il remplace le menu de course de #19 (une fenêtre egui).
 
 ![L'écran Jouer solo : une coupe](img/jouer-solo.png)
 
@@ -242,8 +247,52 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 | C'est parti | Entrée | « C'est parti ! » | A |
 | Revenir sans rien lancer | Échap, N | « Retour » | B, Start |
 
-- **Il ouvre sur ce qui est couru** (le mode, le circuit, le miroir, les bots et les objets du moment) ; la coupe et le championnat personnalisé restent comme on les a laissés. Le jeu est en pause tant qu'il est ouvert depuis le jeu en solo ; sur l'accueil, jamais (son fond roule derrière). En ligne, il ne s'ouvre pas : l'hôte choisit dans le salon (« Jouer solo » est grisé dans le menu en course).
+- **Il ouvre sur ce qui est couru** (le mode, le circuit, le miroir, les bots et les objets du moment) ; la coupe et le championnat personnalisé restent comme on les a laissés. Le jeu est en pause tant qu'il est ouvert depuis le jeu en solo ; sur l'accueil, jamais (son fond roule derrière). En ligne, il ne s'ouvre pas : l'hôte choisit dans le salon (N ne fait rien en ligne).
 - **Choix technique** : l'état et les touches sont ceux de `modes::RaceMenu` (headless, testés), la vue est dans `SoloPlugin` (avec un rendu seulement). L'arbre est reconstruit quand ses lignes ou ses courses changent (un autre mode, une autre formule, un autre circuit, le miroir : la vignette se retourne), sinon ses textes changent en place ; **fermé, il n'en reste rien**. Aucune crate ajoutée.
+
+## La pause (#100)
+
+Le menu en course est devenu **l'écran de pause** : Échap (ou Start) en course, quand aucun autre écran n'est ouvert. C'est le choix fait pour la question 4 de #56, sans retour de Max : un écran à part, comme dans les jeux de karting de référence.
+
+- **Le titre** : « Pause » ; en ligne, « Pas de pause ! » (le jeu continue derrière, décision de Max, #9).
+- **Quatre boutons, dans cet ordre** : **Reprendre** (Menthe : « Le kart t'attend, moteur chaud. » ; en ligne, « Ton kart roule tout seul : file ! »), **Recommencer** (Lagon : « Retour sur la grille, chrono à zéro. » ; en ligne, grisé : « En ligne, c'est l'hôte qui lance la course. »), **Options** (Prune), **Quitter** (Myrtille : « Retour à l'accueil » ; en ligne, « Retour à l'accueil : tu quittes la partie. »).
+- **« Quitter » plutôt que « Quitter vers l'accueil »** (écart avec l'issue) : un libellé fait au plus 16 signes, comme « Quitter » de #89 ; sa petite ligne dit où l'on va.
+- **« Recommencer »** relance la course depuis sa grille : le niveau est reconstruit, comme avec « Relancer » du panneau d'admin. Dans un championnat, la course repart et ses points sont repris (GD § 1) ; en contre-la-montre, la course repart contre le fantôme.
+- **Jouer solo, Multijoueur et Pilote** ne sont plus dans la pause : leurs raccourcis (N, L, G) les ouvrent toujours par-dessus, et l'accueil (« Quitter ») les a tous.
+
+## L'écran des options (#100)
+
+Il s'ouvre depuis l'accueil (« Options »), la pause et avec O, même par-dessus l'écran Pilote ; il revient à l'écran qui l'a ouvert. Il remplace la fenêtre egui de #17.
+
+- **Le panneau** : celui de Jouer solo (900 px), au milieu, sur le voile ; au-dessus, le titre « Options » (48 px), dessous, les touches sur deux lignes.
+- **À gauche, une ligne par option**, comme une ligne de l'écran Jouer solo : son libellé, « < », sa valeur au milieu, « > ». **La ligne qui a le focus est Mangue** et grossit de 5 % avec le rebond du focus. Aujourd'hui : **Clavier** (AZERTY, QWERTY) et **Noms des joueurs** (Oui, Non : en ligne, le pseudo des autres au-dessus de leur kart). Dessous, **une petite ligne dit ce que fait la ligne qui a le focus**, puis « Retour » (pastille Myrtille).
+- **La place pour d'autres lignes** : les volumes du son et de la musique (#103, #104) seront des lignes comme les autres (« Son », « 80 % », de 10 en 10 %), avec l'icône `audioOn` ou `musicOn` du même pack s'il le faut. Le panneau en tient six dans une fenêtre de 720 px (un test le vérifie).
+- **À droite, les commandes** du jeu, avec les lettres du clavier choisi : l'action à gauche, la touche à droite, en Myrtille. Elles changent dès qu'on change de clavier.
+- **Navigation** :
+
+| | Clavier | Souris | Manette |
+|---|---|---|---|
+| La ligne | Haut / Bas, ou Z / S (AZERTY), W / S (QWERTY) | survol | croix, stick (un pas par poussée) |
+| Changer | Gauche / Droite, ou Q / D (AZERTY), A / D (QWERTY) ; Entrée, Espace | « < », « > », un clic sur la valeur | croix, stick ; A |
+| Revenir | Échap, O | « Retour » | B, Start |
+
+- **Un changement vaut tout de suite** et il est gardé dans le navigateur. Le jeu attend tant que l'écran est ouvert depuis le jeu en solo ; sur l'accueil et en ligne, jamais.
+- **Choix technique** : l'état et les touches sont ceux de `options::OptionsMenu` (headless, testés) ; la vue est dans `options_screen.rs`. **Elle n'a aucun système à elle** : ses étapes sont des paramètres des systèmes de l'écran Jouer solo. Un système de plus change l'ordre des systèmes du jeu, et le fond de l'accueil avec lui (voir `docs/ARCHITECTURE.md`, « Écrans de jeu »). Fermé, il n'en reste rien. Aucune crate ajoutée.
+
+## Le classement, le classement général et le podium (#100)
+
+- **Le classement d'une course** (#70) : sur le voile, le titre « Classement » (44 px, blanc à l'ombre Fraise), un panneau Guimauve de 720 px, une ligne par coureur, les touches dessous en blanc (« Espace ou Entrée (manette : A) : on rejoue », « … : classement général » dans un championnat, « Course suivante : l'hôte la lance depuis le salon (L) » en ligne).
+- **Une ligne** : une pilule Coton avec sa profondeur Lilas ; **celle du joueur est Mangue** (sa profondeur Abricot), où qu'elle aille quand le classement change en direct. À gauche, **la place sur une pastille ronde** : l'or (Mangue), l'argent (`#D3CBE3`), le bronze (Carotte), puis le Lagon ; le texte en Myrtille sur toutes (au moins 4,5:1, vérifié). Puis le nom (« Toi », « Kart 3 », le pseudo d'un autre joueur avec ses accents), le temps, et le détail (« Meilleur tour 0:20.12 », « Tour 2/3 », « Temps estimé »).
+- **Le classement général** du championnat : le même voile et les mêmes lignes, un panneau de 600 px ; au-dessus, le nom du championnat, la course et son circuit (« Coupe Doudou 2/4 · Anneau Guimauve », « Championnat 3/5 · Crique Câline ») ; en tête du panneau, « Classement général » ; par ligne, la place, le nom, les points de la course (« +15 ») et le total (« 42 pts ») ; dessous, « Espace ou Entrée (manette : A) : course suivante (Crique Câline) », ou « … : le podium ».
+- **Le podium** : pas de voile (le podium en 3D se voit) ; en haut, un petit panneau Guimauve de 470 px : « Podium » (en Myrtille, à l'ombre Fraise légère), les trois premiers (la place, le nom, le total) et « Entrée : on recommence · N : changer de mode ».
+
+## Le HUD (#100)
+
+- **En Fredoka demi-gras**, aux mêmes tailles qu'avant (le rang 72 px, le chrono et le tour 36, la bannière 110…), en blanc ; le rang et ce qui « pope » (le tour, les croquettes au maximum, la roulette) en Mangue ; les cases des objets sur la Myrtille à 60 %.
+- **Lisible en course** : chaque texte a une ombre Myrtille à 85 %, décalée de 2 px à droite et 3 px vers le bas, lisible sur un ciel clair comme sur la route (Bevy 0.20 n'a pas de contour de texte ; l'ombre en tient lieu).
+- **Le chrono** est écrit depuis la gauche d'une boîte de largeur fixe (128 px, alignée à droite de l'écran) : les chiffres de Fredoka n'ont pas tous la même largeur (le « 1 » est plus étroit), et aligné à droite tout le chrono tremblerait à chaque centième ; ainsi un nouveau centième ne bouge que les chiffres après lui.
+- **Les étiquettes au-dessus des karts** (#80) et le HUD du contre-la-montre aussi (« LE FANTÔME DU RECORD COURT AVEC TOI »). Les bannières restent en capitales (« GO ! », « DERNIER TOUR ! », « FINI ! »).
+- L'overlay de debug (F3) garde la police par défaut : il ne suit pas la charte.
 
 ## Ton des textes
 
@@ -272,7 +321,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 | Maintenance | Plus verbeux : un petit kit (panneau, bouton) dans `src/menu/` le compense, et chaque écran se teste headless (l'arbre existe sans rendu) | Très court à écrire, mais il ne se teste qu'en partie sans rendu |
 | Déjà là | Oui (HUD, étiquettes des pseudos) | Oui (panneau d'admin, fenêtres actuelles) |
 
-**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P) et, en attendant leurs écrans, les options (O) et le salon (L) ; le menu de course (N) est devenu l'écran Jouer solo (#99). Le champ du pseudo : `EditableText` de Bevy 0.20 (#98, voir « L'écran Pilote »).
+**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P) et, en attendant son écran (#101), le salon (L) ; le menu de course (N) est devenu l'écran Jouer solo (#99), la fenêtre des options (O) l'écran des options (#100). Le champ du pseudo : `EditableText` de Bevy 0.20 (#98, voir « L'écran Pilote »).
 
 **Pas de 9-slice pour l'instant.** Le UI Pack de Kenney (CC0) a des boutons prêts à découper, mais avec de petits coins et des couleurs figées. Les formes natives sont plus rondes, se recolorent avec la palette et restent nettes à toute taille, sans aucun fichier. Le 9-slice resservira si on veut une texture (papier, tissu).
 
@@ -281,6 +330,8 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 ## Captures de référence
 
 Elles ont été prises dans Chromium headless, sur un build trunk de debug avec WebGL logiciel, en 1280 × 720. Ce navigateur dessine environ une image par seconde.
+
+**Les écrans de #100** : captures dans le scratchpad de la session (`shots100/`), quatre d'entre elles dans le dépôt : `docs/img/options.png` (l'écran des options), `docs/img/pause.png` (la pause en solo), `docs/img/classement.png` (le classement d'une course, la ligne du joueur en Mangue) et `docs/img/hud.png` (le HUD en course, en Fredoka).
 
 **L'écran Jouer solo (#99)** : captures dans le scratchpad de la session (`shots99/`), deux d'entre elles dans le dépôt (`docs/img/jouer-solo.png` : la coupe, ses quatre circuits et leurs vignettes ; `docs/img/jouer-solo-perso.png` : un championnat personnalisé au choix).
 
@@ -309,9 +360,6 @@ Les captures sont dans le scratchpad de la session (`shots56/`). Deux d'entre el
 
 ## Questions pour Max
 
-Les questions 1 et 2 de #56 (la palette et le ton, la police) sont tranchées : Max a validé la charte le 2026-10-17. Les autres sont reprises par les écrans qui suivent :
+Les questions 1 et 2 de #56 (la palette et le ton, la police) sont tranchées : Max a validé la charte le 2026-10-17. Avec #100 : les animations restent comme elles sont (la question 3, sans retour), la pause est un écran à part (la question 4, voir « La pause »), Échap ferme le salon (la question 6). Reste :
 
-- **les animations** (trop molles, pas assez ? l'action 0,12 s après le relâchement) : avec #100 ;
-- **le menu en course** : il garde « Reprendre » en attendant son écran de pause, #100 ;
-- **« Multijoueur » ouvre le salon actuel**, qui ne met pas le jeu en pause : depuis l'accueil, c'est son fond qui roule derrière, plus une course ; le salon en 3D vient avec #101 ;
-- **Échap dans le salon** ne le ferme toujours pas (L ou « Fermer ») : avec #101.
+- **« Multijoueur » ouvre le salon actuel**, qui ne met pas le jeu en pause : depuis l'accueil, c'est son fond qui roule derrière, plus une course ; le salon en 3D vient avec #101.

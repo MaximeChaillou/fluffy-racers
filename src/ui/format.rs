@@ -1,8 +1,10 @@
 //! HUD texts (pure): what to show, written into reused strings (no allocation once their
 //! capacity is reached).
 //!
-//! Everything is plain ASCII: Bevy's built-in font has no accented letters (a CC0 font will
-//! come with the assets, issue #11), hence "FINI !" and "ENTREE".
+//! Issue #100: the HUD writes in Fredoka, the charter's font (`menu::style`), which has every
+//! letter of French: « Entrée », « Temps estimé », « Éloïse » on the results. [`writable`] says
+//! which characters it can draw (a test reads them in the font files): every text of the HUD is
+//! made of them, and a pseudo keeps only them (`net::pseudo`).
 
 use std::fmt::Write;
 
@@ -175,19 +177,19 @@ pub fn write_debug_overlay(
     };
 }
 
-/// Static labels of the HUD and the results screen.
-pub const RESULTS_TITLE: &str = "CLASSEMENT";
-pub const RESULTS_FOOTER: &str = "ESPACE ou ENTREE (manette : A) : rejouer";
+/// Static labels of the HUD and the results screen (issue #100: with their accents).
+pub const RESULTS_TITLE: &str = "Classement";
+pub const RESULTS_FOOTER: &str = "Espace ou Entrée (manette : A) : on rejoue";
 /// Issue #19: in a Grand Prix (issue #99: a championship), the same keys go on to its standings.
-pub const RESULTS_FOOTER_GRAND_PRIX: &str = "ESPACE ou ENTREE (manette : A) : classement general";
+pub const RESULTS_FOOTER_GRAND_PRIX: &str = "Espace ou Entrée (manette : A) : classement général";
 /// Online (issue #9): the host starts the next race.
-pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hote la lance depuis le salon (L)";
+pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hôte la lance depuis le salon (L)";
 pub const PLAYER_NAME: &str = "Toi";
 /// Issue #70: the results screen, for a racer still on track, one that gave up (online: its
 /// player left), and an estimated time (`ESTIMATE_MARK` before it).
 pub const RESULTS_RACING: &str = "en course";
 pub const RESULTS_GAVE_UP: &str = "abandon";
-pub const RESULTS_ESTIMATED: &str = "Temps estime";
+pub const RESULTS_ESTIMATED: &str = "Temps estimé";
 pub const ESTIMATE_MARK: char = '~';
 
 /// What a line of the results screen says of its racer's race (issue #70). Times in hundredths
@@ -251,41 +253,73 @@ impl ResultsTime {
     }
 }
 
-/// Name of a racer on the results screen. `name`: another player's (online, issue #9), written
-/// in the HUD's font: its accented letters without their accents, any other letter it lacks as
-/// "?".
+/// Name of a racer on the results screen. `name`: another player's (online, issue #9), as typed
+/// (issue #100: the HUD's font has its accents: « Éloïse »).
 pub fn write_racer_name(out: &mut String, player: bool, grid_slot: usize, name: Option<&str>) {
     out.clear();
     if player {
         out.push_str(PLAYER_NAME);
     } else if let Some(name) = name {
-        out.extend(name.chars().map(ascii_letter));
+        out.push_str(name);
     } else {
         let _ = write!(out, "Kart {}", grid_slot + 1);
     }
 }
 
-/// A letter the HUD's font has (ASCII): the French accented ones lose their accent.
-pub fn ascii_letter(c: char) -> char {
-    match c {
-        ' '..='~' => c,
-        'à' | 'â' | 'ä' | 'á' | 'ã' | 'å' => 'a',
-        'À' | 'Â' | 'Ä' | 'Á' | 'Ã' | 'Å' => 'A',
-        'é' | 'è' | 'ê' | 'ë' => 'e',
-        'É' | 'È' | 'Ê' | 'Ë' => 'E',
-        'î' | 'ï' | 'í' | 'ì' => 'i',
-        'Î' | 'Ï' | 'Í' | 'Ì' => 'I',
-        'ô' | 'ö' | 'ó' | 'ò' | 'õ' => 'o',
-        'Ô' | 'Ö' | 'Ó' | 'Ò' | 'Õ' => 'O',
-        'ù' | 'û' | 'ü' | 'ú' => 'u',
-        'Ù' | 'Û' | 'Ü' | 'Ú' => 'U',
-        'ç' => 'c',
-        'Ç' => 'C',
-        'ñ' => 'n',
-        'Ñ' => 'N',
-        'ÿ' => 'y',
-        _ => '?',
-    }
+/// The characters of Fredoka (`assets/ui/fonts/`, both weights), as ranges of code points (the
+/// fonts' `cmap`, read again by a test): Basic Latin, Latin-1 (all of French: « é », « ç », « œ »,
+/// « Ÿ », the guillemets), a few letters of Latin Extended-A, the Hebrew alphabet, the dashes,
+/// the curly quotes, the ellipsis, « € ».
+const FREDOKA: &[(u32, u32)] = &[
+    (0x0020, 0x007E),
+    (0x00A0, 0x00AC),
+    (0x00AE, 0x00FF),
+    (0x0131, 0x0131),
+    (0x0141, 0x0142),
+    (0x0152, 0x0153),
+    (0x0160, 0x0161),
+    (0x0178, 0x0178),
+    (0x017D, 0x017E),
+    (0x0192, 0x0192),
+    (0x02C6, 0x02C7),
+    (0x02D8, 0x02DD),
+    (0x0300, 0x0304),
+    (0x0306, 0x0308),
+    (0x030A, 0x030C),
+    (0x0327, 0x0328),
+    (0x05B0, 0x05BC),
+    (0x05BE, 0x05BF),
+    (0x05C1, 0x05C2),
+    (0x05C7, 0x05C7),
+    (0x05D0, 0x05EA),
+    (0x05F3, 0x05F4),
+    (0x2013, 0x2014),
+    (0x2018, 0x201A),
+    (0x201C, 0x201E),
+    (0x2020, 0x2022),
+    (0x2026, 0x2026),
+    (0x2030, 0x2030),
+    (0x2039, 0x203A),
+    (0x2044, 0x2044),
+    (0x20AA, 0x20AA),
+    (0x20AC, 0x20AC),
+    (0x2122, 0x2122),
+    (0x2212, 0x2212),
+    (0xFB01, 0xFB02),
+    (0xFB2A, 0xFB36),
+    (0xFB38, 0xFB3C),
+    (0xFB3E, 0xFB3E),
+    (0xFB40, 0xFB41),
+    (0xFB43, 0xFB44),
+    (0xFB46, 0xFB4B),
+];
+
+/// Issue #100: whether the HUD's font, Fredoka, can draw `c` (never a control character: it has
+/// none). The HUD, the screens and the tags only write these; a pseudo keeps only them (an emoji
+/// would be a blank box).
+pub fn writable(c: char) -> bool {
+    let c = c as u32;
+    FREDOKA.iter().any(|&(first, last)| first <= c && c <= last)
 }
 
 #[cfg(test)]
@@ -423,16 +457,18 @@ mod tests {
             }),
             ("1:02.35".into(), "Meilleur tour -:--.--".into())
         );
-        assert_eq!(cells(estimated), ("~1:45.35".into(), "Temps estime".into()));
+        assert_eq!(cells(estimated), ("~1:45.35".into(), "Temps estimé".into()));
         assert_eq!(
             cells(ResultsTime::GaveUp),
             ("abandon".into(), String::new())
         );
     }
 
-    /// The built-in font only has ASCII glyphs.
+    /// Issue #100: the HUD writes in Fredoka, with the accents: every text of the HUD and of the
+    /// results is made of its characters, another player's name is written as typed (« Éloïse »,
+    /// no longer « Eloise »).
     #[test]
-    fn every_text_is_ascii() {
+    fn every_text_is_written_in_fredoka_with_its_accents() {
         let mut texts = vec![
             RESULTS_TITLE.to_string(),
             RESULTS_FOOTER.to_string(),
@@ -460,14 +496,71 @@ mod tests {
         write_racer_name(&mut s, false, 4, None);
         assert_eq!(s, "Kart 5");
         texts.push(s.clone());
-        // Issue #9: another player's name, its accents dropped.
-        write_racer_name(&mut s, false, 4, Some("Éloïse ça va ✨"));
-        assert_eq!(s, "Eloise ca va ?");
+        // Issue #9: another player's name; issue #100: with its accents.
+        write_racer_name(&mut s, false, 4, Some("Éloïse ça va"));
+        assert_eq!(s, "Éloïse ça va");
         texts.push(s.clone());
         write_racer_name(&mut s, true, 4, Some("Max"));
         assert_eq!(s, PLAYER_NAME);
-        for text in texts {
-            assert!(text.is_ascii(), "{text}");
+        for text in &texts {
+            assert!(text.chars().all(writable), "{text}");
+        }
+        // The accents are there.
+        assert!(RESULTS_FOOTER.contains("Entrée") && RESULTS_ESTIMATED.contains('é'));
+        assert!(RESULTS_FOOTER_ONLINE.contains("l'hôte"));
+        assert!(RESULTS_FOOTER_GRAND_PRIX.ends_with("classement général"));
+    }
+
+    /// The code points of a TrueType font (its `cmap`: the Unicode subtable of format 4).
+    fn code_points(font: &[u8]) -> std::collections::BTreeSet<u32> {
+        let u16_at = |at: usize| u16::from_be_bytes([font[at], font[at + 1]]);
+        let u32_at =
+            |at: usize| u32::from_be_bytes([font[at], font[at + 1], font[at + 2], font[at + 3]]);
+        let tables = u16_at(4) as usize;
+        let cmap = (0..tables)
+            .map(|i| 12 + 16 * i)
+            .find(|at| &font[*at..*at + 4] == b"cmap")
+            .map(|at| u32_at(at + 8) as usize)
+            .expect("a cmap table");
+        let mut points = std::collections::BTreeSet::new();
+        for i in 0..u16_at(cmap + 2) as usize {
+            let sub = cmap + u32_at(cmap + 4 + 8 * i + 4) as usize;
+            if u16_at(sub) != 4 {
+                continue;
+            }
+            let segments = u16_at(sub + 6) as usize / 2;
+            for k in 0..segments {
+                let end = u16_at(sub + 14 + 2 * k) as u32;
+                let start = u16_at(sub + 16 + 2 * segments + 2 * k) as u32;
+                if start != 0xFFFF {
+                    points.extend(start..=end);
+                }
+            }
+        }
+        points
+    }
+
+    /// Issue #100: [`writable`] is exactly what both weights of Fredoka can draw (their `cmap`),
+    /// all of French among it, and no control character, no emoji.
+    #[test]
+    fn writable_is_what_fredoka_draws() {
+        const FONTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/ui/fonts");
+        let [medium, semibold] = ["Fredoka-Medium.ttf", "Fredoka-SemiBold.ttf"]
+            .map(|name| code_points(&std::fs::read(format!("{FONTS}/{name}")).unwrap()));
+        assert!(medium.len() > 300, "{}", medium.len());
+        for code in 0..=0xFFFFu32 {
+            let Some(c) = char::from_u32(code) else {
+                continue;
+            };
+            let both = medium.contains(&code) && semibold.contains(&code);
+            assert_eq!(writable(c), both, "U+{code:04X} {c:?}");
+        }
+        for c in "àâäçéèêëîïôöùûüÿœæÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆ«»’…–—·€".chars()
+        {
+            assert!(writable(c), "{c}");
+        }
+        for c in ['\t', '\n', '\u{7}', '\u{7f}', '😀', '✨', '→'] {
+            assert!(!writable(c), "{c:?}");
         }
     }
 

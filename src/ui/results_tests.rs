@@ -314,7 +314,7 @@ fn the_results_follow_the_bots_that_finish_then_close_with_estimates() {
             "4e".to_string(),
             format!("Kart {}", slot(&app, frozen) + 1),
             format!("~{}", time_text(estimate)),
-            "Temps estime".to_string(),
+            "Temps estimé".to_string(),
         ]
     );
 
