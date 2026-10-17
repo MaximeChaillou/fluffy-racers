@@ -10,6 +10,8 @@
 use bevy::prelude::*;
 use bevy::text::FontSize;
 
+use crate::admin::tracks::CupIcon;
+
 /// The height the sizes are given for (px).
 pub const REFERENCE_HEIGHT: f32 = 720.0;
 
@@ -159,6 +161,32 @@ pub mod size {
     pub const TERRAIN_WIDE: f32 = 88.0;
     /// ...and its two buttons (« Valider », « Retour »).
     pub const PILOT_BUTTON_HEIGHT: f32 = 56.0;
+
+    /// Issue #99: the « Jouer solo » screen: its panel (the width of the « Pilote » one, the
+    /// charter's 720 to 900 px) and its left column (the lines of the settings; the races on the
+    /// right); its lines are those of « Pilote » (`LINE_HEIGHT`...).
+    pub const SOLO_LEFT: f32 = 430.0;
+    /// The help under the lines (a small line).
+    pub const SOLO_HELP: f32 = 16.0;
+    /// The header of the races (the cup's name...).
+    pub const SOLO_HEADER: f32 = 24.0;
+    /// A race on the right: its card's height, its number's badge, its vignette, its name.
+    pub const CARD_HEIGHT: f32 = 46.0;
+    pub const CARD_BADGE: f32 = 28.0;
+    pub const CARD_TEXT: f32 = 19.0;
+    pub const VIGNETTE_WIDTH: f32 = 64.0;
+    pub const VIGNETTE_HEIGHT: f32 = 38.0;
+    /// The vignette of a race alone or of a time trial, big, and its corners.
+    pub const BIG_VIGNETTE_WIDTH: f32 = 400.0;
+    pub const BIG_VIGNETTE_HEIGHT: f32 = 226.0;
+    pub const VIGNETTE_RADIUS: f32 = 10.0;
+    pub const BIG_VIGNETTE_RADIUS: f32 = 24.0;
+    /// The road's dots in a vignette (and in a big one).
+    pub const VIGNETTE_DOT: f32 = 3.0;
+    pub const BIG_VIGNETTE_DOT: f32 = 8.0;
+    /// A cup's icon on its badge, on its line.
+    pub const CUP_BADGE: f32 = 30.0;
+    pub const CUP_ICON: f32 = 24.0;
 }
 
 /// What a button shows (`docs/UI_CHARTE.md` « Boutons »). The pointer over a button gives it the
@@ -249,10 +277,27 @@ pub const ICON_OPTIONS: &str = "ui/icons/gear.png";
 pub const ICON_GARAGE: &str = "ui/icons/wrench.png";
 /// Issue #89: « Quitter », back home.
 pub const ICON_QUIT: &str = "ui/icons/home.png";
+/// Issue #99: the cups' icons (`admin::tracks::CupIcon`, named by the manifest).
+pub const ICON_TROPHY: &str = "ui/icons/trophy.png";
+pub const ICON_MEDAL: &str = "ui/icons/medal1.png";
+pub const ICON_ROSETTE: &str = "ui/icons/medal2.png";
+pub const ICON_TARGET: &str = "ui/icons/target.png";
+pub const ICON_PODIUM: &str = "ui/icons/leaderboardsComplex.png";
+
+/// The file of a cup's icon.
+pub fn cup_icon(icon: CupIcon) -> &'static str {
+    match icon {
+        CupIcon::Trophy => ICON_TROPHY,
+        CupIcon::Medal => ICON_MEDAL,
+        CupIcon::Rosette => ICON_ROSETTE,
+        CupIcon::Target => ICON_TARGET,
+        CupIcon::Podium => ICON_PODIUM,
+    }
+}
 
 /// Every file of `assets/ui/` the game uses (each pack's licence is next to them): a test checks
 /// that each one is there with its credits, and that nothing else is.
-pub const UI_FILES: [&str; 8] = [
+pub const UI_FILES: [&str; 13] = [
     FONT_MEDIUM,
     FONT_SEMIBOLD,
     ICON_RESUME,
@@ -261,6 +306,11 @@ pub const UI_FILES: [&str; 8] = [
     ICON_OPTIONS,
     ICON_GARAGE,
     ICON_QUIT,
+    ICON_TROPHY,
+    ICON_MEDAL,
+    ICON_ROSETTE,
+    ICON_TARGET,
+    ICON_PODIUM,
 ];
 
 #[cfg(test)]

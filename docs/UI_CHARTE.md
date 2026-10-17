@@ -2,9 +2,9 @@
 
 Cette charte décrit l'apparence et le comportement des écrans du jeu : accueil, menus, salon, choix du kart, pause, résultats. Elle est née avec #56 (étape 1 : la charte et un premier menu pour la rendre concrète).
 
-> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Puis **l'écran Pilote** (#98, plus bas). Les écrans suivants ont chacun leur issue : Jouer solo et les réglages de partie (#99), options, pause, résultats, podium et HUD en Fredoka (#100), le salon en 3D (#101).
+> **Validée par Max le 2026-10-17** : la palette, le ton des textes et la police Fredoka. Étape 2 (#89) : **l'écran d'accueil** et son fond animé (plus bas). Puis **l'écran Pilote** (#98, plus bas) et **l'écran Jouer solo** (#99, plus bas). Les écrans suivants ont chacun leur issue : options, pause, résultats, podium et HUD en Fredoka (#100), le salon en 3D (#101).
 
-Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra) ; l'écran Pilote `pilot.rs` (ses lignes, ses textes, sa boucle molle), `pilot_screen.rs` (son arbre, la souris, la manette, le champ du pseudo) et `preview.rs` (sa 3D). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte.
+Le code de la charte se trouve dans `src/menu/` : `style.rs` (palette, tailles, états des boutons), `anim.rs` (animations) et `nav.rs` (entrées et navigation) ; l'accueil ajoute `showcase.rs` (son fond) et `trailer.rs` (sa caméra) ; l'écran Pilote `pilot.rs` (ses lignes, ses textes, sa boucle molle), `pilot_screen.rs` (son arbre, la souris, la manette, le champ du pseudo) et `preview.rs` (sa 3D) ; l'écran Jouer solo `solo.rs` (ses textes, ses vignettes) et `solo_screen.rs` (son arbre, la souris, la manette). Le panneau de développement (P) et l'overlay de debug (F3) restent comme ils sont : ils ne suivent pas la charte.
 
 ## L'esprit
 
@@ -107,6 +107,7 @@ Le pack **Game Icons** de Kenney (CC0, licence dans `assets/ui/icons/License.txt
 | Options | `gear.png` | Prune |
 | Pilote | `wrench.png` (le garage) | Carotte |
 | Quitter (#89) | `home.png` (la maison : l'accueil) | Myrtille |
+| Les coupes du championnat (#99) | `trophy.png`, `medal1.png`, `medal2.png`, `target.png`, `leaderboardsComplex.png` (le manifeste dit laquelle : `Trophy`, `Medal`, `Rosette`, `Target`, `Podium`) | Mangue |
 
 Pour les écrans suivants, le même pack a d'autres icônes utiles :
 
@@ -131,6 +132,7 @@ Les tailles sont données pour une fenêtre de **720 px de haut** et dessinées 
 | Panneau | 520 de large, marge de 20, rayon de 36, 12 entre deux boutons |
 | Colonne de l'accueil | à 64 du bord gauche ; voile plein jusqu'à 640, effacé à 1 000 |
 | Écran Pilote (#98) | panneau de 900 (deux colonnes, 380 et 460, 20 entre elles), titre de 48 ; aperçu 380 × 236, rayon 28 ; une ligne 46 de haut (profondeur 5, libellé 21, 8 entre deux) ; portrait 52, son nom 14, case de 96 ; pastille de couleur 22 ; une stat 20 de haut (texte 15, barre 10) ; boutons 56 |
+| Écran Jouer solo (#99) | panneau de 900 (deux colonnes, 430 et 410, 20 entre elles), titre de 48 ; les lignes de l'écran Pilote (46, libellé 21) ; la petite ligne d'aide 16 ; l'en-tête des courses 24 ; une course 46 de haut (son numéro sur une pastille de 28, sa vignette 64 × 38, rayon 10, son nom 19) ; la grande vignette 400 × 226, rayon 24 ; la pastille d'une coupe 30, son icône 24 ; boutons 56 |
 
 ## Animations « molles »
 
@@ -170,7 +172,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 ![L'accueil et son fond](img/accueil.png)
 
 - **La colonne à gauche**, à 64 px du bord : le titre en grand, la phrase « Des karts tout doux, des virages tout fous. », le panneau et les touches (alignées à gauche, sur quatre lignes). **Le fond se voit à droite.**
-- **Quatre boutons, dans cet ordre** : Jouer solo (Lagon), Multijoueur (Fraise), Options (Prune), Pilote (Carotte). En attendant son écran (#99), Jouer solo ouvre le menu de course (N) ; Pilote ouvre l'écran Pilote (#98, G), Multijoueur le salon (L), Options les options (O).
+- **Quatre boutons, dans cet ordre** : Jouer solo (Lagon), Multijoueur (Fraise), Options (Prune), Pilote (Carotte). Jouer solo ouvre son écran (#99, N) ; Pilote ouvre l'écran Pilote (#98, G), Multijoueur le salon (L), Options les options (O).
 - **Le titre** : « Fluffy » et « Racers » sur deux lignes, en Fredoka demi-gras de 88 px, blanc à l'ombre Fraise (7 px), vivant (voir « Animations molles »).
 - **Le voile** : la Myrtille à 55 % derrière la colonne, jusqu'à 640 px du bord gauche, puis il s'efface jusqu'à 1 000 px. Les textes blancs gardent leur contraste ; les karts, à droite, se voient tels quels. Pas de flou : il coûterait une passe de rendu.
 - **Le fond, c'est le jeu** : une vraie course de bots sur le circuit du moment (Prairie Pompon au lancement), sans écran de course (ni HUD, ni son de course). Ses réglages sont dans le panneau d'admin (`HomeTuning`) :
@@ -221,6 +223,28 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 
 **Aucune crate ajoutée.**
 
+## L'écran Jouer solo (#99)
+
+« Dans solo on a le choix de championnat, contre la montre, circuit seul. Le championnat peut être une coupe déjà définie ou un championnat custom avec un certain nombre de circuits définis ou aléatoire. » (Max, 2026-10-17). Il s'ouvre depuis l'accueil (« Jouer solo »), le menu en course et avec N ; il revient à l'écran qui l'a ouvert. Il remplace le menu de course de #19 (une fenêtre egui).
+
+![L'écran Jouer solo : une coupe](img/jouer-solo.png)
+
+- **Le panneau** : 900 px de large, au milieu, sur le voile ; au-dessus, le titre « Jouer solo » (48 px), dessous, les touches sur deux lignes.
+- **À gauche, les lignes du choix**, de haut en bas : **Mode** (Championnat, Contre-la-montre, Circuit seul) ; pour un championnat, **Formule** (Une coupe, Personnalisé), puis **Coupe** (son icône sur une pastille Mangue, son nom), ou **Courses** (de 2 au nombre de circuits) et **Circuits** (Au hasard, Au choix) ; sinon **Circuit** ; puis **Miroir**, **Bots** et **Objets** (Oui, Non ; pas pour le contre-la-montre). Chaque ligne est une pilule avec sa profondeur, son libellé, « < », sa valeur au milieu, « > » : **la ligne qui a le focus est Mangue** et grossit de 5 % avec le rebond du focus. Dessous, **une petite ligne dit à quoi sert la ligne qui a le focus** (« Toi seul sur la piste. », « Aucune boîte ; les croquettes restent. »…), puis « C'est parti ! » (pastille Menthe) et « Retour » (pastille Myrtille).
+- **À droite, les courses** : un en-tête (le nom de la coupe, « Tes 5 courses, tirées au sort », « Tes 4 courses », ou le nom du circuit), puis chaque course sur une pilule : **son numéro** sur une pastille Lagon, **sa vignette** et son nom. Au choix, ces pilules sont des lignes (« < », le circuit, « > ») : on y arrive en descendant après « Objets ». Pour un circuit seul ou un contre-la-montre, **la vignette en grand**, et pour le contre-la-montre le record du circuit (« Ton record : 0:40.00 », ou « Pas encore de record : à toi de jouer ! »).
+- **La vignette d'un circuit** : le ciel puis le sol de son biome (un dégradé), et **la route vue de dessus** : des points ronds de la couleur de son asphalte le long de sa ligne centrale (le point de départ, blanc), centrée et à l'échelle de la vignette ; en miroir, retournée gauche-droite. Les fichiers des circuits sont lus à la première ouverture de l'écran : avant qu'ils arrivent, la vignette n'a que ses couleurs (celles d'un circuit sans biome).
+- **Navigation** :
+
+| | Clavier | Souris | Manette |
+|---|---|---|---|
+| La ligne | Haut / Bas, ou Z / S (AZERTY), W / S (QWERTY) | survol | croix, stick (un pas par poussée) |
+| Changer | Gauche / Droite, ou Q / D (AZERTY), A / D (QWERTY) ; Espace | « < », « > » | croix, stick |
+| C'est parti | Entrée | « C'est parti ! » | A |
+| Revenir sans rien lancer | Échap, N | « Retour » | B, Start |
+
+- **Il ouvre sur ce qui est couru** (le mode, le circuit, le miroir, les bots et les objets du moment) ; la coupe et le championnat personnalisé restent comme on les a laissés. Le jeu est en pause tant qu'il est ouvert depuis le jeu en solo ; sur l'accueil, jamais (son fond roule derrière). En ligne, il ne s'ouvre pas : l'hôte choisit dans le salon (« Jouer solo » est grisé dans le menu en course).
+- **Choix technique** : l'état et les touches sont ceux de `modes::RaceMenu` (headless, testés), la vue est dans `SoloPlugin` (avec un rendu seulement). L'arbre est reconstruit quand ses lignes ou ses courses changent (un autre mode, une autre formule, un autre circuit, le miroir : la vignette se retourne), sinon ses textes changent en place ; **fermé, il n'en reste rien**. Aucune crate ajoutée.
+
 ## Ton des textes
 
 - **Court.** Un libellé fait trois mots au plus, une petite ligne moins de 48 signes.
@@ -248,7 +272,7 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 | Maintenance | Plus verbeux : un petit kit (panneau, bouton) dans `src/menu/` le compense, et chaque écran se teste headless (l'arbre existe sans rendu) | Très court à écrire, mais il ne se teste qu'en partie sans rendu |
 | Déjà là | Oui (HUD, étiquettes des pseudos) | Oui (panneau d'admin, fenêtres actuelles) |
 
-**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P) et, en attendant leurs écrans, les options (O), le menu de course (N) et le salon (L). Le champ du pseudo : `EditableText` de Bevy 0.20 (#98, voir « L'écran Pilote »).
+**Décision : `bevy_ui`** pour les écrans de jeu. egui reste pour le panneau de développement (P) et, en attendant leurs écrans, les options (O) et le salon (L) ; le menu de course (N) est devenu l'écran Jouer solo (#99). Le champ du pseudo : `EditableText` de Bevy 0.20 (#98, voir « L'écran Pilote »).
 
 **Pas de 9-slice pour l'instant.** Le UI Pack de Kenney (CC0) a des boutons prêts à découper, mais avec de petits coins et des couleurs figées. Les formes natives sont plus rondes, se recolorent avec la palette et restent nettes à toute taille, sans aucun fichier. Le 9-slice resservira si on veut une texture (papier, tissu).
 
@@ -257,6 +281,8 @@ On y arrive au lancement du jeu (avec `?room=…`, directement dans le salon, co
 ## Captures de référence
 
 Elles ont été prises dans Chromium headless, sur un build trunk de debug avec WebGL logiciel, en 1280 × 720. Ce navigateur dessine environ une image par seconde.
+
+**L'écran Jouer solo (#99)** : captures dans le scratchpad de la session (`shots99/`), deux d'entre elles dans le dépôt (`docs/img/jouer-solo.png` : la coupe, ses quatre circuits et leurs vignettes ; `docs/img/jouer-solo-perso.png` : un championnat personnalisé au choix).
 
 **L'écran Pilote (#98)** : captures dans le scratchpad de la session (`shots98/`, `shots98b/`, `shots98c/`), l'une d'elles dans le dépôt (`docs/img/pilote.png` : l'écran ouvert depuis l'accueil, le choix par défaut). Elles montrent l'aperçu de 3/4 face (le chat dans la caisse à savon ; le cochon dans la baignoire, l'aile ouverte sur sa ligne ; le chat dans le panier en osier sur ses bobines de fil ; le lapin rouge), la grille des portraits, les stats et les terrains, le focus au clavier et à la souris, le champ du pseudo pendant la saisie (« Loéa », le « é » envoyé comme un clavier AZERTY, puis Retour arrière), et l'écran ouvert par G en course, le jeu en pause derrière.
 

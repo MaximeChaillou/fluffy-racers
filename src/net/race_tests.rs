@@ -159,7 +159,7 @@ pub(super) fn seated(players: &[(PeerKey, &str)]) -> Room {
     room.until(15.0, "everyone seated, free driving", |app| {
         app.world().get_resource::<KartSync>().is_some_and(|sync| {
             sync.remotes().len() == count - 1 && sync.remotes().iter().all(|r| r.proxy.is_some())
-        }) && showing(app) == Some(Showing::Free(0))
+        }) && showing(app) == Some(Showing::free(0))
             && app.world().get_resource::<TrackLayout>().is_some()
     });
     room
@@ -268,7 +268,7 @@ fn the_host_starts_the_race_for_everyone() {
     // Another circuit, then back to the first one.
     room.act(ANA, NetAction::ChooseCircuit(1));
     room.until(10.0, "free driving on the second circuit", |app| {
-        showing(app) == Some(Showing::Free(1))
+        showing(app) == Some(Showing::free(1))
             && app
                 .world()
                 .get_resource::<TrackLayout>()
@@ -284,7 +284,7 @@ fn the_host_starts_the_race_for_everyone() {
     }
     room.act(ANA, NetAction::ChooseCircuit(0));
     room.until(10.0, "free driving on the first circuit", |app| {
-        showing(app) == Some(Showing::Free(0))
+        showing(app) == Some(Showing::free(0))
             && app
                 .world()
                 .get_resource::<TrackLayout>()

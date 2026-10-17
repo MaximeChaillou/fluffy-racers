@@ -17,7 +17,7 @@ use crate::items::ItemTuning;
 use crate::kart::{ColorSet, KartPaint, KartWheels, PlayerKart, bot_colors};
 use crate::race::{GrandPrixStage, OnPodium, Parked, RaceTuning, RacerName, ResultTime};
 use crate::tests::{game_app_unloaded, single_threaded, wait_for_the_player};
-use crate::track::TrackLayout;
+use crate::track::{CroquetteSpot, ItemBoxSpot, TrackLayout};
 use crate::ui::{HudRoot, ResultsScreen};
 
 fn tap(app: &mut App, key_code: KeyCode, logical_key: Key) {
@@ -131,24 +131,23 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
     let mut app = quick_game(bots);
     let circuits = tracks::circuits();
 
-    // N, then the mode (Grand Prix) and the mirror (two lines down: issue #118, no class).
+    // N, then the mode (the championship, a cup: issue #99) and the mirror (three lines down:
+    // the formula, the cup, the mirror; issue #118, no class).
     tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
     assert!(app.world().resource::<RaceMenu>().open);
     assert!(app.world().resource::<Time<Virtual>>().is_paused());
     tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
-    tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
-    tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
+    }
     tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
-    let menu = *app.world().resource::<RaceMenu>();
+    let menu = app.world().resource::<RaceMenu>().clone();
     assert_eq!(menu.row(), MenuRow::Mirror);
     assert_eq!(
-        menu.setup,
-        RaceSetup {
-            mode: GameMode::GrandPrix,
-            circuit: 0,
-            mirror: true,
-        }
+        (menu.setup.mode, menu.setup.formula, menu.setup.cup),
+        (GameMode::GrandPrix, Formula::Cup, 0)
     );
+    assert!(menu.setup.mirror && menu.setup.bots && menu.setup.items);
     enter(&mut app);
     assert!(!app.world().resource::<RaceMenu>().open);
     let cup = cup_of(&circuits, 4);
@@ -169,6 +168,7 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
         let gp = grand_prix(&app);
         assert_eq!((gp.race, gp.stage), (race, GrandPrixStage::Racing));
         assert_eq!(gp.cup, cup);
+        assert_eq!(gp.title, "Coupe Doudou", "issue #99: the cup's name");
         assert_eq!(gp.entrants, bots + 1);
         // The mirror holds for the whole Grand Prix.
         assert!(app.world().resource::<TrackLayout>().mirrored);
@@ -356,15 +356,11 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     tap(&mut app, KeyCode::ArrowDown, Key::ArrowDown);
     tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
     tap(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft);
-    let menu = *app.world().resource::<RaceMenu>();
+    let menu = app.world().resource::<RaceMenu>().clone();
     assert_eq!(menu.row(), MenuRow::Mirror);
     assert_eq!(
-        menu.setup,
-        RaceSetup {
-            mode: GameMode::FreeRace,
-            circuit: col,
-            mirror: false,
-        }
+        (menu.setup.mode, menu.setup.circuit, menu.setup.mirror),
+        (GameMode::FreeRace, col, false)
     );
     enter(&mut app);
     wait_for_the_level(&mut app, "Col des Moufles");
@@ -378,47 +374,11 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
     assert!(!app.world().resource::<RaceMenu>().open);
 }
 
-/// The lines of the race menu: the mode (issue #76: free race, Grand Prix, time trial), the
-/// circuit (a free race or a time trial: a Grand Prix races the cup) and the mirror, each one
-/// around; issue #118: no class line (the game has a single speed).
+/// The texts of the championship's screens are ASCII (the HUD's font); issue #99: its standings
+/// say the cup's name (or « Championnat »).
 #[test]
-fn the_menu_lines_go_around() {
+fn the_screens_of_a_championship_write_ascii() {
     let circuits = tracks::circuits();
-    let n = circuits.len();
-    assert_eq!(
-        MenuRow::ALL.map(MenuRow::label),
-        ["Mode", "Circuit", "Miroir"]
-    );
-    let setup = RaceSetup::default();
-    assert_eq!(setup.mode, GameMode::FreeRace);
-    let gp = setup.changed(MenuRow::Mode, 1, n);
-    assert_eq!(gp.mode, GameMode::GrandPrix);
-    let trial = gp.changed(MenuRow::Mode, 1, n);
-    assert_eq!(trial.mode, GameMode::TimeTrial);
-    assert_eq!(trial.changed(MenuRow::Mode, 1, n), setup, "around");
-    assert_eq!(setup.changed(MenuRow::Mode, -1, n), trial);
-    assert_eq!(GameMode::TimeTrial.label(), "Contre-la-montre");
-    assert_eq!(setup.changed(MenuRow::Circuit, -1, n).circuit, n - 1);
-    assert_eq!(gp.changed(MenuRow::Circuit, 1, n).circuit, 0, "the cup");
-    assert_eq!(trial.changed(MenuRow::Circuit, 2, n).circuit, 2 % n);
-    assert_eq!(
-        trial
-            .changed(MenuRow::Circuit, 1, n)
-            .value(MenuRow::Circuit, &circuits, 4),
-        circuits[1 % n].name
-    );
-    assert!(setup.changed(MenuRow::Mirror, 1, n).mirror);
-    assert!(!setup.changed(MenuRow::Mirror, 2, n).mirror);
-    assert_eq!(
-        setup.value(MenuRow::Circuit, &circuits, 4),
-        "Prairie Pompon"
-    );
-    assert_eq!(
-        gp.value(MenuRow::Circuit, &circuits, 4),
-        "Prairie Pompon · Anneau Guimauve · Crique Câline · Col des Moufles"
-    );
-    assert_eq!(gp.value(MenuRow::Mirror, &circuits, 4), "Non");
-    // The texts of the Grand Prix's screens are ASCII (the HUD's font).
     let mut grand_prix = GrandPrix::new(cup_of(&circuits, 4), 11);
     grand_prix.score(
         &(0..12).collect::<Vec<_>>(),
@@ -441,6 +401,224 @@ fn the_menu_lines_go_around() {
     }
     assert_eq!(
         screens::standings_title(&grand_prix),
-        "GRAND PRIX 3/4 - Crique Caline"
+        "CHAMPIONNAT 3/4 - Crique Caline"
     );
+    grand_prix.title = "Coupe Doudou".into();
+    assert_eq!(
+        screens::standings_title(&grand_prix),
+        "COUPE DOUDOU 3/4 - Crique Caline"
+    );
+}
+
+fn count<C: Component>(app: &mut App) -> usize {
+    let world = app.world_mut();
+    world.query_filtered::<(), With<C>>().iter(world).count()
+}
+
+fn menu(app: &App) -> RaceMenu {
+    app.world().resource::<RaceMenu>().clone()
+}
+
+fn arrow(app: &mut App, key: KeyCode, times: usize) {
+    let logical = match key {
+        KeyCode::ArrowUp => Key::ArrowUp,
+        KeyCode::ArrowDown => Key::ArrowDown,
+        KeyCode::ArrowLeft => Key::ArrowLeft,
+        _ => Key::ArrowRight,
+    };
+    for _ in 0..times {
+        tap(app, key, logical.clone());
+    }
+}
+
+/// Issue #99 acceptance: a custom championship of two races, its circuits chosen one by one
+/// (Col des Moufles, then Prairie Pompon), races them in that order, under the name
+/// « Championnat », with its points and its standings, and ends on the podium after the second.
+#[test]
+fn a_championship_with_its_circuits_chosen_races_them_in_order() {
+    let mut app = quick_game(2);
+    let circuits = tracks::circuits();
+    let col = circuits
+        .iter()
+        .position(|c| c.name == "Col des Moufles")
+        .unwrap();
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    // The championship, a custom one, two races (4, 3, 2), chosen.
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowLeft, 2);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    let setup = menu(&app).setup;
+    assert_eq!(
+        (setup.mode, setup.formula, setup.races, setup.pick),
+        (GameMode::GrandPrix, Formula::Custom, 2, Pick::Chosen)
+    );
+    assert_eq!(setup.chosen, [0, 1], "the first circuits not chosen yet");
+    // Its races are its last lines (past the mirror, the bots and the items): the first one on
+    // the Col des Moufles, the second on Prairie Pompon.
+    arrow(&mut app, KeyCode::ArrowDown, 4);
+    assert_eq!(menu(&app).row(), MenuRow::Race(0));
+    arrow(&mut app, KeyCode::ArrowRight, col);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    assert_eq!(menu(&app).row(), MenuRow::Race(1));
+    arrow(&mut app, KeyCode::ArrowLeft, 1);
+    assert_eq!(menu(&app).setup.chosen, [col, 0]);
+    enter(&mut app);
+    for (race, name) in [(0, "Col des Moufles"), (1, "Prairie Pompon")] {
+        wait_for_the_level(&mut app, name);
+        let gp = grand_prix(&app);
+        assert_eq!((gp.race, gp.stage), (race, GrandPrixStage::Racing));
+        assert_eq!(
+            gp.cup.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["Col des Moufles", "Prairie Pompon"]
+        );
+        assert_eq!(gp.title, "Championnat");
+        assert_eq!(gp.entrants, 3);
+        player_becomes_a_bot(&mut app);
+        race_to_the_results(&mut app);
+        enter(&mut app);
+        for _ in 0..5 {
+            app.update();
+        }
+        let gp = grand_prix(&app);
+        assert_eq!(gp.stage, GrandPrixStage::Standings, "race {race}");
+        assert_eq!(gp.orders.len(), race + 1);
+        assert_eq!(
+            screens::standings_title(&gp),
+            format!("CHAMPIONNAT {}/2 - {}", race + 1, ascii_name(name))
+        );
+        enter(&mut app);
+    }
+    for _ in 0..30 {
+        app.update();
+    }
+    assert_eq!(grand_prix(&app).stage, GrandPrixStage::Podium);
+}
+
+fn ascii_name(name: &str) -> String {
+    name.chars().map(crate::ui::format::ascii_letter).collect()
+}
+
+/// Issue #99 acceptance: a random custom championship draws its circuits from the race's seed:
+/// what the screen shows is what is raced, the same seed and draw give the same circuits, none
+/// twice; the next championship is another draw. Without bots, the championship is the player
+/// alone (its bots kept for later).
+#[test]
+fn a_random_championship_draws_its_circuits_from_the_seed() {
+    let mut app = quick_game(2);
+    app.world_mut().resource_mut::<RaceGrid>().seed = 77;
+    let catalog = Catalog::game(4);
+    let n = catalog.circuits.len();
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    // Five races, drawn at random; no bots.
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 3);
+    assert_eq!(menu(&app).row(), MenuRow::Bots);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    let setup = menu(&app).setup;
+    assert_eq!(
+        (setup.races, setup.pick, setup.bots),
+        (5, Pick::Random, false)
+    );
+    let shown = setup.program(77, &catalog);
+    assert_eq!(shown, draw_circuits(77, setup.draw, 5, n));
+    let mut distinct = shown.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 5, "no circuit twice: {shown:?}");
+    enter(&mut app);
+    let gp = grand_prix(&app);
+    assert_eq!(gp.cup, catalog.races(&shown), "the draw shown is raced");
+    assert_eq!(gp.entrants, 1, "without bots, the player alone");
+    assert_eq!(app.world().resource::<RaceGrid>().bots, 0);
+    assert_eq!(menu(&app).kept_bots, Some(2));
+    wait_for_the_level(&mut app, catalog.name(shown[0]));
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(count::<Racer>(&mut app), 1);
+    // The same seed and draw: the same circuits, every time.
+    assert_eq!(draw_circuits(77, setup.draw, 5, n), shown);
+    // The next championship: another draw.
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    let next = menu(&app).setup;
+    assert_eq!(
+        next.mode,
+        GameMode::GrandPrix,
+        "it opens on the championship"
+    );
+    assert_ne!(next.draw, setup.draw);
+    assert_ne!(next.program(77, &catalog), shown);
+    tap(&mut app, KeyCode::Escape, Key::Escape);
+}
+
+/// Issue #99 acceptance: « Bots : non » races the player alone (its bots kept, back with « Bots :
+/// oui »); « Objets : non » builds the circuit without any item box (the croquettes stay), back
+/// with « Objets : oui ». The screen opens on what is raced.
+#[test]
+fn a_race_alone_without_bots_nor_items() {
+    let bots = 3;
+    let mut app = quick_game(bots);
+    let boxes = count::<ItemBoxSpot>(&mut app);
+    let croquettes = count::<CroquetteSpot>(&mut app);
+    assert!(boxes > 0 && croquettes > 0);
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    assert_eq!(
+        menu(&app).rows(),
+        [
+            MenuRow::Mode,
+            MenuRow::Circuit,
+            MenuRow::Mirror,
+            MenuRow::Bots,
+            MenuRow::Items
+        ]
+    );
+    arrow(&mut app, KeyCode::ArrowDown, 3);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    let setup = menu(&app).setup;
+    assert!(!setup.bots && !setup.items);
+    enter(&mut app);
+    wait_for_the_level(&mut app, "Prairie Pompon");
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(count::<Racer>(&mut app), 1, "the player alone");
+    assert_eq!(app.world().resource::<RaceGrid>().bots, 0);
+    assert_eq!(menu(&app).kept_bots, Some(bots));
+    assert_eq!(count::<ItemBoxSpot>(&mut app), 0, "no item box");
+    assert_eq!(count::<crate::items::ItemBox>(&mut app), 0);
+    assert_eq!(
+        count::<CroquetteSpot>(&mut app),
+        croquettes,
+        "the croquettes stay"
+    );
+    assert!(app.world().contains_resource::<NoItemBoxes>());
+
+    // It opens on that; both back on.
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    let setup = menu(&app).setup;
+    assert!(!setup.bots && !setup.items);
+    arrow(&mut app, KeyCode::ArrowDown, 3);
+    arrow(&mut app, KeyCode::ArrowLeft, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 1);
+    arrow(&mut app, KeyCode::ArrowLeft, 1);
+    enter(&mut app);
+    wait_for_the_level(&mut app, "Prairie Pompon");
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(count::<Racer>(&mut app), bots + 1);
+    assert_eq!(app.world().resource::<RaceGrid>().bots, bots);
+    assert_eq!(menu(&app).kept_bots, None);
+    assert_eq!(count::<ItemBoxSpot>(&mut app), boxes);
+    assert!(!app.world().contains_resource::<NoItemBoxes>());
 }

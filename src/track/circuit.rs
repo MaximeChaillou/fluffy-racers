@@ -17,7 +17,7 @@ use super::mesh::{self, GROUND_HEIGHT, MeshData};
 use super::start_line::StartLine;
 use super::water;
 use super::{
-    AntiGravity, MirrorMode, PlayerStart, Surface, WALL_RESTITUTION, anti_gravity_at,
+    AntiGravity, MirrorMode, NoItemBoxes, PlayerStart, Surface, WALL_RESTITUTION, anti_gravity_at,
     ramp_transform_on,
 };
 use crate::level::LevelScoped;
@@ -120,12 +120,14 @@ pub fn fall_back_when_loading_fails(
 }
 
 /// Builds the circuit once its file is loaded: its mirror image in the mirror mode (issue #19,
-/// [`MirrorMode`]).
+/// [`MirrorMode`]); issue #99: without its item boxes when the items are off ([`NoItemBoxes`]).
+#[allow(clippy::too_many_arguments)]
 pub fn build_circuit_when_loaded(
     mut commands: Commands,
     handle: Res<TrackHandle>,
     tracks: Res<Assets<TrackData>>,
     mirror: Option<Res<MirrorMode>>,
+    no_boxes: Option<Res<NoItemBoxes>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -215,7 +217,14 @@ pub fn build_circuit_when_loaded(
     );
     spawn_trick_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
     spawn_glide_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
-    spawn_spots(&mut commands, &mut meshes, &mut materials, &layout, data);
+    let item_boxes = no_boxes.is_none();
+    spawn_spots(
+        &mut commands,
+        (&mut *meshes, &mut *materials),
+        &layout,
+        data,
+        item_boxes,
+    );
 
     commands.insert_resource(PlayerStart(layout.grid[0]));
     commands.insert_resource(layout);
@@ -510,13 +519,14 @@ fn spawn_trick_ramps(
 
 /// The gameplay spots of the file. Boost pads are active (issue #13, the kart reads
 /// [`BoostPad`]), croquettes too (issue #14, `crate::croquettes`), and the item boxes (issue #16,
-/// `crate::items`, which also dresses them).
+/// `crate::items`, which also dresses them), unless the items are off (`item_boxes`, issue #99:
+/// [`NoItemBoxes`]; their numbers, `SpotIndex`, are the boxes' only: the croquettes keep theirs).
 fn spawn_spots(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
+    (meshes, materials): (&mut Assets<Mesh>, &mut Assets<StandardMaterial>),
     layout: &TrackLayout,
     data: &TrackData,
+    item_boxes: bool,
 ) {
     let center = &layout.center;
     let at = |param: f32| center.at(center.param_to_distance(param));
@@ -581,7 +591,12 @@ fn spawn_spots(
     }
 
     let mut index = 0u16;
-    for row in &data.item_boxes {
+    let rows = if item_boxes {
+        data.item_boxes.as_slice()
+    } else {
+        &[]
+    };
+    for row in rows {
         let sample = at(row.at);
         for offset in &row.offsets {
             index += 1;

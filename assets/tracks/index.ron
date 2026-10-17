@@ -1,14 +1,25 @@
 // The circuits of this folder, as the admin panel lists them (issue #36): a browser cannot list
 // a folder, so every new `*.track.ron` file is added here too (a test checks it). `name` is the
 // circuit's `name`, `file` its file in this folder. The first one is the game's circuit. The
-// Grand Prix (issue #19) races the first four, in this order. The Lagon Duvet (issue #20) shows
-// the special environments: the glider and the water; the Ruban Réglisse (issue #78), the
-// anti-gravity.
-[
-    (name: "Prairie Pompon", file: "prairie.track.ron"),
-    (name: "Anneau Guimauve", file: "anneau.track.ron"),
-    (name: "Crique Câline", file: "crique.track.ron"),
-    (name: "Col des Moufles", file: "col.track.ron"),
-    (name: "Lagon Duvet", file: "lagon.track.ron"),
-    (name: "Ruban Réglisse", file: "ruban.track.ron"),
-]
+// Lagon Duvet (issue #20) shows the special environments: the glider and the water; the Ruban
+// Réglisse (issue #78), the anti-gravity.
+//
+// Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
+// `circuits` (the first cup races the first four, the second one the next four...), each with
+// an original name and its icon (`Trophy`, `Medal`, `Rosette`, `Target`, `Podium`: icons of
+// Kenney's Game Icons, `assets/ui/icons/`). A cup that does not have its four circuits yet is not
+// offered (its circuits can be raced alone, or in a custom championship).
+(
+    circuits: [
+        (name: "Prairie Pompon", file: "prairie.track.ron"),
+        (name: "Anneau Guimauve", file: "anneau.track.ron"),
+        (name: "Crique Câline", file: "crique.track.ron"),
+        (name: "Col des Moufles", file: "col.track.ron"),
+        (name: "Lagon Duvet", file: "lagon.track.ron"),
+        (name: "Ruban Réglisse", file: "ruban.track.ron"),
+    ],
+    cups: [
+        (name: "Coupe Doudou", icon: Trophy),
+        (name: "Coupe Nuage", icon: Medal),
+    ],
+)

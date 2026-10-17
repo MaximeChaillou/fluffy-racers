@@ -33,12 +33,13 @@
 //!
 //! **The room** (issue #9): the host chooses its circuit ([`Lobby::choose_circuit`], everyone
 //! drives freely on it) and starts the races ([`Lobby::announce_race`]); every client it seats
-//! gets what is on. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's:
+//! gets what is on. Issue #99: with its other settings ([`Lobby::choose_setup`], [`RoomSetup`]:
+//! the mirror, the bots, the items), which every client sees and drives with. The room's clock ([`Lobby::room_time_ms`], `clock::RoomClock`) is the host's:
 //! the race's ticks are counted on it.
 
 use super::clock::{PeerClock, RoomClock};
 use super::links::Stuck;
-use super::protocol::{DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceStart};
+use super::protocol::{DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceStart, RoomSetup};
 use crate::kart::{KartColor, resolve_players};
 
 /// A ping to every peer we are linked with this often (ms).
@@ -77,8 +78,9 @@ pub enum LobbyEvent {
     OtherVersion(PeerKey, u8),
     /// The host starts the race (issue #9).
     RaceAnnounced(RaceStart),
-    /// The host chose the room's circuit (issue #9): free driving on it.
-    CircuitChosen(u8),
+    /// The host chose the room's circuit (issue #9): free driving on it. Issue #99: and its
+    /// other settings.
+    SetupChosen(RoomSetup),
 }
 
 /// Another player of the room (or a peer waiting for its seat), as we know it.
@@ -183,8 +185,9 @@ pub struct Lobby {
     /// Issue #63: our host left: the room is over.
     host_left: bool,
     announced: Option<RaceStart>,
-    /// The room's circuit (issue #9): the host's choice, index in `assets/tracks/index.ron`.
-    circuit: u8,
+    /// The room's circuit (issue #9): the host's choice, index in `assets/tracks/index.ron`; issue
+    /// #99: with its other settings.
+    setup: RoomSetup,
     /// The number of the last race announced (0: none yet): the next one counts on.
     last_race: u16,
     /// The room's clock (issue #9): the host's.
@@ -214,7 +217,7 @@ impl Lobby {
             left: false,
             host_left: false,
             announced: None,
-            circuit: 0,
+            setup: RoomSetup::default(),
             last_race: 0,
             room,
             outbox: Vec::new(),
@@ -283,7 +286,13 @@ impl Lobby {
 
     /// The room's circuit (issue #9): the host's choice.
     pub fn circuit(&self) -> u8 {
-        self.circuit
+        self.setup.track
+    }
+
+    /// Issue #99: the room's settings: the host's choice (the race on keeps its own:
+    /// [`Lobby::announced`]).
+    pub fn setup(&self) -> RoomSetup {
+        self.setup
     }
 
     /// The number the next race takes: one more than the last one announced.
@@ -417,17 +426,24 @@ impl Lobby {
             }
             Message::StartRace(start) => {
                 if !self.hosting {
-                    self.circuit = start.track;
+                    // Issue #99: the race's settings are the room's (its bots: as many as it has,
+                    // or as the room had).
+                    self.setup = RoomSetup {
+                        track: start.track,
+                        mirror: start.mirror,
+                        items: start.items,
+                        bots: start.bots > 0 || self.setup.bots,
+                    };
                     self.last_race = start.race;
                     self.announced = Some(start.clone());
                     self.events.push(LobbyEvent::RaceAnnounced(start));
                 }
             }
-            Message::Circuit(track) => {
+            Message::Setup(setup) => {
                 if !self.hosting {
-                    self.circuit = track;
+                    self.setup = setup;
                     self.announced = None;
-                    self.events.push(LobbyEvent::CircuitChosen(track));
+                    self.events.push(LobbyEvent::SetupChosen(setup));
                 }
             }
             Message::Relayed { origin, message } => {
@@ -694,7 +710,7 @@ impl Lobby {
         if !self.hosting || self.stopped() {
             return false;
         }
-        self.circuit = start.track;
+        self.setup.track = start.track;
         self.last_race = start.race;
         self.announced = Some(start.clone());
         self.broadcast(Message::StartRace(start));
@@ -704,20 +720,31 @@ impl Lobby {
     /// The host chooses the room's circuit (issue #9): everyone drives freely on it, and the
     /// race that was on (or over) is gone. Only the host may.
     pub fn choose_circuit(&mut self, track: u8) -> bool {
+        let setup = RoomSetup {
+            track,
+            ..self.setup
+        };
+        self.choose_setup(setup)
+    }
+
+    /// Issue #99: the host chooses the room's settings (the circuit, the mirror, the bots, the
+    /// items), like its circuit: everyone drives freely with them, the race that was on (or over)
+    /// is gone, and the next race takes them. Only the host may.
+    pub fn choose_setup(&mut self, setup: RoomSetup) -> bool {
         if !self.hosting || self.stopped() {
             return false;
         }
-        self.circuit = track;
+        self.setup = setup;
         self.announced = None;
-        self.broadcast(Message::Circuit(track));
+        self.broadcast(Message::Setup(setup));
         true
     }
 
-    /// What is on in the room, for a client we (the host) just seated: the circuit, and the race.
+    /// What is on in the room, for a client we (the host) just seated: the race, or the settings.
     fn tell_room(&mut self, to: PeerKey) {
         let message = match &self.announced {
             Some(start) => Message::StartRace(start.clone()),
-            None => Message::Circuit(self.circuit),
+            None => Message::Setup(self.setup),
         };
         self.send(to, message);
     }
@@ -1416,7 +1443,7 @@ mod tests {
             origin: other,
             message: Box::new(Message::Hello(Star::profile("Autre"))),
         }));
-        assert!(to_small.contains(&&Message::Circuit(0)));
+        assert!(to_small.contains(&&Message::Setup(RoomSetup::default())));
         assert!(to_small.contains(&&Message::Seats(vec![big, other, small])));
         // The other client learns the newcomer, through us.
         assert!(sent.contains(&Outgoing {
@@ -1500,6 +1527,8 @@ mod tests {
             laps: 3,
             bots: 10,
             difficulty: 1,
+            mirror: false,
+            items: true,
             start_tick: 9_000,
             players: vec![a, b],
         };
@@ -1511,7 +1540,11 @@ mod tests {
         assert_eq!(star.view(b).announced(), Some(&start));
         star.lobby(a)
             .receive(b, Message::StartRace(start.clone()), now_a);
-        star.lobby(a).receive(b, Message::Circuit(1), now_a);
+        let one = RoomSetup {
+            track: 1,
+            ..RoomSetup::default()
+        };
+        star.lobby(a).receive(b, Message::Setup(one), now_a);
         assert_eq!(star.view(a).announced(), None);
         assert_eq!(star.view(a).circuit(), 0);
         assert!(star.lobby(a).announce_race(start));
@@ -1521,7 +1554,7 @@ mod tests {
         assert_eq!(star.view(a).seats().len(), 2);
         // A client: another peer's word, even its circuit or the seats, is not the host's.
         star.lobby(b)
-            .receive(PeerKey(99), Message::Circuit(1), now_b);
+            .receive(PeerKey(99), Message::Setup(one), now_b);
         star.lobby(b)
             .receive(PeerKey(99), Message::Seats(vec![PeerKey(99)]), now_b);
         star.lobby(b).receive(PeerKey(99), Message::RoomFull, now_b);
@@ -1546,11 +1579,11 @@ mod tests {
             assert_eq!(star.view(key).circuit(), 1, "{key:?}");
             assert_eq!(star.view(key).announced(), None);
         }
-        assert!(
-            star.lobby(b)
-                .drain_events()
-                .any(|event| event == LobbyEvent::CircuitChosen(1))
-        );
+        assert!(star.lobby(b).drain_events().any(|event| event
+            == LobbyEvent::SetupChosen(RoomSetup {
+                track: 1,
+                ..RoomSetup::default()
+            })));
         assert_eq!(star.view(a).next_race(), 1);
         let start = RaceStart {
             race: star.view(a).next_race(),
@@ -1559,6 +1592,8 @@ mod tests {
             laps: 3,
             bots: 10,
             difficulty: 1,
+            mirror: false,
+            items: true,
             start_tick: 12_000,
             players: vec![a, b],
         };
@@ -1593,6 +1628,62 @@ mod tests {
             assert!(star.view(key).host_left());
             assert!(!star.lobby(key).choose_circuit(1));
         }
+    }
+
+    /// Issue #99: the host's settings of the room (the circuit, the mirror, the bots, the items)
+    /// reach every client, and a newcomer; a client cannot choose them; choosing the circuit
+    /// alone keeps the others; a newcomer seated during a race takes them from the race.
+    #[test]
+    fn the_host_chooses_the_rooms_settings_and_everyone_sees_them() {
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        star.run(1_000);
+        let setup = RoomSetup {
+            track: 2,
+            mirror: true,
+            bots: false,
+            items: false,
+        };
+        assert!(!star.lobby(b).choose_setup(setup));
+        assert!(star.lobby(a).choose_setup(setup));
+        star.run(100);
+        for key in [a, b] {
+            assert_eq!(star.view(key).setup(), setup, "{key:?}");
+            assert_eq!(star.view(key).circuit(), 2);
+        }
+        assert!(
+            star.lobby(b)
+                .drain_events()
+                .any(|event| event == LobbyEvent::SetupChosen(setup))
+        );
+        let c = star.join(3);
+        star.run(1_000);
+        assert_eq!(star.view(c).setup(), setup, "a newcomer learns them");
+        assert!(star.lobby(a).choose_circuit(4));
+        star.run(100);
+        for key in [a, b, c] {
+            assert_eq!(star.view(key).setup(), RoomSetup { track: 4, ..setup });
+        }
+        let start = RaceStart {
+            race: star.view(a).next_race(),
+            seed: 3,
+            track: 4,
+            laps: 3,
+            bots: 0,
+            difficulty: 1,
+            mirror: true,
+            items: false,
+            start_tick: 20_000,
+            players: vec![a, b, c],
+        };
+        assert!(star.lobby(a).announce_race(start.clone()));
+        star.run(100);
+        let d = star.join(4);
+        star.run(1_000);
+        assert_eq!(star.view(d).announced(), Some(&start));
+        let seen = star.view(d).setup();
+        assert_eq!((seen.track, seen.mirror, seen.items), (4, true, false));
     }
 
     /// Issue #63 (was « the room clock goes on when the host leaves », issue #9): the room's

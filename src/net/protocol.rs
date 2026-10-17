@@ -47,7 +47,10 @@
 //! items left around the kart (`KartSnapshot::pinata`, 50 bytes). Version 12 (issue #88): a
 //! boomerang-os thrown carries its curve ([`OutMotion::Boomerang`]: the steering of its throw, 4
 //! bytes more). Version 13 (issue #78): the last bit of a kart's flags, in anti-gravity
-//! (`KART_FLAGS`).
+//! (`KART_FLAGS`). Version 14 (issue #99): the host's settings of the room ([`RoomSetup`]: the
+//! circuit, the mirror, the bots and the items, [`Message::Setup`] instead of the circuit alone),
+//! and in the race's start, its mirror and its items ([`RaceStart::mirror`],
+//! [`RaceStart::items`]; without bots, [`RaceStart::bots`] is 0).
 
 use std::fmt;
 
@@ -57,7 +60,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 13;
+pub const PROTOCOL_VERSION: u8 = 14;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -133,6 +136,39 @@ impl Profile {
     }
 }
 
+/// Issue #99: the host's settings of the room, which every peer shows (the lobby) and drives
+/// with: the circuit (free driving on it until a race, and the next race's), the mirror, whether
+/// bots fill the grid, whether the item boxes are on the track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RoomSetup {
+    /// Index of the circuit in `assets/tracks/index.ron`.
+    pub track: u8,
+    pub mirror: bool,
+    /// Bots fill the grid to 12 (off: the players only).
+    pub bots: bool,
+    /// Item boxes on the track (off: none, the croquettes stay).
+    pub items: bool,
+}
+
+impl Default for RoomSetup {
+    fn default() -> Self {
+        Self {
+            track: 0,
+            mirror: false,
+            bots: true,
+            items: true,
+        }
+    }
+}
+
+/// The bits of a [`RoomSetup`]'s byte.
+const SETUP_MIRROR: u8 = 1;
+const SETUP_BOTS: u8 = 1 << 1;
+const SETUP_ITEMS: u8 = 1 << 2;
+/// The bits of a [`RaceStart`]'s byte of settings.
+const START_MIRROR: u8 = 1;
+const START_ITEMS: u8 = 1 << 1;
+
 /// The host starts a race (issue #9): everything a peer needs to build the same race, and when it
 /// starts on the room's clock (`clock::RoomClock`, `Lobby::room_time_ms`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +185,10 @@ pub struct RaceStart {
     pub bots: u8,
     /// The bots' level (`bots::BotDifficulty`: 0 easy, 1 normal, 2 hard).
     pub difficulty: u8,
+    /// Issue #99: the circuit mirrored (`track::MirrorMode`).
+    pub mirror: bool,
+    /// Issue #99: the item boxes on the track (off: `track::NoItemBoxes`).
+    pub items: bool,
     /// The common tick (60 per second on the room's clock) of the race's first tick on the grid:
     /// the countdown follows, the same for everyone.
     pub start_tick: u32,
@@ -656,8 +696,8 @@ pub enum Message {
     StartRace(RaceStart),
     /// The host's circuit for the room (issue #9), index in `assets/tracks/index.ron`: everyone
     /// drives freely on it, until the host starts a race. Sent after a race too: back to free
-    /// driving.
-    Circuit(u8),
+    /// driving. Issue #99: with the host's other settings (the mirror, the bots, the items).
+    Setup(RoomSetup),
     /// A racer validated a checkpoint (issue #9).
     Progress(Progress),
     /// The host ends the race, with its final order (issue #9).
@@ -730,7 +770,7 @@ const SEATS: u8 = 3;
 const ROOM_FULL: u8 = 4;
 const BYE: u8 = 5;
 const START_RACE: u8 = 6;
-const CIRCUIT: u8 = 7;
+const SETUP: u8 = 7;
 const PROGRESS: u8 = 8;
 const RACE_OVER: u8 = 9;
 const RACE_RESULTS: u8 = 11;
@@ -781,7 +821,7 @@ impl Message {
             Message::RoomFull => ROOM_FULL,
             Message::Bye => BYE,
             Message::StartRace(_) => START_RACE,
-            Message::Circuit(_) => CIRCUIT,
+            Message::Setup(_) => SETUP,
             Message::Progress(_) => PROGRESS,
             Message::RaceOver(_) => RACE_OVER,
             Message::RaceResults(_) => RACE_RESULTS,
@@ -820,7 +860,7 @@ impl Message {
             Message::Seats(_)
                 | Message::RoomFull
                 | Message::StartRace(_)
-                | Message::Circuit(_)
+                | Message::Setup(_)
                 | Message::RaceOver(_)
                 | Message::RaceResults(_)
                 | Message::Verdict(_)
@@ -869,10 +909,30 @@ impl Message {
                 out.extend_from_slice(&start.race.to_le_bytes());
                 out.extend_from_slice(&start.seed.to_le_bytes());
                 out.extend_from_slice(&[start.track, start.laps, start.bots, start.difficulty]);
+                let mut settings = 0;
+                if start.mirror {
+                    settings |= START_MIRROR;
+                }
+                if start.items {
+                    settings |= START_ITEMS;
+                }
+                out.push(settings);
                 put_u32(out, start.start_tick);
                 put_keys(out, &start.players);
             }
-            Message::Circuit(track) => out.push(*track),
+            Message::Setup(setup) => {
+                let mut bits = 0;
+                for (on, bit) in [
+                    (setup.mirror, SETUP_MIRROR),
+                    (setup.bots, SETUP_BOTS),
+                    (setup.items, SETUP_ITEMS),
+                ] {
+                    if on {
+                        bits |= bit;
+                    }
+                }
+                out.extend_from_slice(&[setup.track, bits]);
+            }
             Message::Progress(progress) => {
                 out.extend_from_slice(&progress.race.to_le_bytes());
                 out.push(progress.kart);
@@ -1135,13 +1195,21 @@ impl Message {
             ROOM_FULL => Message::RoomFull,
             BYE => Message::Bye,
             START_RACE => {
+                let (race, seed) = (reader.u16()?, u64::from_le_bytes(reader.array()?));
+                let [track, laps, bots, difficulty] = reader.array()?;
+                let settings = reader.u8()?;
+                if settings & !(START_MIRROR | START_ITEMS) != 0 {
+                    return Err(DecodeError::Invalid("race settings"));
+                }
                 let start = RaceStart {
-                    race: reader.u16()?,
-                    seed: u64::from_le_bytes(reader.array()?),
-                    track: reader.u8()?,
-                    laps: reader.u8()?,
-                    bots: reader.u8()?,
-                    difficulty: reader.u8()?,
+                    race,
+                    seed,
+                    track,
+                    laps,
+                    bots,
+                    difficulty,
+                    mirror: settings & START_MIRROR != 0,
+                    items: settings & START_ITEMS != 0,
                     start_tick: reader.u32()?,
                     players: reader.keys("more racers than players")?,
                 };
@@ -1159,7 +1227,19 @@ impl Message {
                 }
                 Message::StartRace(start)
             }
-            CIRCUIT => Message::Circuit(reader.u8()?),
+            SETUP => {
+                let track = reader.u8()?;
+                let bits = reader.u8()?;
+                if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS) != 0 {
+                    return Err(DecodeError::Invalid("room settings"));
+                }
+                Message::Setup(RoomSetup {
+                    track,
+                    mirror: bits & SETUP_MIRROR != 0,
+                    bots: bits & SETUP_BOTS != 0,
+                    items: bits & SETUP_ITEMS != 0,
+                })
+            }
             PROGRESS => {
                 let progress = Progress {
                     race: reader.u16()?,
@@ -1967,6 +2047,8 @@ mod tests {
                 laps: 3,
                 bots: 10,
                 difficulty: 2,
+                mirror: true,
+                items: false,
                 start_tick: 4_000_000_007,
                 players: vec![PeerKey(u128::MAX), PeerKey(0x0123_4567_89ab_cdef)],
             }),
@@ -1977,13 +2059,29 @@ mod tests {
                 laps: 1,
                 bots: 0,
                 difficulty: 0,
+                mirror: false,
+                items: true,
                 start_tick: 0,
                 players: (0..MAX_PLAYERS as u128)
                     .map(|i| PeerKey(i << 100))
                     .collect(),
             }),
-            Message::Circuit(1),
-            Message::Circuit(255),
+            Message::Setup(RoomSetup {
+                track: 1,
+                ..RoomSetup::default()
+            }),
+            Message::Setup(RoomSetup {
+                track: 255,
+                mirror: true,
+                bots: false,
+                items: false,
+            }),
+            Message::Setup(RoomSetup {
+                track: 3,
+                mirror: false,
+                bots: true,
+                items: false,
+            }),
             Message::Progress(Progress {
                 race: 7,
                 kart: 11,
@@ -2651,9 +2749,10 @@ mod tests {
         assert_eq!(twelve.to_bytes().len(), 783);
         for message in every_message() {
             match &message {
-                // Issue #9: a race's start lists its players (16 bytes each): 213 bytes with 12.
+                // Issue #9: a race's start lists its players (16 bytes each); issue #99, one
+                // byte more for its mirror and its items: 214 bytes with 12.
                 Message::StartRace(start) => {
-                    assert_eq!(message.to_bytes().len(), 21 + 16 * start.players.len());
+                    assert_eq!(message.to_bytes().len(), 22 + 16 * start.players.len());
                 }
                 Message::KartStates(_) => {}
                 _ => assert!(message.to_bytes().len() <= 200, "{message:?}"),
@@ -2791,6 +2890,8 @@ mod tests {
             laps: 3,
             bots: 10,
             difficulty: 1,
+            mirror: true,
+            items: true,
             start_tick: 600,
             players: vec![PeerKey(1), PeerKey(2)],
         };
@@ -2820,6 +2921,15 @@ mod tests {
         too_many[count_at] = MAX_PLAYERS as u8 + 1;
         too_many.extend(std::iter::repeat_n(0, 16 * (MAX_PLAYERS - 1)));
         assert!(invalid(&too_many));
+        // Issue #99: a setting the protocol does not have, in the room's and in a race's (the
+        // byte after the bots' level).
+        assert!(Message::decode(&[v, SETUP, 2, 0b111]).is_ok());
+        assert!(invalid(&[v, SETUP, 2, 0b1000]));
+        let mut odd = Message::StartRace(start.clone()).to_bytes();
+        let settings_at = 2 + 2 + 8 + 4;
+        assert_eq!(odd[settings_at], START_MIRROR | START_ITEMS);
+        odd[settings_at] |= 0b100;
+        assert!(invalid(&odd));
         assert!(invalid(&[v, PROGRESS, 1, 0, 12, 0, 0, 0, 0, 0, 0]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 12]));
         assert!(invalid(&[v, RACE_OVER, 1, 0, 0, 0, 0, 0, 2, 3, 3]));
@@ -3217,7 +3327,7 @@ mod tests {
             Message::Ping { sent_ms: 1 },
             Message::KartState(KartSnapshot::default()),
             Message::Seats(vec![PeerKey(1)]),
-            Message::Circuit(1),
+            Message::Setup(RoomSetup::default()),
             Message::RoomFull,
             Message::Relayed {
                 origin: PeerKey(2),

@@ -24,6 +24,7 @@ use super::anim;
 use super::nav::{self, Entry};
 use super::style::{self, ButtonState, font, palette, size, u};
 use super::{MainMenu, MainMenuAction};
+use crate::admin::tracks::CupIcon;
 use crate::kart::KeyboardLayout;
 use crate::level::Online;
 
@@ -87,11 +88,19 @@ pub struct MenuAssets {
     pub medium: Handle<Font>,
     pub semibold: Handle<Font>,
     pub icons: [Handle<Image>; 6],
+    /// Issue #99: the cups' icons, in the order of `CupIcon::ALL`.
+    pub cups: [Handle<Image>; 5],
 }
 
 impl MenuAssets {
     fn icon(&self, entry: Entry) -> Handle<Image> {
         self.icons[icon_index(entry)].clone()
+    }
+
+    /// Issue #99: a cup's icon.
+    pub fn cup(&self, icon: CupIcon) -> Handle<Image> {
+        let index = CupIcon::ALL.iter().position(|i| *i == icon).unwrap_or(0);
+        self.cups[index].clone()
     }
 }
 
@@ -141,6 +150,7 @@ pub(super) fn load_menu_assets(
             style::ICON_QUIT,
         ]
         .map(|path| server.load(path)),
+        cups: CupIcon::ALL.map(|icon| server.load(style::cup_icon(icon))),
     });
 }
 

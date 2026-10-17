@@ -21,7 +21,7 @@ Les écrans de jeu (le menu principal, puis ceux de l'étape 2) : une police lib
 | Fichier(s) | Source | Auteur | Licence |
 |---|---|---|---|
 | `ui/fonts/` (2 polices, licence dans `OFL.txt`) : Fredoka-Medium.ttf, Fredoka-SemiBold.ttf (les graisses 500 et 600, instances statiques servies par Google Fonts) | [Fredoka](https://fonts.google.com/specimen/Fredoka) 2.001 | The Fredoka Project Authors (Milena Brandão, Hafontia) | SIL OFL 1.1 |
-| `ui/icons/` (6 icônes blanches de 100 px, licence dans `License.txt`) : right.png, singleplayer.png, multiplayer.png, gear.png, wrench.png (le menu principal), home.png (« Quitter », retour à l'accueil, #89) | [Game Icons](https://kenney.nl/assets/game-icons) (2014) | Kenney (www.kenney.nl) | CC0 1.0 |
+| `ui/icons/` (11 icônes blanches de 100 px, licence dans `License.txt`) : right.png, singleplayer.png, multiplayer.png, gear.png, wrench.png (le menu principal), home.png (« Quitter », retour à l'accueil, #89), trophy.png, medal1.png, medal2.png, target.png, leaderboardsComplex.png (les coupes du championnat, #99) | [Game Icons](https://kenney.nl/assets/game-icons) (2014) | Kenney (www.kenney.nl) | CC0 1.0 |
 
 ## Polices embarquées par une crate (pas des fichiers du dépôt)
 

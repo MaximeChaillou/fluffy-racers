@@ -52,10 +52,20 @@ pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
 /// The mirror mode (issue #19, GD § 1): the circuits are built as the mirror image of their file
 /// (`TrackData::mirrored`: the track, its spots, its decor and its grid; the bots' racing line
 /// follows from the track). Read when a circuit is built: `crate::level::LoadLevel` applies a
-/// change. Solo only for now: online, the room's circuits are never mirrored (`crate::net` puts
-/// this back to false in a room).
+/// change. Online (issue #99), the host's choice: `crate::net` sets it for the room's circuit and
+/// races, and gives the solo one back out of the room.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MirrorMode(pub bool);
+
+/// Issue #99 (« Objets : non », GD § 1): the circuits are built **without their item boxes**
+/// (nothing to draw an item from; the croquettes stay). Read when a circuit is built:
+/// `crate::level::LoadLevel` applies a change. Set by the choice of « Jouer solo »
+/// (`crate::modes`), or online by the host's (`crate::net`, the solo one given back out of the
+/// room). **Only there while the items are off**: the default world, the bot races' one, never
+/// has it (a resource is an entity in Bevy 0.20: one more archetype before the grid would change
+/// every bot race, `STATUS.md`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoItemBoxes;
 
 /// Where the local player's kart starts, available once the track is built. On a circuit it is
 /// the pole; the player's actual grid slot comes from `race::RaceGrid` (behind the bots).

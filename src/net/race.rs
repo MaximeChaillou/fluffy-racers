@@ -322,6 +322,8 @@ mod tests {
             laps: 3,
             bots: 9,
             difficulty: 1,
+            mirror: false,
+            items: true,
             start_tick: 1_000,
             players: vec![ANA, BOB, CYD],
         });

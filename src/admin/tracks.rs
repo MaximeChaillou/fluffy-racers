@@ -1,5 +1,7 @@
 //! The circuits the admin panel offers (issue #36): the manifest `assets/tracks/index.ron`,
 //! built into the game (a browser cannot list a folder, and the list is then there at once).
+//! Issue #99: the manifest also names the cups of the championship ([`CupEntry`]): four circuits
+//! each, in the order of its circuits.
 
 use serde::Deserialize;
 
@@ -7,6 +9,16 @@ use crate::track::TrackChoice;
 
 /// The manifest's text.
 pub const MANIFEST: &str = include_str!("../../assets/tracks/index.ron");
+
+/// The manifest: the circuits, then (issue #99) the cups.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Manifest {
+    pub circuits: Vec<TrackEntry>,
+    /// The cups, in order: cup `k` races circuits `4k` to `4k + 3` (`modes::cups`).
+    #[serde(default)]
+    pub cups: Vec<CupEntry>,
+}
 
 /// A circuit of the manifest.
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -16,6 +28,34 @@ pub struct TrackEntry {
     pub name: String,
     /// Its file in `assets/tracks/`.
     pub file: String,
+}
+
+/// Issue #99: a cup of the manifest: its name (original) and its icon.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CupEntry {
+    pub name: String,
+    pub icon: CupIcon,
+}
+
+/// The icon of a cup: one of Kenney's Game Icons (`menu::style::cup_icon`, `assets/ui/icons/`).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CupIcon {
+    Trophy,
+    Medal,
+    Rosette,
+    Target,
+    Podium,
+}
+
+impl CupIcon {
+    pub const ALL: [Self; 5] = [
+        CupIcon::Trophy,
+        CupIcon::Medal,
+        CupIcon::Rosette,
+        CupIcon::Target,
+        CupIcon::Podium,
+    ];
 }
 
 impl TrackEntry {
@@ -30,13 +70,18 @@ impl TrackEntry {
 }
 
 /// Parses a manifest.
-pub fn parse_manifest(text: &str) -> Result<Vec<TrackEntry>, ron::error::SpannedError> {
+pub fn parse_manifest(text: &str) -> Result<Manifest, ron::error::SpannedError> {
     ron::from_str(text)
 }
 
-/// The circuits of the built-in manifest (none if it does not parse: a test makes sure it does).
-pub fn circuits() -> Vec<TrackEntry> {
+/// The built-in manifest (empty if it does not parse: a test makes sure it does).
+pub fn manifest() -> Manifest {
     parse_manifest(MANIFEST).unwrap_or_default()
+}
+
+/// The circuits of the built-in manifest.
+pub fn circuits() -> Vec<TrackEntry> {
+    manifest().circuits
 }
 
 /// What the panel shows for `choice`: the circuit's name, or the test ground.
@@ -62,7 +107,7 @@ mod tests {
     /// and can be built, under the name the manifest gives.
     #[test]
     fn the_manifest_lists_every_circuit_of_the_folder() {
-        let entries = parse_manifest(MANIFEST).unwrap();
+        let entries = parse_manifest(MANIFEST).unwrap().circuits;
         assert_eq!(entries, circuits());
         assert_eq!(entries[0].asset_path(), DEFAULT_CIRCUIT);
         assert!(entries.len() >= 2);
