@@ -116,9 +116,9 @@ pub const WING_REST: f32 = 0.35;
 
 /// The models' colors (sRGB): bright, candy-like, far from the decor's greens, greys and sands.
 mod color {
-    pub const BANANA: (f32, f32, f32) = (1.0, 0.86, 0.18);
-    pub const BANANA_TIP: (f32, f32, f32) = (0.42, 0.26, 0.1);
-    pub const BANANA_INSIDE: (f32, f32, f32) = (1.0, 0.95, 0.7);
+    pub const PEEL: (f32, f32, f32) = (1.0, 0.56, 0.1);
+    pub const PEEL_PORE: (f32, f32, f32) = (0.95, 0.47, 0.07);
+    pub const PITH: (f32, f32, f32) = (1.0, 0.96, 0.88);
     pub const YARN: (f32, f32, f32) = (0.97, 0.36, 0.62);
     pub const YARN_DARK: (f32, f32, f32) = (0.78, 0.16, 0.45);
     pub const BEE: (f32, f32, f32) = (1.0, 0.8, 0.1);
@@ -133,6 +133,7 @@ mod color {
     pub const STEM: (f32, f32, f32) = (0.25, 0.7, 0.22);
     pub const GOLD: (f32, f32, f32) = (1.0, 0.78, 0.16);
     pub const GOLD_DEEP: (f32, f32, f32) = (0.9, 0.55, 0.08);
+    pub const SPARKLE: (f32, f32, f32) = (1.0, 0.97, 0.78);
     pub const CREAM: (f32, f32, f32) = (1.0, 0.97, 0.9);
     pub const CUP: (f32, f32, f32) = (1.0, 0.55, 0.7);
     pub const CHERRY: (f32, f32, f32) = (0.85, 0.08, 0.2);
@@ -216,8 +217,8 @@ fn item_model(item: ItemKind) -> ItemModel {
         ItemKind::Pelure => body(pelure()),
         ItemKind::Pelote => body(pelote()),
         ItemKind::Abeille => abeille(),
-        ItemKind::Piment => body(piment(c(color::CHILI), c(color::STEM))),
-        ItemKind::PimentDore => body(piment(c(color::GOLD), c(color::GOLD_DEEP))),
+        ItemKind::Piment => body(piment(c(color::CHILI), c(color::CHILI), c(color::STEM))),
+        ItemKind::PimentDore => body(golden_piment()),
         ItemKind::CroquetteDoree => body(golden_croquettes()),
         ItemKind::Bombe => bombe(),
         ItemKind::Chantilly => body(chantilly()),
@@ -232,67 +233,149 @@ fn item_model(item: ItemKind) -> ItemModel {
     }
 }
 
-/// A banana peel lying on the ground (at −0.5): its stub standing in the middle, its stalk on
-/// top, four floppy petals splayed out, brown at their tips.
+/// The pelure (issue #132: ours, not the banana peel of the karting games of reference): a
+/// clementine peeled in one strip, the way one peels it in a spiral, dropped on the ground (at
+/// −0.5) where it lies coiled up loosely: orange outside, dimpled, its white pith inside; in the
+/// middle, the round cap from the top of the fruit where the peeling began, its little green
+/// calyx on it; its other end lies out on the ground, curling up.
 fn pelure() -> MeshData {
+    let (peel, pore, pith) = (c(color::PEEL), c(color::PEEL_PORE), c(color::PITH));
+    let rows = peel_rows();
+    let faces: Vec<(Vec3, Vec3)> = rows.iter().map(|row| (row.center, row.thin)).collect();
     let mut mesh = MeshData::default();
-    let (yellow, tip, inside) = (
-        c(color::BANANA),
-        c(color::BANANA_TIP),
-        c(color::BANANA_INSIDE),
-    );
-    // The stub: a soft column, pale inside at its top.
-    tube(
+    peel_strip(&mut mesh, &rows, move |p| {
+        // Which face of the strip: the peel's (dimpled), or its pith's.
+        let (center, thin) = faces
+            .iter()
+            .min_by(|a, b| a.0.distance_squared(p).total_cmp(&b.0.distance_squared(p)))
+            .copied()
+            .unwrap_or((Vec3::ZERO, Vec3::Y));
+        if (p - center).dot(thin) > PEEL_HALF_THICK * 0.3 {
+            let dimple = (p.x * 31.0).sin() * (p.y * 29.0).sin() * (p.z * 37.0).sin() > 0.55;
+            if dimple { pore } else { peel }
+        } else {
+            pith
+        }
+    });
+    // The cap at its inner end, lying in the middle of the coil, tilted a little; on it, the
+    // calyx: a little green star.
+    let (end, out, _) = peel_line(1.0);
+    let cap = (end - out * 0.32).with_y(end.y + 0.03);
+    let tilt = Quat::from_axis_angle(out.cross(Vec3::Y), -0.25);
+    ellipsoid(
         &mut mesh,
-        Mat4::IDENTITY,
-        &[
-            (Vec3::new(0.0, -0.5, 0.0), 0.0),
-            (Vec3::new(0.0, -0.45, 0.0), 0.34),
-            (Vec3::new(0.0, 0.05, 0.0), 0.3),
-            (Vec3::new(0.02, 0.42, 0.0), 0.22),
-            (Vec3::new(0.05, 0.62, 0.0), 0.12),
-            (Vec3::new(0.06, 0.66, 0.0), 0.0),
-        ],
-        Ends::Poles,
-        12,
-        1.0,
-        Vec3::X,
-        move |p| if p.y > 0.5 { tip } else { yellow },
+        at(cap, tilt),
+        Vec3::new(0.36, 0.085, 0.36),
+        Detail::new(16, 9),
+        move |p| if p.y > 0.02 { peel } else { pith },
     );
-    for k in 0..4 {
-        let angle = TAU * (k as f32 + 0.15) / 4.0;
-        // Out along +X, then turned around: up a little, out, down onto the ground, the tip
-        // curling up.
-        let path: Vec<(Vec3, f32)> = [
-            (0.12, 0.18, 0.2),
-            (0.42, 0.26, 0.25),
-            (0.78, 0.02, 0.27),
-            (1.05, -0.36, 0.24),
-            (1.3, -0.42, 0.17),
-            (1.45, -0.34, 0.0),
-        ]
-        .iter()
-        .map(|(x, y, r)| (Vec3::new(*x, *y, 0.0), *r))
-        .collect();
-        tube(
+    for k in 0..5 {
+        let angle = TAU * k as f32 / 5.0;
+        let ray = Vec3::new(angle.cos(), 0.0, angle.sin());
+        ellipsoid(
             &mut mesh,
-            at(Vec3::ZERO, Quat::from_rotation_y(angle)),
-            &path,
-            Ends::Poles,
-            10,
-            0.38,
-            Vec3::Y,
-            move |p| {
-                let base = if p.y > -0.1 && p.x < 0.5 {
-                    mix(inside, yellow, (p.x / 0.5).clamp(0.0, 1.0))
-                } else {
-                    yellow
-                };
-                mix(base, tip, ((p.x - 1.18) / 0.2).clamp(0.0, 1.0))
-            },
+            at(
+                cap + tilt * (Vec3::Y * 0.085 + ray * 0.06),
+                tilt * Quat::from_rotation_y(-angle),
+            ),
+            Vec3::new(0.08, 0.025, 0.035),
+            TINY,
+            solid(c(color::STEM)),
         );
     }
-    mesh
+    // On its ground.
+    let lowest = bounds(&mesh).map_or(-0.5, |(lo, _)| lo.y);
+    moved(&mesh, Mat4::from_translation(Vec3::Y * (-0.5 - lowest)))
+}
+
+/// The pelure's strip: its rows, its half width and half thickness (in the item's radius).
+const PEEL_ROWS: usize = 56;
+const PEEL_HALF_WIDTH: f32 = 0.27;
+const PEEL_HALF_THICK: f32 = 0.065;
+/// The turns of its coil.
+const PEEL_TURNS: f32 = 1.45;
+
+/// A row across the pelure's strip: its middle, its wide side, its thin side (out of the peel's
+/// face: `thin` = tangent × `wide`, so that the strip faces out), its size (1: its full width).
+#[derive(Clone, Copy, Debug)]
+struct PeelRow {
+    center: Vec3,
+    wide: Vec3,
+    thin: Vec3,
+    size: f32,
+}
+
+/// `t` from 0 at `a` to 1 at `b`, smoothly.
+fn smooth(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The middle line of the pelure's strip at `s`, from its free end on the ground (0) to its
+/// inner end (1): where it is, which way is out of the coil there, and how the strip leans (its
+/// wide side up the coil, from horizontal, rad): lying flat at its free end (whose tip curls
+/// up), on its edge around the coil, flatter again where it meets the cap.
+fn peel_line(s: f32) -> (Vec3, Vec3, f32) {
+    let angle = -TAU * PEEL_TURNS * s;
+    let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+    let radius = 1.3 - 0.82 * s.powf(0.8);
+    let height = -0.42
+        + 0.36 * smooth(0.12, 1.0, s)
+        + 0.16 * (1.0 - smooth(0.0, 0.08, s))
+        + 0.04 * (s * 19.0).sin();
+    let slope = 0.25 + 0.85 * smooth(0.0, 0.2, s) - 0.5 * smooth(0.8, 1.0, s);
+    (out * radius + Vec3::Y * height, out, slope)
+}
+
+/// The rows of the pelure's strip, along its line.
+fn peel_rows() -> Vec<PeelRow> {
+    let last = (PEEL_ROWS - 1) as f32;
+    (0..PEEL_ROWS)
+        .map(|row| {
+            let s = row as f32 / last;
+            let (center, out, slope) = peel_line(s);
+            let tangent = (peel_line((s + 1.0 / last).min(1.0)).0
+                - peel_line((s - 1.0 / last).max(0.0)).0)
+                .normalize();
+            let up_coil = -out * slope.cos() + Vec3::Y * slope.sin();
+            let mut wide = (up_coil - tangent * up_coil.dot(tangent)).normalize();
+            let mut thin = tangent.cross(wide);
+            // The peel's face out of the coil and up.
+            if thin.dot(out * slope.sin() + Vec3::Y * slope.cos()) < 0.0 {
+                (wide, thin) = (-wide, -thin);
+            }
+            // Its ends rounded (it narrows over its last rows), and torn by hand: a little wider
+            // here, narrower there.
+            let end = (row.min(PEEL_ROWS - 1 - row) as f32 / 3.0).min(1.0);
+            let size = (1.0 - (1.0 - end).powi(2)).sqrt() * (1.0 + 0.1 * (s * 27.0).sin());
+            PeelRow {
+                center,
+                wide,
+                thin,
+                size,
+            }
+        })
+        .collect()
+}
+
+/// The pelure's strip through `rows`: a flat section, rounded at its edges, its ends closed.
+fn peel_strip(mesh: &mut MeshData, rows: &[PeelRow], color: impl Fn(Vec3) -> [f32; 4]) {
+    crate::models::shape::surface(
+        mesh,
+        Mat4::IDENTITY,
+        8,
+        rows.len(),
+        Ends::Poles,
+        |u, k| {
+            let row = rows[k];
+            let phi = TAU * u;
+            row.center
+                + (row.wide * (PEEL_HALF_WIDTH * phi.cos())
+                    + row.thin * (PEEL_HALF_THICK * phi.sin()))
+                    * row.size
+        },
+        color,
+    );
 }
 
 /// A ball of pink yarn, its strands wound around it every way, its loose end hanging.
@@ -433,8 +516,9 @@ fn abeille() -> ItemModel {
     }
 }
 
-/// A chili lying along Z, curved, its tip down; a green cap and stem (`stem`), or all gold.
-fn piment(body: [f32; 4], stem: [f32; 4]) -> MeshData {
+/// A chili lying along Z, curved, its tip down (its color toward `tip` there); its green cap,
+/// five leaves folded over its shoulder, and its stalk, bent.
+fn piment(body: [f32; 4], tip: [f32; 4], stem: [f32; 4]) -> MeshData {
     let mut mesh = MeshData::default();
     let rings: Vec<(Vec3, f32)> = (0..=10)
         .map(|k| {
@@ -456,30 +540,70 @@ fn piment(body: [f32; 4], stem: [f32; 4]) -> MeshData {
         12,
         1.0,
         Vec3::Y,
-        solid(body),
+        move |p| mix(body, tip, ((0.5 - p.z) / 1.3).clamp(0.0, 1.0)),
     );
-    // The cap over its thick end, and the stem out of it.
+    // The cap over its thick end, its leaves folded over the shoulder, and the stalk out of it.
+    let cap = Vec3::new(0.0, 0.03, 0.9);
     ellipsoid(
         &mut mesh,
-        at(Vec3::new(0.0, 0.03, 0.9), Quat::from_rotation_x(FRAC_PI_2)),
+        at(cap, Quat::from_rotation_x(FRAC_PI_2)),
         Vec3::new(0.3, 0.14, 0.3),
         SMALL,
         solid(stem),
     );
+    for k in 0..5 {
+        let angle = TAU * k as f32 / 5.0 + 0.3;
+        let around = Vec3::new(angle.cos(), angle.sin(), 0.0);
+        ellipsoid(
+            &mut mesh,
+            at(
+                cap + around * 0.27 - Vec3::Z * 0.1,
+                Quat::from_rotation_z(angle) * Quat::from_rotation_y(-0.5),
+            ),
+            Vec3::new(0.07, 0.13, 0.17),
+            TINY,
+            solid(stem),
+        );
+    }
     tube(
         &mut mesh,
         Mat4::IDENTITY,
         &[
-            (Vec3::new(0.0, 0.05, 0.98), 0.07),
-            (Vec3::new(0.0, 0.18, 1.12), 0.06),
-            (Vec3::new(0.0, 0.32, 1.16), 0.05),
+            (Vec3::new(0.0, 0.05, 0.98), 0.0),
+            (Vec3::new(0.0, 0.05, 1.0), 0.09),
+            (Vec3::new(0.0, 0.16, 1.14), 0.08),
+            (Vec3::new(0.0, 0.34, 1.2), 0.075),
+            (Vec3::new(0.0, 0.5, 1.14), 0.07),
+            (Vec3::new(0.0, 0.54, 1.1), 0.0),
         ],
-        Ends::Open,
-        6,
+        Ends::Poles,
+        7,
         1.0,
         Vec3::Y,
         solid(stem),
     );
+    mesh
+}
+
+/// The piment doré: the chili in gold, sparkling (three little stars around it): a golden curve
+/// alone read as a banana (issue #132).
+fn golden_piment() -> MeshData {
+    let mut mesh = piment(c(color::GOLD), c(color::GOLD_DEEP), c(color::STEM));
+    for (spot, size) in [
+        (Vec3::new(0.15, 0.72, 0.15), 1.0),
+        (Vec3::new(-0.1, 0.62, -0.6), 0.75),
+        (Vec3::new(0.1, -0.55, 0.45), 0.8),
+    ] {
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            ellipsoid(
+                &mut mesh,
+                at(spot, Quat::from_rotation_arc(Vec3::Y, axis)),
+                Vec3::new(0.045, 0.2, 0.045) * size,
+                TINY,
+                solid(c(color::SPARKLE)),
+            );
+        }
+    }
     mesh
 }
 
@@ -1361,6 +1485,36 @@ mod tests {
                 "{item:?}: {}",
                 bottom(item)
             );
+        }
+    }
+
+    /// Issue #132: the pelure's strip faces out (Bevy culls the back of its triangles, and lights
+    /// them by their normals): each normal points away from the middle of its row; the peel's
+    /// face (`thin`) is out of the coil or up.
+    #[test]
+    fn the_pelures_strip_faces_out() {
+        let rows = peel_rows();
+        let mut mesh = MeshData::default();
+        peel_strip(&mut mesh, &rows, solid([1.0; 4]));
+        // Its two tips, and as many points around each row between them.
+        let around = (mesh.positions.len() - 2) / (rows.len() - 2);
+        assert_eq!(mesh.positions.len(), 2 + around * (rows.len() - 2));
+        let inner = mesh.positions.len() - 2;
+        for (i, (p, n)) in mesh
+            .positions
+            .iter()
+            .zip(&mesh.normals)
+            .enumerate()
+            .skip(1)
+            .take(inner)
+        {
+            let row = rows[1 + (i - 1) / around];
+            let out = (Vec3::from(*p) - row.center).normalize();
+            assert!(out.dot(Vec3::from(*n)) > 0.2, "vertex {i}: {p:?} {n:?}");
+        }
+        for row in &rows {
+            let away = row.center.with_y(0.0).normalize();
+            assert!(row.thin.dot(away) + row.thin.y > 0.0, "{row:?}");
         }
     }
 

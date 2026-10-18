@@ -236,7 +236,7 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; la table de distri
 
 ### Nos objets (originaux)
 
-Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un nom et un visuel à nous.
+Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un nom et un visuel à nous. **Aucun ne reprend le visuel d'un objet d'un jeu de référence** (#132) : la pelure est une peau de clémentine, pas une peau de banane (plus bas, « Les objets à l'écran »).
 
 | Notre objet | Fonction | Phase |
 |---|---|---|
@@ -263,11 +263,11 @@ Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un 
 
 | Objet | Son modèle | Ce qui bouge |
 |---|---|---|
-| **Pelure** | une peau de banane jaune, ses quatre pans étalés au sol, bruns au bout, la queue en haut | elle tremble comme de la gelée en tombant, puis un peu |
+| **Pelure** (#132) | une **peau de clémentine** pelée d'un seul ruban, comme on la pèle en spirale, tombée en boucles lâches : orange et piquée dehors, sa peau blanche dedans ; au milieu, la calotte du haut du fruit et son petit calice vert en étoile ; son autre bout traîne au sol et se relève (de #106 à #132 : une peau de banane jaune, l'objet le plus reconnaissable du jeu de référence) | elle tremble comme de la gelée en tombant, puis un peu |
 | **Pelote de laine** | une boule rose, ses brins enroulés dans tous les sens, le bout qui pend | elle roule |
 | **Abeille** | une boule jaune à deux rayures noires, deux gros yeux, deux antennes, le dard | ses ailes battent, elle flotte en volant, elle regarde où elle va |
-| **Piment** | un piment rouge courbé, sa queue verte | — |
-| **Piment doré** | le même, en or qui brille | — |
+| **Piment** | un piment rouge courbé, sa coiffe de cinq feuilles vertes rabattues et sa queue (#132) | — |
+| **Piment doré** | le même, en or qui brille, plus orangé au bout, avec la même coiffe verte et trois petites étoiles qui scintillent autour (#132 : sans elles, une courbe dorée au bout sombre se lisait comme une banane) | — |
 | **Bombe à confettis** | une boule bleu roi couverte de confettis, son capuchon, sa mèche et son étincelle | elle **clignote en rouge**, de plus en plus vite jusqu'à la fin de sa mèche ; l'étincelle crépite |
 | **Chantilly** | une chantilly en spirale dans sa coupe rose, une cerise dessus | elle tremblote |
 | **Super câlin** | un cœur rose en peluche, ses yeux et ses joues roses | son cœur bat |
@@ -284,8 +284,8 @@ Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un 
 - **La boîte cadeau** : un vrai cadeau rond avec son ruban et son nœud, bleu ciel au ruban rose (la double boîte : dorée, ruban rouge). Elle **tourne doucement et rebondit**, s'écrase un peu en touchant le sol, son couvercle tremblote comme de la gelée. Prise, elle **éclate** : elle enfle, son couvercle saute, puis elle disparaît dans une gerbe de **confettis** (28 par défaut, `VfxTuning`, emportés en partie par le kart qui l'a prise). Elle revient en sautant (comme avant).
 - **Un objet utilisé qui agit tout de suite** (piment, piment doré, croquette dorée, chantilly, super câlin, fusée, dégonflage, klaxon-canard, pie voleuse, piñata) **jaillit au-dessus de son kart** : son modèle grandit, tourne et monte, puis disparaît (0,75 s).
 - **Les icônes** du HUD et de la roulette sont **les modèles eux-mêmes**, vus de 3/4, rendus une seule fois au lancement par le jeu (sur le processeur, en 128 px) avec un **épais contour Myrtille** : on les lit en petit et en défilant, sur le ciel comme sur la route. Deux voisins de la roulette restent de couleurs éloignées (un test le vérifie sur les icônes rendues).
-- **Lisibilité** (§ 14), vérifiée par des tests : deux objets n'ont jamais la même silhouette et la même couleur ; ce qui est posé ou vole sur la piste (la pelure, la pelote, l'abeille, la bombe, l'oreiller géant, le boomerang-os, les croquettes, les boîtes) a des couleurs loin de celles de la route, de l'herbe, des bas-côtés et du sable de chaque biome.
-- **La fluidité** : de 220 à 1 520 triangles par objet (la boîte du fichier : 238 ; sa forme construite, quand le fichier manque : 2 450), un maillage par modèle (l'abeille : trois, avec ses ailes ; la bombe : deux, avec son étincelle ; la boîte : deux, avec son couvercle), les mêmes maillages et matériaux pour toutes les instances : des dizaines d'objets à l'écran ne coûtent que quelques appels de dessin.
+- **Lisibilité** (§ 14), vérifiée par des tests : deux objets n'ont jamais la même silhouette et la même couleur ; ce qui est posé ou vole sur la piste (la pelure, la pelote, l'abeille, la bombe, l'oreiller géant, le boomerang-os, les croquettes, les boîtes) a des couleurs loin de celles de la route, de l'herbe, des bas-côtés et du sable de chaque biome. Depuis #132, un test vérifie aussi que la pelure se voit orange (pas le jaune d'une banane), sa peau blanche visible, et que les deux piments montrent leur coiffe verte.
+- **La fluidité** : de 220 à 1 520 triangles par objet (depuis #132 : la pelure 1 298, le piment 582, le piment doré 960 ; la boîte du fichier : 238 ; sa forme construite, quand le fichier manque : 2 450), un maillage par modèle (l'abeille : trois, avec ses ailes ; la bombe : deux, avec son étincelle ; la boîte : deux, avec son couvercle), les mêmes maillages et matériaux pour toutes les instances : des dizaines d'objets à l'écran ne coûtent que quelques appels de dessin.
 - **Purement visuel** : les colliders et la simulation ne changent pas. Le panneau d'admin (P) a une **vitrine** (la case « Vitrine » de la section « Donner un objet ») : tous les modèles côte à côte devant la caméra.
 
 ### Distribution (première proposition, à régler)

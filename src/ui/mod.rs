@@ -185,11 +185,11 @@ pub const SLOTS_TOP: f32 = 24.0;
 /// (issue #106, `items::icons`, in the reel's cells).
 pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
     match item {
-        // A yellow peel, slanted.
+        // A strip of clementine peel (issue #132), slanted: orange, its white pith around it.
         ItemKind::Pelure => (
             Vec2::new(46.0, 18.0),
-            Color::srgb(1.0, 0.86, 0.15),
-            Color::srgb(0.6, 0.45, 0.05),
+            Color::srgb(1.0, 0.52, 0.08),
+            Color::srgb(1.0, 0.95, 0.85),
             3.0,
             -35.0,
         ),
