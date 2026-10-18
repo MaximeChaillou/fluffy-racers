@@ -84,7 +84,7 @@ fn the_banner_and_the_lobby_follow_the_room() {
     assert_eq!(ana.race, RaceStage::Free);
     assert_eq!(
         banner(room.view(ANA)).as_deref(),
-        Some("Salon TEST · 3 joueurs · Tu es l'hôte : choisis le circuit puis lance la course (L)")
+        Some("Salon TEST · 3 joueurs · Tu es l'hôte : choisis le circuit puis lance la course")
     );
     // Its clients in its order of seats.
     let names: Vec<&str> = lobby(room.view(ANA))
@@ -104,7 +104,7 @@ fn the_banner_and_the_lobby_follow_the_room() {
         assert_eq!(client.host, "Ana", "{key:?}");
         assert_eq!(
             banner(app).as_deref(),
-            Some("Salon TEST · 3 joueurs · Clique sur « Prêt ! » (L)")
+            Some("Salon TEST · 3 joueurs · Clique sur « Prêt ! »")
         );
         assert_eq!(
             client.meanwhile(),
@@ -135,7 +135,7 @@ fn the_banner_and_the_lobby_follow_the_room() {
     );
     assert_eq!(
         banner(room.view(CYD)).as_deref(),
-        Some("Salon TEST · 3 joueurs · Clique sur « Prêt ! » (L)")
+        Some("Salon TEST · 3 joueurs · Clique sur « Prêt ! »")
     );
 
     // Cyd too: the host can start, without being ready itself.
@@ -225,7 +225,7 @@ fn the_lobby_opens_at_the_end_of_a_race() {
     });
     assert_eq!(
         banner(room.view(ANA)).as_deref(),
-        Some("Salon TEST · 2 joueurs · Tu es l'hôte : choisis le circuit puis lance la course (L)")
+        Some("Salon TEST · 2 joueurs · Tu es l'hôte : choisis le circuit puis lance la course")
     );
     assert_eq!(
         banner(room.view(BOB)).as_deref(),

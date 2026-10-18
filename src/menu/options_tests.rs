@@ -83,6 +83,23 @@ fn texts_of<C: Component>(app: &mut App) -> Vec<String> {
         .collect()
 }
 
+/// Issue #136: the commands on the right, as written (each action, then its keys): no line of
+/// keys under the panel any more, the commands follow the keyboard.
+fn commands_shown(app: &mut App) -> String {
+    let world = app.world_mut();
+    let lines: Vec<Entity> = world
+        .query_filtered::<Entity, With<ControlLine>>()
+        .iter(world)
+        .collect();
+    world
+        .query::<(&Text, &ChildOf)>()
+        .iter(world)
+        .filter(|(_, parent)| lines.contains(&parent.parent()))
+        .map(|(text, _)| text.0.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The fill of the line `index`.
 fn fill(app: &mut App, index: usize) -> Color {
     let world = app.world_mut();
@@ -125,8 +142,10 @@ fn the_options_change_and_keep_their_value() {
     app.update();
     assert_eq!(fill(&mut app, 0), palette::MANGUE, "the focus");
     assert_eq!(fill(&mut app, 1), palette::COTON);
-    let hints = texts_of::<OptionsHint>(&mut app).join("\n");
-    assert!(hints.contains("(Z / S)"), "{hints}");
+    // Issue #136: the keyboard's letters are those of the commands (no line of keys under the
+    // panel any more).
+    let commands = commands_shown(&mut app);
+    assert!(commands.contains("Haut ou Z"), "{commands}");
 
     // Right: QWERTY, at once; the screen is built again with the new letters.
     tap(&mut app, KeyCode::ArrowRight);
@@ -138,8 +157,11 @@ fn the_options_change_and_keep_their_value() {
     );
     assert_eq!(values(&mut app), ["QWERTY", "Oui", VOLUME, VOLUME, VOLUME]);
     assert_eq!(count::<With<OptionsRoot>>(&mut app), 1);
-    let hints = texts_of::<OptionsHint>(&mut app).join("\n");
-    assert!(hints.contains("(W / S)"), "{hints}");
+    let commands = commands_shown(&mut app);
+    assert!(
+        commands.contains("Haut ou W") && !commands.contains("Haut ou Z"),
+        "{commands}"
+    );
 
     // The pointer over the second line gives it the focus; « < » turns the names off; a click on
     // the value turns them on again, then off.

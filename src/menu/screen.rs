@@ -1,6 +1,7 @@
 //! The menus drawn with `bevy_ui`, after the charter (issue #56, `style.rs`, `anim.rs`): a veil
 //! over the game, the title, a cream panel of pill buttons (an icon on a round badge, a label, a
-//! small line), the keys at the bottom. Opened from the game, all of it in the middle of the
+//! small line). Issue #136: no line of keys at the bottom any more (Max: « Je ne veux pas
+//! d'indications avec des raccourcis, seulement des CTA clairs »). Opened from the game, all of it in the middle of the
 //! screen, over a veil. The home screen (issue #89): the column on the left, its title big and
 //! alive (its two words bob), over a veil that fades out toward the right, where the background's
 //! karts race.
@@ -18,14 +19,13 @@ use bevy::picking::Pickable;
 use bevy::picking::events::{PointerOut, PointerOver, PointerPress, PointerRelease};
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
-use bevy::text::{FontSource, Justify, LineHeight};
+use bevy::text::{FontSource, LineHeight};
 
 use super::anim;
 use super::nav::{self, Entry};
 use super::style::{self, ButtonState, font, palette, size, u};
 use super::{MainMenu, MainMenuAction};
 use crate::admin::tracks::CupIcon;
-use crate::kart::KeyboardLayout;
 use crate::level::Online;
 
 /// On every entity of the menu's tree: none is left once it is closed.
@@ -40,15 +40,15 @@ pub struct MainMenuRoot {
     pub key: TreeKey,
 }
 
-/// What the tree shows.
+/// What the tree shows. Issue #136: no line of keys under it any more (the buttons say what they
+/// do), so another keyboard is the same tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TreeKey {
     pub in_game: bool,
     pub online: bool,
-    pub layout: KeyboardLayout,
 }
 
-/// The column of the title, the panel and the keys: it pops in.
+/// The column of the title and the panel: it pops in.
 #[derive(Component, Clone, Copy, Debug)]
 #[require(MenuNode)]
 pub struct MenuColumn;
@@ -93,7 +93,9 @@ pub struct MenuAssets {
 }
 
 impl MenuAssets {
-    fn icon(&self, entry: Entry) -> Handle<Image> {
+    /// The icon of an entry (issue #136: the end screens' buttons take those of the entries that
+    /// do the same).
+    pub(super) fn icon(&self, entry: Entry) -> Handle<Image> {
         self.icons[icon_index(entry)].clone()
     }
 
@@ -175,7 +177,6 @@ pub(super) fn sync_tree(
     time: Res<Time<Real>>,
     roots: Query<(Entity, &MainMenuRoot)>,
     assets: Option<Res<MenuAssets>>,
-    layout: Option<Res<KeyboardLayout>>,
     online: Option<Res<Online>>,
     cameras: Query<(), With<Camera>>,
 ) {
@@ -185,7 +186,6 @@ pub(super) fn sync_tree(
     let key = TreeKey {
         in_game: menu.in_game,
         online: online.is_some(),
-        layout: layout.map_or_else(KeyboardLayout::default, |layout| *layout),
     };
     let mut shown = false;
     for (entity, root) in &roots {
@@ -255,29 +255,6 @@ fn spawn_panel(column: &mut ChildSpawnerCommands, key: TreeKey, assets: &MenuAss
         });
 }
 
-/// The keys at the bottom of a menu, `justify`-ed.
-fn spawn_hints(
-    column: &mut ChildSpawnerCommands,
-    key: TreeKey,
-    assets: &MenuAssets,
-    justify: Justify,
-) {
-    for (line, hint) in nav::hint(key.layout, key.in_game).into_iter().enumerate() {
-        column.spawn((
-            text(hint, &assets.medium, size::HINT, palette::NEIGE),
-            TextLayout::justify(justify),
-            TextShadow {
-                offset: Vec2::new(0.0, 2.0),
-                color: palette::OMBRE,
-            },
-            Node {
-                margin: UiRect::top(u(if line == 0 { 6.0 } else { 0.0 })),
-                ..default()
-            },
-        ));
-    }
-}
-
 /// The menu opened from the game, the pause (issue #100): in the middle, over the veil, its title
 /// « Pause » (online, « Pas de pause ! »: the game goes on).
 fn spawn_game_menu(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
@@ -322,7 +299,6 @@ fn spawn_game_menu(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
                     },
                 ));
                 spawn_panel(column, key, assets);
-                spawn_hints(column, key, assets, Justify::Center);
             });
         });
 }
@@ -338,8 +314,8 @@ pub fn home_veil(opacity: f32) -> BackgroundGradient {
     ]))
 }
 
-/// Issue #89: the home screen: on the left, the title big and alive, its phrase, the panel and
-/// the keys; the veil fading out toward the right, where its background races.
+/// Issue #89: the home screen: on the left, the title big and alive, its phrase and the panel;
+/// the veil fading out toward the right, where its background races.
 fn spawn_home(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
     commands
         .spawn((
@@ -417,7 +393,6 @@ fn spawn_home(commands: &mut Commands, key: TreeKey, assets: &MenuAssets) {
                     },
                 ));
                 spawn_panel(column, key, assets);
-                spawn_hints(column, key, assets, Justify::Left);
             });
         });
 }

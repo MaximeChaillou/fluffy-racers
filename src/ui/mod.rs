@@ -42,9 +42,8 @@ use crate::menu::style::{palette, size, u};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use crate::track::GRID_SLOTS;
 use format::{
-    HudValues, RESULTS_FOOTER, RESULTS_FOOTER_GRAND_PRIX, RESULTS_FOOTER_ONLINE,
-    RESULTS_FOOTER_ONLINE_CHAMPIONSHIP, RESULTS_TITLE, ResultsTime, write_best_lap,
-    write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
+    HudValues, RESULTS_TITLE, ResultsTime, write_best_lap, write_croquettes, write_lap,
+    write_ordinal, write_racer_count, write_racer_name, write_time,
 };
 use roulette::{ReelFrame, RouletteClock};
 
@@ -905,12 +904,13 @@ fn animate_counters(
 }
 
 /// Spawns the results screen when the results phase starts, removes it on restart. Online
-/// (issue #9): the host's order (`race::OnlineFlow`), the other players' names, and the host
-/// starts the next race. Its lines are filled by [`update_results`] (issue #70).
+/// (issue #9): the host's order (`race::OnlineFlow`), the other players' names. Its lines are
+/// filled by [`update_results`] (issue #70). Issue #136: under its panel, no line of keys any more
+/// but the slot of its buttons (`kit::EndSlot`: « Rejouer », « Changer de circuit », « Accueil »…,
+/// `menu::end`, with a renderer).
 fn show_results(
     mut commands: Commands,
     race: Res<Race>,
-    online: Option<Res<crate::level::Online>>,
     grand_prix: Option<Res<crate::race::GrandPrix>>,
     assets: Option<Res<MenuAssets>>,
     mut shown: ResMut<ResultsShown>,
@@ -938,13 +938,6 @@ fn show_results(
     .min(GRID_SLOTS);
     *shown = ResultsShown { rows, ..default() };
     let (medium, semibold) = kit::faces(assets.as_deref());
-    let footer = match (online.is_some(), grand_prix.is_some()) {
-        // Issue #122: the championship online: the host's standings come after.
-        (true, true) => RESULTS_FOOTER_ONLINE_CHAMPIONSHIP,
-        (true, false) => RESULTS_FOOTER_ONLINE,
-        (false, true) => RESULTS_FOOTER_GRAND_PRIX,
-        (false, false) => RESULTS_FOOTER,
-    };
     let mut rank = String::new();
     commands
         .spawn((
@@ -986,7 +979,7 @@ fn show_results(
                                     });
                             }
                         });
-                    column.spawn(kit::keys_line(footer, &medium));
+                    column.spawn(kit::end_slot());
                 });
         });
 }

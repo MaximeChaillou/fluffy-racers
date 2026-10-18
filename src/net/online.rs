@@ -431,6 +431,9 @@ fn online_mode(
                 clock.set_if_neq(InteractionClock { offset });
             }
             let wanted = match lobby.announced() {
+                // Issue #136: a guest left the results of this race (« Retour au salon »): the
+                // lobby's scene at once, before the host brings everyone back.
+                Some(_) if salon.is_some() && lobby.left_the_results() => Showing::Salon,
                 Some(start) => Showing::Race(start.race),
                 // Issue #101: with the lobby in 3D (a renderer), its own scene.
                 None if salon.is_some() => Showing::Salon,
@@ -447,7 +450,7 @@ fn online_mode(
                 level.showing = wanted;
                 let seat = seat_of(lobby);
                 match lobby.announced() {
-                    None if wanted == Showing::Salon => {
+                    _ if wanted == Showing::Salon => {
                         info!("network: the lobby's scene, seat {seat}");
                         commands.insert_resource(OnlineSlot(seat));
                         commands.remove_resource::<OnlineRace>();

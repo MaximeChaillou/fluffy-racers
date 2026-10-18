@@ -8,13 +8,16 @@
 //!   a cream panel of 900 px in two columns: on the left, who does what, **the host's settings**
 //!   (Circuit, Miroir, Bots, Objets: a line each, « < » and « > »; disabled for the others, with
 //!   their reason), the main action (« Lancer la course », disabled with its reason, or « Prêt ! »),
-//!   « Pilote » and « Quitter »; on the right, **the players** (their color, pseudo, animal, link
-//!   and ping, « hôte », « prêt »), the invitation link with « Copier », the problems of
-//!   connection (#49). The keys under it. Up and down (or Z/S, W/S) go through its lines and
+//!   « Pilote », « Commandes » (issue #136: the options, their list of commands) and
+//!   « Quitter »; on the right, **the players** (their color, pseudo, animal, link and ping,
+//!   « hôte », « prêt »), the invitation link with « Copier », the problems of connection (#49).
+//!   Issue #136: no line of keys under it. Up and down (or Z/S, W/S) go through its lines and
 //!   buttons, left and right change a line, Entrée (Espace, A) chooses, Échap or L (B, Start)
 //!   close it: then our character walks again.
 //! - **The banner** (#64) at the top while the panel is closed, in a room (not during a race nor
-//!   over its results), and **the keys of the lobby** at the bottom of its scene.
+//!   over its results). Issue #136: it is the panel's button (a click opens it; Entrée too, in
+//!   the scene), instead of « (L) » in its text and of the line of keys at the bottom of the
+//!   scene.
 //! - **One screen at a time**: not while « Pilote », the options, « Jouer solo » or the pause are
 //!   open (it comes back after them), nor over a race's results.
 //!
@@ -22,7 +25,7 @@
 //! first time it opens.
 
 use bevy::picking::Pickable;
-use bevy::picking::events::{PointerClick, PointerOver};
+use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::prelude::*;
 use bevy::text::Justify;
 
@@ -38,7 +41,7 @@ use crate::net::{
     LobbyWindow, NetAction, NetSession, NetSettings, OnlineRace, RoomFacts, character_name,
     invitation, is_local_signal, loopback_page, now_ms,
 };
-use crate::options::OptionsMenu;
+use crate::options::{OptionsAction, OptionsMenu};
 use crate::race::{GrandPrixTuning, Race};
 
 /// What the player does with the lobby's screen: the keys and the gamepad (`salon_keys`), the
@@ -137,10 +140,9 @@ pub struct Shape {
     players: usize,
     invite: bool,
     notes: usize,
-    layout: KeyboardLayout,
 }
 
-fn shape_of(view: &SalonView, layout: KeyboardLayout) -> Shape {
+fn shape_of(view: &SalonView) -> Shape {
     Shape {
         lines: view.lines.len(),
         seat: view.seat.as_ref().map(|seat| seat.editable),
@@ -153,7 +155,6 @@ fn shape_of(view: &SalonView, layout: KeyboardLayout) -> Shape {
         players: view.players.len(),
         invite: view.invite.is_some(),
         notes: view.notes.len(),
-        layout,
     }
 }
 
@@ -198,13 +199,6 @@ pub struct SalonBadge {
 #[derive(Component, Clone, Copy, Debug, Default)]
 #[require(MenuNode)]
 pub struct SalonBanner;
-
-/// The lobby's keys at the bottom of its scene, while the panel is closed.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-#[require(MenuNode)]
-pub struct SalonKeys {
-    layout: KeyboardLayout,
-}
 
 /// Which text of the view a node writes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,27 +281,6 @@ fn now(time: &Time<Real>) -> f64 {
     time.elapsed_secs_f64()
 }
 
-/// The lines of keys under the panel, with the letters of the player's keyboard.
-pub fn panel_hint(layout: KeyboardLayout) -> [String; 2] {
-    let [up, left, down, right] = layout.letters();
-    [
-        format!(
-            "Haut / Bas ({up} / {down}) : choisir  ·  Gauche / Droite ({left} / {right}) : \
-             changer  ·  Entrée : valider  ·  Échap ou L : te promener"
-        ),
-        "Manette : croix ou stick, A : valider, B : te promener".to_string(),
-    ]
-}
-
-/// The keys of the lobby's scene, at its bottom (the race's keys).
-pub fn scene_hint(layout: KeyboardLayout) -> String {
-    let [up, left, down, right] = layout.letters();
-    format!(
-        "Haut / Bas / Gauche / Droite ({up} {left} {down} {right}) : marcher  ·  Espace : sauter  \
-         ·  X ou F : coup de patte  ·  L : le salon  ·  Échap : pause"
-    )
-}
-
 /// The screen is wanted: the window open, no other screen over it, not over a race's results.
 #[allow(clippy::too_many_arguments)]
 pub fn screen_wanted(
@@ -327,11 +300,11 @@ pub fn screen_wanted(
 }
 
 /// The screen's systems run: it is wanted, or something of it is shown (to go), or the banner
-/// or the scene's keys could show.
+/// could show, or Entrée could open it (in the scene).
 #[allow(clippy::too_many_arguments)]
 pub fn screen_wanted_or_shown(
     window: Option<Res<LobbyWindow>>,
-    roots: Query<(), Or<(With<SalonScreenRoot>, With<SalonBanner>, With<SalonKeys>)>>,
+    roots: Query<(), Or<(With<SalonScreenRoot>, With<SalonBanner>)>>,
     scenes: Query<(), With<SalonRoot>>,
 ) -> bool {
     !roots.is_empty()
@@ -346,7 +319,8 @@ pub fn screen_shown(roots: Query<(), With<SalonScreenRoot>>) -> bool {
 
 /// The keys and the gamepad on the screen (see the module's documentation): the gamepad's
 /// « Select » opens and closes it in a room; open, up and down, left and right, Entrée, Espace
-/// or A; B or Start close it (Échap and L are `net`'s). Not while another screen has the keys.
+/// or A; B or Start close it (Échap and L are `net`'s). Issue #136: closed, in the lobby's
+/// scene, Entrée opens it (the banner is its button). Not while another screen has the keys.
 #[allow(clippy::too_many_arguments)]
 pub fn salon_keys(
     keys: Option<Res<ButtonInput<KeyCode>>>,
@@ -362,6 +336,7 @@ pub fn salon_keys(
     ),
     menu: Option<ResMut<SalonMenu>>,
     capture: Option<Res<crate::admin::KeyboardCapture>>,
+    (scenes, panels): (Query<(), With<SalonRoot>>, Query<(), With<SalonScreenRoot>>),
     mut actions: MessageWriter<SalonAction>,
     mut net: MessageWriter<NetAction>,
 ) {
@@ -378,7 +353,18 @@ pub fn salon_keys(
         net.write(NetAction::Toggle);
         return;
     }
-    let Some(mut menu) = menu.filter(|_| window.open) else {
+    // Issue #136: walking in the lobby's scene, Entrée opens its panel, as a click on the banner
+    // (no line of keys tells L any more). Not Espace: it jumps there.
+    let enter = keys
+        .as_ref()
+        .is_some_and(|keys| keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]));
+    if enter && !window.open && session.is_some() && !scenes.is_empty() {
+        net.write(NetAction::Toggle);
+        return;
+    }
+    // Issue #136: only on the panel shown (the window is open, hidden, over a race's results:
+    // there, the end screen's buttons have the keys).
+    let Some(mut menu) = menu.filter(|_| window.open && !panels.is_empty()) else {
         return;
     };
     let (y, x) = gamepads.iter().fold((0.0f32, 0.0f32), |(y, x), gamepad| {
@@ -425,6 +411,7 @@ pub fn apply_salon_actions(
     time: Res<Time<Real>>,
     mut net: MessageWriter<NetAction>,
     mut selection: MessageWriter<SelectionAction>,
+    mut options: MessageWriter<OptionsAction>,
 ) {
     let Some(mut menu) = menu else {
         actions.read().for_each(drop);
@@ -526,6 +513,11 @@ pub fn apply_salon_actions(
             ButtonKind::Pilot => {
                 selection.write(SelectionAction::Open);
             }
+            // Issue #136: the options' screen, its commands on the right (the panel comes back
+            // after it, like after « Pilote »).
+            ButtonKind::Controls => {
+                options.write(OptionsAction::Toggle);
+            }
             ButtonKind::Leave => {
                 net.write(NetAction::Leave);
                 net.write(NetAction::Close);
@@ -544,7 +536,8 @@ fn set_focus(menu: &mut SalonMenu, focus: usize, now: f64) {
     }
 }
 
-/// The view of now, and whether the screen, the banner and the scene's keys are wanted.
+/// The view of now, and whether the screen and the banner are wanted. Issue #136: no line of
+/// keys at the bottom of the scene any more (« Commandes » in the panel opens them).
 #[allow(clippy::too_many_arguments)]
 pub fn sync_salon_tree(
     mut commands: Commands,
@@ -558,11 +551,10 @@ pub fn sync_salon_tree(
         Option<Res<MainMenu>>,
         Option<Res<Race>>,
     ),
-    (roster, settings, loadout, layout, assets, cups): (
+    (roster, settings, loadout, assets, cups): (
         Res<Roster>,
         Res<NetSettings>,
         Option<Res<PlayerLoadout>>,
-        Option<Res<KeyboardLayout>>,
         Option<Res<MenuAssets>>,
         Option<Res<GrandPrixTuning>>,
     ),
@@ -570,8 +562,6 @@ pub fn sync_salon_tree(
     time: Res<Time<Real>>,
     roots: Query<(Entity, &SalonScreenRoot)>,
     banners: Query<Entity, With<SalonBanner>>,
-    scene_keys: Query<(Entity, &SalonKeys)>,
-    scenes: Query<(), With<SalonRoot>>,
     cameras: Query<(), With<Camera>>,
 ) {
     let others = selection.as_deref().is_some_and(|s| s.open)
@@ -586,7 +576,6 @@ pub fn sync_salon_tree(
         main_menu.as_deref(),
         racing.is_some(),
     ) && !cameras.is_empty();
-    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
     let (medium, semibold) = kit::faces(assets.as_deref());
     // The banner (#64): in a room, the panel closed, out of a race and its results.
     let banner = (window.banner && !window.open && !others && racing.is_none())
@@ -602,20 +591,6 @@ pub fn sync_salon_tree(
         }
         (None, Some(entity)) => commands.entity(entity).despawn(),
         (None, None) => {}
-    }
-    // The scene's keys, while we walk.
-    let walking = !scenes.is_empty() && !window.open && !others;
-    let shown_keys = scene_keys.iter().next();
-    match (walking, shown_keys) {
-        (true, Some((_, keys))) if keys.layout == layout => {}
-        (true, shown) => {
-            if let Some((entity, _)) = shown {
-                commands.entity(entity).despawn();
-            }
-            spawn_scene_keys(&mut commands, layout, &medium);
-        }
-        (false, Some((entity, _))) => commands.entity(entity).despawn(),
-        (false, None) => {}
     }
     if !wanted {
         for (entity, _) in &roots {
@@ -661,7 +636,7 @@ pub fn sync_salon_tree(
     if menu.focus >= focus_count {
         menu.focus = focus_count.saturating_sub(1);
     }
-    let shape = shape_of(&view, layout);
+    let shape = shape_of(&view);
     let mut shown = false;
     for (entity, root) in &roots {
         if !shown && root.shape == shape {
@@ -688,16 +663,57 @@ pub fn sync_salon_tree(
 /// A command: the banner writes `text`.
 fn write_banner(entity: Entity, text: String) -> impl FnOnce(&mut World) {
     move |world: &mut World| {
-        let Some(children) = world.get::<Children>(entity).map(|c| c.to_vec()) else {
-            return;
-        };
-        for child in children {
+        // Its text is in its pill (issue #136: the pill is the button; it was looked for one
+        // level too high, and the banner kept its first text).
+        let pills = world
+            .get::<Children>(entity)
+            .map(|c| c.to_vec())
+            .unwrap_or_default();
+        let texts: Vec<Entity> = pills
+            .iter()
+            .filter_map(|pill| world.get::<Children>(*pill))
+            .flat_map(|children| children.iter().collect::<Vec<_>>())
+            .collect();
+        for child in texts {
             if let Some(mut written) = world.get_mut::<Text>(child)
                 && written.0 != text
             {
                 written.0.clone_from(&text);
             }
         }
+    }
+}
+
+/// Issue #136: the banner's pill, a button: a click opens the panel (Entrée too, in the scene).
+#[derive(Component, Clone, Copy, Debug, Default)]
+#[require(MenuNode)]
+pub struct SalonBannerPill;
+
+/// The banner's colors: the cream pill, Mangue under the pointer (the charter's focus).
+fn banner_colors(hovered: bool) -> (BackgroundColor, BorderColor) {
+    if hovered {
+        (
+            BackgroundColor(palette::MANGUE),
+            BorderColor::all(palette::ABRICOT),
+        )
+    } else {
+        (
+            BackgroundColor(palette::GUIMAUVE),
+            BorderColor::all(palette::LILAS),
+        )
+    }
+}
+
+/// The banner's pill, as the pointer is over it (or not).
+type BannerPills<'w, 's> =
+    Query<'w, 's, (&'static mut BackgroundColor, &'static mut BorderColor), With<SalonBannerPill>>;
+
+/// The pointer over the banner's pill (or out of it).
+fn hover_banner(pills: &mut BannerPills, hovered: bool) {
+    let (fill, depth) = banner_colors(hovered);
+    for (mut background, mut border) in pills {
+        background.set_if_neq(fill);
+        border.set_if_neq(depth);
     }
 }
 
@@ -717,18 +733,18 @@ fn spawn_banner(commands: &mut Commands, text: &str, face: &Handle<Font>) {
             Pickable::IGNORE,
         ))
         .with_children(|banner| {
+            let (fill, depth) = banner_colors(false);
             banner
                 .spawn((
-                    MenuNode,
+                    SalonBannerPill,
                     Node {
                         padding: UiRect::axes(u(18.0), u(8.0)),
                         border: UiRect::bottom(u(size::LINE_DEPTH)),
                         border_radius: BorderRadius::all(u(22.0)),
                         ..default()
                     },
-                    BackgroundColor(palette::GUIMAUVE),
-                    BorderColor::all(palette::LILAS),
-                    Pickable::IGNORE,
+                    fill,
+                    depth,
                 ))
                 .with_children(|pill| {
                     pill.spawn((
@@ -736,32 +752,17 @@ fn spawn_banner(commands: &mut Commands, text: &str, face: &Handle<Font>) {
                         kit::text(text, face, 18.0, palette::MYRTILLE),
                         Pickable::IGNORE,
                     ));
+                })
+                // Issue #136: the banner is the panel's button (no « (L) » in it any more).
+                .observe(|_: On<PointerOver>, mut pills: BannerPills| {
+                    hover_banner(&mut pills, true);
+                })
+                .observe(|_: On<PointerOut>, mut pills: BannerPills| {
+                    hover_banner(&mut pills, false);
+                })
+                .observe(|_: On<PointerClick>, mut net: MessageWriter<NetAction>| {
+                    net.write(NetAction::Toggle);
                 });
-        });
-}
-
-fn spawn_scene_keys(commands: &mut Commands, layout: KeyboardLayout, face: &Handle<Font>) {
-    commands
-        .spawn((
-            Name::new("Salon : touches"),
-            SalonKeys { layout },
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: u(14.0),
-                width: percent(100),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            GlobalZIndex(15),
-            Pickable::IGNORE,
-        ))
-        .with_children(|keys| {
-            keys.spawn((
-                MenuNode,
-                kit::keys_line(scene_hint(layout), face),
-                TextLayout::justify(Justify::Center),
-                Pickable::IGNORE,
-            ));
         });
 }
 
@@ -783,6 +784,8 @@ fn accent(kind: ButtonKind) -> Color {
         ButtonKind::JoinAsGuest => palette::FRAISE,
         ButtonKind::Copy => palette::LAGON,
         ButtonKind::Pilot => palette::CAROTTE,
+        // Issue #136: the options' color (their list of commands).
+        ButtonKind::Controls => palette::PRUNE,
         ButtonKind::Leave | ButtonKind::Back => palette::MYRTILLE,
     }
 }
@@ -805,7 +808,6 @@ fn spawn_tree(
     medium: &Handle<Font>,
     semibold: &Handle<Font>,
 ) {
-    let layout = shape.layout;
     let list = focusables(view);
     let focus = list.get(menu.focus).copied();
     let help = help_of(view, focus);
@@ -874,14 +876,6 @@ fn spawn_tree(
                         spawn_left(panel, view, (&list, focus), &help, medium, semibold);
                         spawn_right(panel, view, (&list, focus), medium, semibold);
                     });
-                for hint in panel_hint(layout) {
-                    column.spawn((
-                        MenuNode,
-                        kit::keys_line(hint, medium),
-                        TextLayout::justify(Justify::Center),
-                        Pickable::IGNORE,
-                    ));
-                }
             });
         });
 }
@@ -1170,17 +1164,19 @@ fn spawn_button(
     let focus_index = list.iter().position(|f| *f == Focusable::Button(index));
     let look = look(focus == Some(Focusable::Button(index)), button.enabled);
     let main = index == 0;
+    // Issue #136: three buttons under the main one (« Pilote », « Commandes », « Quitter »): each
+    // as wide as its label, the room left shared out.
     let mut node = parent.spawn((
         Name::new(button.label.clone()),
         SalonButtonNode { index, kind },
         Node {
             flex_grow: 1.0,
-            flex_basis: Val::ZERO,
+            flex_basis: if main { Val::ZERO } else { Val::Auto },
             min_height: u(size::PILOT_BUTTON_HEIGHT),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            padding: UiRect::axes(u(14.0), u(4.0)),
+            padding: UiRect::axes(u(if main { 14.0 } else { 10.0 }), u(4.0)),
             border: UiRect::bottom(u(size::BUTTON_DEPTH)),
             border_radius: BorderRadius::all(u(size::PILOT_BUTTON_HEIGHT / 2.0)),
             ..default()

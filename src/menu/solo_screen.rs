@@ -29,7 +29,6 @@ use super::options_screen::{
 use super::screen::{MenuAssets, MenuNode};
 use super::solo;
 use super::style::{self, ButtonState, font, palette, size, u};
-use crate::kart::KeyboardLayout;
 use crate::modes::{
     Catalog, GameMode, MenuRow, RaceMenu, RaceMenuAction, TimeTrialState, TrialKey,
 };
@@ -46,10 +45,10 @@ pub struct SoloRoot {
     pub shape: SoloShape,
 }
 
-/// What the tree is built for: the keyboard, the lines, the races and what they look like.
+/// What the tree is built for: the lines, the races and what they look like. Issue #136: not the
+/// keyboard any more (no line of keys under the panel).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoloShape {
-    pub layout: KeyboardLayout,
     pub rows: Vec<MenuRow>,
     pub mode: GameMode,
     pub cup: usize,
@@ -111,11 +110,6 @@ pub struct RaceCard {
 pub struct Vignette {
     pub circuit: usize,
 }
-
-/// A line of keys at the bottom.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-#[require(MenuNode)]
-pub struct SoloHint(pub usize);
 
 /// « C'est parti ! » (`start`) or « Retour ».
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,15 +183,8 @@ fn palette_of(ui: &SoloUi, tracks: &Assets<TrackData>, circuit: usize) -> Palett
 }
 
 /// The shape of the tree for the menu now.
-fn shape_of(
-    menu: &RaceMenu,
-    ui: &SoloUi,
-    tracks: &Assets<TrackData>,
-    layout: KeyboardLayout,
-    seed: u64,
-) -> SoloShape {
+fn shape_of(menu: &RaceMenu, ui: &SoloUi, tracks: &Assets<TrackData>, seed: u64) -> SoloShape {
     SoloShape {
-        layout,
         rows: menu.rows(),
         mode: menu.setup.mode,
         cup: menu.setup.cup,
@@ -219,12 +206,7 @@ pub(super) fn sync_solo_tree(
     ui: Option<ResMut<SoloUi>>,
     time: Res<Time<Real>>,
     roots: Query<(Entity, &SoloRoot)>,
-    (assets, layout, grid, gp_tuning): (
-        Option<Res<MenuAssets>>,
-        Option<Res<KeyboardLayout>>,
-        Res<RaceGrid>,
-        Res<GrandPrixTuning>,
-    ),
+    (assets, grid, gp_tuning): (Option<Res<MenuAssets>>, Res<RaceGrid>, Res<GrandPrixTuning>),
     (server, tracks): (Option<Res<AssetServer>>, Option<Res<Assets<TrackData>>>),
     trial: Option<Res<TimeTrialState>>,
     cameras: Query<(), With<Camera>>,
@@ -266,17 +248,15 @@ pub(super) fn sync_solo_tree(
     let Some(tracks) = tracks.as_deref() else {
         return;
     };
-    // Nothing new (the menu, the keyboard, a vignette's file loaded): the tree is the one shown.
+    // Nothing new (the menu, a vignette's file loaded): the tree is the one shown.
     let drawn = ui.tracks.iter().filter(|h| tracks.contains(*h)).count();
     let new_files = roots
         .iter()
         .any(|(_, root)| root.shape.drawn.iter().filter(|d| **d).count() != drawn);
-    let layout_changed = layout.as_ref().is_some_and(|layout| layout.is_changed());
-    if !roots.is_empty() && !menu.is_changed() && !layout_changed && !new_files {
+    if !roots.is_empty() && !menu.is_changed() && !new_files {
         return;
     }
-    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
-    let shape = shape_of(&menu, &ui, tracks, layout, grid.seed);
+    let shape = shape_of(&menu, &ui, tracks, grid.seed);
     let mut shown = false;
     for (entity, root) in &roots {
         if !shown && root.shape == shape {
@@ -338,7 +318,6 @@ struct Tree<'a> {
 
 fn spawn_tree(commands: &mut Commands, tree: &Tree, shape: SoloShape) {
     let assets = tree.assets;
-    let layout = shape.layout;
     commands
         .spawn((
             Name::new("Jouer solo"),
@@ -404,17 +383,6 @@ fn spawn_tree(commands: &mut Commands, tree: &Tree, shape: SoloShape) {
                         spawn_left(panel, tree);
                         spawn_right(panel, tree);
                     });
-                for (line, hint) in solo::hint(layout).into_iter().enumerate() {
-                    column.spawn((
-                        SoloHint(line),
-                        text(hint, &assets.medium, size::HINT, palette::NEIGE),
-                        TextLayout::justify(Justify::Center),
-                        TextShadow {
-                            offset: Vec2::new(0.0, 2.0),
-                            color: palette::OMBRE,
-                        },
-                    ));
-                }
             });
         });
 }

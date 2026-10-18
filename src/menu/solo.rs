@@ -5,7 +5,6 @@
 
 use bevy::math::Vec2;
 
-use crate::kart::KeyboardLayout;
 use crate::modes::{Catalog, Formula, GameMode, MenuRow, Pick, RaceSetup};
 use crate::track::TrackData;
 
@@ -38,19 +37,6 @@ pub fn header(setup: &RaceSetup, catalog: &Catalog) -> String {
         },
         GameMode::TimeTrial | GameMode::FreeRace => catalog.name(setup.circuit).to_string(),
     }
-}
-
-/// The keys at the bottom, with the letters of the player's keyboard: the keyboard's, then the
-/// gamepad's.
-pub fn hint(layout: KeyboardLayout) -> [String; 2] {
-    let [up, left, down, right] = layout.letters();
-    [
-        format!(
-            "Haut / Bas ({up} / {down}) : la ligne  ·  Gauche / Droite ({left} / {right}) : changer  ·  \
-             Entrée : c'est parti  ·  Échap : retour"
-        ),
-        "Manette : croix ou stick, A : c'est parti, B : retour".to_string(),
-    ]
 }
 
 /// The record line of a time trial: « Ton record : 0:40.00 », or none yet.
@@ -211,15 +197,6 @@ mod tests {
         assert_eq!(header(&setup, &catalog), "Tes 5 courses, tirées au sort");
         setup.pick = Pick::Chosen;
         assert_eq!(header(&setup, &catalog), "Tes 5 courses");
-        let [keys, pad] = hint(KeyboardLayout::Azerty);
-        assert!(keys.starts_with("Haut / Bas (Z / S)"), "{keys}");
-        assert!(keys.contains("Gauche / Droite (Q / D)"), "{keys}");
-        assert!(pad.contains("A : c'est parti"));
-        let [keys, _] = hint(KeyboardLayout::Qwerty);
-        assert!(
-            keys.contains("(W / S)") && keys.contains("(A / D)"),
-            "{keys}"
-        );
         assert!(record_line(Some("0:40.00")).ends_with("0:40.00"));
         for line in [record_line(None), START_LABEL.into(), BACK_LABEL.into()] {
             assert!(line.chars().count() <= 48);

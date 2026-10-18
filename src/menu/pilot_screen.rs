@@ -1,5 +1,6 @@
 //! The « Pilote » screen (issue #98) drawn with `bevy_ui`, after the charter (`style.rs`,
-//! `anim.rs`): over a veil, its title, a wide cream panel and the keys at the bottom. On the
+//! `anim.rs`): over a veil, its title and a wide cream panel (issue #136: no line of keys under
+//! it any more; while one types the pseudo, the help of its field: « 12 lettres au plus »). On the
 //! left, the 3D preview of the kart (`preview.rs`), its seven stat bars `(level + 3) / 4` and
 //! the Speed and the Handling on each terrain, « Valider » and « Retour »; on the right, its
 //! lines, from the top: the pseudo (a text field), the character (a grid of every animal, a
@@ -45,20 +46,18 @@ use crate::characters::{
     PartKind, PlayerLoadout, Roster, SelectionAction, SelectionInput, SelectionScreen, WeightClass,
     selection_action,
 };
-use crate::kart::{KartColor, KeyboardLayout, Stat, Terrain, display_level};
+use crate::kart::{KartColor, Stat, Terrain, display_level};
 use crate::modes::RaceMenu;
 use crate::net::pseudo::{self, PSEUDO_MAX_CHARS, PSEUDO_STORAGE_KEY};
 use crate::net::{NetSettings, character_name};
 use crate::options::OptionsMenu;
 
-/// The root of the screen's tree (the veil), with the keyboard it was built for.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+/// The root of the screen's tree (the veil).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[require(MenuNode)]
-pub struct PilotRoot {
-    pub layout: KeyboardLayout,
-}
+pub struct PilotRoot;
 
-/// The column of the title, the panel and the keys: it pops in.
+/// The column of the title, the panel and the help: it pops in.
 #[derive(Component, Clone, Copy, Debug)]
 #[require(MenuNode)]
 pub struct PilotColumn;
@@ -131,10 +130,11 @@ pub struct PseudoField;
 #[require(MenuNode)]
 pub struct PseudoHint;
 
-/// A line of keys at the bottom.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+/// Issue #136: the help under the panel while one types the pseudo (« 12 lettres au plus »; no
+/// keys), empty otherwise. It was the lines of keys.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[require(MenuNode)]
-pub struct PilotHint(pub usize);
+pub struct PilotHint;
 
 /// « Valider » (`confirm`) or « Retour ».
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,10 +237,9 @@ pub(super) fn sync_pilot_tree(
     screen: Res<SelectionScreen>,
     ui: Option<ResMut<PilotUi>>,
     time: Res<Time<Real>>,
-    roots: Query<(Entity, &PilotRoot)>,
-    (assets, layout, roster, settings, loadout): (
+    roots: Query<Entity, With<PilotRoot>>,
+    (assets, roster, settings, loadout): (
         Option<Res<MenuAssets>>,
-        Option<Res<KeyboardLayout>>,
         Res<Roster>,
         Option<Res<NetSettings>>,
         Option<Res<PlayerLoadout>>,
@@ -250,9 +249,8 @@ pub(super) fn sync_pilot_tree(
     cameras: Query<(), With<crate::camera::ChaseCamera>>,
     pointers: Option<Res<PointerMap>>,
 ) {
-    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
     if !screen.open {
-        for (entity, _) in &roots {
+        for entity in &roots {
             commands.entity(entity).despawn();
         }
         if let Some(preview) = preview.as_deref() {
@@ -264,15 +262,7 @@ pub(super) fn sync_pilot_tree(
     if cameras.is_empty() {
         return;
     }
-    let mut shown = false;
-    for (entity, root) in &roots {
-        if !shown && root.layout == layout {
-            shown = true;
-        } else {
-            commands.entity(entity).despawn();
-        }
-    }
-    if shown {
+    if !roots.is_empty() {
         return;
     }
     let now = now(&time);
@@ -303,7 +293,6 @@ pub(super) fn sync_pilot_tree(
     let field = spawn_tree(
         &mut commands,
         Tree {
-            layout,
             assets: &assets,
             roster: &roster,
             screen: &screen,
@@ -334,7 +323,6 @@ pub(super) fn sync_pilot_tree(
 
 /// What the tree is built with.
 struct Tree<'a> {
-    layout: KeyboardLayout,
     assets: &'a MenuAssets,
     roster: &'a Roster,
     screen: &'a SelectionScreen,
@@ -356,9 +344,7 @@ fn spawn_tree(commands: &mut Commands, tree: Tree) -> Entity {
     commands
         .spawn((
             Name::new("Pilote"),
-            PilotRoot {
-                layout: tree.layout,
-            },
+            PilotRoot,
             GlobalZIndex(20),
             Node {
                 position_type: PositionType::Absolute,
@@ -420,20 +406,21 @@ fn spawn_tree(commands: &mut Commands, tree: Tree) -> Entity {
                         spawn_left(panel, &tree);
                         field = spawn_right(panel, &tree);
                     });
-                for (line, hint) in pilot::hint(tree.layout, tree.screen)
-                    .into_iter()
-                    .enumerate()
-                {
-                    column.spawn((
-                        PilotHint(line),
-                        text(hint, &assets.medium, size::HINT, palette::NEIGE),
-                        TextLayout::justify(Justify::Center),
-                        TextShadow {
-                            offset: Vec2::new(0.0, 2.0),
-                            color: palette::OMBRE,
-                        },
-                    ));
-                }
+                // Issue #136: no line of keys; while one types the pseudo, its field's help.
+                column.spawn((
+                    PilotHint,
+                    text(
+                        pilot::typing_help(tree.screen),
+                        &assets.medium,
+                        size::HINT,
+                        palette::NEIGE,
+                    ),
+                    TextLayout::justify(Justify::Center),
+                    TextShadow {
+                        offset: Vec2::new(0.0, 2.0),
+                        color: palette::OMBRE,
+                    },
+                ));
             });
         });
     field
@@ -1303,21 +1290,18 @@ pub(super) fn follow_the_field(
 pub(super) fn refresh_pilot_tree(
     screen: Res<SelectionScreen>,
     roster: Res<Roster>,
-    layout: Option<Res<KeyboardLayout>>,
     roots: Query<(), Added<PilotRoot>>,
     mut texts: ParamSet<(
         Query<(&LineValue, &mut Text)>,
         Query<(&StatValue, &mut Text)>,
         Query<(&TerrainValue, &mut Text)>,
-        Query<(&PilotHint, &mut Text)>,
+        Query<&mut Text, With<PilotHint>>,
     )>,
     mut bars: Query<(&StatBar, &mut Node)>,
     mut cells: Query<(&PortraitCell, &mut BackgroundColor), Without<ColorSwatch>>,
     mut swatches: Query<(&ColorSwatch, &mut BorderColor)>,
 ) {
-    let changed = screen.is_changed()
-        || layout.as_ref().is_some_and(|layout| layout.is_changed())
-        || !roots.is_empty();
+    let changed = screen.is_changed() || !roots.is_empty();
     if !changed || !screen.open {
         return;
     }
@@ -1345,13 +1329,10 @@ pub(super) fn refresh_pilot_tree(
             text.0 = wanted;
         }
     }
-    let layout = layout.map_or_else(KeyboardLayout::default, |layout| *layout);
-    let hints = pilot::hint(layout, &screen);
-    for (hint, mut text) in &mut texts.p3() {
-        if let Some(wanted) = hints.get(hint.0)
-            && text.0 != *wanted
-        {
-            text.0.clone_from(wanted);
+    let help = pilot::typing_help(&screen);
+    for mut text in &mut texts.p3() {
+        if text.0 != help {
+            help.clone_into(&mut text.0);
         }
     }
     for (bar, mut node) in &mut bars {

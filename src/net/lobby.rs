@@ -207,6 +207,9 @@ pub struct Lobby {
     run: Option<Championship>,
     /// Issue #122, a client: the championship in progress, as the host told it.
     told: Option<ChampionshipState>,
+    /// Issue #136, a client: the race whose results we left (« Retour au salon »): over for us,
+    /// in the lobby already, before the host brings everyone back. Ours only (not sent).
+    left_results: Option<u16>,
     /// The room's clock (issue #9): the host's.
     room: RoomClock,
     outbox: Vec<Outgoing>,
@@ -238,6 +241,7 @@ impl Lobby {
             last_race: 0,
             run: None,
             told: None,
+            left_results: None,
             room,
             outbox: Vec::new(),
             events: if hosting {
@@ -301,6 +305,27 @@ impl Lobby {
     /// The race the host announced (issue #9), until it chooses a circuit again.
     pub fn announced(&self) -> Option<&RaceStart> {
         self.announced.as_ref()
+    }
+
+    /// Issue #136, a client: we leave the results of the race announced (« Retour au salon »):
+    /// it is over for us, we go to the lobby before the host brings everyone back. Not the host
+    /// (its « Retour au salon » brings everyone: `NetAction::ChooseSetup`), nor before a race.
+    pub fn leave_results(&mut self) -> bool {
+        let Some(race) = self.announced.as_ref().map(|start| start.race) else {
+            return false;
+        };
+        if self.hosting {
+            return false;
+        }
+        self.left_results = Some(race);
+        true
+    }
+
+    /// Issue #136: we left the results of the race announced (`leave_results`): for us, it is
+    /// over, and we are in the lobby. A new race is another one.
+    pub fn left_the_results(&self) -> bool {
+        self.left_results.is_some()
+            && self.left_results == self.announced.as_ref().map(|start| start.race)
     }
 
     /// The room's circuit (issue #9): the host's choice.
@@ -1734,6 +1759,49 @@ mod tests {
             assert!(star.view(key).host_left());
             assert!(!star.lobby(key).choose_circuit(1));
         }
+    }
+
+    /// Issue #136: a client leaves the results of the race (« Retour au salon »): over for it
+    /// alone, until the next race; not before a race, never the host (its button brings everyone
+    /// back: the room's settings again).
+    #[test]
+    fn a_client_leaves_the_results_of_its_race_alone() {
+        let mut star = Star::new();
+        let a = star.create(1);
+        let b = star.join(2);
+        star.run(1_000);
+        assert!(!star.lobby(b).leave_results(), "no race yet");
+        let start = |race| RaceStart {
+            race,
+            seed: 7,
+            track: 0,
+            laps: 1,
+            bots: 0,
+            difficulty: 1,
+            mirror: false,
+            items: true,
+            start_tick: 12_000,
+            round: 0,
+            lineup: Vec::new(),
+            players: vec![a, b],
+        };
+        let first = star.view(a).next_race();
+        assert!(star.lobby(a).announce_race(start(first)));
+        star.run(100);
+        assert!(!star.view(b).left_the_results());
+        assert!(!star.lobby(a).leave_results(), "the host brings everyone");
+        assert!(star.lobby(b).leave_results());
+        assert!(star.view(b).left_the_results());
+        assert!(!star.view(a).left_the_results(), "Bob's only");
+        // The host brings everyone back, then starts another race: Bob is on it.
+        assert!(star.lobby(a).choose_circuit(0));
+        star.run(100);
+        assert!(!star.view(b).left_the_results());
+        let second = star.view(a).next_race();
+        assert!(star.lobby(a).announce_race(start(second)));
+        star.run(100);
+        assert_eq!(star.view(b).announced().map(|s| s.race), Some(second));
+        assert!(!star.view(b).left_the_results(), "another race");
     }
 
     /// Issue #99: the host's settings of the room (the circuit, the mirror, the bots, the items)

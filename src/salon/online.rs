@@ -30,6 +30,7 @@ use super::walker::{PlayerWalker, Walker, WalkerHistory, WalkerLook, WalkerVisua
 use crate::characters::{
     Knock, PlayerColor, PlayerLoadout, Ragdoll, RagdollPhase, RagdollTuning, Roster,
 };
+use crate::menu::{EndButton, EndMenu};
 use crate::modes::Catalog;
 use crate::net::championship::after_a_championship;
 use crate::net::foot::{FootPose, direction_of, position_of};
@@ -423,12 +424,14 @@ pub fn results_shown(race: Option<Res<OnlineRace>>, session: Option<Res<NetSessi
 }
 
 /// The host, once the race's results are closed and showed for a while: the room's settings
-/// again, for everyone (the race is over, everyone is back in the lobby).
+/// again, for everyone (the race is over, everyone is back in the lobby). Issue #136: at once
+/// with its « Retour au salon » (`menu::end`, its countdown on the button).
 pub fn back_to_the_salon(
     tuning: Res<SalonTuning>,
     race: Res<OnlineRace>,
     session: Res<NetSession>,
     time: Res<Time<Real>>,
+    end: Option<ResMut<EndMenu>>,
     mut since: Local<Option<(u16, f64)>>,
     mut actions: MessageWriter<NetAction>,
 ) {
@@ -453,7 +456,10 @@ pub fn back_to_the_salon(
             now
         }
     };
-    if now - start >= f64::from(tuning.back_after_results.max(0.0)) {
+    let chosen = end
+        .and_then(|mut end| end.take(|button| button == EndButton::BackToSalon))
+        .is_some();
+    if chosen || now - start >= f64::from(tuning.back_after_results.max(0.0)) {
         info!("lobby: race {number} over, everyone back in the lobby");
         actions.write(NetAction::ChooseSetup(lobby.setup()));
         *since = Some((number, f64::INFINITY));
@@ -554,7 +560,10 @@ type Waiting = (Shown, f64, bool);
 /// `SalonTuning::standings_seconds`, or at its Entrée (Espace, A, Start): its next race, or the
 /// podium after the last; once the podium showed for `SalonTuning::podium_seconds` (or at its
 /// Entrée), the room's settings again (a championship at random drawn anew): everyone back in
-/// the lobby. Not while another screen has the keys.
+/// the lobby. Not while another screen has the keys. Issue #136: in the game with its screens
+/// (`menu::MainMenu`), its buttons instead of the keys (`menu::end`: « Course suivante » or
+/// « Le podium », and « Retour au salon », which stops the championship for everyone, at any
+/// stage).
 #[allow(clippy::too_many_arguments)]
 pub fn run_the_championship(
     tuning: Res<SalonTuning>,
@@ -568,6 +577,7 @@ pub fn run_the_championship(
     ),
     cups: Option<Res<GrandPrixTuning>>,
     time: Res<Time<Real>>,
+    mut end: Option<ResMut<EndMenu>>,
     mut waiting: Local<Option<Waiting>>,
     mut actions: MessageWriter<NetAction>,
 ) {
@@ -579,6 +589,24 @@ pub fn run_the_championship(
         *waiting = None;
         return;
     };
+    // Issue #136: « Retour au salon »: the championship stops, everyone back in the lobby (a
+    // championship at random drawn anew, as after its podium).
+    if end
+        .as_mut()
+        .and_then(|end| end.take(|button| button == EndButton::BackToSalon))
+        .is_some()
+    {
+        let catalog = Catalog::game(cups.as_deref().map_or(4, |tuning| tuning.races as usize));
+        let next = after_a_championship(lobby.setup(), seed, &catalog);
+        if state.podium {
+            info!("lobby: the championship is over, everyone back in the lobby");
+        } else {
+            info!("lobby: the championship stopped, everyone back in the lobby");
+        }
+        actions.write(NetAction::ChooseSetup(next));
+        *waiting = None;
+        return;
+    }
     // Its race scored (the standings), or its podium.
     if start.round == 0 || (state.scored < start.round && !state.podium) {
         return;
@@ -595,14 +623,21 @@ pub fn run_the_championship(
     if done {
         return;
     }
-    let menus = main_menu.is_some_and(|m| m.open)
-        || options.is_some_and(|o| o.open)
-        || selection.is_some_and(|s| s.open);
-    let pressed = !menus
-        && (keys.is_some_and(|keys| keys.any_just_pressed(RESTART_KEYS))
-            || gamepads
-                .iter()
-                .any(|gamepad| gamepad.any_just_pressed(RESTART_BUTTONS)));
+    let pressed = if main_menu.is_some() {
+        // Issue #136: the game with its screens: the end screen's buttons.
+        end.as_mut()
+            .and_then(|end| {
+                end.take(|button| matches!(button, EndButton::NextRace | EndButton::Podium))
+            })
+            .is_some()
+    } else {
+        let menus = options.is_some_and(|o| o.open) || selection.is_some_and(|s| s.open);
+        !menus
+            && (keys.is_some_and(|keys| keys.any_just_pressed(RESTART_KEYS))
+                || gamepads
+                    .iter()
+                    .any(|gamepad| gamepad.any_just_pressed(RESTART_BUTTONS)))
+    };
     let wait = if state.podium {
         tuning.podium_seconds
     } else {

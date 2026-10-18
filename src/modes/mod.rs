@@ -14,11 +14,14 @@
 //!   unchanged. The game is paused while it is open, like the other menus (not over the home
 //!   screen: its background runs). Not online: there, the host chooses in the lobby.
 //! - **The championship** (`race::GrandPrix`, pure): the races one after the other, in the
-//!   mirror mode chosen. When a race's results close (issue #70; Entrée closes them at once
-//!   in a championship), the race is scored; Entrée shows the overall standings (`screens.rs`),
-//!   then starts the next race (`LoadLevel`), its grid the reverse of the standings
-//!   (`RaceGrid::lineup`). After the last race, the **podium** (`podium.rs`): the three first on
-//!   their steps, dancing, a still camera on them; Entrée starts the same championship again.
+//!   mirror mode chosen. When a race's results close (issue #70; « Classement général » closes
+//!   them at once in a championship), the race is scored; it shows the overall standings
+//!   (`screens.rs`), then « Course suivante » starts the next race (`LoadLevel`), its grid the
+//!   reverse of the standings (`RaceGrid::lineup`). After the last race, the **podium**
+//!   (`podium.rs`): the three first on their steps, dancing, a still camera on them; « Rejouer le
+//!   championnat » starts the same championship again. Issue #136: these are the end screens'
+//!   buttons (`menu::end`, with a renderer: [`GrandPrixAction::Continue`]); headless, Entrée does
+//!   the same.
 //! - **Time trial** (issue #76, `time_trial.rs`): alone (no bot, no item box), three piments, the
 //!   clock and the record of the circuit and mirror, and the ghost of the record
 //!   (`ghost.rs`, `trial.rs`). The menu starts it ([`TimeTrial`]); the rest is
@@ -417,7 +420,12 @@ fn score_the_race(
 }
 
 /// Entrée, Espace or the gamepad's A / Start on the screens of a Grand Prix (once the results
-/// let a restart through: `RaceFlow::can_restart`). Not while a menu pauses the game.
+/// let a restart through: `RaceFlow::can_restart`). Not while a menu pauses the game. Issue #136:
+/// not in the game with its screens (`crate::menu::MainMenu`, with a renderer): there, these
+/// screens have buttons (« Classement général », « Course suivante »…, `menu::end`), and Entrée
+/// chooses the one with the focus. Headless (the tests), Entrée still does what the first one
+/// does.
+#[allow(clippy::too_many_arguments)]
 fn grand_prix_keys(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
@@ -425,6 +433,7 @@ fn grand_prix_keys(
     race: Option<Res<Race>>,
     menu: Res<RaceMenu>,
     grand_prix: Res<GrandPrix>,
+    screens: Option<Res<crate::menu::MainMenu>>,
     mut actions: MessageWriter<GrandPrixAction>,
 ) {
     let Some(race) = race else {
@@ -432,6 +441,7 @@ fn grand_prix_keys(
     };
     // Issue #122: online, the host moves it on (`salon`).
     if grand_prix.online.is_some()
+        || screens.is_some()
         || menu.open
         || time.is_some_and(|time| time.is_paused())
         || race.phase() != RacePhase::Results

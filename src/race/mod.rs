@@ -334,17 +334,22 @@ fn setup_race(mut commands: Commands, layout: Res<TrackLayout>, tuning: Res<Race
 
 /// Results screen: Enter / Space or the gamepad's A / Start races again. Not while the game is
 /// paused (a menu is open: its keys are not the race's), nor in a Grand Prix (issue #19: the same
-/// keys go on to its standings, `crate::modes`).
+/// keys go on to its standings, `crate::modes`). Issue #136: not in the game with its screens
+/// (`crate::menu::MainMenu`, with a renderer): there, the results have buttons (« Rejouer »,
+/// `menu::end`), and Entrée chooses the one with the focus. Headless (the tests), Entrée still
+/// does what the first one does.
 fn request_restart(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     time: Option<Res<Time<Virtual>>>,
     gamepads: Query<&Gamepad>,
     grand_prix: Option<Res<GrandPrix>>,
+    screens: Option<Res<crate::menu::MainMenu>>,
     mut race: ResMut<Race>,
 ) {
     if race.phase() != RacePhase::Results
         || time.is_some_and(|time| time.is_paused())
         || grand_prix.is_some()
+        || screens.is_some()
     {
         return;
     }

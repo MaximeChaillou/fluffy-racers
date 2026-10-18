@@ -12,7 +12,7 @@ use std::f32::consts::{PI, TAU};
 use bevy::prelude::*;
 
 use crate::characters::{Roster, SelectionScreen, WeightClass};
-use crate::kart::{KeyboardLayout, MAX_LEVEL, display_level};
+use crate::kart::{MAX_LEVEL, display_level};
 
 /// The screen's title.
 pub const TITLE: &str = "Pilote";
@@ -71,30 +71,15 @@ pub fn bar_share(value: f32) -> f32 {
     (value / display_level(MAX_LEVEL)).clamp(0.0, 1.0)
 }
 
-/// The keys at the bottom of the screen, with the letters of the player's keyboard: the
-/// keyboard's line, then the gamepad's. On the pseudo's line, Entrée types; while one types, how
-/// to stop.
-pub fn hint(layout: KeyboardLayout, screen: &SelectionScreen) -> [String; 2] {
-    let [up, left, down, right] = layout.letters();
+/// Issue #136: the help under the panel while one types the pseudo: its length and what an
+/// empty one is (no keys: Entrée, Échap or a click elsewhere end it, as one expects). Empty
+/// otherwise (no line of keys under the screen any more).
+pub fn typing_help(screen: &SelectionScreen) -> &'static str {
     if screen.typing {
-        return [
-            "Tape ton pseudo (12 lettres au plus)  ·  Entrée ou Échap : c'est bon".to_string(),
-            "Vide, c'est le nom de ton animal.".to_string(),
-        ];
-    }
-    let enter = if screen.on_pseudo_row() {
-        "Entrée : écrire"
+        "12 lettres au plus  ·  vide, c'est le nom de ton animal"
     } else {
-        "Entrée : valider"
-    };
-    [
-        format!(
-            "Haut / Bas ({up} / {down}) : la ligne  ·  Gauche / Droite ({left} / {right}) : \
-             changer  ·  {enter}  ·  Échap : retour"
-        ),
-        "Manette : croix ou stick, A : valider, B : retour  ·  Souris : clique sur ton choix"
-            .to_string(),
-    ]
+        ""
+    }
 }
 
 /// The preview's frame, in px of the reference window: the camera renders exactly this shape.
@@ -300,34 +285,23 @@ mod tests {
         }
     }
 
-    /// The keys at the bottom: the letters of the keyboard, Entrée that types on the pseudo's
-    /// line, and how to stop typing.
+    /// Issue #136: no line of keys under the screen; while one types the pseudo, its help (its
+    /// length, without any key), and nothing otherwise.
     #[test]
-    fn the_keys_line_says_what_each_key_does_here() {
+    fn only_the_pseudo_has_a_help_and_it_names_no_key() {
         let mut screen = SelectionScreen {
             open: true,
             ..default()
         };
-        let [keys, pad] = hint(KeyboardLayout::Azerty, &screen);
-        assert!(
-            keys.contains("(Z / S)") && keys.contains("(Q / D)"),
-            "{keys}"
-        );
-        assert!(keys.contains("Entrée : valider") && keys.contains("Échap : retour"));
-        assert!(
-            pad.contains("A : valider") && pad.contains("B : retour"),
-            "{pad}"
-        );
-        let [keys, _] = hint(KeyboardLayout::Qwerty, &screen);
-        assert!(
-            keys.contains("(W / S)") && keys.contains("(A / D)"),
-            "{keys}"
-        );
+        assert_eq!(typing_help(&screen), "");
         screen.row = SelectionScreen::PSEUDO_ROW;
-        assert!(hint(KeyboardLayout::Azerty, &screen)[0].contains("Entrée : écrire"));
+        assert_eq!(typing_help(&screen), "", "not before one types");
         screen.typing = true;
-        let [keys, _] = hint(KeyboardLayout::Azerty, &screen);
-        assert!(keys.contains("Tape ton pseudo") && keys.contains("Entrée ou Échap"));
+        let help = typing_help(&screen);
+        assert!(help.contains("12 lettres au plus"), "{help}");
+        for key in ["Entrée", "Échap", "Espace", "Manette", "Haut", "Gauche"] {
+            assert!(!help.contains(key), "{help}");
+        }
     }
 
     /// Issue #98: the driver's soft loop. It hops (never under its seat, at most its hop), lands

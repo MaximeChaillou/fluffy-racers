@@ -78,6 +78,8 @@ mod ui;
 #[cfg(test)]
 mod championship_tests;
 #[cfg(test)]
+mod end_tests;
+#[cfg(test)]
 mod guide_tests;
 #[cfg(test)]
 mod item_tests;
