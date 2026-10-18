@@ -1,14 +1,15 @@
-//! The player's options (issue #17, GD § 13): the keyboard layout and (issue #80) the names over
-//! the karts online, in a small menu kept in the browser between sessions. Made to take more
-//! options later (issue #100: the volumes of the sounds and of the music, #103 and #104): a field
-//! of [`PlayerOptions`] (with its default), a line of [`OptionRow`] (its label, its help, its
-//! value, how it changes); the screen (`menu::options_screen`) draws every line of
-//! [`OptionRow::ALL`].
+//! The player's options (issue #17, GD § 13): the keyboard layout, (issue #80) the names over
+//! the karts online and (issue #103) the volumes (general, the sound effects, the music), in a
+//! small menu kept in the browser between sessions. Made to take more options later: a field of
+//! [`PlayerOptions`] (with its default), a line of [`OptionRow`] (its label, its help, its value,
+//! how it changes); the screen (`menu::options_screen`) draws every line of [`OptionRow::ALL`].
 //!
 //! - **What**: [`PlayerOptions`]: the keyboard layout (AZERTY by default: the game is in
 //!   French), applied to the keyboard input (`KeyboardLayout`: the letters shown, and Z and Q
 //!   read in AZERTY); the other players' pseudos over their karts online (on by default,
-//!   `net::tags`). The driving aids of GD § 11 are not planned for now (Max, 2026-10-13).
+//!   `net::tags`); issue #103: the volumes, from 0 to 100 % by steps of 10 (80 % by default),
+//!   read by the mixer (`audio`: the general one on everything, the effects' on the sounds, the
+//!   music's for #104). The driving aids of GD § 11 are not planned for now (Max, 2026-10-13).
 //! - **Menu** ([`OptionsMenu`]): **O** opens and closes it (« options »: the same letter at the
 //!   same place in AZERTY and QWERTY, free in the game's controls, no Fn on a Mac), from the race
 //!   or from the selection screen. Up and down (arrows, or Z/S in AZERTY and W/S in QWERTY): the
@@ -53,6 +54,39 @@ pub struct PlayerOptions {
     pub keyboard: KeyboardLayout,
     /// Issue #80: online, the other players' pseudos over their karts (on by default).
     pub name_tags: bool,
+    /// Issue #103: the volume of everything (0 to 100 %)...
+    pub master_volume: u8,
+    /// ...of the sound effects (engines, items, hits, cries, the screens)...
+    pub effects_volume: u8,
+    /// ...and of the music (#104).
+    pub music_volume: u8,
+}
+
+/// Issue #103: the volumes by default (%).
+pub const DEFAULT_VOLUME: u8 = 80;
+/// A volume changes by this much a step (%).
+pub const VOLUME_STEP: u8 = 10;
+
+/// The volumes as written on their lines (0 % to 100 %, by steps of 10). The space before « % »
+/// is a no-break space, as French wants it.
+const VOLUME_LABELS: [&str; 11] = [
+    "0\u{a0}%",
+    "10\u{a0}%",
+    "20\u{a0}%",
+    "30\u{a0}%",
+    "40\u{a0}%",
+    "50\u{a0}%",
+    "60\u{a0}%",
+    "70\u{a0}%",
+    "80\u{a0}%",
+    "90\u{a0}%",
+    "100\u{a0}%",
+];
+
+/// How a volume is written (rounded to its step).
+pub fn volume_label(percent: u8) -> &'static str {
+    let index = (usize::from(percent.min(100)) + 5) / usize::from(VOLUME_STEP);
+    VOLUME_LABELS[index.min(VOLUME_LABELS.len() - 1)]
 }
 
 impl Default for PlayerOptions {
@@ -60,6 +94,9 @@ impl Default for PlayerOptions {
         Self {
             keyboard: KeyboardLayout::default(),
             name_tags: true,
+            master_volume: DEFAULT_VOLUME,
+            effects_volume: DEFAULT_VOLUME,
+            music_volume: DEFAULT_VOLUME,
         }
     }
 }
@@ -82,6 +119,19 @@ impl PlayerOptions {
         match row {
             OptionRow::Keyboard => self.keyboard.label(),
             OptionRow::NameTags => on_off(self.name_tags),
+            OptionRow::MasterVolume => volume_label(self.master_volume),
+            OptionRow::EffectsVolume => volume_label(self.effects_volume),
+            OptionRow::MusicVolume => volume_label(self.music_volume),
+        }
+    }
+
+    /// Issue #103: the volume of a line, if it is one.
+    fn volume_mut(&mut self, row: OptionRow) -> Option<&mut u8> {
+        match row {
+            OptionRow::MasterVolume => Some(&mut self.master_volume),
+            OptionRow::EffectsVolume => Some(&mut self.effects_volume),
+            OptionRow::MusicVolume => Some(&mut self.music_volume),
+            OptionRow::Keyboard | OptionRow::NameTags => None,
         }
     }
 
@@ -95,6 +145,13 @@ impl PlayerOptions {
             }
             // Two values: an odd step changes it.
             OptionRow::NameTags => self.name_tags ^= step.rem_euclid(2) == 1,
+            // Issue #103: by steps of 10 %, from 0 to 100 % (not around: up at 100 % stays).
+            OptionRow::MasterVolume | OptionRow::EffectsVolume | OptionRow::MusicVolume => {
+                if let Some(volume) = self.volume_mut(row) {
+                    let next = i32::from(*volume) + step * i32::from(VOLUME_STEP);
+                    *volume = next.clamp(0, 100) as u8;
+                }
+            }
         }
         self
     }
@@ -111,16 +168,29 @@ pub enum OptionRow {
     Keyboard,
     /// Issue #80.
     NameTags,
+    /// Issue #103: the volumes.
+    MasterVolume,
+    EffectsVolume,
+    MusicVolume,
 }
 
 impl OptionRow {
-    pub const ALL: [Self; 2] = [OptionRow::Keyboard, OptionRow::NameTags];
+    pub const ALL: [Self; 5] = [
+        OptionRow::Keyboard,
+        OptionRow::NameTags,
+        OptionRow::MasterVolume,
+        OptionRow::EffectsVolume,
+        OptionRow::MusicVolume,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             OptionRow::Keyboard => "Clavier",
             // Issue #100: short, on its line (« Noms au-dessus des karts » before).
             OptionRow::NameTags => "Noms des joueurs",
+            OptionRow::MasterVolume => "Volume général",
+            OptionRow::EffectsVolume => "Effets sonores",
+            OptionRow::MusicVolume => "Musique",
         }
     }
 
@@ -130,6 +200,9 @@ impl OptionRow {
         match self {
             OptionRow::Keyboard => "Les lettres affichées suivent ton clavier.",
             OptionRow::NameTags => "En ligne : le pseudo des autres sur leur kart.",
+            OptionRow::MasterVolume => "Le volume de tout le jeu.",
+            OptionRow::EffectsVolume => "Moteurs, objets, coups et cris des animaux.",
+            OptionRow::MusicVolume => "La musique des circuits.",
         }
     }
 }
@@ -317,26 +390,73 @@ mod tests {
     use crate::kart::{DEBUG_RESET_KEY, INTERACT_KEYS, ITEM_KEYS, JUMP_KEYS, LOOK_BACK_KEYS};
 
     /// Issue #17: the options go to the browser and come back the same (issue #80: the names
-    /// over the karts too).
+    /// over the karts too; issue #103: the volumes).
     #[test]
     fn options_survive_a_round_trip_through_the_storage_text() {
         for keyboard in KeyboardLayout::ALL {
             for name_tags in [true, false] {
-                let options = PlayerOptions {
-                    keyboard,
-                    name_tags,
-                };
-                let text = options.to_ron();
-                assert_eq!(PlayerOptions::from_ron(&text), Ok(options), "{text}");
+                for volume in [0, 30, 80, 100] {
+                    let options = PlayerOptions {
+                        keyboard,
+                        name_tags,
+                        master_volume: volume,
+                        effects_volume: 100 - volume,
+                        music_volume: volume / 2,
+                    };
+                    let text = options.to_ron();
+                    assert_eq!(PlayerOptions::from_ron(&text), Ok(options), "{text}");
+                }
             }
         }
         let text = PlayerOptions {
             keyboard: KeyboardLayout::Qwerty,
             name_tags: false,
+            master_volume: 70,
+            ..PlayerOptions::default()
         }
         .to_ron();
         assert!(text.contains("keyboard: Qwerty"), "{text}");
         assert!(text.contains("name_tags: false"), "{text}");
+        assert!(text.contains("master_volume: 70"), "{text}");
+        assert!(text.contains("effects_volume: 80"), "{text}");
+    }
+
+    /// Issue #103: the volumes go by steps of 10 %, from 0 to 100 % (not around), 80 % by
+    /// default; only their line changes.
+    #[test]
+    fn the_volume_lines_go_by_steps_of_ten() {
+        let options = PlayerOptions::default();
+        for row in [
+            OptionRow::MasterVolume,
+            OptionRow::EffectsVolume,
+            OptionRow::MusicVolume,
+        ] {
+            assert_eq!(options.value(row), "80\u{a0}%");
+            let up = options.changed(row, 1);
+            assert_eq!(up.value(row), "90\u{a0}%");
+            assert_eq!(up.changed(row, 1).value(row), "100\u{a0}%");
+            assert_eq!(up.changed(row, 5).value(row), "100\u{a0}%", "not around");
+            assert_eq!(options.changed(row, -8).value(row), "0\u{a0}%");
+            assert_eq!(options.changed(row, -20).value(row), "0\u{a0}%");
+            assert_eq!(up.changed(row, -1), options);
+            assert_eq!(options.changed(row, 0), options);
+            // The other lines stay.
+            for other in OptionRow::ALL.into_iter().filter(|r| *r != row) {
+                assert_eq!(up.value(other), options.value(other), "{row:?} {other:?}");
+            }
+            assert!(row.label().chars().count() <= 16 && row.help().chars().count() < 48);
+        }
+        assert_eq!(
+            (
+                options.master_volume,
+                options.effects_volume,
+                options.music_volume
+            ),
+            (80, 80, 80)
+        );
+        assert_eq!(volume_label(0), "0\u{a0}%");
+        assert_eq!(volume_label(54), "50\u{a0}%");
+        assert_eq!(volume_label(255), "100\u{a0}%");
     }
 
     /// A text from another version (a field missing, one unknown) keeps what it can read and
@@ -351,6 +471,7 @@ mod tests {
             Ok(PlayerOptions {
                 keyboard: KeyboardLayout::Qwerty,
                 name_tags: true,
+                ..PlayerOptions::default()
             })
         );
         assert_eq!(
@@ -358,6 +479,18 @@ mod tests {
             Ok(PlayerOptions {
                 keyboard: KeyboardLayout::Azerty,
                 name_tags: false,
+                ..PlayerOptions::default()
+            })
+        );
+        // Issue #103: a text from before the volumes keeps its keyboard, at 80 % everywhere.
+        assert_eq!(
+            PlayerOptions::from_ron("(keyboard: Qwerty, name_tags: false)"),
+            Ok(PlayerOptions {
+                keyboard: KeyboardLayout::Qwerty,
+                name_tags: false,
+                master_volume: 80,
+                effects_volume: 80,
+                music_volume: 80,
             })
         );
         for bad in [
@@ -367,6 +500,8 @@ mod tests {
             "(keyboard: 3)",
             "(name_tags: 3)",
             "(name_tags: oui)",
+            "(master_volume: -10)",
+            "(effects_volume: fort)",
         ] {
             assert!(PlayerOptions::from_ron(bad).is_err(), "{bad}");
         }
@@ -392,7 +527,17 @@ mod tests {
         assert_eq!(options.changed(row, -1), off);
         assert_eq!(options.changed(row, 2), options);
         assert_eq!(options.changed(row, 0), options);
-        assert_eq!(OptionRow::ALL, [OptionRow::Keyboard, OptionRow::NameTags]);
+        // Issue #103: the volumes after them.
+        assert_eq!(
+            OptionRow::ALL,
+            [
+                OptionRow::Keyboard,
+                OptionRow::NameTags,
+                OptionRow::MasterVolume,
+                OptionRow::EffectsVolume,
+                OptionRow::MusicVolume,
+            ]
+        );
     }
 
     #[test]

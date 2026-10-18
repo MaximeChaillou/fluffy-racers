@@ -77,8 +77,8 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     tap(&mut app, KeyCode::Enter);
     assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
     // Issue #80: down goes to the second line, the names over the karts (Entrée turns them
-    // off, right on again: the keyboard stays), and around back to the keyboard; up goes the
-    // other way round.
+    // off, right on again: the keyboard stays); issue #103: then the three volumes (left lowers
+    // the general one by 10 %), and around back to the keyboard; up goes the other way round.
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::NameTags);
     tap(&mut app, KeyCode::Enter);
@@ -87,8 +87,21 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     assert!(options(&app).name_tags);
     assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
     tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::MasterVolume);
+    tap(&mut app, KeyCode::ArrowLeft);
+    assert_eq!(options(&app).master_volume, 70);
+    assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::EffectsVolume);
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
+    tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::Keyboard);
     tap(&mut app, KeyCode::ArrowUp);
+    assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
+    for _ in 0..3 {
+        tap(&mut app, KeyCode::ArrowUp);
+    }
     assert_eq!(menu(&app).row(), OptionRow::NameTags);
     tap(&mut app, KeyCode::ArrowUp);
     assert_eq!(menu(&app).row(), OptionRow::Keyboard);

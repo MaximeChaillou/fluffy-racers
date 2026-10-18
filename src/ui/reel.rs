@@ -18,7 +18,7 @@ use bevy::prelude::*;
 
 use super::roulette::{self, REEL, ReelFrame, RouletteClock};
 use super::{ICON_SCALES, ItemIcon, ItemSlot, PANEL_COLOR, followed, icon_shape};
-use crate::audio::{Blip, RouletteSounds, SoundEffect, play_roulette};
+use crate::audio::{RouletteSounds, SoundEffect, play_roulette};
 use crate::items::{ItemKind, ItemSlots, ItemTuning, Slot};
 use crate::kart::PlayerKart;
 use crate::menu::style::palette;
@@ -56,8 +56,8 @@ const SPIN_PANEL: Color = Color::srgba(0.227, 0.173, 0.431, 0.88);
 const FLASH_COLOR: Color = Color::srgb(1.0, 0.95, 0.75);
 const BURST_COLOR: Color = palette::MANGUE;
 
-fn create_sounds(mut commands: Commands, mut blips: ResMut<Assets<Blip>>) {
-    commands.insert_resource(RouletteSounds::new(&mut blips));
+fn create_sounds(mut commands: Commands) {
+    commands.insert_resource(RouletteSounds);
 }
 
 /// The reel of each new slot: its cells, in place of the single icon.

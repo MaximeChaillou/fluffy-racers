@@ -13,6 +13,9 @@ use crate::options::{OptionRow, PlayerOptions};
 use crate::tests::{game_app_unloaded, wait_for_the_player};
 use crate::track::TrackChoice;
 
+/// Issue #103: a volume line's value by default.
+const VOLUME: &str = "80\u{a0}%";
+
 fn options_app() -> App {
     let mut app = game_app_unloaded(TrackChoice::TestGround, 0);
     app.add_plugins(MainMenuPlugin { at_launch: false });
@@ -114,7 +117,7 @@ fn the_options_change_and_keep_their_value() {
         count::<With<ControlLine>>(&mut app),
         crate::options::controls(KeyboardLayout::Azerty).len()
     );
-    assert_eq!(values(&mut app), ["AZERTY", "Oui"]);
+    assert_eq!(values(&mut app), ["AZERTY", "Oui", VOLUME, VOLUME, VOLUME]);
     assert_eq!(
         texts_of::<OptionsHelp>(&mut app),
         [OptionRow::Keyboard.help()]
@@ -133,7 +136,7 @@ fn the_options_change_and_keep_their_value() {
         *app.world().resource::<KeyboardLayout>(),
         KeyboardLayout::Qwerty
     );
-    assert_eq!(values(&mut app), ["QWERTY", "Oui"]);
+    assert_eq!(values(&mut app), ["QWERTY", "Oui", VOLUME, VOLUME, VOLUME]);
     assert_eq!(count::<With<OptionsRoot>>(&mut app), 1);
     let hints = texts_of::<OptionsHint>(&mut app).join("\n");
     assert!(hints.contains("(W / S)"), "{hints}");
@@ -149,7 +152,7 @@ fn the_options_change_and_keep_their_value() {
         [OptionRow::NameTags.help()]
     );
     act(&mut app, OptionsAction::Change(OptionRow::NameTags, -1));
-    assert_eq!(values(&mut app), ["QWERTY", "Non"]);
+    assert_eq!(values(&mut app), ["QWERTY", "Non", VOLUME, VOLUME, VOLUME]);
     for wanted in ["Oui", "Non"] {
         act(&mut app, OptionsAction::Change(OptionRow::NameTags, 1));
         assert_eq!(values(&mut app)[1], wanted);
@@ -174,7 +177,7 @@ fn the_options_change_and_keep_their_value() {
     tap(&mut app, crate::options::OPTIONS_KEY);
     app.update();
     assert_eq!(options(&app), changed);
-    assert_eq!(values(&mut app), ["QWERTY", "Non"]);
+    assert_eq!(values(&mut app), ["QWERTY", "Non", VOLUME, VOLUME, VOLUME]);
     // And through the text kept in the browser.
     assert_eq!(PlayerOptions::from_ron(&changed.to_ron()), Ok(changed));
     tap(&mut app, KeyCode::Escape);

@@ -75,8 +75,9 @@ impl Plugin for SimulationPlugin {
 /// online (issue #8, `net::KartSyncPlugin`: nothing runs without a room), and the game modes
 /// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix), and with a renderer the home
 /// screen and the menu opened from the game (issues #56 and #89, `menu::MainMenuPlugin`, with the
-/// home's background), the time trial (issue #76, `modes::TimeTrialPlugin`) and the reel of the
-/// item slots' roulette (issue #102, `ui::RoulettePlugin`). `LevelPlugin`
+/// home's background), the time trial (issue #76, `modes::TimeTrialPlugin`), the reel of the
+/// item slots' roulette (issue #102, `ui::RoulettePlugin`) and the sound design (issue #103,
+/// `audio::SoundDesignPlugin`). `LevelPlugin`
 /// restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -138,6 +139,9 @@ impl Plugin for GamePlugin {
             // Issue #102: the roulette of the item slots as a slot machine's reel. Only on screen:
             // the headless HUD keeps its single icon, the bot races their world.
             app.add_plugins(ui::RoulettePlugin);
+            // Issue #103: the sound design (engines, drift, boosts, items, hits, cries, screens).
+            // Only on screen: nothing audio in the bot races' world.
+            app.add_plugins(audio::SoundDesignPlugin);
         }
     }
 }

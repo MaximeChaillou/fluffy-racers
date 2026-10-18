@@ -5,8 +5,8 @@
 //! with the letters of the chosen keyboard. The line with the focus is the charter's focused
 //! button (mango, a little bigger). It replaces the egui window of #17.
 //!
-//! **Room for more lines**: the volumes of the sounds and of the music (#103, #104) will be lines
-//! of `OptionRow` like the others; the panel takes six of them in a 720 px high window
+//! **Room for more lines**: the volumes (issue #103: general, effects, music) are lines of
+//! `OptionRow` like the others; the panel takes six of them in a 720 px high window
 //! (`options_tests`).
 //!
 //! Its state and its keys are `options::OptionsMenu`'s (headless, tested); here: its tree, the
