@@ -178,15 +178,9 @@ pub fn write_debug_overlay(
 }
 
 /// Static labels of the HUD and the results screen (issue #100: with their accents).
+/// Issue #136: no line of keys under the results any more (« Espace ou Entrée (manette : A) : on
+/// rejoue »...): their buttons (`menu::end`) say what comes next.
 pub const RESULTS_TITLE: &str = "Classement";
-pub const RESULTS_FOOTER: &str = "Espace ou Entrée (manette : A) : on rejoue";
-/// Issue #19: in a Grand Prix (issue #99: a championship), the same keys go on to its standings.
-pub const RESULTS_FOOTER_GRAND_PRIX: &str = "Espace ou Entrée (manette : A) : classement général";
-/// Online (issue #9): the host starts the next race.
-pub const RESULTS_FOOTER_ONLINE: &str = "Course suivante : l'hôte la lance depuis le salon (L)";
-/// Issue #122: online, in a championship: the host's overall standings come after the results.
-pub const RESULTS_FOOTER_ONLINE_CHAMPIONSHIP: &str =
-    "Championnat : le classement général arrive juste après";
 pub const PLAYER_NAME: &str = "Toi";
 /// Issue #70: the results screen, for a racer still on track, one that gave up (online: its
 /// player left), and an estimated time (`ESTIMATE_MARK` before it).
@@ -194,6 +188,32 @@ pub const RESULTS_RACING: &str = "en course";
 pub const RESULTS_GAVE_UP: &str = "abandon";
 pub const RESULTS_ESTIMATED: &str = "Temps estimé";
 pub const ESTIMATE_MARK: char = '~';
+
+/// Issue #136: whether a text names a key of the keyboard or of the gamepad, as the lines of keys
+/// under the screens did (« Haut / Bas (Z / S) : choisir · Entrée : valider · Échap : retour »,
+/// « Manette : croix ou stick, A : valider », « Espace ou Entrée (manette : A) : on rejoue », «
+/// … (L) »). The screens say what to do with their buttons (Max: « seulement des CTA clairs »);
+/// only the options' list of commands names the keys.
+pub fn names_a_key(text: &str) -> bool {
+    const KEYS: [&str; 15] = [
+        "Entrée",
+        "Échap",
+        "Espace",
+        "Manette",
+        "manette",
+        "Haut / Bas",
+        "Gauche / Droite",
+        "Start",
+        "Select",
+        "Souris",
+        "(L)",
+        "(G)",
+        "(N)",
+        "(O)",
+        "(X ou F)",
+    ];
+    KEYS.iter().any(|key| text.contains(key))
+}
 
 /// What a line of the results screen says of its racer's race (issue #70). Times in hundredths
 /// of a second (what is displayed). Compared from frame to frame: a line is rewritten only when
@@ -474,10 +494,6 @@ mod tests {
     fn every_text_is_written_in_fredoka_with_its_accents() {
         let mut texts = vec![
             RESULTS_TITLE.to_string(),
-            RESULTS_FOOTER.to_string(),
-            RESULTS_FOOTER_GRAND_PRIX.to_string(),
-            RESULTS_FOOTER_ONLINE.to_string(),
-            RESULTS_FOOTER_ONLINE_CHAMPIONSHIP.to_string(),
             PLAYER_NAME.to_string(),
             RESULTS_RACING.to_string(),
             RESULTS_GAVE_UP.to_string(),
@@ -509,10 +525,42 @@ mod tests {
         for text in &texts {
             assert!(text.chars().all(writable), "{text}");
         }
-        // The accents are there.
-        assert!(RESULTS_FOOTER.contains("Entrée") && RESULTS_ESTIMATED.contains('é'));
-        assert!(RESULTS_FOOTER_ONLINE.contains("l'hôte"));
-        assert!(RESULTS_FOOTER_GRAND_PRIX.ends_with("classement général"));
+        // The accents are there (issue #136: the footers that had some, « Entrée », « l'hôte »,
+        // « classement général », are the buttons of `menu::end` now, checked there).
+        assert!(RESULTS_ESTIMATED.contains('é'));
+        assert!(texts.iter().any(|t| t == "Éloïse ça va"));
+    }
+
+    /// Issue #136: the lines of keys of before are seen for what they are, the texts of the
+    /// screens are not.
+    #[test]
+    fn a_line_of_keys_is_seen_as_one() {
+        for keys in [
+            "Haut / Bas (Z / S) : choisir  ·  Entrée : valider  ·  Échap : retour",
+            "Manette : croix ou stick, A : valider, B : retour",
+            "Espace ou Entrée (manette : A) : on rejoue",
+            "Course suivante : l'hôte la lance depuis le salon (L)",
+            "Entrée : on recommence  ·  N : changer de mode",
+            "Haut / Bas / Gauche / Droite (Z Q S D) : marcher  ·  Espace : sauter  ·  X ou F : \
+             coup de patte  ·  L : le salon  ·  Échap : pause",
+            "Ton pseudo : Ana · change-le dans Pilote (G).",
+        ] {
+            assert!(names_a_key(keys), "{keys}");
+        }
+        for text in [
+            "Rejouer",
+            "La même course, chrono à zéro.",
+            "Changer de circuit",
+            "Retour au salon",
+            "Dans 5 s, pour tout le monde.",
+            "Classement général",
+            "Coupe Doudou 2/4 · Anneau Guimauve",
+            "Le kart t'attend, moteur chaud.",
+            "12 lettres au plus  ·  vide, c'est le nom de ton animal",
+            "En attendant, promène-toi et donne des coups de patte !",
+        ] {
+            assert!(!names_a_key(text), "{text}");
+        }
     }
 
     /// The code points of a TrueType font (its `cmap`: the Unicode subtable of format 4).

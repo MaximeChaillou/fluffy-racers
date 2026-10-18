@@ -293,7 +293,7 @@ fn the_lobby_is_gone_when_a_race_starts() {
     assert_eq!(count::<With<WalkerVisual>>(&mut app), 0);
     assert_eq!(count::<With<WalkerTag>>(&mut app), 0);
     assert_eq!(count::<With<WalkerHat>>(&mut app), 0);
-    assert_eq!(count::<With<SalonKeys>>(&mut app), 0);
+    assert_eq!(count::<With<SalonBanner>>(&mut app), 0);
     assert_eq!(count::<With<Ragdoll>>(&mut app), 0);
     assert!(app.world().get_resource::<TrackLayout>().is_some());
     assert_eq!(count::<With<crate::kart::PlayerKart>>(&mut app), 1);

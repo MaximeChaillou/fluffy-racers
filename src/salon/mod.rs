@@ -23,12 +23,14 @@
 //!   and the invitation link (« Copier »), the players (pseudo, animal, color, ping, host, ready),
 //!   « Prêt ! » or « Lancer la course » (disabled with its reason), the host's settings (issue
 //!   #122: the mode, « Circuit seul » or « Championnat » and its lines, a championship's program
-//!   on the right; the mirror, the bots, the items), « Pilote », « Quitter »; the banner of #64
-//!   when it is closed, and the connection problems of #49. It replaces the egui window.
+//!   on the right; the mirror, the bots, the items), « Pilote », « Commandes » (issue #136),
+//!   « Quitter »; the banner of #64 when it is closed (issue #136: its button), and the
+//!   connection problems of #49. It replaces the egui window.
 //! - **The championship online** (issue #122, `online.rs`, `net::championship`): between its
 //!   races, every peer shows the host's standings, then its podium (the screens of
 //!   `crate::modes`); the host moves on after a moment (`SalonTuning::standings_seconds`,
-//!   `podium_seconds`) or at its Entrée; after the podium, everyone is back in the lobby.
+//!   `podium_seconds`) or with its buttons (issue #136, `menu::end`: « Course suivante »,
+//!   « Le podium », « Retour au salon »); after the podium, everyone is back in the lobby.
 //!
 //! **Only with a renderer** (added by `menu::MainMenuPlugin`), like the other screens: the headless
 //! world of the bot races has none of it (no resource, no system, no component). The tests add
@@ -49,7 +51,7 @@ mod tests;
 pub use online::{RemoteWalkerBody, SALON_SESSION};
 pub use scene::{SALON_MODELS, SalonDecor, SalonRoot, seat_spot};
 pub use screen::{
-    SalonAction, SalonBanner, SalonButtonNode, SalonKeys, SalonLineNode, SalonMenu,
+    SalonAction, SalonBanner, SalonBannerPill, SalonButtonNode, SalonLineNode, SalonMenu,
     SalonPlayerNode, SalonScreenRoot,
 };
 pub use view::{

@@ -3,8 +3,6 @@
 //! the focus moves (around, over the disabled entries), and the gamepad's stick turned into single
 //! steps.
 
-use crate::kart::KeyboardLayout;
-
 /// An entry of the home screen, or of the menu opened from the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Entry {
@@ -146,22 +144,6 @@ pub fn moved(entries: &[Entry], focus: usize, step: i32, online: bool) -> usize 
     }
 }
 
-/// The line of keys at the bottom of the menu, with the letters of the player's keyboard: the
-/// keyboard's, then the gamepad's. On the home screen (issue #89), each one in two lines, to fit
-/// its column: Échap there races at once, on the circuit behind.
-pub fn hint(layout: KeyboardLayout, in_game: bool) -> [String; 2] {
-    let [up, _, down, _] = layout.letters();
-    let (back, cut) = if in_game {
-        ("reprendre", "  ·  ")
-    } else {
-        ("rouler tout de suite", "\n")
-    };
-    [
-        format!("Haut / Bas ({up} / {down}) : choisir  ·  Entrée : valider{cut}Échap : {back}"),
-        format!("Manette : croix ou stick, A : valider{cut}B ou Start : {back}"),
-    ]
-}
-
 /// The gamepad's left stick as single steps up and down: a step when it is pushed past
 /// [`StickLatch::PUSH`], and the next one only once it came back under [`StickLatch::RELEASE`]
 /// (the stick held does not run through the menu).
@@ -266,26 +248,6 @@ mod tests {
         assert_eq!(moved(&[Entry::Options], 0, 1, false), 0);
         assert_eq!(moved(&[Entry::Solo, Entry::Options], 1, 1, true), 1);
         assert_eq!(moved(&[], 0, 1, false), 0);
-    }
-
-    #[test]
-    fn the_keys_line_shows_the_letters_of_the_keyboard() {
-        let [keys, pad] = hint(KeyboardLayout::Azerty, true);
-        assert!(keys.starts_with("Haut / Bas (Z / S)"), "{keys}");
-        assert!(keys.contains("Échap : reprendre"), "{keys}");
-        assert!(pad.contains("A : valider"), "{pad}");
-        let [keys, pad] = hint(KeyboardLayout::Qwerty, false);
-        assert!(keys.starts_with("Haut / Bas (W / S)"), "{keys}");
-        assert!(keys.contains("Échap : rouler tout de suite"), "{keys}");
-        // Issue #89: on the home screen, two short lines each (its column is narrow).
-        for line in keys.lines().chain(pad.lines()) {
-            assert!(line.chars().count() <= 52, "{line}");
-        }
-        assert_eq!(keys.lines().count() + pad.lines().count(), 4);
-        assert!(
-            pad.contains("A : valider") && pad.contains("Start : rouler"),
-            "{pad}"
-        );
     }
 
     /// The stick held does not run through the menu: one step per push.

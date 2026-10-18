@@ -377,24 +377,37 @@ fn the_race_menu_starts_a_free_race_and_ends_a_grand_prix() {
 /// Issue #99: the standings say the cup's name (or « Championnat »). Issue #100: the texts of the
 /// championship's screens are written in Fredoka, with their accents (they were ASCII, the old
 /// font's): every character is one Fredoka draws, and the names are as written (« Crique
-/// Câline », « Entrée »).
+/// Câline »). Issue #136: what comes next is no longer a line of keys under the standings
+/// (« Espace ou Entrée (manette : A) : course suivante (Col des Moufles) », « … dans un instant ·
+/// Entrée : tout de suite »), but their buttons' small lines (`menu::end`): the next race and its
+/// circuit, as written; online, when, for the host and for the others.
 #[test]
 fn the_screens_of_a_championship_write_their_accents() {
+    use crate::menu::end::{EndButton, EndContext, EndScreen, caption};
+    // What the buttons under the standings say of the next race (`menu::end::follow_the_end`).
+    let next = |gp: &GrandPrix, seconds: Option<u32>| EndContext {
+        next: gp
+            .cup
+            .get(gp.race + 1)
+            .map(|race| (gp.race + 2, gp.cup.len(), race.name.clone())),
+        seconds,
+        closed: false,
+    };
     let circuits = tracks::circuits();
     let mut grand_prix = GrandPrix::new(cup_of(&circuits, 4), 11);
     grand_prix.score(
         &(0..12).collect::<Vec<_>>(),
         &GrandPrixTuning::default().points,
     );
+    let solo = EndScreen::Standings { last: false };
     let mut texts = vec![
         screens::standings_title(&grand_prix),
-        screens::standings_footer(&grand_prix),
+        caption(solo, EndButton::NextRace, &next(&grand_prix, None)),
         screens::PODIUM_TITLE.to_string(),
-        screens::PODIUM_FOOTER.to_string(),
     ];
     grand_prix.race = 2;
     texts.push(screens::standings_title(&grand_prix));
-    texts.push(screens::standings_footer(&grand_prix));
+    texts.push(caption(solo, EndButton::NextRace, &next(&grand_prix, None)));
     for line in standings_lines(&grand_prix) {
         texts.extend([line.rank, line.name, line.won, line.total]);
     }
@@ -413,12 +426,12 @@ fn the_screens_of_a_championship_write_their_accents() {
         "Coupe Doudou 3/4 · Crique Câline"
     );
     assert_eq!(
-        screens::standings_footer(&grand_prix),
-        "Espace ou Entrée (manette : A) : course suivante (Col des Moufles)"
+        caption(solo, EndButton::NextRace, &next(&grand_prix, None)),
+        "Course 4/4 : Col des Moufles"
     );
     assert_eq!(screens::STANDINGS_HEADER, "Classement général");
     // Issue #122: online, the players' pseudos (ours « Toi »), the host's standings, and what
-    // comes next: the host moves on after a moment (or Entrée), the others wait.
+    // comes next: the host moves on after a moment (issue #136: or its button), the others wait.
     let mut names: Vec<String> = (0..12).map(|e| format!("Kart {}", e + 1)).collect();
     names[10] = "Éloïse".into();
     names[11] = "Zoé".into();
@@ -434,27 +447,44 @@ fn the_screens_of_a_championship_write_their_accents() {
     assert_eq!((lines[0].name.as_str(), lines[0].player), ("Zoé", false));
     assert_eq!((lines[1].name.as_str(), lines[1].player), ("Toi", true));
     assert_eq!(lines[2].name, "Kart 10");
+    let guest = EndScreen::OnlineStandings {
+        host: false,
+        last: false,
+    };
     assert_eq!(
-        screens::standings_footer(&grand_prix),
-        "Course suivante (Col des Moufles) dans un instant"
+        caption(guest, EndButton::NextRace, &next(&grand_prix, Some(8))),
+        "Dans 8 s : l'hôte décide."
+    );
+    let host = EndScreen::OnlineStandings {
+        host: true,
+        last: false,
+    };
+    assert_eq!(
+        caption(host, EndButton::NextRace, &next(&grand_prix, Some(8))),
+        "Col des Moufles, dans 8 s"
     );
     let mut online_texts = vec![
-        screens::standings_footer(&grand_prix),
-        screens::podium_footer(&grand_prix),
+        caption(guest, EndButton::NextRace, &next(&grand_prix, Some(8))),
+        caption(host, EndButton::NextRace, &next(&grand_prix, Some(8))),
     ];
     grand_prix.online.as_mut().unwrap().hosting = true;
     grand_prix.race = 3;
+    let last = EndScreen::OnlineStandings {
+        host: true,
+        last: true,
+    };
     assert_eq!(
-        screens::standings_footer(&grand_prix),
-        "Le podium dans un instant  ·  Entrée : tout de suite"
+        caption(last, EndButton::Podium, &next(&grand_prix, Some(3))),
+        "Dans 3 s, pour tout le monde."
     );
+    let podium = EndScreen::OnlinePodium { host: true };
     assert_eq!(
-        screens::podium_footer(&grand_prix),
-        "Retour au salon dans un instant  ·  Entrée : tout de suite"
+        caption(podium, EndButton::BackToSalon, &next(&grand_prix, Some(12))),
+        "Dans 12 s, pour tout le monde."
     );
     online_texts.extend([
-        screens::standings_footer(&grand_prix),
-        screens::podium_footer(&grand_prix),
+        caption(last, EndButton::Podium, &next(&grand_prix, Some(3))),
+        caption(podium, EndButton::BackToSalon, &next(&grand_prix, Some(12))),
     ]);
     for line in standings_lines(&grand_prix) {
         online_texts.push(line.name);

@@ -164,6 +164,9 @@ pub enum ButtonKind {
     Copy,
     /// « Pilote » (issue #98).
     Pilot,
+    /// Issue #136: « Commandes »: the game's commands (the options' list), instead of the line of
+    /// keys at the bottom of the scene.
+    Controls,
     /// Out of the room (back home).
     Leave,
     /// Back, without a room.
@@ -310,7 +313,7 @@ pub fn salon_view(input: &ViewInput) -> SalonView {
     let mut view = SalonView {
         title: "Multijoueur".to_string(),
         lines: vec![format!(
-            "Ton pseudo : {} · change-le dans Pilote (G).",
+            "Ton pseudo : {} · change-le dans Pilote.",
             input.pseudo
         )],
         seat: None,
@@ -490,9 +493,8 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
                 .push(format!("Course n° {} terminée.", start.race));
         }
         (None, _) => {
-            view.lines.push(
-                "En attendant, promène-toi et donne des coups de patte (X ou F) !".to_string(),
-            );
+            view.lines
+                .push("En attendant, promène-toi et donne des coups de patte !".to_string());
         }
     }
     let racing = matches!(seated.race, RaceStage::Racing | RaceStage::Watching);
@@ -564,6 +566,13 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
         "Pilote",
         "Ton pseudo, ton animal, ton kart.",
     ));
+    // Issue #136: the commands of the game (to walk, jump, strike here too), instead of the keys
+    // written at the bottom of the scene.
+    view.buttons.push(button(
+        ButtonKind::Controls,
+        "Commandes",
+        "Marcher, sauter, donner un coup de patte.",
+    ));
     view.buttons.push(button(
         ButtonKind::Leave,
         "Quitter",
@@ -633,8 +642,7 @@ fn players_view(view: &mut SalonView, input: &ViewInput, session: &NetSession) {
             .push("Un joueur a une autre version du jeu : rechargez tous la page.".to_string());
     }
     if let Some(notice) = color_notice(&rows) {
-        view.notes
-            .push(format!("{notice} Change-la dans Pilote (G)."));
+        view.notes.push(format!("{notice} Change-la dans Pilote."));
     }
 }
 
@@ -829,7 +837,8 @@ mod tests {
 
     /// Seated: the host's main action « Lancer la course », disabled with its reason while it is
     /// alone or someone is not ready, then usable; its settings can change; « Pilote »,
-    /// « Quitter » and « Copier » follow; the players listed with their link.
+    /// « Commandes » (issue #136), « Quitter » and « Copier » follow; the players listed with
+    /// their link.
     #[test]
     fn the_host_starts_when_everyone_is_ready() {
         let circuits = circuits();
@@ -850,6 +859,7 @@ mod tests {
             [
                 ButtonKind::StartRace,
                 ButtonKind::Pilot,
+                ButtonKind::Controls,
                 ButtonKind::Leave,
                 ButtonKind::Copy
             ]
@@ -868,13 +878,21 @@ mod tests {
             Some("https://example.org/?room=ABCDE")
         );
         assert!(view.lines.iter().any(|l| l.contains("coups de patte")));
+        // Issue #136: no key in its lines (« Commandes » lists them).
+        for line in &view.lines {
+            for key in ["(G)", "(L)", "(X ou F)", "Entrée", "Échap"] {
+                assert!(!line.contains(key), "{line}");
+            }
+        }
         assert_short(&view);
         // « Copier » says it was.
         let copied = salon_view(&ViewInput {
             copied: true,
             ..input(Some(&session), &circuits)
         });
-        assert_eq!(copied.buttons[3].caption, "Copié !");
+        // (Found by its kind: issue #136 put « Commandes » before it.)
+        let copy = copied.buttons.iter().find(|b| b.kind == ButtonKind::Copy);
+        assert_eq!(copy.map(|b| b.caption.as_str()), Some("Copié !"));
         // A race announced: the settings are locked, the start says why.
         let lobby = session.lobby.as_mut().unwrap();
         lobby.announce_race(RaceStart {

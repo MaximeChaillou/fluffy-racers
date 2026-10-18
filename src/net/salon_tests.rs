@@ -319,11 +319,13 @@ pub(super) fn panel(app: &App) -> Option<crate::salon::SalonView> {
     menu.view.clone().filter(|_| shown)
 }
 
-/// The lobby's screen keys (`crate::salon::SalonKeys`) are shown in `app`.
-fn scene_keys_shown(app: &App) -> bool {
+/// Issue #136: the banner's button (`crate::salon::SalonBannerPill`: a click, or Entrée in the
+/// scene, opens the panel) is shown in `app`. It took the place of the line of keys at the bottom
+/// of the scene (`SalonKeys`, gone: « Commandes » in the panel lists them).
+fn banner_shown(app: &App) -> bool {
     app.world()
         .iter_entities()
-        .any(|e| e.contains::<crate::salon::SalonKeys>())
+        .any(|e| e.contains::<crate::salon::SalonBannerPill>())
 }
 
 /// One key pressed then let go, a frame each.
@@ -351,8 +353,9 @@ pub(super) fn act_on_panel(room: &mut Room, key: PeerKey, action: crate::salon::
 /// Issue #101: the lobby's screen of the charter in a room, over its scene: its title (the
 /// room's code), the players (the host's badge, who is ready), the host's settings (the host
 /// changes them, the others see them and why they cannot), « Prêt ! », then « Lancer la course »,
-/// disabled with its reason until everyone is ready; Échap closes it (the scene's keys come, the
-/// character walks), L opens it again; the host launches the race from it (without bots, in
+/// disabled with its reason until everyone is ready; issue #136: « Commandes » opens the options
+/// (their commands) and the panel comes back after them; Échap closes it (the banner, its button,
+/// comes; the character walks), Entrée or L open it again; the host launches the race from it (without bots, in
 /// mirror: its settings), and nothing of it is left on the grid.
 #[test]
 fn the_lobby_screen_runs_the_room_and_launches_the_race() {
@@ -399,10 +402,7 @@ fn the_lobby_screen_runs_the_room_and_launches_the_race() {
             .any(|l| l.starts_with("Réglages de l'hôte")),
         "{guest:?}"
     );
-    assert!(
-        !scene_keys_shown(room.view(ANA)),
-        "the panel over the scene"
-    );
+    assert!(!banner_shown(room.view(ANA)), "the panel over the scene");
 
     // The host's settings: a guest's step changes nothing; the host's reach everyone.
     let before = lobby(room.view(ANA)).setup();
@@ -435,12 +435,35 @@ fn the_lobby_screen_runs_the_room_and_launches_the_race() {
         "{host:?}"
     );
 
-    // Échap: the panel closes, the scene's keys come; L: it opens again.
+    // Issue #136: « Commandes » opens the options (their list of commands), the panel hidden
+    // under them; Échap closes them, and the panel is back.
+    act_on_panel(&mut room, ANA, SalonAction::Press(ButtonKind::Controls));
+    room.frame();
+    assert!(
+        room.view(ANA)
+            .world()
+            .resource::<crate::options::OptionsMenu>()
+            .open
+    );
+    assert!(panel(room.view(ANA)).is_none(), "one screen at a time");
+    tap(&mut room, ANA, KeyCode::Escape);
+    room.frame();
+    assert!(
+        !room
+            .view(ANA)
+            .world()
+            .resource::<crate::options::OptionsMenu>()
+            .open
+    );
+    assert!(panel(room.view(ANA)).is_some(), "the panel is back");
+
+    // Échap: the panel closes, the banner comes (issue #136: its button, no more line of keys
+    // at the bottom of the scene); Entrée (as a click on it) opens the panel again; so does L.
     tap(&mut room, ANA, KeyCode::Escape);
     room.frame();
     assert!(!room.view(ANA).world().resource::<LobbyWindow>().open);
     assert!(panel(room.view(ANA)).is_none());
-    assert!(scene_keys_shown(room.view(ANA)));
+    assert!(banner_shown(room.view(ANA)));
     assert!(
         room.view(ANA)
             .world()
@@ -448,10 +471,17 @@ fn the_lobby_screen_runs_the_room_and_launches_the_race() {
             .is_some(),
         "still in the room"
     );
+    tap(&mut room, ANA, KeyCode::Enter);
+    room.frame();
+    assert!(panel(room.view(ANA)).is_some());
+    assert!(!banner_shown(room.view(ANA)));
+    tap(&mut room, ANA, KeyCode::Escape);
+    room.frame();
+    assert!(banner_shown(room.view(ANA)));
     tap(&mut room, ANA, LOBBY_KEY);
     room.frame();
     assert!(panel(room.view(ANA)).is_some());
-    assert!(!scene_keys_shown(room.view(ANA)));
+    assert!(!banner_shown(room.view(ANA)));
 
     // « Lancer la course »: on the grid, without bots, in mirror; nothing of the screen left.
     act_on_panel(&mut room, ANA, SalonAction::Press(ButtonKind::StartRace));
@@ -485,7 +515,7 @@ fn the_lobby_screen_runs_the_room_and_launches_the_race() {
             .iter(world)
             .count()
             + world
-                .query::<&crate::salon::SalonKeys>()
+                .query::<&crate::salon::SalonBanner>()
                 .iter(world)
                 .count()
             + world.query::<&SalonRoot>().iter(world).count();

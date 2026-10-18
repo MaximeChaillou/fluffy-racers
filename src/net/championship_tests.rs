@@ -27,7 +27,7 @@ fn state(app: &App) -> Option<ChampionshipState> {
 /// Short races and short waits: one lap; the host ends a race 3 s after the first player
 /// finished and closes its results 1 s after they showed; the standings and the podium show for
 /// a second.
-fn quick(room: &mut Room, host: PeerKey) {
+pub(super) fn quick(room: &mut Room, host: PeerKey) {
     let app = room.app(host);
     let world = app.world_mut();
     let mut race = world.resource_mut::<RaceTuning>();
@@ -42,7 +42,7 @@ fn quick(room: &mut Room, host: PeerKey) {
 /// The host chose a championship of `program` (chosen one by one) in the room's settings, and
 /// starts it with `bots` bots (fewer than a grid's, for the tests' time) and the players seated:
 /// its first race.
-fn start_championship(room: &mut Room, host: PeerKey, program: &[usize], bots: u8) {
+pub(super) fn start_championship(room: &mut Room, host: PeerKey, program: &[usize], bots: u8) {
     let keys: Vec<PeerKey> = room.games.iter().map(|(k, _)| *k).collect();
     for key in &keys {
         room.act(*key, NetAction::Ready(true));
@@ -72,7 +72,7 @@ fn start_championship(room: &mut Room, host: PeerKey, program: &[usize], bots: u
 
 /// Every game on the grid of round `round` of the championship, the players' karts driven by
 /// bots.
-fn race_round(room: &mut Room, round: u8) {
+pub(super) fn race_round(room: &mut Room, round: u8) {
     room.until(15.0, "everyone on the grid", |app| {
         on_grid(app) && app.world().resource::<OnlineRace>().shared.start.round == round
     });

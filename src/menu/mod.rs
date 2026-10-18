@@ -44,6 +44,7 @@
 //! tests add [`MainMenuPlugin`] to a headless game themselves; everything in it runs headless.
 
 pub mod anim;
+pub mod end;
 pub mod kit;
 mod nav;
 mod options_screen;
@@ -58,6 +59,8 @@ pub mod style;
 pub mod trailer;
 
 #[cfg(test)]
+pub(crate) mod end_tests;
+#[cfg(test)]
 mod home_tests;
 #[cfg(test)]
 mod options_tests;
@@ -69,12 +72,13 @@ mod scenario_tests;
 mod solo_tests;
 
 pub use anim::ACTIVATE_DELAY;
+pub use end::{EndButton, EndButtonNode, EndMenu, EndRow, EndScreen, EndText};
 pub use nav::{
     Entry, GAME_ENTRIES, LAUNCH_ENTRIES, StickLatch, enabled, entries, game_title, moved,
 };
 pub use options_screen::{
-    ControlLine, OptionsArrow, OptionsBack, OptionsColumn, OptionsHelp, OptionsHint, OptionsLine,
-    OptionsRoot, OptionsUi, OptionsValue,
+    ControlLine, OptionsArrow, OptionsBack, OptionsColumn, OptionsHelp, OptionsLine, OptionsRoot,
+    OptionsUi, OptionsValue,
 };
 pub use pilot_screen::{
     ColorSwatch, LineValue, PilotArrow, PilotButton, PilotColumn, PilotHint, PilotLine, PilotRoot,
@@ -88,8 +92,8 @@ pub use preview::{
 pub use screen::{MainMenuRoot, MenuAssets, MenuButton, MenuNode, TitleWord};
 pub use showcase::{HomeTuning, SHOWCASE_LAPS, Showcase, ShowcaseKart, ShowcasePhase, pack_scale};
 pub use solo_screen::{
-    RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloHint, SoloLine,
-    SoloRoot, SoloShape, SoloUi, SoloValue, Vignette,
+    RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloLine, SoloRoot,
+    SoloShape, SoloUi, SoloValue, Vignette,
 };
 pub use style::{ButtonLook, ButtonState, UI_FILES, button_look};
 
@@ -103,13 +107,13 @@ use crate::level::{LevelSystems, LoadLevel, Online};
 use crate::modes::{RaceMenu, RaceMenuAction};
 use crate::net::{LobbyWindow, NetAction, NetSession};
 use crate::options::{OptionsAction, OptionsMenu, OptionsSystems};
-use crate::race::{Race, RaceMode, RacePhase};
+use crate::race::RaceMode;
 
 /// Opens the main menu from the game (and goes back from it): Échap, no Fn on a Mac, the same
 /// key in AZERTY and QWERTY. While another screen is open, Échap closes that screen instead.
 pub const MAIN_MENU_KEY: KeyCode = KeyCode::Escape;
-/// The gamepad's Start opens it too (GD § 13), and closes it. Not on the results screen, where
-/// Start races again (`race::RESTART_BUTTONS`).
+/// The gamepad's Start opens it too (GD § 13), and closes it. Issue #136: on the results screen
+/// too (Start raced again there; its buttons do now, with A).
 pub const MAIN_MENU_BUTTON: GamepadButton = GamepadButton::Start;
 
 /// Chooses the entry with the focus (on release).
@@ -320,6 +324,15 @@ impl Plugin for MainMenuPlugin {
                 )
                     .chain()
                     .in_set(MainMenuSystems),
+            )
+            // Issue #136: the end screens' buttons (`end.rs`): after the modes, which show the
+            // standings and the podium and take the championship's actions.
+            .add_systems(
+                Update,
+                (end::follow_the_end, end::end_input, end::animate_end)
+                    .chain()
+                    .after(crate::modes::ModeSystems)
+                    .run_if(end::end_wanted_or_shown),
             )
             // Issue #89: the home screen's background (`showcase.rs`).
             .add_systems(PreUpdate, showcase::watch_the_levels.before(LevelSystems))
@@ -534,7 +547,6 @@ fn menu_input(
     layout: Option<Res<KeyboardLayout>>,
     menu: Res<MainMenu>,
     screens: OpenScreens,
-    race: Option<Res<Race>>,
     mut latch: Local<StickLatch>,
     mut actions: MessageWriter<MainMenuAction>,
 ) {
@@ -557,14 +569,14 @@ fn menu_input(
         .fold(0.0f32, |a, b| if b.abs() > a.abs() { b } else { a });
     let step = latch.step(stick);
     if !menu.open {
-        // Échap closes the other screens first; not over a screen the menu opened.
+        // Échap closes the other screens first; not over a screen the menu opened. Issue #136:
+        // on the results screen too, Start opens the pause (it raced again; their buttons do
+        // now, with A).
         let free = !menu.others_open
             && screens.first_open().is_none()
             && menu.handing_over.is_none()
             && menu.child.is_none();
-        // On the results screen, Start races again.
-        let results = race.is_some_and(|race| race.phase() == RacePhase::Results);
-        if free && (key(&[MAIN_MENU_KEY]) || (!results && button(&[MAIN_MENU_BUTTON]))) {
+        if free && (key(&[MAIN_MENU_KEY]) || button(&[MAIN_MENU_BUTTON])) {
             actions.write(MainMenuAction::Open);
         }
         return;

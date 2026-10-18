@@ -16,7 +16,7 @@ use crate::camera::ChaseCamera;
 use crate::interactions::PawStats;
 use crate::interpolation::InterpolatedFrom;
 use crate::kart::{Kart, PlayerKart};
-use crate::race::{Course, RaceGrid, RaceProgress, RaceTuning};
+use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceTuning};
 use crate::tests::{game_app_unloaded, wait_for_the_player};
 use crate::track::TrackChoice;
 use crate::ui::HudRoot;

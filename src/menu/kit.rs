@@ -1,6 +1,7 @@
 //! Issue #100: the charter's pieces for the screens drawn outside the menus' trees, with the HUD:
 //! the results of a race (`ui`), the overall standings and the podium of a championship
-//! (`modes`). Pure bundles and colors: no system, no resource of their own. Their font is
+//! (`modes`). Pure bundles and colors: no system, no resource of their own. Issue #136: no line of
+//! keys under them any more, a slot for their buttons ([`EndSlot`], `menu::end`). Their font is
 //! [`MenuAssets`]' Fredoka when the game has a renderer; headless (no font asset), the default
 //! handle: nothing is drawn anyway, and the headless world keeps the archetypes it had.
 
@@ -41,13 +42,20 @@ pub fn title(content: impl Into<String>, face: &Handle<Font>, px: f32) -> impl B
     )
 }
 
-/// A line of keys under a panel: white over the veil, with a shadow.
-pub fn keys_line(content: impl Into<String>, face: &Handle<Font>) -> impl Bundle {
+/// Issue #136: where an end screen's buttons go, under its panel (the results of a race, the
+/// overall standings, the podium), in place of its line of keys. With a renderer, the menu fills
+/// it (`menu::end`); headless, it stays empty.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct EndSlot;
+
+/// The slot of an end screen's buttons (see [`EndSlot`]).
+pub fn end_slot() -> impl Bundle {
     (
-        text(content, face, size::HINT, palette::NEIGE),
-        TextShadow {
-            offset: Vec2::new(0.0, 2.0),
-            color: palette::OMBRE,
+        EndSlot,
+        Node {
+            justify_content: JustifyContent::Center,
+            margin: UiRect::top(u(6.0)),
+            ..default()
         },
     )
 }

@@ -6,8 +6,9 @@
 //! Issue #100: after the charter (`menu::kit`), in Fredoka with the accents (« Coupe Doudou 3/4 ·
 //! Crique Câline », « classement général »): the standings over the veil, their title in white, a
 //! cream panel of lines (the player's in Mangue, each place on its badge: gold, silver, bronze,
-//! then blue), the keys under it; the podium's names in a small cream panel at the top, the 3D
-//! podium in sight under it (no veil).
+//! then blue), its buttons under it (issue #136: no line of keys any more, `menu::end` fills
+//! their slot, `kit::EndSlot`); the podium's names in a small cream panel at the top, the 3D
+//! podium in sight under it (no veil), its buttons at the bottom.
 
 use bevy::prelude::*;
 
@@ -87,46 +88,8 @@ pub fn standings_title(grand_prix: &GrandPrix) -> String {
     )
 }
 
-/// What Entrée does next, under the standings. Issue #122: online, the host moves on (after a
-/// moment, or Entrée); the others wait.
-pub fn standings_footer(grand_prix: &GrandPrix) -> String {
-    let next = grand_prix.cup.get(grand_prix.race + 1);
-    match (&grand_prix.online, next) {
-        (None, Some(next)) => format!(
-            "Espace ou Entrée (manette : A) : course suivante ({})",
-            next.name
-        ),
-        (None, None) => "Espace ou Entrée (manette : A) : le podium".to_string(),
-        (Some(online), Some(next)) => format!(
-            "Course suivante ({}) dans un instant{}",
-            next.name,
-            soon(online.hosting)
-        ),
-        (Some(online), None) => format!("Le podium dans un instant{}", soon(online.hosting)),
-    }
-}
-
-/// Issue #122: what the host's Entrée does online, after « dans un instant ».
-fn soon(hosting: bool) -> &'static str {
-    if hosting { ONLINE_NOW } else { "" }
-}
-
-/// Issue #122: online, the host moves on at once.
-pub const ONLINE_NOW: &str = "  ·  Entrée : tout de suite";
-
-/// Under the podium's names: solo, its keys; issue #122, online, the way back to the lobby.
-pub fn podium_footer(grand_prix: &GrandPrix) -> String {
-    match &grand_prix.online {
-        None => PODIUM_FOOTER.to_string(),
-        Some(online) => format!("{PODIUM_FOOTER_ONLINE}{}", soon(online.hosting)),
-    }
-}
-
 pub const STANDINGS_HEADER: &str = "Classement général";
 pub const PODIUM_TITLE: &str = "Podium";
-pub const PODIUM_FOOTER: &str = "Entrée : on recommence  ·  N : changer de mode";
-/// Issue #122: online, after the podium, everyone goes back to the lobby.
-pub const PODIUM_FOOTER_ONLINE: &str = "Retour au salon dans un instant";
 
 /// Shows the screen of the Grand Prix's stage (none while racing), over the results screen (only
 /// there: not on a level being rebuilt).
@@ -199,7 +162,7 @@ fn spawn_standings(
     faces: &(Handle<Font>, Handle<Font>),
 ) {
     let lines = standings_lines(grand_prix);
-    let (medium, semibold) = faces;
+    let (_, semibold) = faces;
     let [_, name, won, total] = size::STANDINGS_COLUMNS;
     commands
         .spawn((
@@ -255,19 +218,22 @@ fn spawn_standings(
                                 spawn_line(panel, place, line, &cells, faces);
                             }
                         });
-                    column.spawn(kit::keys_line(standings_footer(grand_prix), medium));
+                    // Issue #136: its buttons (« Course suivante », « Abandonner »…, `menu::end`).
+                    column.spawn(kit::end_slot());
                 });
         });
 }
 
-/// The names of the podium, at the top of the screen: the 3D podium stays in sight.
+/// The names of the podium, at the top of the screen: the 3D podium stays in sight. Issue #136:
+/// its buttons at the bottom (« Rejouer le championnat », « Accueil »; online, « Retour au
+/// salon »: `menu::end`).
 fn spawn_podium_names(
     commands: &mut Commands,
     grand_prix: &GrandPrix,
     faces: &(Handle<Font>, Handle<Font>),
 ) {
     let lines = standings_lines(grand_prix);
-    let (medium, semibold) = faces;
+    let (_, semibold) = faces;
     let [_, name, _, total] = size::STANDINGS_COLUMNS;
     commands
         .spawn((
@@ -278,8 +244,15 @@ fn spawn_podium_names(
             Node {
                 position_type: PositionType::Absolute,
                 width: percent(100),
-                top: u(16.0),
-                justify_content: JustifyContent::Center,
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect {
+                    top: u(16.0),
+                    bottom: u(28.0),
+                    ..default()
+                },
                 ..default()
             },
         ))
@@ -307,19 +280,7 @@ fn spawn_podium_names(
                         let cells = [(line.name.as_str(), name), (line.total.as_str(), total)];
                         spawn_line(panel, place, line, &cells, faces);
                     }
-                    panel.spawn((
-                        kit::text(
-                            podium_footer(grand_prix),
-                            medium,
-                            size::HINT,
-                            palette::MYRTILLE.with_alpha(0.75),
-                        ),
-                        Node {
-                            align_self: AlignSelf::Center,
-                            margin: UiRect::top(u(4.0)),
-                            ..default()
-                        },
-                    ));
                 });
+            screen.spawn(kit::end_slot());
         });
 }

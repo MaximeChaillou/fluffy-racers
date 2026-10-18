@@ -1,5 +1,6 @@
 //! Issue #100: the options screen (O, issues #17 and #80) drawn with `bevy_ui`, after the charter
-//! (`style.rs`, `anim.rs`): over a veil, its title, a wide cream panel and the keys at the bottom.
+//! (`style.rs`, `anim.rs`): over a veil, its title and a wide cream panel (issue #136: no line of
+//! keys under it any more).
 //! On the left, **a line per option** (`options::OptionRow::ALL`: its label, « < », its value,
 //! « > »), what the line with the focus does, and « Retour »; on the right, the game's commands
 //! with the letters of the chosen keyboard. The line with the focus is the charter's focused
@@ -87,11 +88,6 @@ pub struct OptionsHelp;
 #[require(MenuNode)]
 pub struct ControlLine(pub usize);
 
-/// A line of keys at the bottom.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-#[require(MenuNode)]
-pub struct OptionsHint(pub usize);
-
 /// « Retour ».
 #[derive(Component, Clone, Copy, Debug, Default)]
 #[require(MenuNode)]
@@ -107,18 +103,6 @@ pub struct OptionsUi {
     pub unfocused: Option<usize>,
     /// « Retour » is under the pointer.
     pub hovered: bool,
-}
-
-/// The keys at the bottom of the screen, with the letters of the player's keyboard.
-pub fn hint(layout: KeyboardLayout) -> [String; 2] {
-    let [up, left, down, right] = layout.letters();
-    [
-        format!(
-            "Haut / Bas ({up} / {down}) : la ligne  ·  Gauche / Droite ({left} / {right}), \
-             Entrée : changer  ·  Échap ou O : fermer"
-        ),
-        "Manette : croix ou stick, A : changer, B : fermer".to_string(),
-    ]
 }
 
 /// The real time (s).
@@ -292,17 +276,6 @@ fn spawn_tree(
                         spawn_lines(panel, menu, options, assets);
                         spawn_controls(panel, layout, assets);
                     });
-                for (line, hint) in hint(layout).into_iter().enumerate() {
-                    column.spawn((
-                        OptionsHint(line),
-                        text(hint, &assets.medium, size::HINT, palette::NEIGE),
-                        TextLayout::justify(Justify::Center),
-                        TextShadow {
-                            offset: Vec2::new(0.0, 2.0),
-                            color: palette::OMBRE,
-                        },
-                    ));
-                }
             });
         });
 }
@@ -781,23 +754,11 @@ pub(super) fn options_open_or_shown(
 mod tests {
     use super::*;
 
-    /// The keys at the bottom write the letters of the chosen keyboard, and every text of the
-    /// screen is short (the charter: a label of three words at most, a small line under 48
-    /// characters).
+    /// Every text of the screen is short (the charter: a label of three words at most, a small
+    /// line under 48 characters). Issue #136: no line of keys under the panel any more (it was
+    /// checked here; the commands on the right still follow the keyboard: `options_tests`).
     #[test]
-    fn the_keys_and_the_texts_of_the_options() {
-        let [keys, pad] = hint(KeyboardLayout::Azerty);
-        assert!(
-            keys.contains("(Z / S)") && keys.contains("(Q / D)"),
-            "{keys}"
-        );
-        assert!(keys.contains("Échap ou O : fermer"), "{keys}");
-        assert!(pad.contains("B : fermer"), "{pad}");
-        let [keys, _] = hint(KeyboardLayout::Qwerty);
-        assert!(
-            keys.contains("(W / S)") && keys.contains("(A / D)"),
-            "{keys}"
-        );
+    fn the_texts_of_the_options_are_short() {
         for row in OptionRow::ALL {
             assert!(row.label().chars().count() <= 16, "{}", row.label());
             assert!(row.help().chars().count() < 48, "{}", row.help());

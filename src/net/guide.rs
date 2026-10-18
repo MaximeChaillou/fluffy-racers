@@ -112,7 +112,8 @@ pub enum RaceStage {
 pub struct Banner {
     /// « Salon ABCDE · 3 joueurs ».
     pub lead: String,
-    /// « Tu es l'hôte : choisis le circuit puis lance la course (L) ».
+    /// « Tu es l'hôte : choisis le circuit puis lance la course » (issue #136: no « (L) »:
+    /// the banner is the panel's button).
     pub action: String,
 }
 
@@ -157,7 +158,7 @@ impl RoomFacts {
         let (lead, action) = match &self.stage {
             Stage::Connecting => (format!("Salon {room}"), "Connexion…".to_string()),
             Stage::Arriving => (format!("Salon {room}"), "Connexion à l'hôte…".to_string()),
-            Stage::NoHost => (String::new(), "Cette partie n'existe plus (L)".to_string()),
+            Stage::NoHost => (String::new(), "Cette partie n'existe plus".to_string()),
             Stage::Over => return None,
             Stage::Seated(seated) => {
                 if seated.race == RaceStage::Racing {
@@ -212,6 +213,10 @@ fn race_stage(lobby: &Lobby, race: Option<&OnlineRace>) -> RaceStage {
     let Some(start) = lobby.announced() else {
         return RaceStage::Free;
     };
+    // Issue #136: we left its results (« Retour au salon »): over for us, we are in the lobby.
+    if lobby.left_the_results() {
+        return RaceStage::Over;
+    }
     match race.filter(|race| race.shared.race() == start.race) {
         Some(race) if race.shared.over().is_some() => RaceStage::Over,
         Some(race) if race.racing => RaceStage::Racing,
@@ -281,11 +286,11 @@ impl Seated {
         match (self.hosting, self.race) {
             (_, RaceStage::Watching) => "Course en cours : tu seras de la prochaine".to_string(),
             (true, _) if self.players < 2 => {
-                "Tu es l'hôte : envoie le lien d'invitation à tes amis (L)".to_string()
+                "Tu es l'hôte : envoie le lien d'invitation à tes amis".to_string()
             }
-            (true, _) => "Tu es l'hôte : choisis le circuit puis lance la course (L)".to_string(),
+            (true, _) => "Tu es l'hôte : choisis le circuit puis lance la course".to_string(),
             (false, _) if self.ready => format!("En attente de {host}…"),
-            (false, _) => "Clique sur « Prêt ! » (L)".to_string(),
+            (false, _) => "Clique sur « Prêt ! »".to_string(),
         }
     }
 
@@ -429,18 +434,16 @@ mod tests {
         assert_eq!(
             banner(Stage::Seated(seated(true, 3, false, &["Bob"]))).as_deref(),
             Some(
-                "Salon ABCDE · 3 joueurs · Tu es l'hôte : choisis le circuit puis lance la course (L)"
+                "Salon ABCDE · 3 joueurs · Tu es l'hôte : choisis le circuit puis lance la course"
             )
         );
         assert_eq!(
             banner(Stage::Seated(seated(true, 1, false, &[]))).as_deref(),
-            Some(
-                "Salon ABCDE · 1 joueur · Tu es l'hôte : envoie le lien d'invitation à tes amis (L)"
-            )
+            Some("Salon ABCDE · 1 joueur · Tu es l'hôte : envoie le lien d'invitation à tes amis")
         );
         assert_eq!(
             banner(Stage::Seated(seated(false, 3, false, &[]))).as_deref(),
-            Some("Salon ABCDE · 3 joueurs · Clique sur « Prêt ! » (L)")
+            Some("Salon ABCDE · 3 joueurs · Clique sur « Prêt ! »")
         );
         assert_eq!(
             banner(Stage::Seated(seated(false, 3, true, &["Cyd"]))).as_deref(),
@@ -465,7 +468,7 @@ mod tests {
         // The words of issue #63.
         assert_eq!(
             banner(Stage::NoHost).as_deref(),
-            Some("Cette partie n'existe plus (L)")
+            Some("Cette partie n'existe plus")
         );
         let parts = facts(Stage::Seated(seated(false, 2, true, &[])))
             .banner()
