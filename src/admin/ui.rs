@@ -638,6 +638,16 @@ fn test_section(
 /// Issue #18: any item, ready in the player's hand (`items::GiveItem`), to try it at once; the
 /// I key goes through them all. Online, only in a debug build, and only what plays online.
 fn items_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
+    // Issue #106: every model side by side, in front of the camera (with a renderer).
+    if let Some(mut showcase) = world.get_resource_mut::<crate::items::ItemShowcase>() {
+        let mut open = showcase.open;
+        if ui
+            .checkbox(&mut open, "Vitrine : tous les objets devant la caméra")
+            .changed()
+        {
+            showcase.open = open;
+        }
+    }
     let online = world.contains_resource::<crate::level::Online>();
     if online && !cfg!(debug_assertions) {
         ui.label("En ligne : pas d'objet donné (seulement dans une version de développement).");

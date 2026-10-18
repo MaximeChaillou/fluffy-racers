@@ -179,8 +179,10 @@ const SLOT_BORDER_WIDTH: f32 = 4.0;
 /// (`interactions::visual`).
 pub const SLOTS_TOP: f32 = 24.0;
 
-/// The shape of an item's icon in a slot: size (px), fill, border color and width, rotation
-/// (degrees). Each item has its own shape and color (GD § 14: recognized at once).
+/// The shape of an item's icon in a slot of the headless HUD: size (px), fill, border color and
+/// width, rotation (degrees). Each item has its own shape and color (GD § 14: recognized at
+/// once). With a renderer, the slots show the items' icons instead, their models rendered
+/// (issue #106, `items::icons`, in the reel's cells).
 pub fn icon_shape(item: ItemKind) -> (Vec2, Color, Color, f32, f32) {
     match item {
         // A yellow peel, slanted.

@@ -214,7 +214,7 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots da
 - **le « ding »** : à l'arrêt, la case s'écrase puis rebondit comme de la gelée (moins d'une demi-seconde, l'animation molle de la charte), un anneau Mangue en jaillit et sa fenêtre s'éclaire ; pendant la roulette, sa fenêtre est plus sombre et son bord s'allume en Mangue un cadeau sur deux ;
 - **les sons** : un tic par cadeau qui passe, un « ding » à l'arrêt, seulement pour son propre kart (depuis #103 : deux sons de l'Interface Sounds de Kenney, voir § 14) ;
 - **ce qui défile ne dit rien de l'objet tiré** : c'est une bande des 16 objets, toujours dans le même ordre (deux voisins ne se ressemblent jamais), qui part d'un endroit tiré du tick où la roulette a commencé ; seule sa fin est l'objet tiré. La réserve d'une double boîte tourne avec la main, une demi-bande plus loin ;
-- **des cases plus grandes** pour lire en défilant : la main 92 px (au lieu de 76), la réserve 60 (au lieu de 50), les icônes 20 % plus grandes dans la main. Les vrais visuels des objets viendront avec #106.
+- **des cases plus grandes** pour lire en défilant : la main 92 px (au lieu de 76), la réserve 60 (au lieu de 50), les icônes 20 % plus grandes dans la main. Depuis #106, chaque case montre la vraie icône de l'objet (son modèle 3D rendu, plus bas « Les objets à l'écran »).
 
 ### Notre implémentation (phase 3, #21)
 
@@ -256,6 +256,37 @@ Chaque objet reprend la *fonction* d'un objet classique de jeu de kart, avec un 
 | **Pie voleuse** | Rend invisible environ 3 s et vole l'objet d'un adversaire. | 3 |
 | **Piñata** | Fait apparaître 8 objets autour du kart, à utiliser un par un. | 3 |
 | **Boomerang-os** | Boomerang qui revient, utilisable 3 fois. | 3 |
+
+### Les objets à l'écran (#106)
+
+« Améliorer les assets des objets aussi » (Max). Chaque objet a **son modèle 3D**, rond et mou, dans le style des personnages : des formes douces (boules, coussins, boudins, anneaux) fusionnées en **un seul maillage par objet**, coloré par sommet, partagé par toutes ses instances et dessiné avec **un seul matériau** (quelques-uns de plus : l'or qui brille, les ailes translucides, l'étincelle, le clignotement de la bombe). Les modèles sont construits par le jeu (`src/items/models.rs`), donc originaux ; la boîte cadeau vient du Holiday Kit de Kenney (CC0), recolorée. Les autres candidats CC0 regardés (le piment et la chantilly du Food Kit, la bombe et le cœur du Platformer Kit) se lisaient moins bien que les nôtres en petit.
+
+| Objet | Son modèle | Ce qui bouge |
+|---|---|---|
+| **Pelure** | une peau de banane jaune, ses quatre pans étalés au sol, bruns au bout, la queue en haut | elle tremble comme de la gelée en tombant, puis un peu |
+| **Pelote de laine** | une boule rose, ses brins enroulés dans tous les sens, le bout qui pend | elle roule |
+| **Abeille** | une boule jaune à deux rayures noires, deux gros yeux, deux antennes, le dard | ses ailes battent, elle flotte en volant, elle regarde où elle va |
+| **Piment** | un piment rouge courbé, sa queue verte | — |
+| **Piment doré** | le même, en or qui brille | — |
+| **Bombe à confettis** | une boule bleu roi couverte de confettis, son capuchon, sa mèche et son étincelle | elle **clignote en rouge**, de plus en plus vite jusqu'à la fin de sa mèche ; l'étincelle crépite |
+| **Chantilly** | une chantilly en spirale dans sa coupe rose, une cerise dessus | elle tremblote |
+| **Super câlin** | un cœur rose en peluche, ses yeux et ses joues roses | son cœur bat |
+| **Fusée à confettis** | une fusée orange, son nez blanc, une bande de confettis, son hublot, trois ailerons rouges | attachée au dos du kart pendant son effet |
+| **Dégonflage** | un ballon bleu pâle froissé, l'air qui s'échappe du nœud | — |
+| **Oreiller géant** | un gros coussin lilas liseré de violet (pas blanc : il tranche sur la neige), endormi (yeux fermés, joues roses), une houppe à chaque coin | il flotte et tangue en volant |
+| **Klaxon-canard** | un canard en caoutchouc jaune dont le bec est le pavillon orange d'un klaxon | — |
+| **Pie voleuse** | une pie noire et blanche, sa longue queue, un anneau d'or dans le bec | — |
+| **Piñata** | une piñata étoile bleu ciel, ses sept cônes de couleurs bonbon, un pompon à chaque pointe | — |
+| **Boomerang-os** | un os en caoutchouc orange (un jouet pour chien) plié en V comme un boomerang, deux boules à chaque bout ; orange et pas blanc os, pour trancher sur la neige, le sable et le sol guimauve | il tourne à plat |
+| **Croquette** (§ 7) | une croquette dodue, dorée, plus grillée au bord, quelques miettes | elle tourne |
+| **Croquette dorée** | deux croquettes en or qui brillent (elle en donne deux) | elle tourne |
+
+- **La boîte cadeau** : un vrai cadeau rond avec son ruban et son nœud, bleu ciel au ruban rose (la double boîte : dorée, ruban rouge). Elle **tourne doucement et rebondit**, s'écrase un peu en touchant le sol, son couvercle tremblote comme de la gelée. Prise, elle **éclate** : elle enfle, son couvercle saute, puis elle disparaît dans une gerbe de **confettis** (28 par défaut, `VfxTuning`, emportés en partie par le kart qui l'a prise). Elle revient en sautant (comme avant).
+- **Un objet utilisé qui agit tout de suite** (piment, piment doré, croquette dorée, chantilly, super câlin, fusée, dégonflage, klaxon-canard, pie voleuse, piñata) **jaillit au-dessus de son kart** : son modèle grandit, tourne et monte, puis disparaît (0,75 s).
+- **Les icônes** du HUD et de la roulette sont **les modèles eux-mêmes**, vus de 3/4, rendus une seule fois au lancement par le jeu (sur le processeur, en 128 px) avec un **épais contour Myrtille** : on les lit en petit et en défilant, sur le ciel comme sur la route. Deux voisins de la roulette restent de couleurs éloignées (un test le vérifie sur les icônes rendues).
+- **Lisibilité** (§ 14), vérifiée par des tests : deux objets n'ont jamais la même silhouette et la même couleur ; ce qui est posé ou vole sur la piste (la pelure, la pelote, l'abeille, la bombe, l'oreiller géant, le boomerang-os, les croquettes, les boîtes) a des couleurs loin de celles de la route, de l'herbe, des bas-côtés et du sable de chaque biome.
+- **La fluidité** : de 220 à 1 520 triangles par objet (la boîte du fichier : 238 ; sa forme construite, quand le fichier manque : 2 450), un maillage par modèle (l'abeille : trois, avec ses ailes ; la bombe : deux, avec son étincelle ; la boîte : deux, avec son couvercle), les mêmes maillages et matériaux pour toutes les instances : des dizaines d'objets à l'écran ne coûtent que quelques appels de dessin.
+- **Purement visuel** : les colliders et la simulation ne changent pas. Le panneau d'admin (P) a une **vitrine** (la case « Vitrine » de la section « Donner un objet ») : tous les modèles côte à côte devant la caméra.
 
 ### Distribution (première proposition, à régler)
 
@@ -410,7 +441,7 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 - un témoin de recharge du bouton Interaction dans le HUD (une patte qui se remplit) ;
 - **la roulette des objets** (§ 8, #102) : les cadeaux défilent dans la case comme sur une machine à sous, ralentissent, s'arrêtent sur l'objet tiré avec un « ding » (la case s'écrase et rebondit, un anneau en jaillit), un tic par cadeau qui passe.
 
-**Lisibilité** : couleurs vives, silhouettes claires. Les objets dangereux se reconnaissent instantanément.
+**Lisibilité** : couleurs vives, silhouettes claires. Les objets dangereux se reconnaissent instantanément. Depuis #106 (§ 8, « Les objets à l'écran ») : chaque objet a son modèle, sa silhouette et ses couleurs, loin de celles du décor (des tests le vérifient), ses icônes sont ses modèles rendus avec un épais contour, et la bombe clignote avant d'exploser.
 
 ### Le son (#103)
 

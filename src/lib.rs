@@ -78,8 +78,9 @@ impl Plugin for SimulationPlugin {
 /// screen and the menu opened from the game (issues #56 and #89, `menu::MainMenuPlugin`, with the
 /// home's background), the time trial (issue #76, `modes::TimeTrialPlugin`), the reel of the
 /// item slots' roulette (issue #102, `ui::RoulettePlugin`), the sound design (issue #103,
-/// `audio::SoundDesignPlugin`), the music (issue #104, `audio::MusicPlugin`) and the particles
-/// (issue #105, `vfx::VfxPlugin`). `LevelPlugin`
+/// `audio::SoundDesignPlugin`), the music (issue #104, `audio::MusicPlugin`), the particles
+/// (issue #105, `vfx::VfxPlugin`) and the items' models from files (issue #106,
+/// `items::ItemModelPlugin`). `LevelPlugin`
 /// restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -150,6 +151,9 @@ impl Plugin for GamePlugin {
             // Issue #105: the particles (the drift's sparks, the boosts, the shocks, the dust).
             // Only on screen: nothing of them in the bot races' world.
             app.add_plugins(vfx::VfxPlugin);
+            // Issue #106: the items' models from their files (and their icons), an item used
+            // popping up over its kart, the admin panel's showcase. Only on screen too.
+            app.add_plugins(items::ItemModelPlugin);
         }
     }
 }

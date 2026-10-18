@@ -59,6 +59,8 @@ fn named_models() -> BTreeSet<String> {
     }
     // Issue #101: the lobby's clearing.
     all.extend(crate::salon::SALON_MODELS.map(str::to_string));
+    // Issue #106: the items' models taken from files.
+    all.extend(crate::items::MODEL_FILES.map(|(_, id)| id.to_string()));
     all
 }
 
@@ -156,7 +158,7 @@ fn load_gltf_headless(app: &mut App) {
 }
 
 /// An App that loads glTF files without a renderer.
-fn loading_app() -> App {
+pub(crate) fn loading_app() -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Mesh>()
@@ -166,7 +168,7 @@ fn loading_app() -> App {
 }
 
 /// Updates until every model asked for is baked or missing.
-fn wait_for_the_models(app: &mut App, ids: &[String]) {
+pub(crate) fn wait_for_the_models(app: &mut App, ids: &[String]) {
     for _ in 0..3000 {
         app.update();
         let models = app.world().resource::<Models>();

@@ -30,7 +30,7 @@ use crate::camera::{CameraShake, ChaseCamera, FixedView};
 use crate::croquettes::{CroquettePickedUp, CroquettesLost};
 use crate::interactions::Paw;
 use crate::interpolation::InterpolatedFrom;
-use crate::items::{Blast, ItemSlots, Slot};
+use crate::items::{Blast, BoxBroken, ItemSlots, Slot};
 use crate::kart::{
     Boost, BoostFlame, DeflatedScale, DriftMotion, ItemEffects, Kart, KartAssists, KartBodyPivot,
     KartBump, KartEnvironment, KartState, KartTuning, KartWheels, MiniTurbo, PlayerKart, Remote,
@@ -177,6 +177,8 @@ pub enum WorldBurst {
     },
     /// An explosion (GD § 8), this wide.
     Blast { at: Vec3, radius: f32 },
+    /// A gift box taken (issue #106), by a kart going at `carrier`.
+    Gift { at: Vec3, carrier: Vec3 },
     /// A croquette picked up, or `count` lost.
     Croquette {
         at: Vec3,
@@ -461,13 +463,15 @@ pub(super) fn watch_karts(
 /// Each tick: the bursts of the world (where two karts bumped, the blasts, the croquettes).
 pub(super) fn watch_world(
     mut queue: ResMut<VfxQueue>,
-    (mut bumps, mut blasts, mut picked, mut lost): (
+    (mut bumps, mut blasts, mut picked, mut lost, mut boxes): (
         MessageReader<KartBump>,
         MessageReader<Blast>,
         MessageReader<CroquettePickedUp>,
         MessageReader<CroquettesLost>,
+        MessageReader<BoxBroken>,
     ),
     karts: Query<(&Transform, Option<&KartVfx>), Or<(With<Kart>, With<Remote>)>>,
+    spots: Query<&GlobalTransform>,
     mut ticked: Local<Ticked>,
 ) {
     let pairs = &mut ticked.pairs;
@@ -495,6 +499,23 @@ pub(super) fn watch_world(
             queue.0.push(WorldBurst::Blast {
                 at: blast.at,
                 radius: blast.radius,
+            });
+        }
+    }
+    // Issue #106: a gift box taken bursts into confetti.
+    for taken in boxes.read() {
+        let Ok(spot) = spots.get(taken.item_box) else {
+            continue;
+        };
+        let carrier = karts
+            .get(taken.kart)
+            .ok()
+            .and_then(|(_, m)| m)
+            .map_or(Vec3::ZERO, |m| m.velocity);
+        if room(&queue) {
+            queue.0.push(WorldBurst::Gift {
+                at: spot.translation() + Vec3::Y * 0.2,
+                carrier,
             });
         }
     }
@@ -853,6 +874,7 @@ pub(super) fn emit_world(
         let at = match burst {
             WorldBurst::Bump { at, .. }
             | WorldBurst::Blast { at, .. }
+            | WorldBurst::Gift { at, .. }
             | WorldBurst::Croquette { at, .. } => at,
         };
         if camera.is_some_and(|c| c.distance(at) > tuning.emit_range) {
@@ -869,6 +891,7 @@ pub(super) fn emit_world(
                 emit::shock(pool, at, normal, carrier, stars, impact.pof_puffs, impact);
             }
             WorldBurst::Blast { at, radius } => emit::confetti(pool, at, radius, impact),
+            WorldBurst::Gift { at, carrier } => emit::gift(pool, at, carrier, impact),
             WorldBurst::Croquette {
                 at,
                 carrier,

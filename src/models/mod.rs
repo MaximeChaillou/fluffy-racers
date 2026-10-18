@@ -18,6 +18,9 @@
 //! (a missing or broken file too: a warning, no panic).
 
 pub mod bake;
+// Issue #106: the models built in code (the items) and their icons.
+pub mod raster;
+pub mod shape;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -397,4 +400,4 @@ fn add_primitive(part: &mut BakedPart, mesh: &Mesh, base: LinearRgba, texture: O
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

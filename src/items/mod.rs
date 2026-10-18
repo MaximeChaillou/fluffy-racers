@@ -70,9 +70,13 @@
 //! Everything runs in `FixedUpdate` at 60 Hz ([`ItemSystems`]): after the karts' input and the
 //! race gate, before the croquettes and the driving. `ItemTuning::enabled` switches the items
 //! off (no box, nothing held, nothing on the track): the bots' driving tests race without items.
-//! Visuals in `visual.rs` ([`ItemVisualPlugin`]); the HUD's two slots in `crate::ui`; the bots'
-//! use in `crate::bots`.
+//! Visuals in `visual.rs` ([`ItemVisualPlugin`]; issue #106: the items' models in `models.rs`,
+//! their icons in `icons.rs`, their files and the showcase with a renderer, [`ItemModelPlugin`]);
+//! the HUD's two slots in `crate::ui`; the bots' use in `crate::bots`.
 
+// Issue #106: the items' icons (with a renderer) and models.
+pub mod icons;
+pub mod models;
 mod objects;
 mod slots;
 mod table;
@@ -82,6 +86,8 @@ mod visual;
 #[cfg(test)]
 mod scenario_tests;
 
+pub use icons::{ItemIconPlugin, ItemIcons};
+pub use models::{Look, MODEL_FILES};
 pub use objects::{
     FALL_LIMIT_SPEED, GROUND_PROBE_DOWN, GROUND_PROBE_UP, Hold, ITEM_GRAVITY, KART_RIDE_HEIGHT,
     Roll, RollStep, WALL_NORMAL_Y, held_offset, pinata_angle, pinata_in_front, roll, segment_box,
@@ -93,7 +99,10 @@ pub use table::{
     TableFile, TableRow, draw_unit, pillow_allowed, steal_unit,
 };
 pub use tuning::ItemTuning;
-pub use visual::{EffectKind, EffectLook, ItemVisualAssets, ItemVisualPlugin};
+pub use visual::{
+    EffectKind, EffectLook, ItemBoxLook, ItemModelPlugin, ItemShowcase, ItemVisualAssets,
+    ItemVisualPlugin,
+};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{QueryFilter, ReadRapierContext, Velocity};
