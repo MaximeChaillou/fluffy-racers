@@ -1,6 +1,7 @@
 //! HUD (`bevy_ui`, issue #5): rank, lap, chrono, best lap, countdown and banners, the two item
-//! slots (issue #16: hand and reserve, each item a shape and a color of its own, the roulette
-//! flashing through them, "x3" for a triple), the croquettes held (issue #14: the counter pops at
+//! slots (issue #16: hand and reserve, each item a shape and a color of its own, "x3" for a
+//! triple; issue #102: the roulette is a slot machine's reel, `roulette.rs`, drawn with a renderer
+//! by [`RoulettePlugin`]), the croquettes held (issue #14: the counter pops at
 //! each pick-up, shakes when some are lost, turns gold at 10), the lap counter (issue #79: it pops
 //! in gold at each new lap), the chantilly's cream over the screen (issue #18), and the results
 //! screen (issue #70: live, until the race closes them).
@@ -20,15 +21,20 @@
 pub mod debug;
 pub mod format;
 pub mod pop;
+mod reel;
 #[cfg(test)]
 pub(crate) mod results_tests;
+pub mod roulette;
+#[cfg(test)]
+mod roulette_tests;
 
 pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationCost};
+pub use reel::{Reel, ReelCell, RoulettePlugin};
 
 use bevy::prelude::*;
 
 use crate::croquettes::{CroquetteTuning, Croquettes};
-use crate::items::{ItemKind, ItemSlots, Slot};
+use crate::items::{ItemKind, ItemSlots, ItemTuning, Slot};
 use crate::kart::{ItemEffects, PlayerKart};
 use crate::menu::MenuAssets;
 use crate::menu::kit;
@@ -40,6 +46,7 @@ use format::{
     RESULTS_FOOTER_ONLINE_CHAMPIONSHIP, RESULTS_TITLE, ResultsTime, write_best_lap,
     write_croquettes, write_lap, write_ordinal, write_racer_count, write_racer_name, write_time,
 };
+use roulette::{ReelFrame, RouletteClock};
 
 /// Root of the in-race HUD.
 #[derive(Component, Clone, Copy, Debug)]
@@ -123,35 +130,54 @@ const CREAM_BLOBS: [(f32, f32, f32, f32); 7] = [
 ];
 const CREAM_COLOR: Color = Color::srgb(1.0, 0.97, 0.88);
 
-/// What a HUD slot shows: the item (`None`: empty), how many, and whether the roulette spins.
+/// What a HUD slot shows: the item (`None`: empty), how many, whether the roulette spins, and
+/// whether its border is lit (issue #102: on every other item of the reel, slower and slower).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SlotView {
     pub item: Option<ItemKind>,
     pub count: u8,
     pub spinning: bool,
+    pub lit: bool,
 }
 
 impl SlotView {
-    /// What `slot` shows at `now` (s): a spinning roulette flashes through the items.
-    pub fn of(slot: &Slot, now: f32) -> Self {
-        match *slot {
-            Slot::Empty => Self::default(),
-            Slot::Spinning { .. } => Self {
-                item: Some(ItemKind::ALL[(now / ROULETTE_FLASH) as usize % ItemKind::ALL.len()]),
+    /// What `slot` shows, `reel` its roulette's window (`roulette::RouletteClock::frames`): a
+    /// spinning roulette shows the item in the middle of its reel, the border lit on every other
+    /// one.
+    pub fn of(slot: &Slot, reel: Option<ReelFrame>) -> Self {
+        match (*slot, reel) {
+            (Slot::Spinning { .. }, Some(reel)) => Self {
+                item: Some(reel.centered()),
                 count: 1,
                 spinning: true,
+                lit: reel.cell.is_multiple_of(2),
             },
-            Slot::Ready { item, count } => Self {
+            (Slot::Spinning { item, .. }, None) => Self {
+                item: Some(item),
+                count: 1,
+                spinning: true,
+                lit: true,
+            },
+            (Slot::Ready { item, count }, _) => Self {
                 item: Some(item),
                 count,
                 spinning: false,
+                lit: false,
             },
+            (Slot::Empty, _) => Self::default(),
         }
     }
 }
 
-/// The roulette shows another item this often (s).
-const ROULETTE_FLASH: f32 = 0.08;
+/// The two item slots (issue #102: bigger, for the reel to be read as it scrolls): the hand's and
+/// the reserve's sides (px), and the scale of their icons (`icon_shape`'s sizes).
+pub const SLOT_SIZES: [f32; 2] = [92.0, 60.0];
+pub const ICON_SCALES: [f32; 2] = [1.2, 0.75];
+/// A slot's border (px).
+const SLOT_BORDER_WIDTH: f32 = 4.0;
+/// The slots' top (px from the top of the screen); under them, the paw gauge
+/// (`interactions::visual`).
+pub const SLOTS_TOP: f32 = 24.0;
 
 /// The shape of an item's icon in a slot: size (px), fill, border color and width, rotation
 /// (degrees). Each item has its own shape and color (GD § 14: recognized at once).
@@ -463,20 +489,20 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>, assets: Option
             hud.spawn(Node {
                 position_type: PositionType::Absolute,
                 left: px(24),
-                top: px(24),
+                top: px(SLOTS_TOP),
                 column_gap: px(10),
                 align_items: AlignItems::FlexStart,
                 ..default()
             })
             .with_children(|slots| {
-                for (index, size) in [(0, 76), (1, 50)] {
+                for (index, size) in SLOT_SIZES.into_iter().enumerate() {
                     slots
                         .spawn((
                             ItemSlot { index },
                             Node {
                                 width: px(size),
                                 height: px(size),
-                                border: UiRect::all(px(4)),
+                                border: UiRect::all(px(SLOT_BORDER_WIDTH)),
                                 border_radius: BorderRadius::all(px(14)),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -486,8 +512,8 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>, assets: Option
                             BorderColor::all(SLOT_BORDER),
                         ))
                         .with_children(|slot| {
-                            // The reserve's icon is smaller.
-                            let scale = if index == 0 { 1.0 } else { 0.62 };
+                            // The reserve's icon is smaller. With a renderer, the reel takes
+                            // its place (issue #102, `reel.rs`).
                             slot.spawn((
                                 ItemIcon { index },
                                 Node {
@@ -495,7 +521,7 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>, assets: Option
                                     ..default()
                                 },
                                 UiTransform {
-                                    scale: Vec2::splat(scale),
+                                    scale: Vec2::splat(ICON_SCALES[index]),
                                     ..default()
                                 },
                                 Visibility::Hidden,
@@ -715,9 +741,13 @@ fn update_hud(
 }
 
 /// The two item slots of the followed racer (issue #16): each item's icon, "x3" for a triple,
-/// the roulette flashing through the items. Rewritten only when what a slot shows changes.
+/// the roulette (issue #102): the item in the middle of its reel, the border lit on every other
+/// one. Rewritten only when what a slot shows changes. With a renderer the reel draws the
+/// roulette (`reel.rs`: this icon is gone).
+#[allow(clippy::too_many_arguments)]
 fn update_item_slots(
-    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
+    tuning: Res<ItemTuning>,
     mut shown: Local<[SlotView; 2]>,
     racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
     held: Query<&ItemSlots>,
@@ -735,13 +765,15 @@ fn update_item_slots(
     >,
     mut counts: Query<(&ItemCount, &mut Text)>,
 ) {
-    let now = time.elapsed_secs();
     let items = followed(racers.iter()).and_then(|(entity, _)| held.get(entity).ok());
     let views = match items {
-        Some(items) => [
-            SlotView::of(&items.hand, now),
-            SlotView::of(&items.reserve, now),
-        ],
+        Some(items) => {
+            let [hand, reserve] = RouletteClock::new(&fixed, &tuning).frames(items);
+            [
+                SlotView::of(&items.hand, hand),
+                SlotView::of(&items.reserve, reserve),
+            ]
+        }
         None => [SlotView::default(); 2],
     };
     if *shown == views {
@@ -749,8 +781,8 @@ fn update_item_slots(
     }
     for (slot, mut border) in &mut slots {
         let view = views[slot.index.min(1)];
-        // The slot's border flashes gold while its roulette spins.
-        let color = if view.spinning && ((now / ROULETTE_FLASH) as u32).is_multiple_of(2) {
+        // The slot's border flashes gold while its roulette spins: on every other item.
+        let color = if view.spinning && view.lit {
             RANK_COLOR
         } else {
             SLOT_BORDER

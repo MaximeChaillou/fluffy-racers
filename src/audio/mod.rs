@@ -4,6 +4,10 @@
 //!
 //! - Croquettes (GD § 7 and 14, issue #14): a bright rising "pop" when the local player picks
 //!   one up, a little higher with each croquette held; a falling "bloop" when it loses some.
+//! - The roulette of the item slots (GD § 8, issue #102): a short tick for each item that passes
+//!   in the slot, a bright "ding" when it stops ([`RouletteSounds`], played by the reel of the
+//!   HUD, `ui::RoulettePlugin`). Synthesized until the sounds of #103: to replace them, change
+//!   [`RouletteSounds`] and [`play_roulette`], nothing else.
 //!
 //! The sounds play only with Bevy's `AudioPlugin` (the game, not the headless tests: there the
 //! players are spawned all the same, which the tests check, but nothing plays them). On the
@@ -51,11 +55,64 @@ pub fn pop_pitch(count: u8) -> f32 {
     1.0 + POP_RISE_PER_CROQUETTE * count.saturating_sub(1) as f32
 }
 
+/// Issue #102: the roulette's tick, one per item that passes in the slot: a short, high click.
+pub const ROULETTE_TICK: Blip = Blip {
+    from_hz: 2400.0,
+    to_hz: 1900.0,
+    duration: 0.025,
+    volume: 0.22,
+};
+
+/// Issue #102: the roulette stops on its item: a bright "ding", rising a little.
+pub const ROULETTE_STOP: Blip = Blip {
+    from_hz: 1320.0,
+    to_hz: 1480.0,
+    duration: 0.3,
+    volume: 0.45,
+};
+
 /// A sound being played (despawned when it ends).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SoundEffect {
     CroquettePop,
     CroquettesLost,
+    /// Issue #102: an item passes in the roulette...
+    RouletteTick,
+    /// ...and it stops.
+    RouletteStop,
+}
+
+/// Issue #102: the roulette's sounds, a tick and its stop. Only with the reel of the HUD
+/// (`ui::RoulettePlugin`, with a renderer): the headless world has no such resource. The sounds
+/// of #103 replace these two handles (and [`play_roulette`]).
+#[derive(Resource, Clone)]
+pub struct RouletteSounds {
+    pub tick: Handle<Blip>,
+    pub stop: Handle<Blip>,
+}
+
+impl RouletteSounds {
+    pub fn new(blips: &mut Assets<Blip>) -> Self {
+        Self {
+            tick: blips.add(ROULETTE_TICK),
+            stop: blips.add(ROULETTE_STOP),
+        }
+    }
+}
+
+/// Plays a sound of the roulette: [`SoundEffect::RouletteTick`] or [`SoundEffect::RouletteStop`]
+/// (the others are not the roulette's: nothing).
+pub fn play_roulette(commands: &mut Commands, sounds: &RouletteSounds, sound: SoundEffect) {
+    let handle = match sound {
+        SoundEffect::RouletteTick => &sounds.tick,
+        SoundEffect::RouletteStop => &sounds.stop,
+        _ => return,
+    };
+    commands.spawn((
+        sound,
+        AudioPlayer::<Blip>(handle.clone()),
+        PlaybackSettings::DESPAWN,
+    ));
 }
 
 pub struct SoundPlugin;

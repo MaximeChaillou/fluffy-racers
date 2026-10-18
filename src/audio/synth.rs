@@ -129,11 +129,11 @@ impl Decodable for Blip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::{CROQUETTE_LOST, CROQUETTE_POP};
+    use crate::audio::{CROQUETTE_LOST, CROQUETTE_POP, ROULETTE_STOP, ROULETTE_TICK};
 
     #[test]
     fn a_blip_is_short_bounded_and_silent_at_both_ends() {
-        for blip in [CROQUETTE_POP, CROQUETTE_LOST] {
+        for blip in [CROQUETTE_POP, CROQUETTE_LOST, ROULETTE_TICK, ROULETTE_STOP] {
             let samples: Vec<f32> = BlipDecoder::new(blip).collect();
             assert_eq!(samples.len(), blip.len());
             assert_eq!(

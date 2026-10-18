@@ -152,6 +152,7 @@ Elles tournent en **temps réel** : en solo, le jeu est en pause derrière l'éc
 | Appui (squash) | Le bouton s'écrase à 86 % de sa hauteur, posé sur son bas, et s'élargit de la moitié de ce qu'il perd. Sa profondeur passe de 7 à 2 px. | environ 0,1 s |
 | Relâché (stretch) | Il remonte, s'étire d'environ 5 % en s'amincissant, puis revient. | 0,5 s ; l'action part à 0,12 s |
 | Titre de l'accueil (#89) | Chaque mot penche de son côté (« Fluffy » vers le haut à droite, « Racers » un peu vers le bas), monte et descend de 4 px et oscille de ±0,03 rad, lentement, le 2ᵉ en décalé d'une demi-période : de la guimauve sur de la gelée. | en boucle, 2,8 s |
+| Ding de la roulette (#102, le HUD) | À l'arrêt de la roulette, la case s'écrase à 72 % de sa hauteur et s'élargit, rebondit au-delà de sa taille et se pose, en grossissant de 12 % au passage ; un anneau Mangue en jaillit (18 px, il s'efface en 0,35 s) et sa fenêtre s'éclaire (0,22 s) | 0,45 s |
 | Pilote de l'aperçu (#98) | Il saute sur son siège (7 cm pour un moyen), s'écrase de 16 % en retombant, s'étire de 7 % en l'air (son volume gardé) et se dandine d'un côté puis de l'autre (0,13 rad) ; le kart se balance (±0,12 rad) ; sur la ligne de l'aile, elle s'ouvre (0,3 s) et la caméra recule | en boucle : 0,9 s un saut, 5 s le balancement |
 | Fermeture | Aucune animation : le jeu reprend tout de suite. | 0 s |
 
@@ -291,6 +292,7 @@ Il s'ouvre depuis l'accueil (« Options »), la pause et avec O, même par-dessu
 
 - **En Fredoka demi-gras**, aux mêmes tailles qu'avant (le rang 72 px, le chrono et le tour 36, la bannière 110…), en blanc ; le rang et ce qui « pope » (le tour, les croquettes au maximum, la roulette) en Mangue ; les cases des objets sur la Myrtille à 60 %.
 - **Lisible en course** : chaque texte a une ombre Myrtille à 85 %, décalée de 2 px à droite et 3 px vers le bas, lisible sur un ciel clair comme sur la route (Bevy 0.20 n'a pas de contour de texte ; l'ombre en tient lieu).
+- **Les cases des objets** (#102) : la main 92 px, la réserve 60, la bordure blanche de 4 px, le rayon de 14 px. **La roulette est une machine à sous** (GD § 8 « La roulette à l'écran ») : les icônes défilent de haut en bas dans la case, qui les coupe à son bord, puis ralentissent et s'arrêtent sur l'objet tiré ; pendant qu'elle tourne, la fenêtre passe à la Myrtille à 88 % (les icônes claires se lisent mieux sur le ciel) et son bord s'allume en Mangue un cadeau sur deux ; à l'arrêt, le « ding » (voir « Animations molles »). Rien n'est remis en page pendant qu'elle tourne : seize cellules par case, construites une fois, que seuls leurs `UiTransform` déplacent.
 - **Le chrono** est écrit depuis la gauche d'une boîte de largeur fixe (128 px, alignée à droite de l'écran) : les chiffres de Fredoka n'ont pas tous la même largeur (le « 1 » est plus étroit), et aligné à droite tout le chrono tremblerait à chaque centième ; ainsi un nouveau centième ne bouge que les chiffres après lui.
 - **Les étiquettes au-dessus des karts** (#80) et le HUD du contre-la-montre aussi (« LE FANTÔME DU RECORD COURT AVEC TOI »). Les bannières restent en capitales (« GO ! », « DERNIER TOUR ! », « FINI ! »).
 - L'overlay de debug (F3) garde la police par défaut : il ne suit pas la charte.
@@ -356,6 +358,10 @@ Il s'ouvre depuis l'accueil (« Options »), la pause et avec O, même par-dessu
 ## Captures de référence
 
 Elles ont été prises dans Chromium headless, sur un build trunk de debug avec WebGL logiciel, en 1280 × 720. Ce navigateur dessine environ une image par seconde.
+
+**La roulette des objets (#102)** : chaque image que la page a dessinée (le « screencast » de Chromium), dans le scratchpad de la session (`shots102c/`), sur une copie locale jamais poussée où une image avance le jeu de 50 ms au plus (le jeu au ralenti : 30 images pour la roulette de 1,5 s), en course avec les 11 bots (Échap sur l'accueil, puis Haut jusqu'à une boîte) ; leur suite dans le dépôt, la case de la main en haut à gauche du HUD :
+
+![La roulette : les cadeaux défilent, ralentissent et s'arrêtent sur l'objet tiré avec le « ding »](img/roulette.png)
 
 **Le championnat en ligne (#122)** : captures dans le scratchpad de la session (`shots122/`, et les essais `shots122-run1/`, `shots122-run2/`), deux pages et un `matchbox_server` local, trois d'entre elles dans le dépôt : `docs/img/salon-championnat.png` (le salon de l'hôte, le mode Championnat, un championnat personnalisé de cinq courses au hasard et son programme), `docs/img/salon-championnat-invite.png` (le même chez l'invité : les réglages grisés, le même tirage) et `docs/img/classement-general-en-ligne.png` (le classement général chez l'invité après la première course : « Toi », « Ana », les bots). Les courses, le classement et le podium viennent d'une copie locale, jamais poussée, où l'hôte termine une course 5 s après le départ (les karts des joueurs restent sur la grille : personne ne conduit dans ce navigateur), clôt les résultats 3 s après, et laisse le classement 25 s et le podium 40 s (une capture y prend une quinzaine de secondes).
 
