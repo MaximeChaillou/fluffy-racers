@@ -22,7 +22,7 @@ pub fn icon_view(look: Look) -> IconView {
     let view = |yaw: f32, pitch: f32, roll: f32| IconView { yaw, pitch, roll };
     match look {
         Look::Item(item) => match item {
-            ItemKind::Pelure => view(0.3, 0.55, 0.0),
+            ItemKind::Pelure => view(0.45, 0.85, 0.0),
             ItemKind::Pelote => view(-0.5, 0.35, 0.0),
             ItemKind::Abeille => view(-0.75, 0.3, 0.0),
             // Lying along Z: seen from its side, slanted.
@@ -213,6 +213,36 @@ mod tests {
             );
         }
         assert!(too_close.is_empty(), "{too_close:#?}");
+    }
+
+    /// Issue #132: the pelure is ours, not the banana peel of the karting games of reference
+    /// (CLAUDE.md; GD § 8, « Nos objets ») but a clementine's: seen orange, not a banana's yellow
+    /// (the peel of #106 was seen at 49°), its white pith showing. And no golden curve reads as
+    /// a banana either: both chilies show their green calyx (the piment doré had none).
+    #[test]
+    fn the_pelure_is_a_clementine_peel_not_a_banana() {
+        let icon = |item: ItemKind| render(Look::Item(item), &model(Look::Item(item)));
+        // The share of the model's own pixels (seen, sRGB) that `test` takes.
+        let share = |icon: &Icon, test: fn(Vec3) -> bool| {
+            let seen: Vec<Vec3> = icon
+                .pixels
+                .iter()
+                .zip(&icon.body)
+                .filter(|(_, body)| **body)
+                .map(|(p, _)| Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0)
+                .collect();
+            seen.iter().filter(|c| test(**c)).count() as f32 / seen.len().max(1) as f32
+        };
+        let pelure = icon(ItemKind::Pelure);
+        let seen = pelure.mean_color();
+        let hue = Hsla::from(Srgba::rgb(seen.x, seen.y, seen.z)).hue;
+        assert!((15.0..40.0).contains(&hue), "the pelure is seen at {hue}°");
+        let pith = share(&pelure, |c| c.min_element() > 0.7);
+        assert!(pith > 0.06, "its pith: {pith}");
+        for item in [ItemKind::Piment, ItemKind::PimentDore] {
+            let calyx = share(&icon(item), |c| c.y > c.x + 0.1 && c.y > c.z + 0.1);
+            assert!(calyx > 0.08, "{item:?}'s calyx: {calyx}");
+        }
     }
 
     /// Issue #106 acceptance: every item of `ItemKind::ALL` has a model and an icon; each file a
