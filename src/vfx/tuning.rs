@@ -321,6 +321,28 @@ pub struct WorldVfx {
     pub anti_gravity_rate: f32,
     /// Gliding: wind streaks off each wing tip per second.
     pub glide_wind_rate: f32,
+    /// Issue #130: the dust off the road is the color of the ground it comes from (its biome's
+    /// shoulders, or its sand on the road), this much lighter (0: the ground's own color, 1:
+    /// white). Off a circuit (the test ground), `VfxColors::dust`.
+    pub ground_lighten: f32,
+    /// Issue #130, the water (GD § 10): going in or out, a splash on the surface: this many drops
+    /// thrown up and out this fast (m/s; coming out, a little less), this big, this long...
+    pub splash_drops: u32,
+    pub splash_speed: f32,
+    pub splash_size: f32,
+    pub splash_life: f32,
+    /// ...a ring of foam on the water this wide (m), and this many puffs of foam.
+    pub splash_ring: f32,
+    pub splash_foam: u32,
+    /// The wake: puffs of foam left on the water per second at top speed, out of the back of a
+    /// kart at the surface (its center from `wake_above` m above it to `wake_below` m under it),
+    /// from this speed (m/s); their size, their life.
+    pub wake_rate: f32,
+    pub wake_above: f32,
+    pub wake_below: f32,
+    pub wake_min_speed: f32,
+    pub wake_size: f32,
+    pub wake_life: f32,
 }
 
 impl Default for WorldVfx {
@@ -338,6 +360,19 @@ impl Default for WorldVfx {
             landing_puffs: 8,
             anti_gravity_rate: 10.0,
             glide_wind_rate: 18.0,
+            ground_lighten: 0.2,
+            splash_drops: 26,
+            splash_speed: 5.5,
+            splash_size: 0.13,
+            splash_life: 0.75,
+            splash_ring: 1.8,
+            splash_foam: 8,
+            wake_rate: 24.0,
+            wake_above: 0.45,
+            wake_below: 0.9,
+            wake_min_speed: 3.0,
+            wake_size: 0.42,
+            wake_life: 0.9,
         }
     }
 }
@@ -359,6 +394,9 @@ pub struct VfxColors {
     pub dust: [f32; 3],
     pub soot: [f32; 3],
     pub cream: [f32; 3],
+    /// Issue #130: the drops of a splash, the foam on the water.
+    pub water: [f32; 3],
+    pub foam: [f32; 3],
 }
 
 impl Default for VfxColors {
@@ -384,6 +422,8 @@ impl Default for VfxColors {
             dust: [0.78, 0.66, 0.48],
             soot: [0.52, 0.5, 0.54],
             cream: [1.0, 0.97, 0.9],
+            water: [0.55, 0.85, 1.0],
+            foam: [0.94, 0.98, 1.0],
         }
     }
 }
@@ -411,6 +451,22 @@ impl VfxColors {
             Paint::Dust => self.dust,
             Paint::Soot => self.soot,
             Paint::Cream => self.cream,
+            // Issue #130: the biome's ground on a circuit (`VfxAssets`), the dust's elsewhere.
+            Paint::Ground | Paint::Sand => self.dust,
+            Paint::Water => self.water,
+            Paint::Foam => self.foam,
         }
     }
+}
+
+/// Issue #130: the colors of the dust off the road on a circuit of `palette`'s biome: its
+/// shoulders' (`Paint::Ground`) and its sand's (`Paint::Sand`), `lighten` of the way to white.
+pub fn ground_dust(palette: &crate::track::biome::Palette, lighten: f32) -> [[f32; 3]; 2] {
+    let t = if lighten.is_finite() {
+        lighten.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let light = |(r, g, b): (f32, f32, f32)| [r, g, b].map(|c| c + (1.0 - c) * t);
+    [light(palette.shoulder), light(palette.sand)]
 }

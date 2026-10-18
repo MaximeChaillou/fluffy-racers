@@ -601,11 +601,13 @@ pub fn cream(pool: &mut ParticlePool, frame: &KartFrame, impact: &ImpactVfx) {
     }
 }
 
-/// Dust off the road (GD § 10), out of a rear wheel: puffs of the ground's color, left behind.
+/// Dust off the road (GD § 10), out of a rear wheel: puffs of the ground's color (issue #130:
+/// `paint`, the biome's shoulders or sand), left behind.
 pub fn dust(
     pool: &mut ParticlePool,
     frame: &KartFrame,
     side: f32,
+    paint: Paint,
     world: &WorldVfx,
     count: u32,
     dt: f32,
@@ -615,7 +617,7 @@ pub fn dust(
     for i in 0..count {
         let mut puff = Particle::new(
             Shape::Ball,
-            Paint::Dust,
+            paint,
             along(at, frame.velocity * dt, i, count),
             world.dust_life * pool.rng.range(0.7, 1.2),
             world.dust_size * pool.rng.range(0.6, 1.2),
@@ -632,15 +634,16 @@ pub fn dust(
     }
 }
 
-/// A landing: puffs of dust blown out flat all around the kart.
-pub fn landing(pool: &mut ParticlePool, frame: &KartFrame, world: &WorldVfx) {
+/// A landing: puffs of dust blown out flat all around the kart (issue #130: `paint`, the
+/// ground's off the road, the road's dust on it).
+pub fn landing(pool: &mut ParticlePool, frame: &KartFrame, paint: Paint, world: &WorldVfx) {
     let at = frame.point(UNDER);
     for k in 0..world.landing_puffs {
         let angle = (k as f32 + pool.rng.unit() * 0.5) / world.landing_puffs.max(1) as f32 * TAU;
         let out = frame.axis(Vec3::new(angle.cos(), 0.1, angle.sin()));
         let mut puff = Particle::new(
             Shape::Ball,
-            Paint::Dust,
+            paint,
             at + out * 0.7,
             pool.rng.range(0.4, 0.6),
             world.dust_size * pool.rng.range(0.7, 1.0),
@@ -651,6 +654,128 @@ pub fn landing(pool: &mut ParticlePool, frame: &KartFrame, world: &WorldVfx) {
         puff.carrier = frame.velocity * 0.5;
         puff.drag = 4.0;
         pool.spawn(puff);
+    }
+}
+
+/// Issue #130 (GD § 10): a kart goes into the water (`going_in`) or comes out of it, at
+/// `surface` (on the water, under or over the kart), going at `carrier`: a crown of drops thrown
+/// up and out of the water (falling back into it), a ring of foam on the water, puffs of foam
+/// around it. Coming out, the drops are fewer and lower, thrown forward with the kart.
+pub fn water_splash(
+    pool: &mut ParticlePool,
+    surface: Vec3,
+    carrier: Vec3,
+    going_in: bool,
+    world: &WorldVfx,
+) {
+    let floor = surface.y - 0.05;
+    let (drops, speed) = if going_in {
+        (world.splash_drops, world.splash_speed)
+    } else {
+        (world.splash_drops * 2 / 3, world.splash_speed * 0.75)
+    };
+    for k in 0..drops {
+        let angle = (k as f32 + pool.rng.unit()) / drops.max(1) as f32 * TAU;
+        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let mut drop = Particle::new(
+            Shape::Ball,
+            Paint::Water,
+            surface + out * pool.rng.range(0.4, 1.0) + Vec3::Y * 0.05,
+            world.splash_life * pool.rng.range(0.7, 1.15),
+            world.splash_size * pool.rng.range(0.6, 1.3),
+        );
+        drop.curve = Curve::Pop;
+        drop.facing = Facing::Tumble;
+        drop.velocity =
+            out * speed * pool.rng.range(0.25, 0.6) + Vec3::Y * speed * pool.rng.range(0.6, 1.1);
+        drop.carrier = carrier * if going_in { 0.25 } else { 0.5 };
+        drop.gravity = 14.0;
+        drop.drag = 0.6;
+        drop.axis = pool.rng.direction();
+        drop.floor = floor;
+        pool.spawn(drop);
+    }
+    let mut ring = Particle::new(
+        Shape::Ring,
+        Paint::Foam,
+        surface + Vec3::Y * 0.03,
+        0.5,
+        world.splash_ring,
+    );
+    ring.curve = Curve::Flash;
+    ring.facing = Facing::Flat;
+    ring.axis = Vec3::Y;
+    ring.carrier = carrier * 0.2;
+    ring.drag = 2.0;
+    pool.spawn(ring);
+    for k in 0..world.splash_foam {
+        let angle = (k as f32 + pool.rng.unit() * 0.6) / world.splash_foam.max(1) as f32 * TAU;
+        let out = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let mut foam = Particle::new(
+            Shape::Ball,
+            Paint::Foam,
+            surface + out * pool.rng.range(0.5, 1.1) + Vec3::Y * 0.03,
+            world.wake_life * pool.rng.range(0.7, 1.1),
+            world.wake_size * pool.rng.range(0.8, 1.3),
+        );
+        foam.curve = Curve::Puff;
+        foam.facing = Facing::Flat;
+        foam.axis = Vec3::Y;
+        foam.velocity = out * pool.rng.range(1.0, 2.5);
+        foam.carrier = carrier * 0.2;
+        foam.drag = 2.5;
+        pool.spawn(foam);
+    }
+}
+
+/// Issue #130 (GD § 10): the wake of a kart at the surface of the water (`level`: its height):
+/// puffs of foam lying on the water out of the back corners of the kart, drifting out to their
+/// side, left behind; now and then a drop thrown up.
+pub fn wake(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    level: f32,
+    world: &WorldVfx,
+    count: u32,
+    dt: f32,
+) {
+    for i in 0..count {
+        let side = if (pool.spawned + u64::from(i)).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        let corner = frame.point(Vec3::new(side * 0.6, 0.0, 0.9));
+        let at = along(corner, frame.velocity * dt, i, count).with_y(level + 0.03);
+        let out = frame.axis(Vec3::new(side, 0.0, 0.35)).with_y(0.0);
+        let mut foam = Particle::new(
+            Shape::Ball,
+            Paint::Foam,
+            at,
+            world.wake_life * pool.rng.range(0.7, 1.2),
+            world.wake_size * pool.rng.range(0.7, 1.2),
+        );
+        foam.curve = Curve::Puff;
+        foam.facing = Facing::Flat;
+        foam.axis = Vec3::Y;
+        foam.velocity = out.normalize_or_zero() * pool.rng.range(1.0, 2.2);
+        foam.drag = 1.5;
+        pool.spawn(foam);
+        if pool.rng.unit() < 0.3 {
+            let mut drop = Particle::new(
+                Shape::Ball,
+                Paint::Water,
+                at,
+                world.splash_life * 0.6,
+                world.splash_size * pool.rng.range(0.5, 0.9),
+            );
+            drop.curve = Curve::Pop;
+            drop.velocity = out.normalize_or_zero() * 1.5 + Vec3::Y * pool.rng.range(1.5, 3.0);
+            drop.carrier = frame.velocity * 0.3;
+            drop.gravity = 14.0;
+            drop.floor = level - 0.05;
+            pool.spawn(drop);
+        }
     }
 }
 
@@ -844,6 +969,87 @@ mod tests {
         let mut small = ParticlePool::new(10);
         rocket_smoke(&mut small, &f, &tuning.boost);
         assert_eq!(small.live(), 10, "never more than the cap");
+    }
+
+    /// Issue #130: a splash going in throws its drops up and out of the water (they fall back on
+    /// it, never under it), a ring and puffs of foam lying on it; coming out, fewer drops. The
+    /// wake lies on the water out of the back of the kart, drifting out to its sides. The dust
+    /// takes the paint it is given.
+    #[test]
+    fn the_water_splashes_and_the_wake_lies_on_it() {
+        let tuning = VfxTuning::default();
+        let world = &tuning.world;
+        let mut pool = ParticlePool::new(ParticlePool::SLOTS);
+        let surface = Vec3::new(3.0, -0.4, 5.0);
+        let carrier = Vec3::new(0.0, 0.0, -15.0);
+        water_splash(&mut pool, surface, carrier, true, world);
+        let drops: Vec<Particle> = pool
+            .alive()
+            .filter(|p| p.paint == Paint::Water)
+            .copied()
+            .collect();
+        assert_eq!(drops.len() as u32, world.splash_drops);
+        assert!(
+            drops
+                .iter()
+                .all(|d| d.velocity.y > 2.0 && d.floor < surface.y)
+        );
+        let out = drops
+            .iter()
+            .map(|d| (d.position - surface).xz().normalize_or_zero())
+            .fold(Vec2::ZERO, |sum, d| sum + d);
+        assert!(out.length() < drops.len() as f32 * 0.3, "all around: {out}");
+        let foam: Vec<&Particle> = pool.alive().filter(|p| p.paint == Paint::Foam).collect();
+        assert_eq!(foam.len() as u32, world.splash_foam + 1);
+        assert!(foam.iter().any(|p| p.shape == Shape::Ring));
+        assert!(
+            foam.iter()
+                .all(|p| p.facing == Facing::Flat && (p.position.y - surface.y).abs() < 0.1)
+        );
+        // The drops come down on the water and stay there.
+        for _ in 0..30 {
+            pool.step(1.0 / 60.0);
+        }
+        assert!(
+            pool.alive()
+                .filter(|p| p.paint == Paint::Water)
+                .all(|p| p.position.y >= surface.y - 0.05 - 1e-4)
+        );
+        pool.clear();
+        water_splash(&mut pool, surface, carrier, false, world);
+        let out = pool.alive().filter(|p| p.paint == Paint::Water).count() as u32;
+        assert!(out < world.splash_drops && out > 0, "{out}");
+        // The wake.
+        pool.clear();
+        let f = KartFrame {
+            position: Vec3::new(0.0, -0.2, 0.0),
+            ..frame()
+        };
+        wake(&mut pool, &f, -0.4, world, 20, 1.0 / 60.0);
+        let foam: Vec<&Particle> = pool.alive().filter(|p| p.paint == Paint::Foam).collect();
+        assert_eq!(foam.len(), 20);
+        for p in &foam {
+            assert!(
+                (p.position.y - (-0.37)).abs() < 1e-4,
+                "on the water: {}",
+                p.position
+            );
+            assert!(p.position.z > 0.5, "behind: {}", p.position);
+            assert!(
+                p.position.x * p.velocity.x > 0.0,
+                "drifting out to its side"
+            );
+        }
+        let sides = foam.iter().filter(|p| p.position.x > 0.0).count();
+        assert!((5..=15).contains(&sides), "both corners: {sides}");
+        pool.clear();
+        dust(&mut pool, &f, 1.0, Paint::Sand, world, 5, 1.0 / 60.0);
+        landing(&mut pool, &f, Paint::Ground, world);
+        assert_eq!(pool.alive().filter(|p| p.paint == Paint::Sand).count(), 5);
+        assert_eq!(
+            pool.alive().filter(|p| p.paint == Paint::Ground).count() as u32,
+            world.landing_puffs
+        );
     }
 
     /// Issue #106: a gift box taken bursts into its confetti, flying up and carried along by the

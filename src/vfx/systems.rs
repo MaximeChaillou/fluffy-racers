@@ -25,7 +25,7 @@ use super::cues::{
 };
 use super::emit::{self, KartFrame, take};
 use super::pool::{Paint, ParticlePool, Shape};
-use super::tuning::{VfxColors, VfxTuning};
+use super::tuning::{VfxColors, VfxTuning, ground_dust};
 use crate::camera::{CameraShake, ChaseCamera, FixedView};
 use crate::croquettes::{CroquettePickedUp, CroquettesLost};
 use crate::interactions::Paw;
@@ -38,7 +38,9 @@ use crate::kart::{
 };
 use crate::level::LoadLevel;
 use crate::menu::MainMenu;
-use crate::race::Race;
+use crate::race::{Race, RaceProgress};
+use crate::track::circuit::TrackHandle;
+use crate::track::{TrackData, TrackLayout, water_depth};
 
 /// What a kart throws all along: one carry each (`emit::take`).
 const SPARKS: usize = 0;
@@ -48,7 +50,9 @@ const TRAIL: usize = 5;
 const DUST: usize = 6;
 const ANTI_GRAVITY: usize = 8;
 const GLIDE: usize = 9;
-const EMITTERS: usize = 10;
+/// Issue #130: the wake on the water.
+const WAKE: usize = 10;
+const EMITTERS: usize = 11;
 /// The most stars over a head (`ImpactVfx::dizzy_stars`).
 pub const MAX_DIZZY_STARS: usize = 5;
 /// A kart's visual that moves farther than this in a frame jumped (a pelican, a restart): its
@@ -60,11 +64,23 @@ const TELEPORT: f32 = 15.0;
 pub struct VfxAssets {
     pub meshes: [Handle<Mesh>; 4],
     pub materials: Vec<Handle<StandardMaterial>>,
-    /// The colors the materials show (they follow `VfxTuning::colors`).
+    /// The colors the materials show (they follow `VfxTuning::colors`)...
     colors: VfxColors,
+    /// ...but the dust off the road on a circuit (issue #130): its biome's shoulders' and sand's
+    /// (`Paint::Ground`, `Paint::Sand`; `tuning::ground_dust`). None off a circuit.
+    pub ground: Option<[[f32; 3]; 2]>,
 }
 
 impl VfxAssets {
+    /// The color the material of `paint` shows.
+    pub fn color(&self, paint: Paint) -> [f32; 3] {
+        match (paint, self.ground) {
+            (Paint::Ground, Some([shoulder, _])) => shoulder,
+            (Paint::Sand, Some([_, sand])) => sand,
+            _ => self.colors.of(paint),
+        }
+    }
+
     pub fn mesh(&self, shape: Shape) -> &Handle<Mesh> {
         &self.meshes[shape.index()]
     }
@@ -213,6 +229,7 @@ pub(super) fn create_vfx(
             .map(|paint| materials.add(material(*paint, tuning.colors.of(*paint))))
             .collect(),
         colors: tuning.colors.clone(),
+        ground: None,
     };
     let entities: Vec<Entity> = (0..ParticlePool::SLOTS)
         .map(|slot| {
@@ -404,6 +421,7 @@ fn snapshot(
         impact,
         impact_dir,
         struck: paw.map_or(0, |p| p.struck_count),
+        underwater: environment.underwater,
     }
 }
 
@@ -568,16 +586,74 @@ pub(super) fn follow_tuning(
     }
     emit::follow_the_cap(&mut particles.pool, &tuning);
     if assets.colors != tuning.colors {
-        for paint in Paint::ALL {
-            let color = tuning.colors.of(paint);
-            if assets.colors.of(paint) != color
-                && let Some(mut material) = materials.get_mut(assets.material(paint))
-            {
-                let [r, g, b] = color;
-                material.base_color = Color::srgb(r, g, b);
-            }
-        }
+        let before = Paint::ALL.map(|paint| assets.color(paint));
         assets.colors = tuning.colors.clone();
+        repaint(&before, &assets, &mut materials);
+    }
+}
+
+/// The materials whose color changed from `before` (by `Paint::index`) take the one of `assets`.
+fn repaint(
+    before: &[[f32; 3]; Paint::COUNT],
+    assets: &VfxAssets,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    for paint in Paint::ALL {
+        let color = assets.color(paint);
+        if before[paint.index()] != color
+            && let Some(mut material) = materials.get_mut(assets.material(paint))
+        {
+            let [r, g, b] = color;
+            material.base_color = Color::srgb(r, g, b);
+        }
+    }
+}
+
+/// Issue #130: the dust off the road takes the colors of the circuit's biome (its shoulders, its
+/// sand: `tuning::ground_dust`), the test ground's the dust's of the tuning. Only when the
+/// circuit or the tuning changes.
+pub(super) fn follow_the_ground(
+    tuning: Res<VfxTuning>,
+    layout: Option<Res<TrackLayout>>,
+    (handle, tracks): (Option<Res<TrackHandle>>, Option<Res<Assets<TrackData>>>),
+    mut assets: ResMut<VfxAssets>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut had_layout: Local<bool>,
+) {
+    let changed = layout.as_ref().is_some_and(|layout| layout.is_changed());
+    if !changed && !tuning.is_changed() && layout.is_some() == *had_layout {
+        return;
+    }
+    *had_layout = layout.is_some();
+    let palette = layout
+        .and(handle)
+        .zip(tracks)
+        .and_then(|(handle, tracks)| tracks.get(&handle.0)?.biome())
+        .map(|biome| biome.palette);
+    let ground = palette.map(|palette| ground_dust(&palette, tuning.world.ground_lighten));
+    if ground != assets.ground {
+        let before = Paint::ALL.map(|paint| assets.color(paint));
+        assets.ground = ground;
+        repaint(&before, &assets, &mut materials);
+    }
+}
+
+/// Issue #130: the paint of the dust off the road at `at`, a kart at `distance` along the track
+/// (its race progress; None: the closest point of the centerline): the sand's on the road (a
+/// sand patch), the shoulders' beside it.
+fn ground_paint(layout: Option<&TrackLayout>, distance: Option<f32>, at: Vec3) -> Paint {
+    let Some(layout) = layout else {
+        return Paint::Ground;
+    };
+    let sample = match distance {
+        Some(distance) => layout.center.at(distance),
+        None => layout.center.samples()[layout.center.nearest_index(at)],
+    };
+    let lateral = (at - sample.position).dot(sample.right);
+    if lateral.abs() <= sample.half_width {
+        Paint::Sand
+    } else {
+        Paint::Ground
     }
 }
 
@@ -595,6 +671,7 @@ type KartLook = (
         Option<&'static StatEffects>,
         Option<&'static KartAssists>,
         Has<PlayerKart>,
+        Option<&'static RaceProgress>,
     ),
 );
 
@@ -606,11 +683,13 @@ pub(super) fn emit_karts(
     tuning: Res<VfxTuning>,
     kart_tuning: Res<KartTuning>,
     deflated: Option<Res<DeflatedScale>>,
+    layout: Option<Res<TrackLayout>>,
     mut particles: ResMut<Particles>,
     cameras: Query<&Transform, (With<ChaseCamera>, Without<InterpolatedFrom>)>,
     roots: Query<(&InterpolatedFrom, &Transform)>,
     mut karts: Query<KartLook>,
 ) {
+    let layout = layout.as_deref();
     let dt = time.delta_secs();
     let now = time.elapsed_secs();
     let alpha = fixed.overstep_fraction();
@@ -621,7 +700,8 @@ pub(super) fn emit_karts(
     let (drift, boost, impact, world) =
         (&tuning.drift, &tuning.boost, &tuning.impact, &tuning.world);
     for (InterpolatedFrom(body), root) in &roots {
-        let Ok((mut vfx, rules, (stats, assists, player))) = karts.get_mut(*body) else {
+        let Ok((mut vfx, rules, (stats, assists, player, race_progress))) = karts.get_mut(*body)
+        else {
             continue;
         };
         let vfx = &mut *vfx;
@@ -720,9 +800,16 @@ pub(super) fn emit_karts(
         if let Some(tier) = trail {
             emit::trail(pool, &frame, Paint::tier(tier.index()), n, dt);
         }
-        // The ground: dust off the road, the anti-gravity's sparks, the glider's wind.
+        // The ground: dust off the road (issue #130: the color of the ground it comes from), the
+        // anti-gravity's sparks, the glider's wind.
         let dusty = on_ground && wheels.offroad_ratio > 0.0 && speed > world.dust_min_speed;
         let dust_rate = world.dust_rate * wheels.offroad_ratio * speed_ratio.min(1.2);
+        let offroad = on_ground && wheels.offroad_ratio > 0.5;
+        let ground = if dusty || (offroad && bursts.landing) {
+            ground_paint(layout, race_progress.map(|p| p.distance), root.translation)
+        } else {
+            Paint::Ground
+        };
         for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
             let n = take(
                 &mut carry[DUST + k],
@@ -730,7 +817,30 @@ pub(super) fn emit_karts(
                 dt,
                 max,
             );
-            emit::dust(pool, &frame, side, world, n, dt);
+            emit::dust(pool, &frame, side, ground, world, n, dt);
+        }
+        // Issue #130: the wake of a kart at the surface of the water.
+        let water = layout.and_then(|layout| {
+            water_depth(&layout.lakes, root.translation)
+                .map(|depth| (depth, root.translation.y + depth))
+        });
+        let wake = water.filter(|(depth, _)| {
+            (-world.wake_above..=world.wake_below).contains(depth)
+                && speed > world.wake_min_speed
+                && !environment.gliding
+        });
+        let n = take(
+            &mut carry[WAKE],
+            if wake.is_some() {
+                world.wake_rate * speed_ratio.min(1.2)
+            } else {
+                0.0
+            },
+            dt,
+            max,
+        );
+        if let Some((_, level)) = wake {
+            emit::wake(pool, &frame, level, world, n, dt);
         }
         let gravity = environment.anti_gravity && on_ground && speed > 5.0;
         let rate = world.anti_gravity_rate * 4.0 * speed_ratio.min(1.2);
@@ -749,17 +859,27 @@ pub(super) fn emit_karts(
         let n = take(&mut carry[GLIDE], rate, dt, max);
         emit::glide_wind(pool, &frame, n, dt);
         // The bursts of the ticks gone by.
-        throw_bursts(pool, &frame, &bursts, &tuning, environment.anti_gravity);
+        let landing = if offroad { ground } else { Paint::Dust };
+        let surface = water.map(|(_, level)| root.translation.with_y(level));
+        throw_bursts(
+            pool,
+            &frame,
+            &bursts,
+            &tuning,
+            (environment.anti_gravity, landing, surface),
+        );
     }
 }
 
-/// A kart's bursts, where it is shown.
+/// A kart's bursts, where it is shown: in anti-gravity or not, the paint of its landing's dust
+/// (issue #130: the ground's off the road), and the surface of the water at it (if a lake is
+/// under it).
 fn throw_bursts(
     pool: &mut ParticlePool,
     frame: &KartFrame,
     bursts: &Bursts,
     tuning: &VfxTuning,
-    anti_gravity: bool,
+    (anti_gravity, landing, surface): (bool, Paint, Option<Vec3>),
 ) {
     let (drift, boost, impact, world) =
         (&tuning.drift, &tuning.boost, &tuning.impact, &tuning.world);
@@ -847,7 +967,11 @@ fn throw_bursts(
         );
     }
     if bursts.landing {
-        emit::landing(pool, frame, world);
+        emit::landing(pool, frame, landing, world);
+    }
+    // Issue #130: into the water or out of it, a splash on its surface.
+    if let (Some(going_in), Some(surface)) = (bursts.splash, surface) {
+        emit::water_splash(pool, surface, frame.velocity, going_in, world);
     }
     if bursts.creamed {
         emit::cream(pool, frame, impact);

@@ -369,7 +369,8 @@ fn pop_pofs(
 }
 
 /// Off balance, the driver leans out of its kart; held, it turns toward its grabber (outraged).
-fn pose_drivers(
+/// Issue #130: the drivers' acting goes on top of it (`characters::ActingSystems`, after it).
+pub(crate) fn pose_drivers(
     time: Res<Time>,
     paws: Query<(&Paw, &Transform)>,
     pivots: Query<&KartBodyPivot>,

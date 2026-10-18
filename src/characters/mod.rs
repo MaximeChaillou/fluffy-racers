@@ -15,6 +15,11 @@
 //!   tail and wings follow the kart with a delay (braking, turns, drifts), squash on landings and
 //!   shocks, a mini-ragdoll of about 1 s when hit or struck (`wobble.rs`, pure; `wobble_visual.rs`;
 //!   [`WobbleTuning`]). Purely visual, nothing sent.
+//! - **Acting** (issue #130, with a renderer only): the kart's shell tilts, squashes at a landing
+//!   and rocks on a bump; the driver does a figure on a trick ramp, looks back at the kart that
+//!   overtook it or at the item it threw behind, sulks over the line among the last, and its head
+//!   goes round while it sees stars (`acting.rs`, pure; `acting_visual.rs`; [`DriverTuning`] and
+//!   [`WobbleTuning::kart`]). Purely visual, nothing sent.
 //! - **Color** (issue #55): the player's kart's color ([`PlayerColor`]), a color of the palette
 //!   (`kart::KartColor`), pink until it chooses. Kept between sessions like the options
 //!   (`admin::storage`, key [`COLOR_STORAGE_KEY`]; with a renderer only, `ui.rs`). Online, two
@@ -37,6 +42,8 @@
 //!   the gamepad are `menu::pilot`'s (with a renderer only); the keys and the actions
 //!   ([`SelectionAction`]) are headless.
 
+mod acting;
+mod acting_visual;
 mod animation;
 mod model;
 pub mod ragdoll;
@@ -47,11 +54,21 @@ mod wobble;
 mod wobble_visual;
 
 #[cfg(test)]
+mod acting_tests;
+#[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
 mod wobble_tests;
 
-pub use animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation};
+pub use acting::{
+    ActingFacts, ActingPose, BodyPose, BodyWobble, DRIVER_MIDDLE, DriverActing, Figure,
+    KartWobbleTuning, acted, shell_transform, yaw_toward,
+};
+/// Issue #130: counted by `vfx::alloc_tests` with the particles' systems.
+#[cfg(test)]
+pub(crate) use acting_visual::act;
+pub use acting_visual::{Acting, ActingPlugin, ActingSystems};
+pub use animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation, sulks};
 pub use model::{AnimalModelData, AnimalNode, AnimalPart, animal_model_data};
 pub use ragdoll::{
     Knock, Ragdoll, RagdollChange, RagdollPhase, RagdollPlugin, RagdollSystems, RagdollTuning,
@@ -269,6 +286,9 @@ impl Plugin for CharacterPlugin {
             );
         if app.is_plugin_added::<bevy::render::RenderPlugin>() {
             app.add_plugins(CharacterUiPlugin);
+            // Issue #130: the karts' bodies and their drivers act (the figures, looking back,
+            // sulking, dizzy). Only on screen: nothing of it in the bot races' world.
+            app.add_plugins(ActingPlugin);
         }
     }
 }

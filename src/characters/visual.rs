@@ -526,6 +526,7 @@ fn animate_drivers(
                 .map(|paw| paw.struck_ticks),
             finish,
             podium: podium.map(|podium| podium.0),
+            racers: race.as_ref().map_or(0, |race| race.standings.len()),
         };
         let wanted = driver_animation(&facts, &tuning);
         if wanted == root.playing {

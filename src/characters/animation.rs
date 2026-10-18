@@ -9,6 +9,9 @@
 //!   the next race (the results screen included).
 //! - **Nod** (`gesture-positive`): over the line further back, for
 //!   [`DriverTuning::finish_nod_seconds`]; then idle.
+//! - **Sulk** (issue #130, `gesture-negative`): over the line among the last
+//!   [`DriverTuning::sulk_places`], it shakes its head for [`DriverTuning::sulk_shake_seconds`];
+//!   then idle, slumped in its seat until the next race (`acting.rs`).
 //! - **On the podium** of a Grand Prix (issue #19): the three of them dance, whatever their last
 //!   race.
 //! - **On foot** (issue #101, the lobby: `crate::salon`): **walk** and **run** (`walk`, `run`),
@@ -97,6 +100,41 @@ pub struct DriverTuning {
     pub dance_speed: f32,
     pub nod_speed: f32,
     pub shake_speed: f32,
+
+    // --- Issue #130: what the drivers act out (`acting.rs`), only with a renderer ---------------
+    /// The drivers act (their figures, looking back, sulking, dizzy). Off: only their clips and
+    /// their wobble (to compare).
+    pub acting: bool,
+    /// **A trick** (GD § 5): the driver pops up out of its seat this high (m, at size 1) and does
+    /// its figure (a backflip, the next time a pirouette...) in this long (s), even after the
+    /// landing...
+    pub trick_seconds: f32,
+    pub trick_hop: f32,
+    /// ...stretched this much on the way (0.15: 15 % taller), squashed this much as it drops
+    /// back in its seat.
+    pub trick_stretch: f32,
+    pub trick_squash: f32,
+    /// **Overtaken** by a kart this close (m), it turns toward it and follows it for this long
+    /// (s)...
+    pub look_back_range: f32,
+    pub look_back_seconds: f32,
+    /// ...an item thrown or dropped behind it: over its shoulder for this long (s).
+    pub throw_look_seconds: f32,
+    /// It turns this far at most (rad: 2.4 is about 140°), following its target this fast (1/s).
+    pub look_back_angle: f32,
+    pub look_back_speed: f32,
+    /// **Over the line among the last this many** (but the dancers): it sulks. It shakes its head
+    /// for this long (s, its clip), and slumps in its seat until the next race: leaning forward
+    /// this much (rad), turned away this much (rad), sunk this low (m, at size 1), sighing.
+    pub sulk_places: usize,
+    pub sulk_shake_seconds: f32,
+    pub sulk_lean: f32,
+    pub sulk_turn: f32,
+    pub sulk_sink: f32,
+    /// **Seeing stars** (« sonné », the stars of #105, as long as they last): its head goes round,
+    /// this far (rad), this fast (rad/s).
+    pub dizzy_sway: f32,
+    pub dizzy_speed: f32,
 }
 
 impl Default for DriverTuning {
@@ -112,6 +150,23 @@ impl Default for DriverTuning {
             dance_speed: 1.0,
             nod_speed: 1.0,
             shake_speed: 1.0,
+            acting: true,
+            trick_seconds: 0.65,
+            trick_hop: 0.45,
+            trick_stretch: 0.15,
+            trick_squash: 0.2,
+            look_back_range: 14.0,
+            look_back_seconds: 1.1,
+            throw_look_seconds: 0.7,
+            look_back_angle: 2.4,
+            look_back_speed: 12.0,
+            sulk_places: 3,
+            sulk_shake_seconds: 2.0,
+            sulk_lean: 0.35,
+            sulk_turn: 0.5,
+            sulk_sink: 0.08,
+            dizzy_sway: 0.22,
+            dizzy_speed: 7.0,
         }
     }
 }
@@ -134,6 +189,17 @@ pub struct DriverFacts {
     pub finish: Option<Finish>,
     /// On the podium of a Grand Prix (issue #19): its place, 0 = the winner.
     pub podium: Option<usize>,
+    /// Issue #130: how many race (0: unknown, nobody sulks).
+    pub racers: usize,
+}
+
+/// Issue #130: over the line at `place` (0 = first) of `racers`, it sulks: among the last
+/// [`DriverTuning::sulk_places`], but never among those who dance.
+pub fn sulks(place: usize, racers: usize, tuning: &DriverTuning) -> bool {
+    tuning.sulk_places > 0
+        && place >= tuning.cheer_places
+        && place < racers
+        && place + tuning.sulk_places >= racers
 }
 
 /// What the driver plays: a hit or a strike first, then the finish, else idle.
@@ -150,6 +216,14 @@ pub fn driver_animation(facts: &DriverFacts, tuning: &DriverTuning) -> AnimalAni
     }
     match facts.finish {
         Some(finish) if finish.place < tuning.cheer_places => AnimalAnimation::Dance,
+        // Issue #130: the last ones sulk, shaking their head (then they slump, `acting.rs`).
+        Some(finish) if sulks(finish.place, facts.racers, tuning) => {
+            if finish.ticks_ago < ticks(tuning.sulk_shake_seconds) {
+                AnimalAnimation::Shake
+            } else {
+                AnimalAnimation::Idle
+            }
+        }
         Some(finish) if finish.ticks_ago < ticks(tuning.finish_nod_seconds) => AnimalAnimation::Nod,
         _ => AnimalAnimation::Idle,
     }
@@ -261,6 +335,39 @@ mod tests {
         };
         assert_eq!(AnimalAnimation::Shake.speed(&tuning), 0.5);
         assert_eq!(AnimalAnimation::Idle.speed(&tuning), 1.0);
+    }
+
+    /// Issue #130: over the line among the last three of twelve, it shakes its head for a while
+    /// (a sulk), then idles (slumped: `acting.rs`); the middle ones nod, the first three dance;
+    /// without the count of the racers, nobody sulks; four racers: the fourth sulks.
+    #[test]
+    fn the_last_ones_sulk() {
+        let tuning = DriverTuning::default();
+        let of = |place: usize, seconds: f32, racers: usize| {
+            let mut facts = finished(place, seconds);
+            facts.racers = racers;
+            driver_animation(&facts, &tuning)
+        };
+        for place in 0..12 {
+            let sulky = (9..12).contains(&place);
+            assert_eq!(sulks(place, 12, &tuning), sulky, "{place}");
+            let expected = match place {
+                0..3 => AnimalAnimation::Dance,
+                9..12 => AnimalAnimation::Shake,
+                _ => AnimalAnimation::Nod,
+            };
+            assert_eq!(of(place, 0.5, 12), expected, "{place}");
+        }
+        assert_eq!(of(11, 1.9, 12), AnimalAnimation::Shake);
+        assert_eq!(of(11, 2.0, 12), AnimalAnimation::Idle);
+        assert_eq!(of(11, 0.5, 0), AnimalAnimation::Nod);
+        assert!(sulks(3, 4, &tuning) && !sulks(2, 4, &tuning) && !sulks(0, 1, &tuning));
+        assert!(!sulks(12, 12, &tuning));
+        let none = DriverTuning {
+            sulk_places: 0,
+            ..default()
+        };
+        assert!(!sulks(11, 12, &none));
     }
 
     /// Issue #19: the three of the podium dance, even the one that finished the last race far

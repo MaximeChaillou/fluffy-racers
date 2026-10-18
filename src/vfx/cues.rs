@@ -44,6 +44,8 @@ pub struct VfxSnapshot {
     pub impact_dir: Vec3,
     /// Paw strikes received so far.
     pub struck: u32,
+    /// Issue #130: under the water of a lake.
+    pub underwater: bool,
 }
 
 /// What else happened to the kart on this tick (messages of the rules).
@@ -113,6 +115,8 @@ pub struct Bursts {
     pub struck: bool,
     /// It sees stars over its head for this long from now (s; 0: none).
     pub dizzy: f32,
+    /// Issue #130: it went into the water (true) or came out of it (false): a splash.
+    pub splash: Option<bool>,
 }
 
 impl Bursts {
@@ -132,6 +136,7 @@ impl Bursts {
         self.stall |= other.stall;
         self.struck |= other.struck;
         self.dizzy = self.dizzy.max(other.dizzy);
+        self.splash = other.splash.or(self.splash);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -227,6 +232,9 @@ pub fn kart_bursts(
     }
     if events.bump >= impact.dizzy_bump_speed {
         bursts.dizzy = bursts.dizzy.max(impact.dizzy_after_shock);
+    }
+    if now.underwater != prev.underwater {
+        bursts.splash = Some(now.underwater);
     }
     bursts
 }
@@ -532,5 +540,23 @@ mod tests {
         let mut merged = bursts(rest, trick);
         merged.merge(bursts(rest, wall));
         assert!(merged.trick && merged.wall == 9.0);
+    }
+
+    /// Issue #130: going into the water splashes, coming out of it too (each once); a tick
+    /// without the splash keeps the one of the tick before in the frame.
+    #[test]
+    fn going_in_and_out_of_the_water_splashes() {
+        let dry = VfxSnapshot::default();
+        let wet = VfxSnapshot {
+            underwater: true,
+            ..dry
+        };
+        assert_eq!(bursts(dry, wet).splash, Some(true));
+        assert_eq!(bursts(wet, dry).splash, Some(false));
+        assert!(bursts(wet, wet).is_empty());
+        assert!(bursts(dry, dry).is_empty());
+        let mut frame = bursts(dry, wet);
+        frame.merge(bursts(wet, wet));
+        assert_eq!(frame.splash, Some(true));
     }
 }

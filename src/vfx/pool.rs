@@ -71,10 +71,18 @@ pub enum Paint {
     Soot,
     /// Lit: the chantilly's cream.
     Cream,
+    /// Issue #130, lit: the dust off the road, the color of the biome's ground (its shoulders)...
+    Ground,
+    /// ...and of its sand (the patches on the road).
+    Sand,
+    /// Issue #130: the drops of a splash, glowing a little like the bubbles.
+    Water,
+    /// Issue #130, lit: the foam on the water (a splash's, the wake).
+    Foam,
 }
 
 impl Paint {
-    pub const COUNT: usize = 19;
+    pub const COUNT: usize = 23;
     pub const ALL: [Self; Self::COUNT] = [
         Paint::Blue,
         Paint::Orange,
@@ -95,6 +103,10 @@ impl Paint {
         Paint::Dust,
         Paint::Soot,
         Paint::Cream,
+        Paint::Ground,
+        Paint::Sand,
+        Paint::Water,
+        Paint::Foam,
     ];
     pub const CONFETTI: [Self; 5] = [
         Paint::Confetti0,
@@ -117,7 +129,13 @@ impl Paint {
     pub fn lit(self) -> bool {
         matches!(
             self,
-            Paint::Smoke | Paint::Dust | Paint::Soot | Paint::Cream
+            Paint::Smoke
+                | Paint::Dust
+                | Paint::Soot
+                | Paint::Cream
+                | Paint::Ground
+                | Paint::Sand
+                | Paint::Foam
         )
     }
 }

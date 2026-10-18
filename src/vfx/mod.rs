@@ -16,11 +16,14 @@
 //!   stars on a kart struck by a paw, the confetti of the explosions, the chantilly's cream, the
 //!   stars over the head of a kart spinning out or tumbling (and a while after: « sonné »), the
 //!   player's camera shaking; gold sparkles for a croquette picked up or lost.
-//! - **The ground** (GD § 10): dust off the road, dust blown out by a landing, the anti-gravity's
-//!   cyan sparks, the glider's wind off its wing tips.
+//! - **The ground** (GD § 10): dust off the road (issue #130: the color of the circuit's biome's
+//!   ground, its shoulders or its sand), dust blown out by a landing, the anti-gravity's cyan
+//!   sparks, the glider's wind off its wing tips.
+//! - **The water** (GD § 10, issue #130): a splash going in and out of a lake (a crown of drops, a
+//!   ring and puffs of foam on the water), the wake of foam of a kart at its surface.
 //!
 //! **Fluidity first**: a fixed pool of [`ParticlePool::SLOTS`] slots (`pool.rs`), each with its
-//! entity made once at startup, sharing 4 meshes and 19 materials; a global cap that the pool
+//! entity made once at startup, sharing 4 meshes and 23 materials; a global cap that the pool
 //! never exceeds ([`VfxTuning::max_particles`], the oldest particle gives its slot up); nothing
 //! thrown by a kart farther than `emit_range` from the camera; no shadow cast; nothing allocated
 //! while racing (`alloc_tests.rs` counts it). No compute shader: the particles are plain meshes
@@ -51,7 +54,7 @@ pub use systems::{
     DizzyStar, FovKick, KartVfx, MAX_DIZZY_STARS, Particles, VfxAssets, VfxParticle, VfxQueue,
     WorldBurst, star_mesh,
 };
-pub use tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WorldVfx};
+pub use tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WorldVfx, ground_dust};
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -91,6 +94,7 @@ impl Plugin for VfxPlugin {
                 PostUpdate,
                 (
                     systems::follow_tuning,
+                    systems::follow_the_ground,
                     systems::emit_karts,
                     systems::emit_world,
                     systems::kick_the_camera,
