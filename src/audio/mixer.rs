@@ -1,9 +1,52 @@
 //! Issue #103: the mixer's rules (pure, unit-tested): which sound gets a voice when they are all
 //! taken, which karts are heard, how loud an option is, and how the engine follows the revs.
+//! Issue #135: where the karts are heard at all ([`race_sounds`]).
 
 use bevy::prelude::*;
 
 use super::tuning::SoundTuning;
+use crate::race::RacePhase;
+
+/// Issue #135: what is shown, for the sounds: the home screen (its background race), the lobby,
+/// the pause, the race's phase (none: no race yet, or driving freely), whether the player drives
+/// freely (no race to wait for: the test ground, « Roulage libre »), the player's finish.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stage {
+    pub home: bool,
+    pub salon: bool,
+    pub paused: bool,
+    pub phase: Option<RacePhase>,
+    pub free: bool,
+    pub finished: bool,
+}
+
+/// Issue #135: whether the karts are heard: their short sounds (`karts`: their drift, boosts,
+/// items, hits, cries) and their loops (`loops`: the engines, the squeals, the wind, the rumble).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RaceSounds {
+    pub karts: bool,
+    pub loops: bool,
+}
+
+/// Issue #135 (Max: « Ils doivent être coupés quand on fait plus la course ou sur l'accueil »):
+/// the karts are heard during a race, from its countdown to the player's finish, and while
+/// driving freely (no race); not on the home screen (only its music), in the lobby, before the
+/// countdown (a race not there yet, its grid), after the player's finish (the results, the
+/// standings, the podium) nor once the race is over. The pause silences the loops (nothing else
+/// moves then).
+pub fn race_sounds(stage: &Stage) -> RaceSounds {
+    let racing = !stage.home
+        && !stage.salon
+        && !stage.finished
+        && match stage.phase {
+            None => stage.free,
+            Some(phase) => matches!(phase, RacePhase::Countdown | RacePhase::Racing),
+        };
+    RaceSounds {
+        karts: racing,
+        loops: racing && !stage.paused,
+    }
+}
 
 /// The priority of a sound: the player's own and the screens' first (2), then the others by
 /// their distance to the camera (1 at the camera, 0 at the range).
@@ -132,6 +175,57 @@ pub fn approach(value: f32, target: f32, rate: f32, dt: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #135: the karts are heard from the countdown to the player's finish, and driving
+    /// freely; never on the home screen, in the lobby, on the grid, after the finish or once
+    /// the race is over; the pause silences the loops.
+    #[test]
+    fn the_karts_are_heard_only_in_a_race() {
+        let racing = |phase| Stage { phase, ..default() };
+        let heard = RaceSounds {
+            karts: true,
+            loops: true,
+        };
+        let silent = RaceSounds::default();
+        let free = Stage {
+            free: true,
+            ..default()
+        };
+        assert_eq!(race_sounds(&free), heard, "driving freely");
+        assert_eq!(race_sounds(&racing(None)), silent, "the race not there yet");
+        assert_eq!(race_sounds(&racing(Some(RacePhase::Countdown))), heard);
+        assert_eq!(race_sounds(&racing(Some(RacePhase::Racing))), heard);
+        for phase in [RacePhase::Grid, RacePhase::Finished, RacePhase::Results] {
+            assert_eq!(race_sounds(&racing(Some(phase))), silent, "{phase:?}");
+        }
+        for stage in [
+            Stage {
+                home: true,
+                ..racing(Some(RacePhase::Racing))
+            },
+            Stage {
+                salon: true,
+                ..free
+            },
+            Stage {
+                finished: true,
+                ..racing(Some(RacePhase::Racing))
+            },
+        ] {
+            assert_eq!(race_sounds(&stage), silent, "{stage:?}");
+        }
+        let paused = Stage {
+            paused: true,
+            ..racing(Some(RacePhase::Racing))
+        };
+        assert_eq!(
+            race_sounds(&paused),
+            RaceSounds {
+                karts: true,
+                loops: false
+            }
+        );
+    }
 
     /// Issue #103: the engine follows the revs: higher and louder with the speed, higher still
     /// with the accelerator and in a boost; low and quiet stalled.

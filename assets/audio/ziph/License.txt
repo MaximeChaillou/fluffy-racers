@@ -1,0 +1,10 @@
+Sounds by Ziph, from OpenGameArt.org.
+
+- "Some sounds": https://opengameart.org/content/some-sounds-0
+  Files here: motorseamless01.ogg, motorseamless07.ogg, motorseamless13.ogg (from motorseamless01.wav, motorseamless07.wav, motorseamless13.wav)
+
+License: Creative Commons Zero (CC0 1.0 Universal), as stated on each page above
+(checked on 2026-10-18): https://creativecommons.org/publicdomain/zero/1.0/
+
+Re-encoded for Fluffy Racers (issue #135): OGG Vorbis, mono, 44.1 kHz, quality 5, no tags.
+The sounds themselves are not changed (but cut where said).

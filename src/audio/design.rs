@@ -26,8 +26,16 @@
 //! - **The web**: the browser lets the sound out after the first click or key press only
 //!   (`index.html` resumes Bevy's audio context then); before, the sinks play into a suspended
 //!   context: nothing is heard, nothing breaks.
-//! - **Behind the home screen** (its background race), the karts make no sound but their
-//!   engines, quieter (`home_volume`).
+//! - **Only in a race** (issue #135, [`RaceSounds`]): the loops (the engines, the squeals, the
+//!   wind, the rumble) play from the countdown to the player's finish, and while driving freely;
+//!   not on the home screen (its background race is silent: only the music), nor in the lobby,
+//!   the pause, or after the player's finish (its results, the standings, the podium): they fade
+//!   out (`engine_response`). The karts' and the items' short sounds follow the same rule.
+//! - **The sound picker** (issue #135, `choice.rs`): each sound plays the candidate Max chose in
+//!   the admin panel ([`SoundChoices`]): the mixer picks its clip (`choice::pick`), the loops
+//!   change their sound at once (a quick fade, then the new one), « ▶ Écouter » plays a slot's
+//!   sound at once, even out of a race ([`PreviewSound`]: the engine a short rev). A file or a
+//!   synthesis is loaded or rendered once, when it is chosen; a recorded loop is decoded once.
 
 use bevy::audio::{
     AddAudioSource, AudioPlayer, AudioPlugin, AudioSink, AudioSinkPlayback, AudioSource,
@@ -39,9 +47,14 @@ use bevy::transform::TransformSystems;
 use bevy_rapier3d::prelude::Velocity;
 
 use super::catalog::{Animal, Clip, FILES, Mood, SoundEffect, base_volume};
+use super::choice::{Picked, Slot, SoundChoices, Source, pick};
 use super::cues::{KartSnapshot, TickEvents, kart_cues};
-use super::dsp::{LoopKind, LoopSound, SynthSound};
-use super::mixer::{Admission, Revs, admit, approach, engine_note, nearest, option_gain, priority};
+use super::dsp::{LoopKind, LoopSound, SynthSound, seamless_loop};
+use super::mixer::{
+    Admission, RaceSounds, Revs, Stage, admit, approach, engine_note, nearest, option_gain,
+    priority, race_sounds,
+};
+use super::stream::is_ogg;
 use super::tuning::SoundTuning;
 use crate::admin::Tunings;
 use crate::camera::ChaseCamera;
@@ -50,7 +63,7 @@ use crate::croquettes::CroquettePickedUp;
 use crate::interactions::{KartGrabbed, Paw, StrikeAnswer, TetherEnd, TetherEnded};
 use crate::items::{
     Blast, BoxBroken, Honked, ItemBlocked, ItemEffect, ItemHitJudged, ItemKind, ItemObject,
-    ItemSlots, ItemStolen, Motion, Slot,
+    ItemSlots, ItemStolen, Motion, Slot as ItemSlot,
 };
 use crate::kart::{
     Boost, DriverVisual, ItemEffects, Kart, KartAssists, KartBodyPivot, KartBump, KartEnvironment,
@@ -61,8 +74,9 @@ use crate::menu::{MainMenu, MainMenuAction};
 use crate::modes::{GrandPrixAction, RaceMenu, RaceMenuAction};
 use crate::net::LobbyWindow;
 use crate::options::{OptionsAction, OptionsMenu, PlayerOptions};
-use crate::race::{Course, Race, RaceProgress, Tow};
+use crate::race::{Course, Race, RaceMode, RaceProgress, Tow};
 use crate::salon::{PlayerWalker, SalonAction, SalonMenu, Walker, WalkerLook};
+use crate::track::TrackChoice;
 
 /// A sound asked for by the game, with its [`SoundEffect`]: whose it is (`kart`), where (`at`),
 /// the player's own or a screen's (`foreground`: in front, not spatialized), its playback speed
@@ -112,7 +126,9 @@ pub struct Voice {
 
 /// A continuous voice: an engine, a squeal, the wind or the rumble. `foreground`: the player's
 /// (in front), else one of the others' (`slot`: spatialized, heard from its kart). `kart`: whose
-/// it plays now; `pitch` and `volume`: what it plays (after the mix).
+/// it plays now; `pitch` and `volume`: what it plays (after the mix; `pitch` is the note of the
+/// revs, the sink plays it times its candidate's speed). Issue #135: `source`, the candidate of
+/// its slot it plays (`SoundChoices`), none before its sound is ready.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct LoopVoice {
     pub kind: LoopKind,
@@ -121,16 +137,39 @@ pub struct LoopVoice {
     pub kart: Option<Entity>,
     pub pitch: f32,
     pub volume: f32,
+    pub source: Option<u8>,
 }
 
 /// The clips: the files (loaded) and the syntheses (rendered once), made when the game starts,
-/// with an audio output only.
+/// with an audio output only. Issue #135: the candidates' files, syntheses and loops are added
+/// when they are chosen (once each), keyed by their slot and their index in it.
 #[derive(Resource, Clone, Debug)]
 pub struct SoundBank {
     pub files: HashMap<&'static str, Handle<AudioSource>>,
     pub synths: HashMap<SoundEffect, Handle<SynthSound>>,
-    pub loops: HashMap<LoopKind, Handle<LoopSound>>,
+    pub alternatives: HashMap<(Slot, u8), Handle<SynthSound>>,
+    pub loops: HashMap<(Slot, u8), Handle<LoopSound>>,
 }
+
+/// Issue #135: « ▶ Écouter » in the admin panel: plays `Slot`'s chosen sound at once, even out of
+/// a race (a loop: a short sample of it, the engine a rev).
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviewSound(pub Slot);
+
+/// Issue #135: a loop listened to (« ▶ Écouter »): the candidate it plays, when it started (real
+/// time, once its sound is there), its pitch and volume now.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct LoopPreview {
+    pub kind: LoopKind,
+    pub source: u8,
+    pub started: Option<f64>,
+    pub pitch: f32,
+    pub volume: f32,
+}
+
+/// A one-shot listened to (« ▶ Écouter »): the mixer plays it like the others.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Preview;
 
 /// What the mixer did since the game started (the tests read it, and so can a debugger).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -197,7 +236,10 @@ impl Plugin for SoundDesignPlugin {
         }
         app.init_resource::<SoundTuning>()
             .init_resource::<MixerStats>()
+            .init_resource::<SoundChoices>()
+            .init_resource::<RaceSounds>()
             .insert_resource(SoundOutput(output))
+            .add_message::<PreviewSound>()
             // The screens' actions it listens to (there in the game; the tests may lack some).
             .add_message::<MainMenuAction>()
             .add_message::<SalonAction>()
@@ -216,15 +258,17 @@ impl Plugin for SoundDesignPlugin {
                 (
                     listen,
                     name_animals,
+                    watch_stage,
                     watch_race,
                     watch_screens,
                     watch_walkers,
+                    (prepare_choices, play_previews).chain(),
                 )
                     .in_set(SoundDesignSystems),
             )
             .add_systems(
                 PostUpdate,
-                (mix, drive_loops)
+                (mix, drive_loops, drive_previews)
                     .chain()
                     .in_set(SoundDesignSystems)
                     .before(TransformSystems::Propagate),
@@ -236,12 +280,12 @@ impl Plugin for SoundDesignPlugin {
     }
 }
 
-/// The clips: the files to load, the syntheses rendered (once), the loops.
+/// The clips: the files to load, the syntheses rendered (once). The loops and the candidates'
+/// clips are added when they are chosen ([`prepare_choices`]).
 fn create_bank(
     mut commands: Commands,
     server: Res<AssetServer>,
     mut synths: ResMut<Assets<SynthSound>>,
-    mut loops: ResMut<Assets<LoopSound>>,
 ) {
     let files = FILES
         .iter()
@@ -253,20 +297,119 @@ fn create_bank(
             _ => None,
         })
         .collect();
-    let loops = [
-        LoopKind::Engine,
-        LoopKind::Squeal,
-        LoopKind::Wind,
-        LoopKind::Rumble,
-    ]
-    .into_iter()
-    .map(|kind| (kind, loops.add(LoopSound::new(kind))))
-    .collect();
     commands.insert_resource(SoundBank {
         files,
         synths,
-        loops,
+        alternatives: HashMap::default(),
+        loops: HashMap::default(),
     });
+}
+
+/// A recorded loop is crossfaded over this long where it starts again (s)...
+const LOOP_SEAM: f32 = 0.04;
+/// ...and brought to this level (RMS), about the syntheses' (each candidate has its gain).
+const RECORDED_RMS: f32 = 0.3;
+
+/// Issue #135: the candidates chosen get their clips, once each (files loaded, syntheses rendered,
+/// loops built; a recorded loop decoded when its file is there). Nothing to do most frames.
+fn prepare_choices(
+    choices: Res<SoundChoices>,
+    bank: Option<ResMut<SoundBank>>,
+    server: Res<AssetServer>,
+    sources: Option<Res<Assets<AudioSource>>>,
+    mut synths: ResMut<Assets<SynthSound>>,
+    mut loops: ResMut<Assets<LoopSound>>,
+    mut recordings: Local<Vec<(Slot, u8)>>,
+) {
+    let Some(mut bank) = bank else {
+        return;
+    };
+    if choices.is_changed() {
+        for slot in Slot::ALL {
+            let index = choices.index(slot) as u8;
+            let candidate = choices.candidate(slot);
+            for (path, _) in candidate.files() {
+                bank.files.entry(path).or_insert_with(|| server.load(*path));
+            }
+            match candidate.source {
+                Source::Synth(synth) => {
+                    bank.alternatives
+                        .entry((slot, index))
+                        .or_insert_with(|| synths.add(SynthSound::new(&synth, 0.9)));
+                }
+                Source::Loop(timbre) => {
+                    bank.loops
+                        .entry((slot, index))
+                        .or_insert_with(|| loops.add(LoopSound::synth(timbre)));
+                }
+                Source::Recording { path, .. } => {
+                    bank.files.entry(path).or_insert_with(|| server.load(path));
+                    if !bank.loops.contains_key(&(slot, index))
+                        && !recordings.contains(&(slot, index))
+                    {
+                        recordings.push((slot, index));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let Some(sources) = sources else {
+        return;
+    };
+    // The recordings whose file is there: decoded once into a seamless loop.
+    recordings.retain(|(slot, index)| {
+        let candidate = &slot.candidates()[usize::from(*index)];
+        let Source::Recording { path, lowpass, .. } = candidate.source else {
+            return false;
+        };
+        let Some(handle) = bank.files.get(path) else {
+            return false;
+        };
+        let Some(source) = sources.get(handle) else {
+            let failed = server.load_state(handle).is_failed();
+            if failed {
+                warn!("{path}: not loaded, its loop stays silent");
+            }
+            return !failed;
+        };
+        if !is_ogg(source) {
+            warn!("{path}: not an OGG file, its loop stays silent");
+            return false;
+        }
+        let decoder = bevy::audio::Decodable::decoder(source);
+        let channels = usize::from(bevy::audio::Source::channels(&decoder).get());
+        let rate = bevy::audio::Source::sample_rate(&decoder).get();
+        let samples: Vec<f32> = decoder.collect();
+        let looped = seamless_loop(&samples, channels, rate, lowpass, LOOP_SEAM, RECORDED_RMS);
+        bank.loops
+            .insert((*slot, *index), loops.add(LoopSound::recorded(looped)));
+        false
+    });
+}
+
+/// Issue #135: where the karts may be heard (see [`RaceSounds`]), from what is shown: the home
+/// screen, the lobby, the pause, the race's phase, the player's finish.
+#[allow(clippy::too_many_arguments)]
+fn watch_stage(
+    mut sounds: ResMut<RaceSounds>,
+    menu: Option<Res<MainMenu>>,
+    track: Option<Res<TrackChoice>>,
+    time: Res<Time<Virtual>>,
+    (race, mode): (Option<Res<Race>>, Option<Res<RaceMode>>),
+    players: Query<&RaceProgress, With<PlayerKart>>,
+) {
+    let stage = Stage {
+        home: on_home(menu.as_deref()),
+        salon: track.as_deref() == Some(&TrackChoice::Salon),
+        paused: time.is_paused(),
+        phase: race.map(|race| race.phase()),
+        // No race to wait for: the test ground (no race there), or « Roulage libre ».
+        free: track.as_deref() == Some(&TrackChoice::TestGround)
+            || mode.is_some_and(|mode| *mode == RaceMode::FreeRoam),
+        finished: players.iter().any(RaceProgress::finished),
+    };
+    sounds.set_if_neq(race_sounds(&stage));
 }
 
 /// The camera listens (one `SpatialListener`, on the chase camera): the others' sounds come
@@ -441,11 +584,11 @@ fn snapshot(
         anti_gravity: environment.anti_gravity,
         carried: tow.and_then(|t| t.carry.as_ref()).map(|c| c.reason),
         hand: slots.and_then(|s| match s.hand {
-            Slot::Ready { item, .. } => Some(item),
+            ItemSlot::Ready { item, .. } => Some(item),
             _ => None,
         }),
         hand_count: slots.map_or(0, |s| match s.hand {
-            Slot::Ready { count, .. } => count,
+            ItemSlot::Ready { count, .. } => count,
             _ => 0,
         }),
         golden: slots.is_some_and(|s| s.golden > 0),
@@ -467,7 +610,7 @@ fn watch_karts(
     tuning: Res<SoundTuning>,
     kart_tuning: Res<KartTuning>,
     race: Option<Res<Race>>,
-    menu: Option<Res<MainMenu>>,
+    stage: Res<RaceSounds>,
     (mut picked, mut bumps, mut strikes, mut grabs, mut tethers): (
         MessageReader<CroquettePickedUp>,
         MessageReader<KartBump>,
@@ -478,7 +621,9 @@ fn watch_karts(
     mut karts: Query<KartView>,
     mut ticked: Local<(Vec<Entity>, Vec<Entity>, Vec<(Entity, Entity)>)>,
 ) {
-    let home = on_home(menu.as_deref());
+    // Issue #135: out of a race (the home's background race, after the player's finish...),
+    // the karts make no sound.
+    let home = !stage.karts;
     let now = time.elapsed_secs();
     let dt = time.delta_secs().max(1e-4);
     let (croquettes, bumped, pairs) = &mut *ticked;
@@ -618,7 +763,7 @@ const SLID_SPLOTCH_SPEED: f32 = 0.8;
 /// karts this peer judges).
 fn watch_items(
     mut commands: Commands,
-    menu: Option<Res<MainMenu>>,
+    stage: Res<RaceSounds>,
     players: Query<(), With<PlayerKart>>,
     karts: Query<&Transform, Or<(With<Kart>, With<Remote>)>>,
     (mut boxes, mut blasts, mut effects, mut honks, mut stolen, mut blocked, mut judged): (
@@ -633,7 +778,8 @@ fn watch_items(
     mut objects: Query<(Entity, &ItemObject, Option<&mut ObjectSounds>)>,
     mut last_seen: Local<Vec<(Entity, Vec3)>>,
 ) {
-    let home = on_home(menu.as_deref());
+    // Issue #135: out of a race, the items make no sound either.
+    let home = !stage.karts;
     let cue_of = |kart: Entity, at: Vec3| {
         if players.contains(kart) {
             Cue::front(Some(kart))
@@ -1041,7 +1187,12 @@ pub fn mix(
     time: Res<Time<Real>>,
     tuning: Res<SoundTuning>,
     options: Res<PlayerOptions>,
-    bank: Option<Res<SoundBank>>,
+    choices: Res<SoundChoices>,
+    (mut bank, server, sources): (
+        Option<ResMut<SoundBank>>,
+        Option<Res<AssetServer>>,
+        Option<Res<Assets<AudioSource>>>,
+    ),
     mut stats: ResMut<MixerStats>,
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     mut fresh: Query<
@@ -1084,7 +1235,9 @@ pub fn mix(
             cue.at.distance(at)
         };
         let twice = recent.iter().any(|(s, k, _)| s == sound && *k == cue.kart);
-        let level = sound_level(&tuning, &options, *sound, cue.gain);
+        // Issue #135: the candidate chosen for its slot.
+        let pick = pick(*sound, &choices);
+        let level = sound_level(&tuning, &options, *sound, cue.gain) * pick.gain;
         if twice || distance > tuning.range || level <= 1e-4 {
             stats.skipped += 1;
             commands.entity(entity).despawn();
@@ -1107,10 +1260,21 @@ pub fn mix(
         }
         stats.played += 1;
         recent.push((*sound, cue.kart, now));
-        let speed = cue.speed.clamp(0.25, 4.0);
+        let speed = (cue.speed * pick.speed).clamp(0.25, 4.0);
+        // A file chosen just now may still be loading: its voice waits for it a little.
+        let loading = match (pick.clip, &bank, &sources) {
+            (Picked::File(path), Some(bank), Some(sources)) => bank
+                .files
+                .get(path)
+                .is_none_or(|handle| !sources.contains(handle)),
+            _ => false,
+        };
         let voice = Voice {
             started: now,
-            ends_at: now + f64::from(sound.length() / speed) + 0.05,
+            ends_at: now
+                + f64::from(pick.seconds / speed)
+                + 0.05
+                + if loading { LOADING_WAIT } else { 0.0 },
             priority,
         };
         playing.push(entity);
@@ -1125,21 +1289,36 @@ pub fn mix(
             spatial_scale: Some(scale),
             ..PlaybackSettings::ONCE
         };
-        match (sound.clip(), &bank) {
-            (Clip::Blip(_), _) => {
+        match (pick.clip, bank.as_deref_mut()) {
+            (Picked::Blip, _) => {
                 // The croquettes' blips come with their player: only their volume.
                 if let Some(mut playback) = playback {
                     let own = playback.volume.to_linear();
                     playback.volume = Volume::Linear(own * level / base_volume(*sound));
                 }
             }
-            (Clip::File(path, _), Some(bank)) => {
-                if let Some(handle) = bank.files.get(path) {
-                    sound_entity.insert((AudioPlayer::<AudioSource>(handle.clone()), settings));
+            (Picked::File(path), Some(bank)) => {
+                // A candidate's file is loaded the first time it plays (if it was not yet).
+                let handle = match (bank.files.get(path), &server) {
+                    (Some(handle), _) => Some(handle.clone()),
+                    (None, Some(server)) => {
+                        let handle: Handle<AudioSource> = server.load(path);
+                        bank.files.insert(path, handle.clone());
+                        Some(handle)
+                    }
+                    (None, None) => None,
+                };
+                if let Some(handle) = handle {
+                    sound_entity.insert((AudioPlayer::<AudioSource>(handle), settings));
                 }
             }
-            (Clip::Synth(_), Some(bank)) => {
-                if let Some(handle) = bank.synths.get(sound) {
+            (Picked::Original(original), Some(bank)) => {
+                if let Some(handle) = bank.synths.get(&original) {
+                    sound_entity.insert((AudioPlayer::<SynthSound>(handle.clone()), settings));
+                }
+            }
+            (Picked::Synth(slot, index), Some(bank)) => {
+                if let Some(handle) = bank.alternatives.get(&(slot, index)) {
                     sound_entity.insert((AudioPlayer::<SynthSound>(handle.clone()), settings));
                 }
             }
@@ -1148,6 +1327,9 @@ pub fn mix(
     }
     stats.most_voices = stats.most_voices.max(playing.len() as u32);
 }
+
+/// A file still loading when its sound is asked for: its voice waits this long more (s).
+const LOADING_WAIT: f64 = 1.5;
 
 /// What the loops need of a kart.
 type LoopKart = (
@@ -1196,14 +1378,7 @@ fn wanted_voices(tuning: &SoundTuning, kind: LoopKind) -> u32 {
     }
 }
 
-fn spawn_loop_voice(
-    commands: &mut Commands,
-    bank: Option<&SoundBank>,
-    tuning: &SoundTuning,
-    kind: LoopKind,
-    foreground: bool,
-    slot: u8,
-) {
+fn spawn_loop_voice(commands: &mut Commands, kind: LoopKind, foreground: bool, slot: u8) {
     let voice = LoopVoice {
         kind,
         foreground,
@@ -1211,23 +1386,30 @@ fn spawn_loop_voice(
         kart: None,
         pitch: 1.0,
         volume: 0.0,
+        source: None,
     };
-    let mut entity = commands.spawn((voice, Transform::default()));
-    if let Some(handle) = bank.and_then(|bank| bank.loops.get(&kind)) {
-        entity.insert((
-            AudioPlayer::<LoopSound>(handle.clone()),
-            PlaybackSettings {
-                mode: PlaybackMode::Once,
-                volume: Volume::Linear(0.0),
-                spatial: !foreground,
-                spatial_scale: Some(SpatialScale::new(
-                    1.0 / tuning.full_volume_distance.max(0.5),
-                )),
-                paused: true,
-                ..PlaybackSettings::ONCE
-            },
-        ));
-    }
+    commands.spawn((voice, Transform::default()));
+}
+
+/// A loop's sound for `foreground` or not (paused, silent: [`drive_loops`] sets it each frame).
+fn loop_player(
+    handle: Handle<LoopSound>,
+    foreground: bool,
+    tuning: &SoundTuning,
+) -> (AudioPlayer<LoopSound>, PlaybackSettings) {
+    (
+        AudioPlayer::<LoopSound>(handle),
+        PlaybackSettings {
+            mode: PlaybackMode::Once,
+            volume: Volume::Linear(0.0),
+            spatial: !foreground,
+            spatial_scale: Some(SpatialScale::new(
+                1.0 / tuning.full_volume_distance.max(0.5),
+            )),
+            paused: true,
+            ..PlaybackSettings::ONCE
+        },
+    )
 }
 
 /// What a loop plays for its kart: its pitch and volume (0 to 1, before the mix).
@@ -1269,15 +1451,13 @@ fn loop_family(tuning: &SoundTuning, kind: LoopKind) -> f32 {
 fn drive_loops(
     mut commands: Commands,
     time: Res<Time<Real>>,
-    game_time: Res<Time<Virtual>>,
-    tuning: Res<SoundTuning>,
-    kart_tuning: Res<KartTuning>,
-    options: Res<PlayerOptions>,
+    (tuning, kart_tuning, options): (Res<SoundTuning>, Res<KartTuning>, Res<PlayerOptions>),
+    (choices, stage, output): (Res<SoundChoices>, Res<RaceSounds>, Res<SoundOutput>),
     bank: Option<Res<SoundBank>>,
-    menu: Option<Res<MainMenu>>,
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     karts: Query<LoopKart, (Or<(With<Kart>, With<Remote>)>, Without<LoopVoice>)>,
     mut voices: Query<(
+        Entity,
         &mut LoopVoice,
         &mut Transform,
         Option<&mut AudioSink>,
@@ -1357,7 +1537,7 @@ fn drive_loops(
         let wanted = wanted_voices(&tuning, kind);
         let mut front = false;
         let mut others = 0u32;
-        for (voice, ..) in &voices {
+        for (_, voice, ..) in &voices {
             if voice.kind == kind {
                 if voice.foreground {
                     front = true;
@@ -1367,17 +1547,10 @@ fn drive_loops(
             }
         }
         if !front {
-            spawn_loop_voice(&mut commands, bank.as_deref(), &tuning, kind, true, 0);
+            spawn_loop_voice(&mut commands, kind, true, 0);
         }
         for slot in others..wanted.min(u32::from(u8::MAX)) {
-            spawn_loop_voice(
-                &mut commands,
-                bank.as_deref(),
-                &tuning,
-                kind,
-                false,
-                slot as u8,
-            );
+            spawn_loop_voice(&mut commands, kind, false, slot as u8);
         }
     }
     let player = scratch.heard.iter().position(|h| h.player);
@@ -1415,7 +1588,7 @@ fn drive_loops(
             .is_some_and(|i| scratch.heard[scratch.drifting[*i]].player);
         player_heard[usize::from(kind == LoopKind::Squeal)] = front;
         let spatial = max.saturating_sub(usize::from(front));
-        for (mut voice, ..) in &mut voices {
+        for (_, mut voice, ..) in &mut voices {
             if voice.kind != kind || voice.foreground {
                 continue;
             }
@@ -1430,7 +1603,7 @@ fn drive_loops(
                 _ => voice.kart = None,
             }
         }
-        for (mut voice, ..) in &mut voices {
+        for (_, mut voice, ..) in &mut voices {
             if voice.kind == kind
                 && !voice.foreground
                 && voice.kart.is_none()
@@ -1443,10 +1616,8 @@ fn drive_loops(
             }
         }
     }
-    let paused = game_time.is_paused();
-    let home = on_home(menu.as_deref());
     let master = option_gain(options.master_volume) * option_gain(options.effects_volume);
-    for (mut voice, mut transform, sink, spatial_sink) in &mut voices {
+    for (entity, mut voice, mut transform, sink, spatial_sink) in &mut voices {
         if voice.foreground {
             // The player's loops: its engine and its squeal when they are heard (within the
             // cap; the squeal while it drifts), its wind and its rumble.
@@ -1468,25 +1639,200 @@ fn drive_loops(
             }
             None => (voice.pitch, 0.0),
         };
-        let mut target = volume * loop_family(&tuning, voice.kind) * master;
-        if paused {
+        // Issue #135: the candidate chosen for its slot; another one: a quick fade out, then the
+        // new sound (from silence).
+        let slot = Slot::of_loop(voice.kind);
+        let wanted = choices.index(slot) as u8;
+        let candidate = choices.candidate(slot);
+        let switching = voice.source != Some(wanted);
+        let mut target = volume * loop_family(&tuning, voice.kind) * master * candidate.gain;
+        // Issue #135: only in a race (not on the home screen, in the lobby, the pause, after the
+        // player's finish): a short fade out.
+        if !stage.loops || switching {
             target = 0.0;
         }
-        if home {
-            target *= tuning.home_volume;
+        let rate = if switching {
+            tuning.switch_response
+        } else {
+            tuning.engine_response
         }
-        let rate = tuning.engine_response.max(0.1);
-        voice.pitch = approach(voice.pitch, pitch, rate, dt);
+        .max(0.1);
+        voice.pitch = approach(voice.pitch, pitch, tuning.engine_response.max(0.1), dt);
         voice.volume = approach(voice.volume, target, rate, dt);
         if voice.volume < 1e-3 && target == 0.0 {
             voice.volume = 0.0;
         }
-        let (pitch, volume) = (voice.pitch.max(0.1), voice.volume);
+        if switching && voice.volume == 0.0 {
+            // Silent now: the new sound (with an output, once it is ready).
+            match (output.0, bank.as_deref()) {
+                (false, _) => voice.source = Some(wanted),
+                (true, Some(bank)) => {
+                    if let Some(handle) = bank.loops.get(&(slot, wanted)) {
+                        commands
+                            .entity(entity)
+                            .remove::<(AudioSink, SpatialAudioSink)>()
+                            .insert(loop_player(handle.clone(), voice.foreground, &tuning));
+                        voice.source = Some(wanted);
+                    }
+                }
+                (true, None) => {}
+            }
+            continue;
+        }
+        let (pitch, volume) = ((voice.pitch * candidate.speed).max(0.1), voice.volume);
         if let Some(mut sink) = sink {
             apply(&mut *sink, pitch, volume);
         }
         if let Some(mut sink) = spatial_sink {
             apply(&mut *sink, pitch, volume);
+        }
+    }
+}
+
+/// Issue #135: how long « ▶ Écouter » plays a loop (s): the engine revs up, then down...
+const ENGINE_PREVIEW: f32 = 2.2;
+/// ...the squeal climbs its three tiers, the wind and the rumble play.
+const LOOP_PREVIEW: f32 = 1.6;
+/// A loop listened to comes in and goes out over this long (s).
+const PREVIEW_FADE: f32 = 0.12;
+
+/// The pitch and volume (0 to 1, before the mix) of a loop listened to, `t` seconds in (pure).
+pub fn preview_note(tuning: &SoundTuning, kind: LoopKind, t: f32) -> (f32, f32) {
+    let length = if kind == LoopKind::Engine {
+        ENGINE_PREVIEW
+    } else {
+        LOOP_PREVIEW
+    };
+    let envelope =
+        (t / PREVIEW_FADE).clamp(0.0, 1.0) * ((length - t) / PREVIEW_FADE).clamp(0.0, 1.0);
+    let (pitch, volume) = match kind {
+        LoopKind::Engine => {
+            // Up for 1.4 s, accelerator down; then let go.
+            let up = 1.4;
+            let (ratio, throttle) = if t < up {
+                ((t / up).powf(1.3), 1.0)
+            } else {
+                ((1.0 - (t - up) / (length - up)).max(0.0) * 0.8 + 0.1, 0.0)
+            };
+            engine_note(
+                tuning,
+                &Revs {
+                    speed: 26.0 * ratio,
+                    top_speed: 26.0,
+                    throttle,
+                    ..default()
+                },
+            )
+        }
+        LoopKind::Squeal => {
+            let tier = (t / length * 3.0).floor().min(3.0);
+            (0.92 + 0.08 * tier, 0.8)
+        }
+        LoopKind::Wind => (1.0, 0.8),
+        LoopKind::Rumble => (1.0, 0.7),
+    };
+    (pitch, volume * envelope)
+}
+
+/// Issue #135: « ▶ Écouter »: a one-shot's sounds, in their time (`Slot::preview`), in front; a
+/// loop's short sample (a [`LoopPreview`], [`drive_previews`]). Even out of a race, even paused.
+fn play_previews(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    choices: Res<SoundChoices>,
+    mut asked: MessageReader<PreviewSound>,
+    previews: Query<(Entity, &LoopPreview)>,
+    mut queue: Local<Vec<(f64, SoundEffect)>>,
+) {
+    let now = time.elapsed_secs_f64();
+    for PreviewSound(slot) in asked.read() {
+        if let Some(kind) = slot.looping() {
+            for (entity, preview) in &previews {
+                if preview.kind == kind {
+                    commands.entity(entity).despawn();
+                }
+            }
+            commands.spawn((
+                LoopPreview {
+                    kind,
+                    source: choices.index(*slot) as u8,
+                    started: None,
+                    pitch: 1.0,
+                    volume: 0.0,
+                },
+                Transform::default(),
+            ));
+            continue;
+        }
+        let mut at = now;
+        for (after, sound) in slot.preview() {
+            at += f64::from(*after);
+            queue.push((at, *sound));
+        }
+    }
+    queue.retain(|(at, sound)| {
+        if *at > now {
+            return true;
+        }
+        commands.spawn((*sound, Cue::front(None), Preview));
+        false
+    });
+}
+
+/// Issue #135: the loops listened to: their sound once it is ready, their pitch and volume
+/// ([`preview_note`]), let go at their end.
+fn drive_previews(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    (tuning, options, output): (Res<SoundTuning>, Res<PlayerOptions>, Res<SoundOutput>),
+    bank: Option<Res<SoundBank>>,
+    mut previews: Query<(
+        Entity,
+        &mut LoopPreview,
+        Has<AudioPlayer<LoopSound>>,
+        Option<&mut AudioSink>,
+    )>,
+) {
+    let now = time.elapsed_secs_f64();
+    let master = option_gain(options.master_volume) * option_gain(options.effects_volume);
+    for (entity, mut preview, playing, sink) in &mut previews {
+        let slot = Slot::of_loop(preview.kind);
+        let candidate = &slot.candidates()[usize::from(preview.source)];
+        let Some(started) = preview.started else {
+            // Its sound: there at once without an output; with one, once it is ready.
+            if !output.0 {
+                preview.started = Some(now);
+            } else if !playing
+                && let Some(handle) = bank
+                    .as_deref()
+                    .and_then(|bank| bank.loops.get(&(slot, preview.source)))
+            {
+                commands
+                    .entity(entity)
+                    .insert(loop_player(handle.clone(), true, &tuning));
+                preview.started = Some(now);
+            }
+            continue;
+        };
+        let t = (now - started) as f32;
+        let length = if preview.kind == LoopKind::Engine {
+            ENGINE_PREVIEW
+        } else {
+            LOOP_PREVIEW
+        };
+        if t > length {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        let (pitch, volume) = preview_note(&tuning, preview.kind, t);
+        preview.pitch = pitch;
+        preview.volume = volume * loop_family(&tuning, preview.kind) * master * candidate.gain;
+        if let Some(mut sink) = sink {
+            apply(
+                &mut *sink,
+                (pitch * candidate.speed).max(0.1),
+                preview.volume,
+            );
         }
     }
 }

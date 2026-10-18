@@ -1,0 +1,16 @@
+Sounds by rubberduck, from OpenGameArt.org.
+
+- "30 CC0 SFX loops": https://opengameart.org/content/30-cc0-sfx-loops
+  Files here: noise_03.ogg, rolling.ogg
+- "25 CC0 mud SFX": https://opengameart.org/content/25-cc0-mud-sfx
+  Files here: mud_11.ogg, mud_18.ogg
+- "40 CC0 water / splash / slime SFX": https://opengameart.org/content/40-cc0-water-splash-slime-sfx
+  Files here: slime_09.ogg, slime_15.ogg, splash_02.ogg, splash_04.ogg
+- "100 CC0 SFX": https://opengameart.org/content/100-cc0-sfx
+  Files here: spring_01.ogg, spring_05.ogg
+
+License: Creative Commons Zero (CC0 1.0 Universal), as stated on each page above
+(checked on 2026-10-18): https://creativecommons.org/publicdomain/zero/1.0/
+
+Re-encoded for Fluffy Racers (issue #135): OGG Vorbis, mono, 44.1 kHz, quality 5, no tags.
+The sounds themselves are not changed (but cut where said).
