@@ -22,7 +22,7 @@ pub fn icon_view(look: Look) -> IconView {
     let view = |yaw: f32, pitch: f32, roll: f32| IconView { yaw, pitch, roll };
     match look {
         Look::Item(item) => match item {
-            ItemKind::Pelure => view(0.45, 0.85, 0.0),
+            ItemKind::Pelure => view(1.0, 0.35, 0.0),
             ItemKind::Pelote => view(-0.5, 0.35, 0.0),
             ItemKind::Abeille => view(-0.75, 0.3, 0.0),
             // Lying along Z: seen from its side, slanted.
@@ -215,12 +215,17 @@ mod tests {
         assert!(too_close.is_empty(), "{too_close:#?}");
     }
 
-    /// Issue #132: the pelure is ours, not the banana peel of the karting games of reference
-    /// (CLAUDE.md; GD § 8, « Nos objets ») but a clementine's: seen orange, not a banana's yellow
-    /// (the peel of #106 was seen at 49°), its white pith showing. And no golden curve reads as
-    /// a banana either: both chilies show their green calyx (the piment doré had none).
+    /// Issue #137 (it was #132's « the pelure is a clementine peel, not a banana »): the ground
+    /// trap is the Cac's, never the banana peel of the karting games of reference (CLAUDE.md; GD
+    /// § 8, « Nos objets ») nor #132's clementine peel. It is seen brown: an orange hue (the
+    /// banana of #106 was seen at 49°), dark (the clementine was seen at a lightness of 0.61, in
+    /// (0.89, 0.60, 0.34)), saturated (not a road's grey). It is seen as its swirl: a mound as
+    /// tall as wide, narrow at its tip and wide at its bottom (a flat peel or a curved banana
+    /// are not), its coils one over the other down its middle (each lit on top, dark in the
+    /// groove under it). And no golden curve reads as a banana either: both chilies show their
+    /// green calyx (the piment doré had none).
     #[test]
-    fn the_pelure_is_a_clementine_peel_not_a_banana() {
+    fn the_trap_is_a_brown_cacs_not_a_banana_nor_a_clementine() {
         let icon = |item: ItemKind| render(Look::Item(item), &model(Look::Item(item)));
         // The share of the model's own pixels (seen, sRGB) that `test` takes.
         let share = |icon: &Icon, test: fn(Vec3) -> bool| {
@@ -233,12 +238,60 @@ mod tests {
                 .collect();
             seen.iter().filter(|c| test(**c)).count() as f32 / seen.len().max(1) as f32
         };
-        let pelure = icon(ItemKind::Pelure);
-        let seen = pelure.mean_color();
-        let hue = Hsla::from(Srgba::rgb(seen.x, seen.y, seen.z)).hue;
-        assert!((15.0..40.0).contains(&hue), "the pelure is seen at {hue}°");
-        let pith = share(&pelure, |c| c.min_element() > 0.7);
-        assert!(pith > 0.06, "its pith: {pith}");
+        let cacs = icon(ItemKind::Pelure);
+        let seen = cacs.mean_color();
+        let hsla = Hsla::from(Srgba::rgb(seen.x, seen.y, seen.z));
+        assert!(
+            (15.0..40.0).contains(&hsla.hue),
+            "the Cac's is seen at {}°",
+            hsla.hue
+        );
+        assert!(hsla.lightness < 0.48, "too light: {hsla:?}");
+        assert!(hsla.saturation > 0.3, "too grey: {hsla:?}");
+        let clementine = Vec3::new(0.89, 0.6, 0.34);
+        assert!(seen.distance(clementine) > 0.3, "{seen}");
+        // Its silhouette, row by row (its width in pixels), and how bright it is down its middle.
+        let size = cacs.size as usize;
+        let rows: Vec<(usize, usize, usize)> = (0..size)
+            .filter_map(|y| {
+                let row = &cacs.body[y * size..(y + 1) * size];
+                let first = row.iter().position(|b| *b)?;
+                let last = row.iter().rposition(|b| *b)?;
+                Some((y, first, last))
+            })
+            .collect();
+        let tall = rows.len();
+        let wide = rows.iter().map(|(_, a, b)| b + 1 - a).max().unwrap_or(0);
+        assert!(tall as f32 > 0.8 * wide as f32, "{tall} tall, {wide} wide");
+        let width = |from: f32, to: f32| {
+            rows[(tall as f32 * from) as usize..(tall as f32 * to) as usize]
+                .iter()
+                .map(|(_, a, b)| b + 1 - a)
+                .max()
+                .unwrap_or(0)
+        };
+        let (tip, bottom) = (width(0.0, 0.25), width(0.5, 1.0));
+        assert!(
+            (tip as f32) < 0.6 * bottom as f32,
+            "its tip {tip} px wide, its bottom {bottom}"
+        );
+        let middle = rows.iter().map(|(_, a, b)| a + b).sum::<usize>() / (2 * tall);
+        let mut coils = 0;
+        let mut darkest = f32::MAX;
+        for (y, ..) in &rows {
+            let x = middle.min(size - 1);
+            if !cacs.body[y * size + x] {
+                continue;
+            }
+            let p = cacs.pixels[y * size + x];
+            let light = (0.3 * p[0] as f32 + 0.59 * p[1] as f32 + 0.11 * p[2] as f32) / 255.0;
+            darkest = darkest.min(light);
+            if light > darkest + 0.15 {
+                coils += 1;
+                darkest = f32::MAX;
+            }
+        }
+        assert!(coils >= 3, "{coils} coils seen down its middle");
         for item in [ItemKind::Piment, ItemKind::PimentDore] {
             let calyx = share(&icon(item), |c| c.y > c.x + 0.1 && c.y > c.z + 0.1);
             assert!(calyx > 0.08, "{item:?}'s calyx: {calyx}");

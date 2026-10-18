@@ -49,8 +49,8 @@ use crate::characters::{Roster, SelectionAction, SelectionScreen};
 use crate::croquettes::CroquettePickedUp;
 use crate::interactions::{KartGrabbed, Paw, StrikeAnswer, TetherEnd, TetherEnded};
 use crate::items::{
-    Blast, BoxBroken, Honked, ItemBlocked, ItemEffect, ItemKind, ItemObject, ItemSlots, ItemStolen,
-    Motion, Slot,
+    Blast, BoxBroken, Honked, ItemBlocked, ItemEffect, ItemHitJudged, ItemKind, ItemObject,
+    ItemSlots, ItemStolen, Motion, Slot,
 };
 use crate::kart::{
     Boost, DriverVisual, ItemEffects, Kart, KartAssists, KartBodyPivot, KartBump, KartEnvironment,
@@ -588,7 +588,7 @@ fn motion_kind(motion: &Motion) -> u8 {
 /// The sound of an item starting a move: dropped, thrown, launched.
 fn launch_sound(motion: u8) -> Option<SoundEffect> {
     match motion {
-        1 => Some(SoundEffect::PeelDrop),
+        1 => Some(SoundEffect::Splotch),
         2 | 4 => Some(SoundEffect::Throw),
         3 => Some(SoundEffect::BeeBuzz),
         5 => Some(SoundEffect::PillowLaunch),
@@ -608,21 +608,27 @@ fn bounces(motion: &Motion) -> (u32, bool) {
     }
 }
 
+/// A kart slides on a Cac's (issue #137): its « splotch » this much lower (the playback speed),
+/// heavier than the Cac's landing.
+const SLID_SPLOTCH_SPEED: f32 = 0.8;
+
 /// Each tick: the items (GD § 8): the boxes, what is thrown and dropped, what bounces, the
 /// blasts, the chantilly, the klaxon-canard, the pie voleuse's theft, the items that break on
-/// each other.
+/// each other, a kart sliding on a Cac's (its victim's decision, `ItemHitJudged`: online, the
+/// karts this peer judges).
 fn watch_items(
     mut commands: Commands,
     menu: Option<Res<MainMenu>>,
     players: Query<(), With<PlayerKart>>,
     karts: Query<&Transform, Or<(With<Kart>, With<Remote>)>>,
-    (mut boxes, mut blasts, mut effects, mut honks, mut stolen, mut blocked): (
+    (mut boxes, mut blasts, mut effects, mut honks, mut stolen, mut blocked, mut judged): (
         MessageReader<BoxBroken>,
         MessageReader<Blast>,
         MessageReader<ItemEffect>,
         MessageReader<Honked>,
         MessageReader<ItemStolen>,
         MessageReader<ItemBlocked>,
+        MessageReader<ItemHitJudged>,
     ),
     mut objects: Query<(Entity, &ItemObject, Option<&mut ObjectSounds>)>,
     mut last_seen: Local<Vec<(Entity, Vec3)>>,
@@ -642,6 +648,7 @@ fn watch_items(
         effects.clear();
         honks.clear();
         stolen.clear();
+        judged.clear();
     }
     for broken in boxes.read() {
         let cue = cue_of(broken.kart, kart_at(broken.kart));
@@ -667,6 +674,14 @@ fn watch_items(
     }
     for honk in honks.read() {
         play(&mut commands, SoundEffect::Honk, cue_of(honk.kart, honk.at));
+    }
+    // A kart ran over a Cac's (hit, or immune: it squashed it all the same).
+    for hit in judged.read().filter(|hit| hit.item == ItemKind::Pelure) {
+        let cue = Cue {
+            speed: SLID_SPLOTCH_SPEED,
+            ..cue_of(hit.kart, kart_at(hit.kart))
+        };
+        play(&mut commands, SoundEffect::Splotch, cue);
     }
     for theft in stolen.read() {
         let player = players.contains(theft.thief) || players.contains(theft.victim);

@@ -25,7 +25,7 @@ Les écrans de jeu (le menu principal, puis ceux de l'étape 2) : une police lib
 
 ## Sons (#103)
 
-Les sons de jeu : des fichiers OGG Vorbis de packs CC0 de Kenney, dans `assets/audio/<pack>/`, la licence de chaque pack à côté d'eux. Seuls les fichiers joués sont dans le dépôt. Ce qu'aucun pack n'a est synthétisé par le jeu (`src/audio/dsp.rs` : le moteur, le crissement, le vent, les cris des animaux, les « fwoosh », le compte à rebours, le « boing ») : ce ne sont pas des fichiers. Un test (`audio::scenario_tests`) vérifie que chaque fichier joué est là, avec sa ligne ici et sa durée, et qu'aucun autre fichier n'est dans `assets/audio/`.
+Les sons de jeu : des fichiers OGG Vorbis de packs CC0 de Kenney, dans `assets/audio/<pack>/`, la licence de chaque pack à côté d'eux. Seuls les fichiers joués sont dans le dépôt. Ce qu'aucun pack n'a est synthétisé par le jeu (`src/audio/dsp.rs` : le moteur, le crissement, le vent, les cris des animaux, les « fwoosh », le compte à rebours, le « boing », le « splotch » du Cac's) : ce ne sont pas des fichiers. Un test (`audio::scenario_tests`) vérifie que chaque fichier joué est là, avec sa ligne ici et sa durée, et qu'aucun autre fichier n'est dans `assets/audio/`.
 
 | Fichier(s) | Source | Auteur | Licence |
 |---|---|---|---|
@@ -33,7 +33,7 @@ Les sons de jeu : des fichiers OGG Vorbis de packs CC0 de Kenney, dans `assets/a
 | `audio/interface-sounds/` (6 sons, licence dans `License.txt`) : back_002.ogg (retour), confirmation_001.ogg (validation), pluck_001.ogg (une valeur qui change), tick_002.ogg (le tic de la roulette), glass_001.ogg (le « ding » de la roulette), drop_004.ogg (la boîte cadeau qui éclate) | [Interface Sounds](https://kenney.nl/assets/interface-sounds) 1.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 | `audio/ui-audio/` (1 son, licence dans `License.txt`) : rollover2.ogg (le survol) | [UI Audio](https://kenney.nl/assets/ui-audio) | Kenney (www.kenney.nl) | CC0 1.0 |
 | `audio/digital-audio/` (6 sons, licence dans `License.txt`) : powerUp7.ogg (le super câlin), phaserUp2.ogg (un plot de boost), phaserUp6.ogg (le spin boost), powerUp2.ogg (le boost d'une figure), highUp.ogg (le départ fusée), phaseJump3.ogg (la pie voleuse qui vole) | [Digital Audio](https://kenney.nl/assets/digital-audio) | Kenney (www.kenney.nl) | CC0 1.0 |
-| `audio/sci-fi-sounds/` (3 sons, licence dans `License.txt`) : slime_000.ogg (la pelure posée, la chantilly sur l'écran), explosionCrunch_000.ogg (la bombe à confettis), forceField_001.ogg (la pie voleuse invisible) | [Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) 1.0 | Kenney (www.kenney.nl) | CC0 1.0 |
+| `audio/sci-fi-sounds/` (3 sons, licence dans `License.txt`) : slime_000.ogg (la chantilly sur l'écran ; le Cac's posé jusqu'à #137, synthétisé depuis), explosionCrunch_000.ogg (la bombe à confettis), forceField_001.ogg (la pie voleuse invisible) | [Sci-Fi Sounds](https://kenney.nl/assets/sci-fi-sounds) 1.0 | Kenney (www.kenney.nl) | CC0 1.0 |
 | `audio/rpg-audio/` (3 sons, licence dans `License.txt`) : cloth2.ogg (l'attrape), cloth4.ogg (le planeur qui s'ouvre), cloth1.ogg (une figure) | [RPG Audio](https://kenney.nl/assets/rpg-audio) | Kenney (www.kenney.nl) | CC0 1.0 |
 
 ## Musique (#104)
