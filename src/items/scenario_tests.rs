@@ -185,6 +185,14 @@ impl Arena {
         world.get::<Velocity>(kart).unwrap().linear.dot(forward)
     }
 
+    /// How many items are out (held out too).
+    fn objects_len(&self) -> usize {
+        let world = self.app.world();
+        world
+            .try_query::<&ItemObject>()
+            .map_or(0, |mut query| query.iter(world).count())
+    }
+
     /// Every item out, by spawn order.
     fn objects(&mut self) -> Vec<(Entity, ItemObject)> {
         let world = self.app.world_mut();
@@ -293,6 +301,162 @@ fn a_box_gives_an_item_after_the_roulette_and_comes_back_after_two_seconds() {
         (slots.hand.item(), slots.reserve.item())
     );
     assert_eq!(arena.stats(kart).boxes, 3);
+}
+
+/// Issue #102: the kart runs into a box at `(x, z)` (placed on it, for one tick with `input`),
+/// then is put 10 m aside (the box does not give again when it comes back). Returns the box.
+fn take_box(arena: &mut Arena, x: f32, z: f32, double: bool, input: KartInput) -> Entity {
+    let kart = arena.kart;
+    let item_box = arena.item_box(x, z, double);
+    arena.place(kart, Transform::from_xyz(x, 0.55, z));
+    arena.tick(&[(kart, input)]);
+    let world = arena.app.world();
+    assert!(!world.get::<ItemBox>(item_box).unwrap().available());
+    arena.place(kart, Transform::from_xyz(x + 10.0, 0.55, z));
+    item_box
+}
+
+/// Issue #102 point 1: every box spins a roulette of 90 ticks (about 1.5 s) before its item can
+/// be used, wherever it lands: the hand (the item button pressed meanwhile does nothing), the
+/// reserve (the hand used meanwhile: the reserve's roulette moves into it and goes on), both
+/// slots of a double box, and a box taken while a pelure is dragged or while an "x3" is out.
+#[test]
+fn every_box_spins_its_roulette_before_its_item_can_be_used() {
+    let mut arena = Arena::new();
+    let kart = arena.kart;
+    let idle = KartInput::default();
+    let spinning = |slot: Slot| matches!(slot, Slot::Spinning { .. });
+    let used = |arena: &Arena| (arena.stats(kart).used, arena.objects_len());
+
+    // The hand: pressed every other tick through the roulette, nothing comes out.
+    take_box(&mut arena, 0.0, -20.0, false, idle);
+    assert!(matches!(
+        arena.slots(kart).hand,
+        Slot::Spinning { ticks: 90, .. }
+    ));
+    let before = used(&arena);
+    for tick in 1..=90 {
+        let pressed = KartInput {
+            item: tick % 2 == 1,
+            ..idle
+        };
+        arena.tick(&[(kart, pressed)]);
+        assert_eq!(spinning(arena.slots(kart).hand), tick < 90, "tick {tick}");
+        if tick < 90 {
+            assert_eq!(used(&arena), before, "tick {tick}: nothing used");
+        }
+    }
+    arena.tick(&[(kart, idle)]);
+
+    // The reserve, a pelote ready in the hand: thrown on the 20th tick, the reserve's roulette
+    // moves into the hand and goes on; ready 90 ticks after the box all the same.
+    arena
+        .app
+        .world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .clear();
+    arena.give(kart, ItemKind::Pelote, 1);
+    take_box(&mut arena, 0.0, -60.0, false, idle);
+    let slots = arena.slots(kart);
+    assert!(matches!(
+        slots.hand,
+        Slot::Ready {
+            item: ItemKind::Pelote,
+            ..
+        }
+    ));
+    assert!(
+        matches!(slots.reserve, Slot::Spinning { ticks: 90, .. }),
+        "{slots:?}"
+    );
+    for tick in 1..=90 {
+        let input = KartInput {
+            item: tick == 20 || tick == 40,
+            ..idle
+        };
+        arena.tick(&[(kart, input)]);
+        let slots = arena.slots(kart);
+        match tick {
+            1..20 => assert!(spinning(slots.reserve), "tick {tick}"),
+            20..90 => {
+                assert!(slots.reserve.is_empty(), "tick {tick}: moved into the hand");
+                assert!(spinning(slots.hand), "tick {tick}: {slots:?}");
+            }
+            _ => assert!(matches!(slots.hand, Slot::Ready { .. }), "{slots:?}"),
+        }
+    }
+    // The pelote went (its press, then its release), the press on the 40th tick did nothing.
+    assert_eq!(arena.stats(kart).used, before.0 + 1);
+
+    // A double box: both slots spin 90 ticks.
+    arena
+        .app
+        .world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .clear();
+    take_box(&mut arena, 0.0, -100.0, true, idle);
+    for tick in 1..=90 {
+        let slots = arena.slots(kart);
+        assert!(
+            spinning(slots.hand) && spinning(slots.reserve),
+            "tick {tick}"
+        );
+        arena.tick(&[(kart, idle)]);
+    }
+    let slots = arena.slots(kart);
+    assert!(
+        matches!(
+            (slots.hand, slots.reserve),
+            (Slot::Ready { .. }, Slot::Ready { .. })
+        ),
+        "{slots:?}"
+    );
+
+    // A pelure dragged (the item button held) into a box: the box's item spins in the hand, the
+    // pelure is dropped at the release meanwhile, the item ready at the 90th tick.
+    arena
+        .app
+        .world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .clear();
+    arena.give(kart, ItemKind::Pelure, 1);
+    arena.tick(&[(kart, ITEM)]);
+    assert_eq!(arena.slots(kart).dragging, Some(ItemKind::Pelure));
+    take_box(&mut arena, 0.0, -140.0, false, ITEM);
+    let slots = arena.slots(kart);
+    assert_eq!(slots.dragging, Some(ItemKind::Pelure));
+    assert!(
+        matches!(slots.hand, Slot::Spinning { ticks: 90, .. }),
+        "{slots:?}"
+    );
+    for tick in 1..=90 {
+        let input = if tick < 10 { ITEM } else { idle };
+        arena.tick(&[(kart, input)]);
+        let slots = arena.slots(kart);
+        assert_eq!(slots.dragging.is_some(), tick < 10, "tick {tick}");
+        assert_eq!(spinning(slots.hand), tick < 90, "tick {tick}");
+    }
+
+    // An "x3" out (three pelures behind): the box's item spins in the reserve.
+    arena
+        .app
+        .world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .clear();
+    arena.give(kart, ItemKind::Pelure, 3);
+    arena.tap(kart, idle);
+    assert!(arena.slots(kart).deployed);
+    take_box(&mut arena, 0.0, -180.0, false, idle);
+    let slots = arena.slots(kart);
+    assert!(slots.deployed);
+    assert!(
+        matches!(slots.reserve, Slot::Spinning { ticks: 90, .. }),
+        "{slots:?}"
+    );
 }
 
 /// Acceptance criterion of #16: a pelure dragged behind a kart (item button held) stops a pelote

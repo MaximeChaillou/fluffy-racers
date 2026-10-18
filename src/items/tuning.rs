@@ -23,6 +23,14 @@ pub struct ItemTuning {
     pub box_reach: f32,
     /// The roulette spins this long before the item comes out (GD § 8: about 1.5 s).
     pub roulette_time: f32,
+    /// Issue #102: on screen, the roulette scrolls the items through the slot like a slot
+    /// machine, about this many a second (items/s; the HUD's reel, `ui::roulette`: it adjusts it a
+    /// little so that the reel stops right on the item drawn)...
+    pub roulette_scroll_speed: f32,
+    /// ...then slows down to a stop on the item drawn over the end of the roulette, this long
+    /// (s, at most `roulette_time`). Only the HUD: the item is ready at `roulette_time` all the
+    /// same.
+    pub roulette_slowdown: f32,
 
     // --- Hits (GD § 8) --------------------------------------------------------------------------
     /// A spin out (tête-à-queue: pelure, abeille) lasts this long (GD § 8: about 1 s). How hard
@@ -231,6 +239,8 @@ impl Default for ItemTuning {
             box_respawn_time: 2.0,
             box_reach: 0.8,
             roulette_time: 1.5,
+            roulette_scroll_speed: 12.0,
+            roulette_slowdown: 0.7,
 
             spin_time: 1.0,
             tumble_time: 1.6,
@@ -380,6 +390,18 @@ mod tests {
         // A dragged item sits behind the kart's body (1 m from its center to its back).
         assert!(t.drag_distance - t.pelure_radius > 1.0);
         assert!(t.drag_distance - t.pelote_radius > 1.0);
+    }
+
+    /// Issue #102: the reel of the roulette on screen scrolls fast (a dozen items a second), then
+    /// slows down over about half of the roulette (it is seen choosing), shorter than the
+    /// roulette itself (the speed is first seen).
+    #[test]
+    fn issue_102_defaults() {
+        let t = ItemTuning::default();
+        assert_eq!(t.roulette_time, 1.5, "the bots' races count on it");
+        assert!((10.0..=16.0).contains(&t.roulette_scroll_speed));
+        assert!(t.roulette_slowdown > 0.3 * t.roulette_time);
+        assert!(t.roulette_slowdown < 0.6 * t.roulette_time);
     }
 
     /// GD § 8, issue #18: the piment doré about 7 s, the super câlin about 7 s, the fusée about

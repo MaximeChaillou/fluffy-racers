@@ -270,6 +270,167 @@ fn grants_tick(room: &Room, key: PeerKey) -> u32 {
     items(room.view(key)).arbiter.grants()[0].tick
 }
 
+/// Puts `key`'s kart on box `index` of the track (on the road under it).
+fn onto_box(room: &mut Room, key: PeerKey, index: u16) {
+    let target = spot(room.app(key), index, false);
+    let road = target.translation - Vec3::Y * (ITEM_BOX_HEIGHT - GRID_HEIGHT);
+    place(
+        room,
+        key,
+        Transform {
+            translation: road,
+            ..target
+        },
+    );
+}
+
+/// `key`'s kart 8 m back from where it is (off the boxes: they come back without giving again).
+fn back_off(room: &mut Room, key: PeerKey) {
+    let at = pose(room, key);
+    place(
+        room,
+        key,
+        Transform {
+            translation: at.translation - *at.forward() * 8.0,
+            ..at
+        },
+    );
+}
+
+/// Issue #102 point 1, online: a box spins its roulette for 90 ticks (about 1.5 s) before its
+/// item can be used, on the screen of its kart's peer, the host's (Ana) as a guest's (Bob): the
+/// host's verdict comes during the roulette, which goes on. Bob's hand: his item button pressed
+/// meanwhile sends nothing. Ana's reserve (a pelote ready in her hand): she throws the pelote, the
+/// reserve's roulette moves into her hand and goes on. Then an oreiller géant the host refuses
+/// (too early in the race): the other draw spins on in Bob's hand, while he drops the pelure he
+/// was dragging. Every item ready 90 ticks after its box, not one tick before.
+#[test]
+fn a_box_online_spins_its_roulette_before_its_item_can_be_used() {
+    let mut room = racing();
+    give(&mut room, ANA, ItemKind::Pelote, 1);
+    // Across the road from each other: Bob on box 0, Ana on box 3.
+    onto_box(&mut room, BOB, 0);
+    onto_box(&mut room, ANA, 3);
+    room.frame();
+    let spinning = |room: &Room, key: PeerKey| {
+        let slots = slots(room, key);
+        [slots.hand, slots.reserve].map(|slot| match slot {
+            Slot::Spinning { ticks, .. } => Some(ticks),
+            _ => None,
+        })
+    };
+    assert_eq!(spinning(&room, BOB), [Some(90), None], "Bob's hand");
+    assert_eq!(spinning(&room, ANA), [None, Some(90)], "Ana's reserve");
+    for key in [ANA, BOB] {
+        back_off(&mut room, key);
+    }
+    let mut granted = None;
+    for tick in 1..=90u32 {
+        // Bob presses his button every other frame; Ana throws her pelote on the 20th.
+        hold_item(&mut room, BOB, tick % 2 == 1);
+        hold_item(&mut room, ANA, tick == 20);
+        room.frame();
+        let left = (tick < 90).then_some(90 - tick);
+        assert_eq!(spinning(&room, BOB), [left, None], "Bob, tick {tick}");
+        let ana = spinning(&room, ANA);
+        if tick < 20 {
+            assert_eq!(ana, [None, left], "Ana, tick {tick}");
+        } else {
+            assert_eq!(ana, [left, None], "Ana, tick {tick}: her reserve moved in");
+        }
+        if granted.is_none()
+            && [ANA, BOB]
+                .iter()
+                .all(|key| items(room.view(*key)).arbiter.grants().len() == 2)
+        {
+            granted = Some(tick);
+        }
+    }
+    assert!(
+        granted.is_some_and(|tick| tick < 30),
+        "the verdicts came during the roulettes: {granted:?}"
+    );
+    assert_eq!(
+        stats(&room, BOB).used,
+        0,
+        "nothing came out of Bob's roulette"
+    );
+    assert_eq!(stats(&room, ANA).used, 1, "Ana's pelote");
+    for key in [ANA, BOB] {
+        assert!(
+            matches!(slots(&room, key).hand, Slot::Ready { .. }),
+            "{key:?}"
+        );
+        // Only Ana's pelote went to the other screen.
+        let thrown: Vec<ItemId> = items(room.view(key)).objects().map(|(_, id)| id).collect();
+        assert!(thrown.len() <= 1, "{key:?}: {thrown:?}");
+        assert!(
+            thrown.iter().all(|id| id.owner == id_of(room.view(ANA))),
+            "{key:?}"
+        );
+    }
+    hold_item(&mut room, ANA, false);
+
+    // An oreiller géant drawn (a table of nearly only oreillers), refused by the host: none
+    // before 60 s of race. Bob drags a pelure into box 1 meanwhile.
+    let table =
+        ItemTable::from_ron("(rows: [(from: 0.0, items: [(OreillerGeant, 99), (Pelure, 1)])])")
+            .unwrap();
+    for key in [ANA, BOB] {
+        let world = room.app(key).world_mut();
+        world.insert_resource(OnlineItemTable(table.clone()));
+        world.resource_mut::<ItemTuning>().oreiller_min_race_time = 60.0;
+    }
+    give(&mut room, BOB, ItemKind::Pelure, 1);
+    hold_item(&mut room, BOB, true);
+    room.frame();
+    assert_eq!(slots(&room, BOB).dragging, Some(ItemKind::Pelure));
+    onto_box(&mut room, BOB, 1);
+    room.frame();
+    let bob = slots(&room, BOB);
+    assert!(
+        matches!(
+            bob.hand,
+            Slot::Spinning {
+                item: ItemKind::OreillerGeant,
+                ticks: 90,
+                ..
+            }
+        ),
+        "{bob:?}"
+    );
+    back_off(&mut room, BOB);
+    for tick in 1..=90u32 {
+        hold_item(&mut room, BOB, tick < 30);
+        room.frame();
+        let bob = slots(&room, BOB);
+        assert_eq!(bob.dragging.is_some(), tick < 30, "tick {tick}");
+        if tick < 90 {
+            let Slot::Spinning { item, ticks, .. } = bob.hand else {
+                panic!("tick {tick}: {bob:?}");
+            };
+            assert_eq!(ticks, 90 - tick, "the roulette goes on");
+            if tick > 30 {
+                assert_eq!(
+                    item,
+                    ItemKind::Pelure,
+                    "tick {tick}: refused, the other draw"
+                );
+            }
+        } else {
+            assert_eq!(
+                bob.hand,
+                Slot::Ready {
+                    item: ItemKind::Pelure,
+                    count: 1
+                }
+            );
+        }
+    }
+    assert_eq!(items(room.view(BOB)).log.refused.len(), 1);
+    assert_eq!(stats(&room, BOB).used, 1, "the pelure he dragged");
+}
+
 /// Issue #53 acceptance: Ana throws a pelote at Bob, 12 m ahead. It rolls at the same place on
 /// both screens (the same position at the same common tick); Bob's game decides that it hits
 /// his kart (a tumble), tells everyone: the pelote is gone on both screens, Ana counts her hit.

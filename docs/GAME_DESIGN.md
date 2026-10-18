@@ -158,6 +158,7 @@ D'après MK8DX :
 Toutes les valeurs sont dans la Resource `ItemTuning` (panneau d'admin), la table de distribution dans `assets/data/items.ron`.
 
 - **Boîtes** : un kart qui touche une boîte la casse et tire un objet par emplacement libre (deux pour une double boîte). Les deux emplacements pris, la boîte casse sans rien donner (MK8DX). Elle revient 2 s plus tard. Un kart transporté par le pélican ou arrivé ne prend rien.
+- **Roulette** : chaque objet d'une boîte tourne 1,5 s (`roulette_time`, 90 ticks) dans son emplacement avant de servir, partout : la main ou la réserve, une double boîte, une boîte prise en traînant une pelure ou avec un « x3 » sorti, et en ligne chez l'hôte comme chez un invité (le kart prend la boîte tout de suite chez lui, le verdict de l'hôte arrive pendant la roulette, qui continue ; un oreiller géant refusé devient l'autre tirage, sa roulette continue). Vérifié par des tests pour chaque cas (#102). Seuls arrivent prêts ce qui ne sort pas d'une boîte : l'objet volé par la pie voleuse (plus bas), les 3 piments du contre-la-montre (§ 1) et la touche de debug I.
 - **Tirage** : décidé au moment de la boîte, selon la distance au leader à cet instant ; déterministe (graine de course, place de grille, nombre de tirages du kart).
 - **Utiliser** (bouton Objet) : à l'appui. Une **pelure** ou une **pelote** seule sort derrière le kart tant qu'on maintient le bouton, et part au relâchement. Une fois sortie, elle libère son emplacement : la réserve passe en main et on peut prendre une boîte en la traînant (MK8DX). Un **« x3 »** de pelures, pelotes ou abeilles sort au premier appui : les pelures en file derrière le kart, les pelotes et les abeilles en tournant autour. Il reste en main, et chaque appui suivant en lâche ou en lance une. Un **piment x3**, c'est trois appuis, trois boosts.
 - **Lancer derrière** : Objet avec la direction arrière, Bas/S (le frein) ou C (regarder derrière). À la manette, B ou X/Y. Une pelure est toujours posée derrière : le clavier n'a pas de touche « vers l'avant » libre, puisque Haut accélère.
@@ -203,6 +204,17 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots da
 - **Bots** (`BotSkill::item_delay` avant tout objet) : le piment doré en ligne droite, puis un boost après l'autre ; la bombe sur un kart devant entre 7 et 24 m, ou posée devant un kart qui suit ; la chantilly, le dégonflage et l'oreiller géant dès qu'un kart est devant au classement (le leader garde son oreiller) ; le super câlin avec un kart à moins de 12 m ou en ligne droite ; la fusée dès qu'elle est prête ; le klaxon-canard quand l'objet d'un autre arrive à moins de 9 m.
 - **En ligne** (#18 puis #61) : tous les objets, avec la table solo. La victime décide toujours pour son kart. La chantilly et le dégonflage suivent le classement de leur lanceur au moment où il les utilise (le même rang pour un kart sur tous les écrans). Les règles de l'oreiller géant (pas avant 20 s, un seul à la fois, 30 s entre deux) sont celles de l'hôte, sur l'horloge commune : un oreiller refusé devient le même tirage sans lui, comme en solo ; l'oreiller vise le leader du classement de son lanceur.
 - **Debug** : la touche **I** met dans la main du joueur l'objet suivant de la liste (tous les objets, « x3 » compris), prêt à servir ; le panneau d'admin (P) a un menu « Donner un objet ». En ligne, seulement dans une version de développement (`cargo run`, `trunk serve`), et seulement les objets qui marchent en ligne (tous depuis #61).
+
+### La roulette à l'écran (#102)
+
+« Quand on prend une case cadeau il doit y avoir un petit temps où ça passe tous les cadeaux avant d'en choisir un » (Max). La roulette des règles ne change pas (1,5 s, le tirage déterministe de la graine de course) ; la case du HUD la montre **comme une machine à sous** :
+
+- **les cadeaux défilent** dans la case, en glissant de haut en bas, environ **12 par seconde** (`ItemTuning::roulette_scroll_speed`, à régler) ;
+- **puis le défilement ralentit** pendant les **0,7 dernière seconde** (`roulette_slowdown`, à régler) et **s'arrête sur l'objet tiré** au tick où il devient utilisable (la vitesse est ajustée pour tomber pile dessus : 14 cadeaux passent avec les valeurs par défaut, le dernier entre en un tiers de seconde) ;
+- **le « ding »** : à l'arrêt, la case s'écrase puis rebondit comme de la gelée (moins d'une demi-seconde, l'animation molle de la charte), un anneau Mangue en jaillit et sa fenêtre s'éclaire ; pendant la roulette, sa fenêtre est plus sombre et son bord s'allume en Mangue un cadeau sur deux ;
+- **les sons** : un tic par cadeau qui passe, un « ding » à l'arrêt, seulement pour son propre kart (synthétisés en attendant #103 : `audio::RouletteSounds`) ;
+- **ce qui défile ne dit rien de l'objet tiré** : c'est une bande des 16 objets, toujours dans le même ordre (deux voisins ne se ressemblent jamais), qui part d'un endroit tiré du tick où la roulette a commencé ; seule sa fin est l'objet tiré. La réserve d'une double boîte tourne avec la main, une demi-bande plus loin ;
+- **des cases plus grandes** pour lire en défilant : la main 92 px (au lieu de 76), la réserve 60 (au lieu de 50), les icônes 20 % plus grandes dans la main. Les vrais visuels des objets viendront avec #106.
 
 ### Notre implémentation (phase 3, #21)
 
@@ -395,7 +407,8 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 - **coup de patte** (§ 15) : la patte se lève dès l'appui ; à l'impact, un « pof » cartoon (petite étoile), le mini-ragdoll et le cri de la cible, un léger tremblement d'écran et une vibration chez la victime ;
 - **attrape** : un bras élastique tendu entre les deux karts, qui s'étire avec la distance et revient en « boing » au lâcher ; le personnage attrapé se retourne, outré ;
 - **coup ou attrape dans le vide** : le personnage se penche trop hors du kart et mouline des bras ;
-- un témoin de recharge du bouton Interaction dans le HUD (une patte qui se remplit).
+- un témoin de recharge du bouton Interaction dans le HUD (une patte qui se remplit) ;
+- **la roulette des objets** (§ 8, #102) : les cadeaux défilent dans la case comme sur une machine à sous, ralentissent, s'arrêtent sur l'objet tiré avec un « ding » (la case s'écrase et rebondit, un anneau en jaillit), un tic par cadeau qui passe.
 
 **Lisibilité** : couleurs vives, silhouettes claires. Les objets dangereux se reconnaissent instantanément.
 

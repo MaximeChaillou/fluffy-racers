@@ -31,7 +31,7 @@ use super::tuning::InteractionTuning;
 use crate::camera::CameraShake;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{DriverVisual, KartBodyPivot, PlayerKart};
-use crate::ui::HudRoot;
+use crate::ui::{HudRoot, SLOT_SIZES, SLOTS_TOP};
 
 /// The arm's radius and the paw's (m).
 const ARM_RADIUS: f32 = 0.07;
@@ -434,7 +434,8 @@ fn spawn_gauge(mut commands: Commands, hud: Query<Entity, With<HudRoot>>) {
             Node {
                 position_type: PositionType::Absolute,
                 left: px(30),
-                top: px(112),
+                // 12 px under the hand's slot (issue #102: bigger).
+                top: px(SLOTS_TOP + SLOT_SIZES[0] + 12.0),
                 width: px(GAUGE_SIZE),
                 height: px(GAUGE_SIZE),
                 border: UiRect::all(px(3)),
