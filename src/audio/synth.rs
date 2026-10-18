@@ -129,11 +129,19 @@ impl Decodable for Blip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::{CROQUETTE_LOST, CROQUETTE_POP, ROULETTE_STOP, ROULETTE_TICK};
+    use crate::audio::{CROQUETTE_LOST, CROQUETTE_POP};
 
+    /// Issue #103: the roulette's two blips of #102 are files now (`audio::catalog`): the
+    /// croquettes' remain, and a tick-like one checks the shortest blips too.
     #[test]
     fn a_blip_is_short_bounded_and_silent_at_both_ends() {
-        for blip in [CROQUETTE_POP, CROQUETTE_LOST, ROULETTE_TICK, ROULETTE_STOP] {
+        let tick = Blip {
+            from_hz: 2400.0,
+            to_hz: 1900.0,
+            duration: 0.025,
+            volume: 0.22,
+        };
+        for blip in [CROQUETTE_POP, CROQUETTE_LOST, tick] {
             let samples: Vec<f32> = BlipDecoder::new(blip).collect();
             assert_eq!(samples.len(), blip.len());
             assert_eq!(

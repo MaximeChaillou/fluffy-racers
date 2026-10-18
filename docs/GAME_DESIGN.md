@@ -212,7 +212,7 @@ Toutes les valeurs sont dans `ItemTuning` (panneau d'admin) ; celles des bots da
 - **les cadeaux défilent** dans la case, en glissant de haut en bas, environ **12 par seconde** (`ItemTuning::roulette_scroll_speed`, à régler) ;
 - **puis le défilement ralentit** pendant les **0,7 dernière seconde** (`roulette_slowdown`, à régler) et **s'arrête sur l'objet tiré** au tick où il devient utilisable (la vitesse est ajustée pour tomber pile dessus : 14 cadeaux passent avec les valeurs par défaut, le dernier entre en un tiers de seconde) ;
 - **le « ding »** : à l'arrêt, la case s'écrase puis rebondit comme de la gelée (moins d'une demi-seconde, l'animation molle de la charte), un anneau Mangue en jaillit et sa fenêtre s'éclaire ; pendant la roulette, sa fenêtre est plus sombre et son bord s'allume en Mangue un cadeau sur deux ;
-- **les sons** : un tic par cadeau qui passe, un « ding » à l'arrêt, seulement pour son propre kart (synthétisés en attendant #103 : `audio::RouletteSounds`) ;
+- **les sons** : un tic par cadeau qui passe, un « ding » à l'arrêt, seulement pour son propre kart (depuis #103 : deux sons de l'Interface Sounds de Kenney, voir § 14) ;
 - **ce qui défile ne dit rien de l'objet tiré** : c'est une bande des 16 objets, toujours dans le même ordre (deux voisins ne se ressemblent jamais), qui part d'un endroit tiré du tick où la roulette a commencé ; seule sa fin est l'objet tiré. La réserve d'une double boîte tourne avec la main, une demi-bande plus loin ;
 - **des cases plus grandes** pour lire en défilant : la main 92 px (au lieu de 76), la réserve 60 (au lieu de 50), les icônes 20 % plus grandes dans la main. Les vrais visuels des objets viendront avec #106.
 
@@ -412,6 +412,26 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 
 **Lisibilité** : couleurs vives, silhouettes claires. Les objets dangereux se reconnaissent instantanément.
 
+### Le son (#103)
+
+« Rendre plus vivant » (Max). Chaque mécanique a son son, et chaque animal sa voix. Les fichiers viennent des packs CC0 de Kenney (`assets/audio/`, crédités dans `assets/CREDITS.md`) ; ce qu'aucun pack n'a est **synthétisé** au lancement du jeu, donc original : le moteur, le crissement, le vent, les « fwoosh », le compte à rebours, le « boing », la glissade du sifflet, le coin-coin du klaxon et les cris des animaux. Aucun son de jeu de kart ni de marque.
+
+- **Le moteur** : un son continu par kart, dont la **hauteur suit le régime** : au ralenti, il ronronne (vitesse de lecture 0,55) ; à la vitesse max, il chante (1,45) ; l'accélérateur ajoute 0,1, un boost 0,2 ; en l'air, il s'emballe avec l'accélérateur ; calé, il tombe bas et faible ; sous l'eau, il est étouffé (plus bas, plus faible). Son volume monte avec la charge. Celui du joueur est **devant** ; les autres viennent de leur kart (spatialisés : la caméra écoute), **les plus proches seulement** : 5 moteurs au plus, le joueur compris (à régler).
+- **Le dérapage** : le crissement tant qu'il dure (le joueur et les 2 karts les plus proches, à régler), un peu plus aigu à chaque palier ; **un carillon à chaque palier**, plus haut à chaque fois (bleu, orange, violet) ; au relâchement, le « fwoosh » du mini-turbo, plus long et plus brillant pour un palier plus haut.
+- **Les boosts** : chacun sa source (GD § 2 : un seul système, le son le reconnaît à ce qui vient de se passer) : piment (et chaque appui du piment doré), plot de boost, départ fusée, boost d'une figure, aspiration (le souffle du sillage), spin boost de l'anti-gravité. Le mini-boost d'une croquette garde son « pop ».
+- **Le départ et l'arrivée** : un bip pour 3, 2 et 1, un « GO » plus aigu et plus long ; le moteur qui crache et cale (départ trop tôt) ; un jingle au **dernier tour** ; à l'arrivée, un jingle de **victoire** sur le podium (avec le cri de joie de son animal), de **consolation** après.
+- **La boîte cadeau** éclate ; la roulette (§ 8, #102) fait un tic par cadeau et un « ding » à l'arrêt.
+- **Les objets** : la pelure posée (« splotch »), la pelote lancée et qui rebondit, l'abeille qui bourdonne, la bombe lancée et son explosion, la chantilly qui gicle (et la crème sur l'écran du joueur), le super câlin, la fusée, le « pfff » de chaque kart dégonflé, l'oreiller qui part et qui tombe, le klaxon-canard (un coin-coin), la pie voleuse (invisible, puis son vol), la piñata qui éclate, chaque lancer du boomerang-os, deux objets qui se cassent l'un sur l'autre.
+- **Les coups et les chocs** : le « pof » de la patte, l'attrape, le « boing » du bras élastique au lâcher, le coup dans le vide (un « fouit ») ; le choc entre karts (plus fort s'il est violent), le muret (une perte de vitesse d'au moins 5 m/s en un tick, à régler) ; la chute (un sifflet qui descend) puis le pélican (son cri) ; le tête-à-queue (un « wiii » qui tourne) et la culbute.
+- **Les environnements** : le planeur qui s'ouvre et son vent, le plongeon et la sortie de l'eau (une gerbe), l'herbe et le sable hors-piste (un grondement), l'atterrissage après 0,35 s en l'air (à régler).
+- **Les cris** : chaque animal a **sa voix** (le poussin pépie, le pingouin cancane, le perroquet criaille, le chat miaule, le lapin couine, le renard jappe, le cochon grogne, la vache meugle, l'éléphant barrit), et chaque humeur sa mélodie : **touché** (un « ouin » qui tombe : un objet, une patte, une chute), **figure** (un « youpi » qui monte), **effort** (un « hop » court : il frappe), **victoire** (sur le podium). Deux karts du même animal n'ont pas tout à fait la même voix ; un kart ne crie pas plus d'une fois toutes les 0,8 s (à régler).
+- **Les écrans** : le survol (le focus qui bouge), une valeur qui change, la validation, le retour.
+- **Le salon** (§ 15, #101) : les pas sur la pelouse, le saut et l'atterrissage, la patte, la culbute (un « pof » et un cri).
+- **Les volumes** : dans les options, le **volume général**, celui des **effets** et celui de la **musique** (#104), de 0 à 100 % par pas de 10 (80 % par défaut), gardés dans le navigateur. Un volume agit comme son carré (50 % : environ deux fois moins fort à l'oreille). Dans le panneau d'admin (`SoundTuning`) : le volume de chaque famille (moteurs, conduite, objets, coups, course, cris, écrans, environnements), la portée (pleine voix à 7 m, puis comme le carré de la distance, plus rien au-delà de 70 m), **16 sons brefs à la fois au plus** (un nouveau prend la place du plus lointain, ou n'est pas joué : ceux du joueur et des écrans d'abord), les moteurs et les crissements à la fois, et la réponse du moteur.
+- **Derrière l'écran d'accueil**, la course du fond ne fait aucun bruit sauf ses moteurs, plus bas (35 %).
+- **Sur le web**, le son ne sort qu'après le premier clic ou la première touche (règle des navigateurs) : rien ne casse avant.
+- **Pas encore fait** : un vrai son étouffé sous l'eau (un filtre ; aujourd'hui le moteur est seulement plus bas et plus faible), la vibration de la manette, les sons de ce qui arrive aux karts des autres joueurs en ligne au-delà de ce que leur état montre (leurs boosts sont entendus comme des plots), la musique (#104).
+
 **Les écrans** (menus, salon, choix du kart, pause, résultats) suivent la charte graphique de #56 : **`docs/UI_CHARTE.md`**. Des formes rondes et des couleurs de bonbons, la police Fredoka (avec les accents), des boutons qui rebondissent et s'écrasent au clic, la même navigation au clavier, à la souris et à la manette, des textes courts avec un brin d'humour. Depuis #100 : les options, la pause, le classement d'une course (la ligne du joueur en Mangue, les places sur des pastilles or, argent, bronze), le classement général et le podium du championnat, et **le HUD en Fredoka** (les mêmes tailles, une ombre Myrtille sous chaque texte pour rester lisible sur le ciel comme sur la route). Seul le salon reste une fenêtre egui (#101).
 
 ## 15. Interactions entre karts
@@ -517,7 +537,8 @@ Toutes les valeurs sont dans la Resource `InteractionTuning` (panneau d'admin) ;
 - **Ressenti** :
   - fait : le bras (capsule) et la patte qui se lève dès l'appui, frappe, s'étire pendant l'attrape (l'élastique) et revient en « boing » ; le « pof » (losange jaune) ; le personnage qui se penche en moulinant ou se retourne vers son attrapeur ; un léger tremblement d'écran pour le joueur frappé ; la jauge de recharge dans le HUD ;
   - le mini-ragdoll (#12) : le pilote frappé ou touché par un objet ballotte environ 1 s (la tête jetée vers la patte, puis des ressorts plus mous), visuel seulement ;
-  - pas encore fait : le cri, la vibration de la manette et les sons.
+  - les sons et le cri (#103, § 14 « Le son ») : le « pof », le cri de la cible et l'effort du frappeur, l'attrape, le « boing » du bras qui revient ;
+  - pas encore fait : la vibration de la manette.
 - **Sans interactions** : `InteractionTuning::enabled` les coupe. Les tests de conduite des bots tournent ainsi.
 
 ### À pied, dans le salon (#101)

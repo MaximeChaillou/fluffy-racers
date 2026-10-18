@@ -1,21 +1,47 @@
-//! Sounds. No sound file yet (assets come with issue #11): the few sounds are synthesized
-//! ([`Blip`], a short sine sweep with an envelope), so they weigh nothing and owe nothing to
-//! anybody.
+//! Sounds (GD § 14, issue #103: the sound design).
 //!
-//! - Croquettes (GD § 7 and 14, issue #14): a bright rising "pop" when the local player picks
-//!   one up, a little higher with each croquette held; a falling "bloop" when it loses some.
-//! - The roulette of the item slots (GD § 8, issue #102): a short tick for each item that passes
-//!   in the slot, a bright "ding" when it stops ([`RouletteSounds`], played by the reel of the
-//!   HUD, `ui::RoulettePlugin`). Synthesized until the sounds of #103: to replace them, change
-//!   [`RouletteSounds`] and [`play_roulette`], nothing else.
+//! - **The croquettes** (GD § 7 and 14, issue #14): a bright rising "pop" when the local player
+//!   picks one up, a little higher with each croquette held; a falling "bloop" when it loses
+//!   some. Synthesized ([`Blip`], a short sine sweep with an envelope): [`SoundPlugin`], headless
+//!   too (the bot races' world has had it since #14: it stays as it is).
+//! - **Everything else** (issue #103): the engines, the drift, the boosts, the start and the
+//!   finish, the boxes and the roulette (GD § 8, issue #102: [`RouletteSounds`] and
+//!   [`play_roulette`]), each item, the hits and shocks, the environments, the animals' cries,
+//!   the screens and the lobby on foot: [`SoundDesignPlugin`] (`design.rs`), **only with a
+//!   renderer**. Its clips are files of Kenney's CC0 packs (`assets/audio/`, `catalog::FILES`)
+//!   and syntheses rendered when the game starts (`dsp.rs`: the engine, the cries, the whooshes
+//!   are original); what plays what is `catalog.rs`, the mixer's rules `mixer.rs`, what a kart's
+//!   tick sounds like `cues.rs`, the admin panel's mix `tuning.rs` ([`SoundTuning`]).
 //!
 //! The sounds play only with Bevy's `AudioPlugin` (the game, not the headless tests: there the
-//! players are spawned all the same, which the tests check, but nothing plays them). On the
-//! web, the browser only lets sound out after a first click or key press in the page.
+//! sounds are entities all the same, a [`SoundEffect`] each, which the tests check, but nothing
+//! plays them). On the web, the browser only lets sound out after a first click or key press in
+//! the page.
 
+mod catalog;
+mod cues;
+mod design;
+mod dsp;
+mod mixer;
 mod synth;
+mod tuning;
 
+#[cfg(test)]
+mod scenario_tests;
+
+pub use catalog::{Animal, Clip, FILES, Family, Mood, SoundEffect, base_volume, cry};
+pub use cues::{Cues, KartSnapshot, TickEvents, kart_cues};
+pub use design::{
+    Cue, KartSounds, LoopVoice, MixerStats, SoundBank, SoundDesignPlugin, SoundDesignSystems,
+    SoundOutput, Voice, mix, sound_level,
+};
+pub use dsp::{
+    ENGINE_HZ, LoopKind, LoopSound, Noise, SQUEAL_HZ, Synth, SynthSound, Tone, Voice as CryVoice,
+    Wave, render,
+};
+pub use mixer::{Admission, Revs, admit, engine_note, nearest, option_gain, priority};
 pub use synth::{Blip, BlipDecoder, SAMPLE_RATE, blip_sample};
+pub use tuning::SoundTuning;
 
 use bevy::audio::{AddAudioSource, AudioPlugin, PlaybackSettings, Volume};
 use bevy::prelude::*;
@@ -55,64 +81,20 @@ pub fn pop_pitch(count: u8) -> f32 {
     1.0 + POP_RISE_PER_CROQUETTE * count.saturating_sub(1) as f32
 }
 
-/// Issue #102: the roulette's tick, one per item that passes in the slot: a short, high click.
-pub const ROULETTE_TICK: Blip = Blip {
-    from_hz: 2400.0,
-    to_hz: 1900.0,
-    duration: 0.025,
-    volume: 0.22,
-};
-
-/// Issue #102: the roulette stops on its item: a bright "ding", rising a little.
-pub const ROULETTE_STOP: Blip = Blip {
-    from_hz: 1320.0,
-    to_hz: 1480.0,
-    duration: 0.3,
-    volume: 0.45,
-};
-
-/// A sound being played (despawned when it ends).
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SoundEffect {
-    CroquettePop,
-    CroquettesLost,
-    /// Issue #102: an item passes in the roulette...
-    RouletteTick,
-    /// ...and it stops.
-    RouletteStop,
-}
-
-/// Issue #102: the roulette's sounds, a tick and its stop. Only with the reel of the HUD
-/// (`ui::RoulettePlugin`, with a renderer): the headless world has no such resource. The sounds
-/// of #103 replace these two handles (and [`play_roulette`]).
-#[derive(Resource, Clone)]
-pub struct RouletteSounds {
-    pub tick: Handle<Blip>,
-    pub stop: Handle<Blip>,
-}
-
-impl RouletteSounds {
-    pub fn new(blips: &mut Assets<Blip>) -> Self {
-        Self {
-            tick: blips.add(ROULETTE_TICK),
-            stop: blips.add(ROULETTE_STOP),
-        }
-    }
-}
+/// Issue #102: the roulette plays its sounds (a tick, its stop). Only with the reel of the HUD
+/// (`ui::RoulettePlugin`, with a renderer): the headless world has no such resource. Since #103,
+/// they are files of Kenney's Interface Sounds (`catalog`: [`SoundEffect::RouletteTick`],
+/// [`SoundEffect::RouletteStop`]), played by the mixer of [`SoundDesignPlugin`] like every
+/// other sound (its volumes, its cap).
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct RouletteSounds;
 
 /// Plays a sound of the roulette: [`SoundEffect::RouletteTick`] or [`SoundEffect::RouletteStop`]
-/// (the others are not the roulette's: nothing).
-pub fn play_roulette(commands: &mut Commands, sounds: &RouletteSounds, sound: SoundEffect) {
-    let handle = match sound {
-        SoundEffect::RouletteTick => &sounds.tick,
-        SoundEffect::RouletteStop => &sounds.stop,
-        _ => return,
-    };
-    commands.spawn((
-        sound,
-        AudioPlayer::<Blip>(handle.clone()),
-        PlaybackSettings::DESPAWN,
-    ));
+/// (the others are not the roulette's: nothing). The player's own: in front.
+pub fn play_roulette(commands: &mut Commands, _sounds: &RouletteSounds, sound: SoundEffect) {
+    if matches!(sound, SoundEffect::RouletteTick | SoundEffect::RouletteStop) {
+        commands.spawn((sound, Cue::front(None)));
+    }
 }
 
 pub struct SoundPlugin;
