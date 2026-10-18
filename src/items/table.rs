@@ -1,8 +1,9 @@
 //! The items and their distribution (GD § 8, issues #16 and #18): pure logic, no ECS.
 //! Unit-tested.
 //!
-//! - [`ItemKind`]: the items a kart can hold and use: those of phase 1 (pelure, pelote de laine,
-//!   abeille, piment, croquette dorée, issue #16), of phase 2 (issue #18: piment doré, bombe à
+//! - [`ItemKind`]: the items a kart can hold and use: those of phase 1 (pelure, shown as the
+//!   Cac's since issue #137, [`CACS`]; pelote de laine, abeille, piment, croquette dorée, issue
+//!   #16), of phase 2 (issue #18: piment doré, bombe à
 //!   confettis, chantilly, super câlin, fusée à confettis, dégonflage, oreiller géant,
 //!   klaxon-canard) and of phase 3 (issue #21: pie voleuse, piñata, boomerang-os).
 //! - [`Prize`]: what a box can give, as written in the distribution table: an item, alone or by
@@ -24,10 +25,17 @@ use serde::Deserialize;
 /// The distribution table of the game (GD § 8), compiled into the game.
 pub const ITEMS_RON: &str = include_str!("../../assets/data/items.ron");
 
+/// The ground trap's name on screen (issue #137, Max: « Appel l'objet "Cac's" »), its
+/// apostrophe straight: Fredoka draws it (`ui::format::writable`), egui too.
+pub const CACS: &str = "Cac's";
+
 /// An item a kart can hold, use, throw or drop (GD § 8, phases 1 to 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ItemKind {
-    /// Trap on the ground: spin out. Dragged behind as a shield.
+    /// Trap on the ground: spin out. Dragged behind as a shield. Shown as the **Cac's** since
+    /// issue #137 (a brown swirl, Max's name for it; #132's clementine peel and #106's banana
+    /// peel before it): « pelure » stays its name in the code (its tuning `ItemTuning::pelure_*`,
+    /// kept by name in the admin panel's storage, the table file `assets/data/items.ron`).
     Pelure,
     /// Pelote de laine: rolls straight, bounces off the walls: tumble. Dragged as a shield; the
     /// "x3" turns around the kart.
@@ -122,7 +130,7 @@ impl ItemKind {
     /// Its name in the HUD and the logs (ASCII: the HUD font has no accents).
     pub fn label(self) -> &'static str {
         match self {
-            Self::Pelure => "Pelure",
+            Self::Pelure => CACS,
             Self::Pelote => "Pelote",
             Self::Abeille => "Abeille",
             Self::Piment => "Piment",
@@ -144,7 +152,7 @@ impl ItemKind {
     /// Its name with the accents (egui has them: the admin panel).
     pub fn name(self) -> &'static str {
         match self {
-            Self::Pelure => "Pelure",
+            Self::Pelure => CACS,
             Self::Pelote => "Pelote de laine",
             Self::Abeille => "Abeille",
             Self::Piment => "Piment",
@@ -643,6 +651,28 @@ mod tests {
         assert!(ItemKind::Boomerang.is_object() && !ItemKind::Boomerang.deploys());
         assert!(ItemKind::Pinata.deploys() && !ItemKind::Pinata.is_object());
         assert!(!ItemKind::PieVoleuse.is_object());
+    }
+
+    /// Issue #137: the ground trap is the Cac's everywhere its name is shown (the HUD's logs, the
+    /// admin panel, its « x3 »), its apostrophe straight; every item's name can be written in
+    /// the HUD's font (Fredoka).
+    #[test]
+    fn the_ground_trap_is_called_cacs() {
+        assert_eq!(ItemKind::Pelure.label(), "Cac's");
+        assert_eq!(ItemKind::Pelure.name(), "Cac's");
+        assert_eq!(Prize::Pelure.name(), "Cac's");
+        assert_eq!(Prize::PelureX3.name(), "Cac's x3");
+        for item in ItemKind::ALL {
+            assert!(item.label().is_ascii(), "{item:?}");
+            for name in [item.label(), item.name()] {
+                assert!(name.chars().all(crate::ui::format::writable), "{name}");
+            }
+        }
+        for prize in Prize::ALL {
+            let name = prize.name();
+            assert!(name.chars().all(crate::ui::format::writable), "{name}");
+            assert!(!name.to_lowercase().contains("pelure"), "{name}");
+        }
     }
 
     /// The five items of phase 2 that did not play online until issue #61 (chantilly, super

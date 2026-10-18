@@ -13,7 +13,7 @@ use super::*;
 use crate::admin::skip_countdown_now;
 use crate::bots::Bot;
 use crate::interactions::{KartGrabbed, StrikeAnswer, TetherEnd, TetherEnded};
-use crate::items::{GiveItem, ItemHit, ItemKind, ItemStats, Prize};
+use crate::items::{GiveItem, ItemHit, ItemKind, ItemObject, ItemStats, Motion, Prize};
 use crate::kart::{HitReaction, ITEM_KEYS, KartBump, KartState, MiniTurbo};
 use crate::options::{OPTIONS_KEY, PlayerOptions};
 use crate::race::{Course, Race, RaceProgress};
@@ -452,7 +452,7 @@ fn a_box_bursts_and_each_item_sounds() {
         "the player's own: in front"
     );
     for (prize, wanted) in [
-        (Prize::Pelure, SoundEffect::PeelDrop),
+        (Prize::Pelure, SoundEffect::Splotch),
         (Prize::Pelote, SoundEffect::Throw),
         (Prize::Abeille, SoundEffect::BeeBuzz),
         (Prize::Piment, SoundEffect::Piment),
@@ -600,6 +600,136 @@ fn hits_cry_and_the_pelican_squawks() {
     tap(&mut app, crate::kart::DEBUG_RESET_KEY);
     run(&mut app, 3);
     assert_eq!(asked(&app, SoundEffect::Pelican), 1, "{:?}", sounds(&app));
+}
+
+/// Issue #137: the Cac's « splotch »: as it lands on the track (from where it lies), and as a kart
+/// slides on it (from that kart, lower); the player's own in front. Not for another item.
+#[test]
+fn the_cacs_splotches_as_it_lands_and_under_a_kart() {
+    let (mut app, kart) = started(1);
+    let bot = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<Bot>>()
+            .single(world)
+            .unwrap()
+    };
+    let splotches = |app: &App| -> Vec<Cue> {
+        app.world()
+            .resource::<Asked>()
+            .0
+            .iter()
+            .filter(|(s, _)| *s == SoundEffect::Splotch)
+            .map(|(_, cue)| *cue)
+            .collect()
+    };
+    // The bot's Cac's lands on the road just ahead of the player's kart: heard from there.
+    let ahead = {
+        let transform = app.world().get::<Transform>(kart).unwrap();
+        transform.translation + transform.forward() * 6.0
+    };
+    app.world_mut().spawn((
+        Transform::from_translation(ahead),
+        ItemObject::new(ItemKind::Pelure, bot, Motion::Ground, ahead, Vec3::ZERO),
+    ));
+    run(&mut app, 2);
+    let landed = splotches(&app);
+    assert_eq!(landed.len(), 1, "{:?}", sounds(&app));
+    assert!(!landed[0].foreground && landed[0].kart == Some(bot));
+    assert!(landed[0].at.distance(ahead) < 1.5, "{:?}", landed[0]);
+    assert_eq!(landed[0].speed, 1.0);
+    // The player drives over it: it spins out, and its « splotch » is in front, lower.
+    forget(&mut app);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    for _ in 0..240 {
+        app.update();
+        if app.world().get::<KartState>(kart).unwrap().is_hit() {
+            break;
+        }
+    }
+    hold_keys(&mut app, &[]);
+    run(&mut app, 2);
+    assert!(app.world().get::<KartState>(kart).unwrap().is_hit());
+    let slid = splotches(&app);
+    assert_eq!(slid.len(), 1, "{:?}", sounds(&app));
+    assert!(slid[0].foreground && slid[0].kart == Some(kart), "{slid:?}");
+    assert!(slid[0].speed < 1.0, "{slid:?}");
+    assert_eq!(asked(&app, SoundEffect::SpinOut), 1, "{:?}", sounds(&app));
+    // The bot hit by a Cac's: from where it is; by a pelote: no « splotch ».
+    run(&mut app, 300);
+    for (item, wanted) in [(ItemKind::Pelure, 1), (ItemKind::Pelote, 0)] {
+        forget(&mut app);
+        app.world_mut().write_message(ItemHit {
+            kart: bot,
+            by: kart,
+            item,
+            object: None,
+        });
+        run(&mut app, 3);
+        let heard = splotches(&app);
+        assert_eq!(heard.len(), wanted, "{item:?}: {:?}", sounds(&app));
+        assert!(
+            heard
+                .iter()
+                .all(|cue| !cue.foreground && cue.kart == Some(bot))
+        );
+        run(&mut app, 300);
+    }
+}
+
+/// Issue #137: the « splotch » is soft and wet: short, loud at once then dying (a hit, not a
+/// whoosh), low (its noise falls from the mids to the lows: fewer zero crossings in its second
+/// half than in its first, and few overall), lower and shorter than the water's splash.
+#[test]
+fn the_splotch_is_short_soft_and_falls() {
+    let mut samples = Vec::new();
+    let Clip::Synth(synth) = SoundEffect::Splotch.clip() else {
+        panic!("synthesized");
+    };
+    render(&synth, 0.9, &mut samples);
+    let rate = samples.len() as f32 / synth.duration();
+    assert!(
+        (0.15..0.4).contains(&synth.duration()),
+        "{}",
+        synth.duration()
+    );
+    let energy = |part: &[f32]| part.iter().map(|s| s * s).sum::<f32>();
+    let half = samples.len() / 2;
+    let (first, second) = (&samples[..half], &samples[half..]);
+    assert!(energy(first) > 6.0 * energy(second), "a hit, not a whoosh");
+    let peak_at = samples
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+        .map_or(0, |(i, _)| i);
+    assert!(
+        (peak_at as f32) < 0.15 * samples.len() as f32,
+        "loud at once: {peak_at}"
+    );
+    // Zero crossings a second: about twice its frequency.
+    let crossings = |part: &[f32]| {
+        part.windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count() as f32
+            * rate
+            / part.len() as f32
+    };
+    let (bright, dull) = (crossings(first), crossings(second));
+    assert!(dull < bright, "it falls: {bright} then {dull}");
+    assert!(
+        crossings(&samples) < 2500.0,
+        "soft: {}",
+        crossings(&samples)
+    );
+    let Clip::Synth(splash) = SoundEffect::Splash.clip() else {
+        panic!("synthesized");
+    };
+    assert!(synth.duration() < splash.duration());
+    if let (Synth::Noise(splotch), Synth::Noise(splash)) = (synth, splash) {
+        assert!(splotch.from_hz < splash.from_hz && splotch.to_hz < splash.to_hz);
+    } else {
+        panic!("two noises");
+    }
 }
 
 /// Issue #103 acceptance (GD § 14 and 15): a paw strike's « pof », the target's cry and the

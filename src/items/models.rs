@@ -11,8 +11,8 @@
 //!   ([`from_file`]), it takes the place of the built one, at its size and place.
 //!
 //! Each model is in the space of its item: +Y up, its front toward +Z, its unit the item's radius
-//! (`items::item_radius`), its origin the item's position (the ground is under it: at −0.5 for a
-//! pelure, at −1 for what rolls on it). The croquette's and the gift box's unit is the meter.
+//! (`items::item_radius`), its origin the item's position (the ground is under it: at −0.5 for the
+//! Cac's, at −1 for what rolls on it). The croquette's and the gift box's unit is the meter.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -116,9 +116,13 @@ pub const WING_REST: f32 = 0.35;
 
 /// The models' colors (sRGB): bright, candy-like, far from the decor's greens, greys and sands.
 mod color {
-    pub const PEEL: (f32, f32, f32) = (1.0, 0.56, 0.1);
-    pub const PEEL_PORE: (f32, f32, f32) = (0.95, 0.47, 0.07);
-    pub const PITH: (f32, f32, f32) = (1.0, 0.96, 0.88);
+    /// The Cac's (issue #137): a warm chocolate brown (reddish and saturated: never the grey
+    /// of a road, nor the pale sand or the dull brown of soils and trunks), darker in its
+    /// grooves, a glossy caramel sheen on top of its coils and a cream glint.
+    pub const CACS: (f32, f32, f32) = (0.55, 0.27, 0.09);
+    pub const CACS_DARK: (f32, f32, f32) = (0.36, 0.16, 0.05);
+    pub const CACS_SHINE: (f32, f32, f32) = (0.76, 0.45, 0.2);
+    pub const CACS_GLINT: (f32, f32, f32) = (1.0, 0.9, 0.74);
     pub const YARN: (f32, f32, f32) = (0.97, 0.36, 0.62);
     pub const YARN_DARK: (f32, f32, f32) = (0.78, 0.16, 0.45);
     pub const BEE: (f32, f32, f32) = (1.0, 0.8, 0.1);
@@ -214,7 +218,7 @@ pub fn model(look: Look) -> ItemModel {
 fn item_model(item: ItemKind) -> ItemModel {
     let body = |body| ItemModel { body, ..default() };
     match item {
-        ItemKind::Pelure => body(pelure()),
+        ItemKind::Pelure => body(cacs()),
         ItemKind::Pelote => body(pelote()),
         ItemKind::Abeille => abeille(),
         ItemKind::Piment => body(piment(c(color::CHILI), c(color::CHILI), c(color::STEM))),
@@ -233,149 +237,135 @@ fn item_model(item: ItemKind) -> ItemModel {
     }
 }
 
-/// The pelure (issue #132: ours, not the banana peel of the karting games of reference): a
-/// clementine peeled in one strip, the way one peels it in a spiral, dropped on the ground (at
-/// −0.5) where it lies coiled up loosely: orange outside, dimpled, its white pith inside; in the
-/// middle, the round cap from the top of the fruit where the peeling began, its little green
-/// calyx on it; its other end lies out on the ground, curling up.
-fn pelure() -> MeshData {
-    let (peel, pore, pith) = (c(color::PEEL), c(color::PEEL_PORE), c(color::PITH));
-    let rows = peel_rows();
-    let faces: Vec<(Vec3, Vec3)> = rows.iter().map(|row| (row.center, row.thin)).collect();
+/// The Cac's (issue #137, Max: « des crottes du style de l'emoji 💩 sans les yeux et la bouche » ;
+/// the ground trap, `ItemKind::Pelure` in the code): a soft brown swirl like a soft-serve ice
+/// cream on its ground (at −0.5), three coils stacked smaller and smaller, its tip curling over
+/// at the top; no face. A warm chocolate brown, darker in the grooves under its coils, a glossy
+/// caramel sheen on top of each one and a cream glint on its lit side: it stands out from the
+/// road's greys and from the soils, sands and trunks of the decor (see `color::CACS`). A core
+/// fills its middle (nothing to see through between the coils).
+fn cacs() -> MeshData {
+    let rings = cacs_rings();
     let mut mesh = MeshData::default();
-    peel_strip(&mut mesh, &rows, move |p| {
-        // Which face of the strip: the peel's (dimpled), or its pith's.
-        let (center, thin) = faces
-            .iter()
-            .min_by(|a, b| a.0.distance_squared(p).total_cmp(&b.0.distance_squared(p)))
-            .copied()
-            .unwrap_or((Vec3::ZERO, Vec3::Y));
-        if (p - center).dot(thin) > PEEL_HALF_THICK * 0.3 {
-            let dimple = (p.x * 31.0).sin() * (p.y * 29.0).sin() * (p.z * 37.0).sin() > 0.55;
-            if dimple { pore } else { peel }
-        } else {
-            pith
-        }
-    });
-    // The cap at its inner end, lying in the middle of the coil, tilted a little; on it, the
-    // calyx: a little green star.
-    let (end, out, _) = peel_line(1.0);
-    let cap = (end - out * 0.32).with_y(end.y + 0.03);
-    let tilt = Quat::from_axis_angle(out.cross(Vec3::Y), -0.25);
+    // Its round bottom, under the first coil, and its core up the middle.
     ellipsoid(
         &mut mesh,
-        at(cap, tilt),
-        Vec3::new(0.36, 0.085, 0.36),
-        Detail::new(16, 9),
-        move |p| if p.y > 0.02 { peel } else { pith },
+        Mat4::from_translation(Vec3::Y * -0.27),
+        Vec3::new(0.74, 0.23, 0.74),
+        Detail::new(18, 7),
+        |p| {
+            c(if p.y < -0.05 {
+                color::CACS_DARK
+            } else {
+                color::CACS
+            })
+        },
     );
-    for k in 0..5 {
-        let angle = TAU * k as f32 / 5.0;
-        let ray = Vec3::new(angle.cos(), 0.0, angle.sin());
-        ellipsoid(
-            &mut mesh,
-            at(
-                cap + tilt * (Vec3::Y * 0.085 + ray * 0.06),
-                tilt * Quat::from_rotation_y(-angle),
-            ),
-            Vec3::new(0.08, 0.025, 0.035),
-            TINY,
-            solid(c(color::STEM)),
-        );
-    }
+    tube(
+        &mut mesh,
+        Mat4::IDENTITY,
+        &cone_rings(Vec3::new(0.0, -0.3, 0.0), 0.95, 0.4, 0.1, 3),
+        Ends::Poles,
+        10,
+        1.0,
+        Vec3::X,
+        solid(c(color::CACS_DARK)),
+    );
+    let line: Vec<(Vec3, f32)> = rings[1..rings.len() - 1].to_vec();
+    tube(
+        &mut mesh,
+        Mat4::IDENTITY,
+        &rings,
+        Ends::Poles,
+        CACS_AROUND,
+        CACS_FLAT,
+        Vec3::Y,
+        move |p| cacs_color(&line, p),
+    );
     // On its ground.
     let lowest = bounds(&mesh).map_or(-0.5, |(lo, _)| lo.y);
     moved(&mesh, Mat4::from_translation(Vec3::Y * (-0.5 - lowest)))
 }
 
-/// The pelure's strip: its rows, its half width and half thickness (in the item's radius).
-const PEEL_ROWS: usize = 56;
-const PEEL_HALF_WIDTH: f32 = 0.27;
-const PEEL_HALF_THICK: f32 = 0.065;
-/// The turns of its coil.
-const PEEL_TURNS: f32 = 1.45;
+/// The Cac's swirl: its turns, its bottom coil's radius (from its axis to the middle of the
+/// tube) and its tube's (both in the item's radius), the tube squashed this much up and down
+/// (soft-serve), cut in this many rings along its coils and points around.
+const CACS_TURNS: f32 = 2.6;
+const CACS_COIL: f32 = 0.66;
+const CACS_THICK: f32 = 0.36;
+const CACS_FLAT: f32 = 0.85;
+const CACS_ROWS: usize = 58;
+const CACS_AROUND: usize = 12;
 
-/// A row across the pelure's strip: its middle, its wide side, its thin side (out of the peel's
-/// face: `thin` = tangent × `wide`, so that the strip faces out), its size (1: its full width).
-#[derive(Clone, Copy, Debug)]
-struct PeelRow {
-    center: Vec3,
-    wide: Vec3,
-    thin: Vec3,
-    size: f32,
+/// The middle line of the Cac's coils at `s`, from the outer end of its bottom coil (0) to the
+/// top of the swirl near its axis (1), and the tube's radius there: each turn higher (its coils
+/// rest on each other), smaller and thinner.
+fn cacs_line(s: f32) -> (Vec3, f32) {
+    let angle = TAU * CACS_TURNS * s;
+    let thick = CACS_THICK * (1.0 - 0.5 * s);
+    // Never tighter than its tube is thick (a tube around a tighter curve turns inside out).
+    let coil = CACS_COIL * (1.0 - s) + 0.22 * s;
+    let height = -0.5 + CACS_THICK * CACS_FLAT + CACS_TURNS * (0.5 * s - 0.125 * s * s);
+    (
+        Vec3::new(coil * angle.cos(), height, -coil * angle.sin()),
+        thick,
+    )
 }
 
-/// `t` from 0 at `a` to 1 at `b`, smoothly.
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+/// The rings of the Cac's tube (for `tube` with `Ends::Poles`): its outer end rounded, its coils
+/// along [`cacs_line`], then its tip: from the top of the swirl, the way it goes, it curls up
+/// and over, thinner and thinner, and falls back down (the last ring is its point).
+fn cacs_rings() -> Vec<(Vec3, f32)> {
+    let last = (CACS_ROWS - 1) as f32;
+    let (start, thick) = cacs_line(0.0);
+    let back = (start - cacs_line(1.0 / last).0).normalize();
+    let mut rings = vec![(start + back * thick * 0.95, 0.0)];
+    for k in [0.55f32, 0.85] {
+        let a = k * FRAC_PI_2;
+        rings.push((start + back * thick * a.cos() * 0.95, thick * a.sin()));
+    }
+    rings.extend((0..CACS_ROWS).map(|row| cacs_line(row as f32 / last)));
+    let (top, thick) = cacs_line(1.0);
+    let ahead = (top - cacs_line(1.0 - 1.0 / last).0)
+        .with_y(0.0)
+        .normalize();
+    for k in 1..=CACS_TIP_RINGS {
+        let x = k as f32 / CACS_TIP_RINGS as f32;
+        let turn = CACS_TIP_TURN * x;
+        let at = top + (ahead * turn.sin() + Vec3::Y * (1.0 - turn.cos())) * CACS_TIP_BEND;
+        rings.push((at, thick * 0.95 * (1.0 - x.powf(1.6))));
+    }
+    rings
 }
 
-/// The middle line of the pelure's strip at `s`, from its free end on the ground (0) to its
-/// inner end (1): where it is, which way is out of the coil there, and how the strip leans (its
-/// wide side up the coil, from horizontal, rad): lying flat at its free end (whose tip curls
-/// up), on its edge around the coil, flatter again where it meets the cap.
-fn peel_line(s: f32) -> (Vec3, Vec3, f32) {
-    let angle = -TAU * PEEL_TURNS * s;
-    let out = Vec3::new(angle.cos(), 0.0, angle.sin());
-    let radius = 1.3 - 0.82 * s.powf(0.8);
-    let height = -0.42
-        + 0.36 * smooth(0.12, 1.0, s)
-        + 0.16 * (1.0 - smooth(0.0, 0.08, s))
-        + 0.04 * (s * 19.0).sin();
-    let slope = 0.25 + 0.85 * smooth(0.0, 0.2, s) - 0.5 * smooth(0.8, 1.0, s);
-    (out * radius + Vec3::Y * height, out, slope)
-}
+/// The tip of the Cac's: it curls around a circle this big (in the item's radius: more than its
+/// tube is thick), this far (rad: up, over, and back down), in this many rings.
+const CACS_TIP_BEND: f32 = 0.22;
+const CACS_TIP_TURN: f32 = 1.45 * PI;
+const CACS_TIP_RINGS: usize = 9;
 
-/// The rows of the pelure's strip, along its line.
-fn peel_rows() -> Vec<PeelRow> {
-    let last = (PEEL_ROWS - 1) as f32;
-    (0..PEEL_ROWS)
-        .map(|row| {
-            let s = row as f32 / last;
-            let (center, out, slope) = peel_line(s);
-            let tangent = (peel_line((s + 1.0 / last).min(1.0)).0
-                - peel_line((s - 1.0 / last).max(0.0)).0)
-                .normalize();
-            let up_coil = -out * slope.cos() + Vec3::Y * slope.sin();
-            let mut wide = (up_coil - tangent * up_coil.dot(tangent)).normalize();
-            let mut thin = tangent.cross(wide);
-            // The peel's face out of the coil and up.
-            if thin.dot(out * slope.sin() + Vec3::Y * slope.cos()) < 0.0 {
-                (wide, thin) = (-wide, -thin);
-            }
-            // Its ends rounded (it narrows over its last rows), and torn by hand: a little wider
-            // here, narrower there.
-            let end = (row.min(PEEL_ROWS - 1 - row) as f32 / 3.0).min(1.0);
-            let size = (1.0 - (1.0 - end).powi(2)).sqrt() * (1.0 + 0.1 * (s * 27.0).sin());
-            PeelRow {
-                center,
-                wide,
-                thin,
-                size,
-            }
-        })
-        .collect()
-}
-
-/// The pelure's strip through `rows`: a flat section, rounded at its edges, its ends closed.
-fn peel_strip(mesh: &mut MeshData, rows: &[PeelRow], color: impl Fn(Vec3) -> [f32; 4]) {
-    crate::models::shape::surface(
-        mesh,
-        Mat4::IDENTITY,
-        8,
-        rows.len(),
-        Ends::Poles,
-        |u, k| {
-            let row = rows[k];
-            let phi = TAU * u;
-            row.center
-                + (row.wide * (PEEL_HALF_WIDTH * phi.cos())
-                    + row.thin * (PEEL_HALF_THICK * phi.sin()))
-                    * row.size
-        },
-        color,
-    );
+/// The color of the Cac's at `p`: from where it is around its tube (the closest point of `line`):
+/// dark under each coil (the grooves), the caramel sheen on top, and a cream glint on top of
+/// its lit side (where the sun of its icon comes from: its top left).
+fn cacs_color(line: &[(Vec3, f32)], p: Vec3) -> [f32; 4] {
+    let (center, _) = line
+        .iter()
+        .min_by(|a, b| a.0.distance_squared(p).total_cmp(&b.0.distance_squared(p)))
+        .copied()
+        .unwrap_or((Vec3::ZERO, 1.0));
+    let out = (p - center).normalize_or(Vec3::Y);
+    let lit = Vec3::new(-1.0, 0.0, -1.0)
+        .normalize()
+        .dot(center.with_y(0.0).normalize_or(Vec3::X));
+    if out.y < -0.35 {
+        c(color::CACS_DARK)
+    } else if out.y > 0.75 && lit > 0.75 {
+        c(color::CACS_GLINT)
+    } else if out.y > 0.45 {
+        c(color::CACS_SHINE)
+    } else {
+        c(color::CACS)
+    }
 }
 
 /// A ball of pink yarn, its strands wound around it every way, its loose end hanging.
@@ -1473,8 +1463,8 @@ mod tests {
         assert!(total < 25_000, "{total}");
     }
 
-    /// The pelure lies on the ground under it (its position is half its radius above it), what
-    /// rolls touches it (a radius below).
+    /// The Cac's (`ItemKind::Pelure`) lies on the ground under it (its position is half its
+    /// radius above it), what rolls touches it (a radius below).
     #[test]
     fn the_models_stand_on_their_ground() {
         let bottom = |item| bounds(&model(Look::Item(item)).merged()).unwrap().0.y;
@@ -1488,33 +1478,80 @@ mod tests {
         }
     }
 
-    /// Issue #132: the pelure's strip faces out (Bevy culls the back of its triangles, and lights
-    /// them by their normals): each normal points away from the middle of its row; the peel's
-    /// face (`thin`) is out of the coil or up.
+    /// Issue #137 (it was #132's « the pelure's strip faces out »): the Cac's tube faces out
+    /// (Bevy culls the back of its triangles, and lights them by their normals): each normal
+    /// points away from the middle of its ring.
     #[test]
-    fn the_pelures_strip_faces_out() {
-        let rows = peel_rows();
+    fn the_cacs_faces_out() {
+        let rings = cacs_rings();
         let mut mesh = MeshData::default();
-        peel_strip(&mut mesh, &rows, solid([1.0; 4]));
-        // Its two tips, and as many points around each row between them.
-        let around = (mesh.positions.len() - 2) / (rows.len() - 2);
-        assert_eq!(mesh.positions.len(), 2 + around * (rows.len() - 2));
-        let inner = mesh.positions.len() - 2;
+        tube(
+            &mut mesh,
+            Mat4::IDENTITY,
+            &rings,
+            Ends::Poles,
+            CACS_AROUND,
+            CACS_FLAT,
+            Vec3::Y,
+            solid([1.0; 4]),
+        );
+        // Its two tips, and `CACS_AROUND` points around each ring between them.
+        assert_eq!(mesh.positions.len(), 2 + CACS_AROUND * (rings.len() - 2));
         for (i, (p, n)) in mesh
             .positions
             .iter()
             .zip(&mesh.normals)
             .enumerate()
             .skip(1)
-            .take(inner)
+            .take(mesh.positions.len() - 2)
         {
-            let row = rows[1 + (i - 1) / around];
-            let out = (Vec3::from(*p) - row.center).normalize();
+            let (center, _) = rings[1 + (i - 1) / CACS_AROUND];
+            let out = (Vec3::from(*p) - center).normalize();
             assert!(out.dot(Vec3::from(*n)) > 0.2, "vertex {i}: {p:?} {n:?}");
         }
-        for row in &rows {
-            let away = row.center.with_y(0.0).normalize();
-            assert!(row.thin.dot(away) + row.thin.y > 0.0, "{row:?}");
+    }
+
+    /// Issue #137: the Cac's is a swirl like a soft-serve ice cream: its coils wind more than
+    /// two and a half times around its axis, each turn higher, smaller and resting on the one
+    /// under it (no gap between them); its tip rises from the top, curls over and falls back
+    /// down. And it has no face (Max: « sans les yeux et la bouche »): nothing but its
+    /// browns, no white of an eye, no black of a pupil or a mouth.
+    #[test]
+    fn the_cacs_is_a_swirl_with_its_tip_over_and_no_face() {
+        let turn = 1.0 / CACS_TURNS;
+        let mut wound = 0.0;
+        let steps = 200;
+        for k in 0..steps {
+            let (s, next) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
+            let ((a, _), (b, _)) = (cacs_line(s), cacs_line(next));
+            wound += a.xz().angle_to(b.xz()).abs();
+            assert!(b.y > a.y, "higher and higher: {s}");
+            if s + turn <= 1.0 {
+                let ((below, thick), (above, over)) = (cacs_line(s), cacs_line(s + turn));
+                assert!(above.xz().length() < below.xz().length(), "smaller: {s}");
+                let gap = above.y - below.y - CACS_FLAT * (thick + over);
+                assert!(gap < 0.0, "a gap of {gap} between two coils at {s}");
+            }
+        }
+        assert!(wound / TAU > 2.5, "{} turns", wound / TAU);
+        let rings = cacs_rings();
+        let tip = &rings[rings.len() - CACS_TIP_RINGS..];
+        let (top, _) = cacs_line(1.0);
+        let highest = tip.iter().map(|(p, _)| p.y).fold(f32::MIN, f32::max);
+        let ((before, _), (point, _)) = (tip[tip.len() - 2], tip[tip.len() - 1]);
+        assert!(highest > top.y + 0.3, "its tip rises: {highest}");
+        assert!(point.y < highest - 0.15, "and falls back over: {point}");
+        assert!(point.y < before.y, "its point heads down: {before} {point}");
+        let mesh = model(Look::Item(ItemKind::Pelure)).merged();
+        let browns = [
+            color::CACS,
+            color::CACS_DARK,
+            color::CACS_SHINE,
+            color::CACS_GLINT,
+        ]
+        .map(c);
+        for color in &mesh.colors {
+            assert!(browns.contains(color), "{color:?}: a face?");
         }
     }
 

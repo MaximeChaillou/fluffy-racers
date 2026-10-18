@@ -44,7 +44,8 @@ pub enum SoundEffect {
     // The items (GD § 8): thrown, dropped, what they do.
     /// A pelote, a bombe or anything lobbed: the throw.
     Throw,
-    PeelDrop,
+    /// The Cac's (issue #137): its soft « splotch » as it lands, and as a kart slides on it.
+    Splotch,
     PeloteBounce,
     BeeBuzz,
     Explosion,
@@ -254,6 +255,21 @@ const FALL: Tone = Tone {
     decay: 1.6,
 };
 
+/// The Cac's « splotch » (issue #137): soft and wet, synthesized (no pack has one that is
+/// ours): a burst of noise through a band falling from the mids to the lows, at once loud then
+/// dying fast (a hit, not a whoosh), sprinkled with wet pops, over the « bloup » of a falling
+/// tone. Lower and shorter than the splash of the water.
+pub const SPLOTCH: Noise = Noise {
+    from_hz: 1300.0,
+    to_hz: 170.0,
+    q: 1.6,
+    duration: 0.3,
+    swell: 0.02,
+    crackle: 60.0,
+    tremolo_hz: 0.0,
+    tone: 0.3,
+};
+
 /// Spinning out: a wobbling « wheee » going down.
 const SPIN: Tone = Tone {
     from_hz: 900.0,
@@ -425,7 +441,7 @@ impl SoundEffect {
             S::TrickBoost => file(21),
             S::RocketStart => file(22),
             S::Steal => file(23),
-            S::PeelDrop | S::Creamed => file(24),
+            S::Creamed => file(24),
             S::Explosion => file(25),
             S::Ghost => file(26),
             S::Grab => file(27),
@@ -446,6 +462,7 @@ impl SoundEffect {
             S::CountdownGo => Clip::Synth(Synth::Tone(GO)),
             S::Stall => Clip::Synth(Synth::Noise(STALL)),
             S::Throw => Clip::Synth(Synth::Noise(Noise::whoosh(600.0, 1800.0, 0.28, 0.35))),
+            S::Splotch => Clip::Synth(Synth::Noise(SPLOTCH)),
             S::BeeBuzz => Clip::Synth(Synth::Tone(BUZZ)),
             S::CreamSquirt => Clip::Synth(Synth::Noise(Noise {
                 q: 0.8,
@@ -510,7 +527,7 @@ impl SoundEffect {
             | S::Trick => Family::Drive,
             S::BoxBreak
             | S::Throw
-            | S::PeelDrop
+            | S::Splotch
             | S::PeloteBounce
             | S::BeeBuzz
             | S::Explosion
@@ -566,6 +583,7 @@ impl SoundEffect {
             S::CountdownGo,
             S::Stall,
             S::Throw,
+            S::Splotch,
             S::BeeBuzz,
             S::CreamSquirt,
             S::Fusee,
@@ -614,7 +632,7 @@ impl SoundEffect {
             S::TrickBoost,
             S::RocketStart,
             S::Steal,
-            S::PeelDrop,
+            S::Creamed,
             S::Explosion,
             S::Ghost,
             S::Grab,
@@ -657,7 +675,7 @@ mod tests {
         all.sort();
         assert_eq!(files, all);
         let synthesized: Vec<SoundEffect> = SoundEffect::synthesized().collect();
-        assert_eq!(synthesized.len(), 20 + 6 + 36);
+        assert_eq!(synthesized.len(), 21 + 6 + 36);
         for sound in &synthesized {
             assert!(matches!(sound.clip(), Clip::Synth(_)), "{sound:?}");
             assert!(sound.length() > 0.05 && sound.length() < 2.0, "{sound:?}");

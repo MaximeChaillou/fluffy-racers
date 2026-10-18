@@ -7,7 +7,8 @@
 //!   bouncing softly, its lid wobbling at each bounce. Broken, it bursts (it swells, its lid
 //!   pops off, then it is gone; the confetti are `vfx`'s); back, it pops in. Hidden when the
 //!   items are switched off.
-//! - **The items out**: the pelure lying on the ground, wobbling like jelly; the pelote rolling;
+//! - **The items out**: the Cac's (`ItemKind::Pelure`, issue #137) lying on the ground, wobbling
+//!   like jelly (dropped, it falls the last bit and squashes as it lands); the pelote rolling;
 //!   the abeille facing where it flies, its wings beating; the bombe blinking red, faster and
 //!   faster, its spark crackling; the oreiller géant floating, rocking; the boomerang-os spinning
 //!   flat; the piñata's items around the kart, the super câlin's heart beating. They move
@@ -71,6 +72,20 @@ const BOOMERANG_SPIN: f32 = 22.0;
 const BLINK_HZ: f32 = 2.5;
 const BLINK_HZ_GAIN: f32 = 7.5;
 const BLINK_LIT: f32 = 0.4;
+/// The Cac's (issue #137): dropped, it falls this high (in its radius) in this long (s), stretched
+/// by this much; as it lands it squashes by this much, then springs back (this fast, rad/s, and
+/// this damped, /s), wobbling like jelly all along (`CACS_JELLY_*`: how fast, rad/s; how much it
+/// squashes and widens; how fast it calms down, /s, to this share of it, which stays).
+const CACS_DROP: f32 = 0.35;
+const CACS_FALL: f32 = 0.1;
+const CACS_STRETCH: f32 = 0.1;
+const CACS_SQUASH: f32 = 0.28;
+const CACS_SPRING: f32 = 17.0;
+const CACS_DAMPING: f32 = 8.0;
+const CACS_JELLY_SPEED: f32 = 7.0;
+const CACS_JELLY: Vec2 = Vec2::new(0.05, 0.08);
+const CACS_JELLY_CALM: f32 = 0.6;
+const CACS_JELLY_REST: f32 = 0.25;
 /// The oreiller géant floats this much up and down (in its radius), this often (Hz).
 const PILLOW_FLOAT: f32 = 0.12;
 const PILLOW_FLOAT_HZ: f32 = 0.9;
@@ -814,7 +829,35 @@ pub fn bombe_lit(age: f32, fuse: f32) -> bool {
     blinks.fract() < BLINK_LIT
 }
 
-/// The items' own motions (issue #106), on their model's parts: the pelure wobbles like jelly,
+/// The Cac's `age` s after it came out (issue #137): its body's offset (in its radius) and scale.
+/// It wobbles like jelly (the pelure's motion of #106: the same tremble, then a little, for
+/// good); `dropped` on the ground, it falls the last bit, stretched, squashes as it lands and
+/// springs back. Its bottom stays on its ground (at −0.5) whatever its scale; held out behind a
+/// kart, it only wobbles.
+pub fn cacs_pose(age: f32, dropped: bool) -> (Vec3, Vec3) {
+    let t = age.max(0.0);
+    let jelly = (t * CACS_JELLY_SPEED).sin() * (-t * CACS_JELLY_CALM).exp().max(CACS_JELLY_REST);
+    let (mut wide, mut high, mut lift) = (CACS_JELLY.x * jelly, -CACS_JELLY.y * jelly, 0.0);
+    if dropped {
+        if t < CACS_FALL {
+            let x = t / CACS_FALL;
+            lift = CACS_DROP * (1.0 - x * x);
+            high += CACS_STRETCH;
+            wide -= CACS_STRETCH * 0.5;
+        } else {
+            let since = t - CACS_FALL;
+            let squash = CACS_SQUASH * (-since * CACS_DAMPING).exp() * (since * CACS_SPRING).cos();
+            high -= squash;
+            wide += squash * 0.5;
+        }
+    }
+    let scale = Vec3::new(1.0 + wide, 1.0 + high, 1.0 + wide);
+    // Scaled around the item's position, half its radius over its ground: moved down (or up) to
+    // keep its bottom there.
+    (Vec3::Y * (lift - 0.5 * (1.0 - scale.y)), scale)
+}
+
+/// The items' own motions (issue #106), on their model's parts: the Cac's wobbles like jelly,
 /// the oreiller géant floats and rocks, the super câlin's heart beats, the bombe blinks and its
 /// spark crackles, the abeille bobs as it flies.
 fn animate_items(
@@ -838,12 +881,8 @@ fn animate_items(
         // The body's motion: its offset (in its radius), its scale and its turn.
         let (offset, scale, turn) = match item.item {
             ItemKind::Pelure => {
-                let w = (t * 7.0).sin() * (-t * 0.6).exp().max(0.25);
-                (
-                    Vec3::ZERO,
-                    Vec3::new(1.0 + 0.05 * w, 1.0 - 0.08 * w, 1.0 + 0.05 * w),
-                    Quat::IDENTITY,
-                )
+                let (offset, scale) = cacs_pose(t, item.motion == Motion::Ground);
+                (offset, scale, Quat::IDENTITY)
             }
             ItemKind::OreillerGeant => (
                 Vec3::Y * PILLOW_FLOAT * (TAU * PILLOW_FLOAT_HZ * now).sin(),
@@ -1277,6 +1316,67 @@ mod tests {
         assert!(peak > 1.1 && peak < 1.5, "{peak}");
         let (end, high) = flourish_pose(FLOURISH_TIME);
         assert!(end.abs() < 1e-6 && high > FLOURISH_HEIGHT);
+    }
+
+    /// Issue #137: the Cac's dropped falls its last bit, stretched, lands squashed, springs back
+    /// and keeps wobbling a little like jelly; its bottom is never under its ground. Held out
+    /// behind a kart, it only wobbles.
+    #[test]
+    fn the_cacs_falls_squashes_and_wobbles_like_jelly() {
+        let bottom = |(offset, scale): (Vec3, Vec3)| offset.y - 0.5 * scale.y;
+        let mut last_lift = f32::MAX;
+        let mut flattest = f32::MAX;
+        for k in 0..=300 {
+            let t = k as f32 / 100.0;
+            let pose = cacs_pose(t, true);
+            let (_, scale) = pose;
+            assert!(
+                bottom(pose) >= -0.5 - 1e-5,
+                "under its ground at {t}: {pose:?}"
+            );
+            assert!((scale.x - scale.z).abs() < 1e-6);
+            if t < CACS_FALL {
+                // Falling: above its ground, lower and lower, stretched.
+                let lift = bottom(pose) + 0.5;
+                assert!(lift > 0.0 && lift < last_lift, "{t}: {lift}");
+                last_lift = lift;
+                assert!(scale.y > 1.0 && scale.x < 1.0, "{t}: {scale}");
+            } else {
+                assert!((bottom(pose) + 0.5).abs() < 1e-5, "on its ground at {t}");
+            }
+            if (CACS_FALL..CACS_FALL + 0.1).contains(&t) {
+                flattest = flattest.min(scale.y);
+            }
+            if (CACS_FALL..CACS_FALL + 0.05).contains(&t) {
+                assert!(scale.x > 1.0, "wider as it lands: {t} {scale}");
+            }
+            if t > 2.4 {
+                // Calmed down: it only trembles a little, for good.
+                assert!((scale.y - 1.0).abs() <= CACS_JELLY.y * CACS_JELLY_REST + 1e-3);
+            }
+        }
+        assert!(last_lift < CACS_DROP && last_lift > 0.0);
+        assert!(
+            (flattest - (1.0 - CACS_SQUASH)).abs() < 0.08,
+            "squashed to {flattest}"
+        );
+        let trembles = (240..300)
+            .map(|k| cacs_pose(k as f32 / 100.0, true).1.y)
+            .fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+        assert!(
+            trembles.1 - trembles.0 > CACS_JELLY.y * CACS_JELLY_REST,
+            "{trembles:?}"
+        );
+        // Held out behind its kart: no fall, no squash, the jelly only.
+        for k in 0..=300 {
+            let t = k as f32 / 100.0;
+            let pose = cacs_pose(t, false);
+            assert!((bottom(pose) + 0.5).abs() < 1e-5);
+            assert!(
+                (pose.1.y - 1.0).abs() <= CACS_JELLY.y + 1e-5,
+                "{t}: {pose:?}"
+            );
+        }
     }
 
     /// Every look has its meshes, the files' looks too; the golden items glow.
