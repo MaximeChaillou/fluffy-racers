@@ -179,19 +179,27 @@ fn step_wobbles(
         let Ok(root) = roots.get(pivot_of.parent()) else {
             continue;
         };
-        let (hit, struck) = karts.get(pivot.body).map_or((None, None), |(state, paw)| {
-            let hit = match *state {
-                KartState::Hit { reaction, .. } => Some(reaction),
-                _ => None,
-            };
-            (hit, paw.map(|paw| (paw.struck_count, paw.struck_side)))
-        });
+        let (hit, struck, drifting) =
+            karts
+                .get(pivot.body)
+                .map_or((None, None, false), |(state, paw)| {
+                    let hit = match *state {
+                        KartState::Hit { reaction, .. } => Some(reaction),
+                        _ => None,
+                    };
+                    (
+                        hit,
+                        paw.map(|paw| (paw.struck_count, paw.struck_side)),
+                        matches!(state, KartState::Drifting { .. }),
+                    )
+                });
         let input = WobbleInput {
             dt,
             position: root.translation,
             rotation: root.rotation,
             hit,
             struck,
+            drifting,
         };
         wobble.0.step(&input, &tuning);
     }

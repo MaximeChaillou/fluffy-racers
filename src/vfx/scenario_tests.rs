@@ -10,7 +10,9 @@ use crate::admin::skip_countdown_now;
 use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_seed};
 use crate::croquettes::CroquettePickedUp;
 use crate::items::{Blast, ItemHit, ItemKind};
-use crate::kart::{Boost, BoostFlame, KartBump, KartState, KartTuning, MiniTurbo, PlayerKart};
+use crate::kart::{
+    Boost, BoostFlame, KartBump, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart,
+};
 use crate::race::{Race, RaceGrid, Racer};
 use crate::tests::{game_app_unloaded, hold_keys, player, wait_for_the_player};
 use crate::track::TrackChoice;
@@ -593,4 +595,198 @@ fn a_gift_box_taken_bursts_into_confetti() {
     for (_, _, visibility, _) in looks(&mut app) {
         assert_eq!(visibility, Visibility::Hidden, "gone after its burst");
     }
+}
+
+/// Puts `kart` at centerline distance `distance` of `layout`, `lateral` m right of it, heading
+/// down the track at `speed`, its race progress there (as `kart::environment_tests` does).
+fn place(app: &mut App, kart: Entity, distance: f32, lateral: f32, speed: f32) {
+    use crate::interpolation::PhysicsPose;
+    use crate::race::{Course, RaceProgress};
+    use bevy_rapier3d::prelude::Velocity;
+    let layout = app.world().resource::<crate::track::TrackLayout>().clone();
+    let spacing = app.world().resource::<Course>().checkpoints[1];
+    let sample = layout.center.at(distance);
+    let transform = sample.transform(lateral, crate::track::GRID_HEIGHT);
+    let world = app.world_mut();
+    *world.get_mut::<Transform>(kart).unwrap() = transform;
+    *world.get_mut::<Velocity>(kart).unwrap() = Velocity {
+        linear: sample.forward * speed,
+        angular: Vec3::ZERO,
+    };
+    world.get_mut::<PhysicsPose>(kart).unwrap().snap(transform);
+    *world.get_mut::<KartState>(kart).unwrap() = KartState::Grounded;
+    let mut progress = world.get_mut::<RaceProgress>(kart).unwrap();
+    progress.passed = 1 + (distance / spacing).floor() as u32;
+    progress.distance = distance;
+}
+
+/// Issue #130: on a circuit, the dust off the road takes the colors of its biome's ground, a
+/// little lighter (`tuning::ground_dust`): the shoulders' beside the road, the sand's on a sand
+/// patch; a landing on the road keeps the road's dust. Off a circuit (the test ground), the
+/// dust's color of the tuning.
+#[test]
+fn the_dust_off_the_road_is_the_color_of_the_biomes_ground() {
+    use crate::track::biome::biome;
+    let (mut app, kart) = started(0);
+    app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+    let tuning = app.world().resource::<VfxTuning>().clone();
+    let palette = biome("Prairie").unwrap().palette;
+    let [shoulder, sand] = ground_dust(&palette, tuning.world.ground_lighten);
+    let assets = app.world().resource::<VfxAssets>().clone();
+    assert_eq!(assets.ground, Some([shoulder, sand]));
+    let color = |app: &App, paint: Paint| {
+        let assets = app.world().resource::<VfxAssets>();
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let color = materials
+            .get(assets.material(paint))
+            .unwrap()
+            .base_color
+            .to_srgba();
+        [color.red, color.green, color.blue]
+    };
+    for (paint, expected) in [(Paint::Ground, shoulder), (Paint::Sand, sand)] {
+        let shown = color(&app, paint);
+        for (a, b) in shown.iter().zip(expected) {
+            assert!(
+                (a - b).abs() < 1e-4,
+                "{paint:?}: {shown:?} for {expected:?}"
+            );
+        }
+    }
+    // Lighter than the ground, the same hue: the meadow's grass is green dust.
+    assert!(shoulder[1] > shoulder[0] && shoulder[1] > palette.shoulder.1);
+    let layout = app.world().resource::<crate::track::TrackLayout>().clone();
+    // On the shoulder of the start straight, then on the sand of the hairpin's apex.
+    let straight = layout.center.length() - 40.0;
+    let sample = layout.center.at(straight);
+    let on_shoulder = sample.half_width + crate::track::mesh::CURB_WIDTH + sample.shoulder / 2.0;
+    let patch = layout.offroad[0];
+    let middle = layout
+        .center
+        .param_to_distance((patch.from + patch.to) / 2.0);
+    let half = layout.center.at(middle).half_width;
+    let on_sand = half * (patch.left + patch.right) / 2.0;
+    for (distance, lateral, paint) in [
+        (straight, on_shoulder, Paint::Ground),
+        (middle, on_sand, Paint::Sand),
+    ] {
+        place(&mut app, kart, distance, lateral, 14.0);
+        let mut thrown = (0, 0);
+        for _ in 0..40 {
+            *app.world_mut().get_mut::<KartInput>(kart).unwrap() = KartInput {
+                throttle: 1.0,
+                ..default()
+            };
+            app.update();
+            for p in new_particles(&app) {
+                if p.paint == paint {
+                    thrown.0 += 1;
+                } else if matches!(p.paint, Paint::Ground | Paint::Sand | Paint::Dust) {
+                    thrown.1 += 1;
+                }
+            }
+        }
+        assert!(thrown.0 > 5, "{paint:?}: {thrown:?}");
+        assert_eq!(thrown.1, 0, "{paint:?}: {thrown:?}");
+    }
+    // The test ground: the tuning's dust.
+    let mut app = vfx_app(TrackChoice::TestGround, 0);
+    run(&mut app, 3);
+    assert_eq!(app.world().resource::<VfxAssets>().ground, None);
+    let shown = color(&app, Paint::Ground);
+    for (a, b) in shown.iter().zip(tuning.colors.dust) {
+        assert!((a - b).abs() < 1e-4);
+    }
+}
+
+/// Issue #130 (GD § 10): on the Lagon Duvet, a kart that dives into the lagoon and comes out of
+/// it splashes twice (a crown of drops, a ring and puffs of foam on the water), and leaves a
+/// wake of foam on the water while it is at the surface; under it, deep, none.
+#[test]
+fn the_lagoon_splashes_and_leaves_a_wake() {
+    use crate::kart::KartEnvironment;
+    use bevy_rapier3d::prelude::Velocity;
+    let mut app = vfx_app(TrackChoice::Circuit("tracks/lagon.track.ron".into()), 0);
+    for _ in 0..600 {
+        if app.world().get_resource::<Race>().is_some() {
+            break;
+        }
+        app.update();
+    }
+    assert!(skip_countdown_now(app.world_mut()));
+    run(&mut app, 3);
+    let kart = player(&mut app);
+    app.world_mut().entity_mut(kart).remove::<PlayerKart>();
+    let world = &app.world().resource::<VfxTuning>().world.clone();
+    let layout = app.world().resource::<crate::track::TrackLayout>().clone();
+    let lake = layout.lakes[0];
+    let margin = app
+        .world()
+        .resource::<KartTuning>()
+        .environment
+        .water_margin;
+    let entry = layout
+        .center
+        .samples()
+        .iter()
+        .find(|s| {
+            let at = s.position + s.up * crate::track::GRID_HEIGHT;
+            lake.depth(at).is_some_and(|d| d > margin)
+        })
+        .unwrap()
+        .distance;
+    place(&mut app, kart, entry - 50.0, 0.0, 16.0);
+    let mut splashes = Vec::new();
+    let mut wake = 0;
+    let mut deep_wake = 0;
+    let mut was_under = false;
+    let mut flips = 0;
+    for _ in 0..(14 * 60) {
+        let transform = *app.world().get::<Transform>(kart).unwrap();
+        let speed = app.world().get::<Velocity>(kart).unwrap().linear.length();
+        let mut input = crate::tests::follow_centerline(&layout, &transform, speed);
+        if speed > 18.0 {
+            input.throttle = 0.0;
+        }
+        *app.world_mut().get_mut::<KartInput>(kart).unwrap() = input;
+        app.update();
+        let under = app.world().get::<KartEnvironment>(kart).unwrap().underwater;
+        if under != was_under {
+            flips += 1;
+            was_under = under;
+        }
+        let thrown = new_particles(&app);
+        let drops = thrown.iter().filter(|p| p.paint == Paint::Water).count();
+        let rings = thrown
+            .iter()
+            .filter(|p| p.paint == Paint::Foam && p.shape == Shape::Ring)
+            .count();
+        if rings > 0 {
+            splashes.push((drops, under));
+        }
+        let depth = lake.depth(transform.translation);
+        for p in thrown
+            .iter()
+            .filter(|p| p.paint == Paint::Foam && p.shape == Shape::Ball)
+        {
+            assert!(
+                (p.position.y - (lake.level + 0.03)).abs() < 0.05,
+                "foam on the water: {}",
+                p.position
+            );
+            wake += 1;
+            if depth.is_some_and(|d| d > world.wake_below + 0.3) {
+                deep_wake += 1;
+            }
+        }
+    }
+    assert!(flips >= 2, "in and out of the lagoon: {flips}");
+    assert_eq!(splashes.len(), 2, "{splashes:?}");
+    let (in_drops, in_under) = splashes[0];
+    let (out_drops, out_under) = splashes[1];
+    assert!(in_under && !out_under, "{splashes:?}");
+    assert!(in_drops as u32 >= world.splash_drops, "{splashes:?}");
+    assert!(out_drops > 0, "{splashes:?}");
+    assert!(wake > 30, "a wake: {wake}");
+    assert_eq!(deep_wake, 0, "no wake from deep under the water");
 }

@@ -115,8 +115,10 @@ fn the_pool_and_the_emitters_allocate_nothing() {
             emit::drift_sparks(pool, frame, side, &style, drift, n, dt);
             let n = take(&mut carry[1], drift.smoke_rate, dt, 6);
             emit::drift_smoke(pool, frame, side, drift, n, dt);
-            emit::dust(pool, frame, side, world, 1, dt);
+            emit::dust(pool, frame, side, Paint::Ground, world, 1, dt);
         }
+        // Issue #130: the wake on the water.
+        emit::wake(pool, frame, frame.position.y - 0.3, world, 1, dt);
         let n = take(&mut carry[2], boost.ember_rate * 2.0, dt, 6);
         emit::embers(pool, frame, Paint::Flame, 1.0, boost, n, dt);
         emit::trail(pool, frame, Paint::Orange, 1, dt);
@@ -134,7 +136,15 @@ fn the_pool_and_the_emitters_allocate_nothing() {
             // Issue #106: a gift box taken.
             emit::gift(pool, frame.position, frame.velocity, impact);
             emit::cream(pool, frame, impact);
-            emit::landing(pool, frame, world);
+            emit::landing(pool, frame, Paint::Dust, world);
+            // Issue #130: a splash, in and out of the water.
+            emit::water_splash(
+                pool,
+                frame.position,
+                frame.velocity,
+                k.is_multiple_of(60),
+                world,
+            );
             emit::wind_burst(pool, frame, 14);
             emit::spray(pool, frame, Paint::Cyan, 18, false);
             emit::sparkles(
@@ -176,12 +186,19 @@ struct Counted;
 /// systems in a schedule of their own (the game's copies switched off): run it after each frame
 /// of the game to count or time them alone. Every kart throws, wherever it is; the stars over a
 /// head are made once per kart, the camera's shake is a component put on the player's kart: both
-/// left out (a kart's first hit makes them, not a frame).
+/// left out (a kart's first hit makes them, not a frame). Issue #130: the acting of the karts'
+/// bodies and their drivers (`characters::ActingPlugin`) is counted with them.
 fn counted_race() -> (App, Schedule) {
     let mut app = game_app_unloaded(TrackChoice::default(), 11);
     app.add_plugins(VfxPlugin);
     app.configure_sets(FixedPostUpdate, VfxSystems::Watch.run_if(|| false));
     app.configure_sets(PostUpdate, VfxSystems::Show.run_if(|| false));
+    // Issue #130: the acting of the karts' bodies and their drivers, counted with them.
+    app.add_plugins(crate::characters::ActingPlugin);
+    app.configure_sets(
+        PostUpdate,
+        crate::characters::ActingSystems.run_if(|| false),
+    );
     wait_for_the_player(&mut app);
     for _ in 0..600 {
         let world = app.world_mut();
@@ -218,12 +235,14 @@ fn counted_race() -> (App, Schedule) {
                 .chain(),
             (
                 systems::follow_tuning,
+                systems::follow_the_ground,
                 systems::emit_karts,
                 systems::emit_world,
                 systems::kick_the_camera,
                 systems::show_particles,
                 systems::show_dizzy_stars,
                 systems::tint_flames,
+                crate::characters::act,
             )
                 .chain(),
         )

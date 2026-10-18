@@ -33,6 +33,7 @@ use std::ops::{Add, Mul, Sub};
 
 use bevy::prelude::*;
 
+use super::acting::KartWobbleTuning;
 use crate::kart::HitReaction;
 
 /// The longest substep of the springs (s): 1/240 s, the fastest frame rate we expect. A frame of
@@ -115,6 +116,14 @@ pub struct WobbleTuning {
     /// A kart that moves more than this in one frame (m) was teleported (the pelican's drop, a
     /// restart): no acceleration measured.
     pub teleport_distance: f32,
+
+    // --- Issue #130 ------------------------------------------------------------------------------
+    /// In a drift, the body leans this many times more (1: as in a turn): the drift is the
+    /// moment the driver hangs on, thrown out of the slide.
+    pub drift_lean: f32,
+    /// The kart's own body over its wheels (`acting.rs`: its tilt, its squash at a landing, its
+    /// rocking on a bump). Only with a renderer.
+    pub kart: KartWobbleTuning,
 }
 
 impl Default for WobbleTuning {
@@ -156,6 +165,8 @@ impl Default for WobbleTuning {
             ragdoll_damping: 0.4,
             ragdoll_max: 1.5,
             teleport_distance: 4.0,
+            drift_lean: 1.35,
+            kart: KartWobbleTuning::default(),
         }
     }
 }
@@ -207,7 +218,7 @@ impl Spring<Vec3> {
     }
 
     /// Never further than `limit` (rad): held there, its speed outward dropped.
-    fn hold(&mut self, limit: f32) {
+    pub(crate) fn hold(&mut self, limit: f32) {
         let length = self.value.length();
         if length > limit && length > 0.0 {
             let out = self.value / length;
@@ -219,12 +230,12 @@ impl Spring<Vec3> {
         }
     }
 
-    fn settled(&self, epsilon: f32) -> bool {
+    pub(crate) fn settled(&self, epsilon: f32) -> bool {
         self.value.length() < epsilon && self.speed.length() < epsilon * 10.0
     }
 
     /// Exactly at rest once nothing would show (the parts are then not written each frame).
-    fn snap(&mut self) {
+    pub(crate) fn snap(&mut self) {
         if self.settled(SNAP) {
             self.reset();
         }
@@ -237,7 +248,7 @@ impl Spring<f32> {
     }
 
     /// Never further than `low` below or `high` above 0, its speed outward dropped.
-    fn hold(&mut self, low: f32, high: f32) {
+    pub(crate) fn hold(&mut self, low: f32, high: f32) {
         if self.value > high {
             self.value = high;
             self.speed = self.speed.min(0.0);
@@ -247,11 +258,11 @@ impl Spring<f32> {
         }
     }
 
-    fn settled(&self, epsilon: f32) -> bool {
+    pub(crate) fn settled(&self, epsilon: f32) -> bool {
         self.value.abs() < epsilon && self.speed.abs() < epsilon * 10.0
     }
 
-    fn snap(&mut self) {
+    pub(crate) fn snap(&mut self) {
         if self.settled(SNAP) {
             self.reset();
         }
@@ -338,6 +349,9 @@ pub struct WobbleInput {
     /// Paw strikes received so far (`Paw::struck_count`), the last one pushing it toward this
     /// world direction (`Paw::struck_side`). None: no paw.
     pub struck: Option<(u32, Vec3)>,
+    /// Issue #130: drifting (`KartState::Drifting`): it leans more
+    /// ([`WobbleTuning::drift_lean`]).
+    pub drifting: bool,
 }
 
 impl WobbleInput {
@@ -349,6 +363,7 @@ impl WobbleInput {
             rotation,
             hit: None,
             struck: None,
+            drifting: false,
         }
     }
 }
@@ -446,7 +461,12 @@ impl WobbleState {
         self.position = Some(input.position);
         self.velocity = velocity;
         if let Some((now, dv)) = change {
-            self.feel(dv, tuning);
+            let lean = if input.drifting {
+                finite(tuning.drift_lean).clamp(0.0, 3.0)
+            } else {
+                1.0
+            };
+            self.feel(dv, lean, tuning);
             self.shock(now, to_kart, dt, tuning);
         } else {
             // A first frame, a teleport or a hitch: the motion starts over from here.
@@ -481,14 +501,15 @@ impl WobbleState {
     }
 
     /// The acceleration felt this frame (`dv`: the velocity change, in the kart's frame): each
-    /// spring is kicked as a steady acceleration would lean it (`per_accel`).
-    fn feel(&mut self, dv: Vec3, tuning: &WobbleTuning) {
+    /// spring is kicked as a steady acceleration would lean it (`per_accel`; the body's lean
+    /// times `lean`: issue #130, more in a drift).
+    fn feel(&mut self, dv: Vec3, lean: f32, tuning: &WobbleTuning) {
         let gain = |spring: &SpringTuning| {
             let omega = TAU * clamp_finite(spring.frequency, FREQUENCY_RANGE);
             omega * omega * finite(spring.per_accel)
         };
         // Inertia: the body lags behind, as if pushed by −dv at its middle.
-        self.lean.speed += Vec3::Y.cross(-dv) * gain(&tuning.body);
+        self.lean.speed += Vec3::Y.cross(-dv) * (gain(&tuning.body) * lean);
         self.squash.speed += dv.y * gain(&tuning.squash);
         if let Some(tail) = self.levers.tail {
             self.tail.speed += tail.cross(-dv) * gain(&tuning.tail);
@@ -866,6 +887,59 @@ mod tests {
             let tip = pose.tail * Vec3::new(0.0, 0.6, 0.8).normalize();
             assert!(tip.x > 0.05, "{start}: {tip}");
         }
+    }
+
+    /// Issue #130: in a drift, the same turn leans the driver `drift_lean` times more (out of the
+    /// turn, as in a turn), within its limit.
+    #[test]
+    fn a_drift_leans_the_driver_further() {
+        let tuning = WobbleTuning::default();
+        let dt = 1.0 / 60.0;
+        let lean = |drifting: bool| {
+            let mut state = WobbleState::new(birds_levers());
+            for i in 0..120 {
+                let angle = i as f32 * dt * 1.5;
+                let at = Vec3::new(angle.cos(), 0.0, -angle.sin()) * 12.0;
+                state.step(
+                    &WobbleInput {
+                        drifting,
+                        ..WobbleInput::at(dt, at, kart(angle))
+                    },
+                    &tuning,
+                );
+            }
+            head(&state.pose).x
+        };
+        let (turning, drifting) = (lean(false), lean(true));
+        assert!(turning > 0.05, "{turning}");
+        let ratio = drifting / turning;
+        assert!(
+            (ratio - tuning.drift_lean).abs() < 0.15,
+            "{drifting} / {turning} = {ratio}"
+        );
+        assert!(drifting < tuning.body.max);
+        let same = WobbleTuning {
+            drift_lean: 1.0,
+            ..default()
+        };
+        let mut a = WobbleState::new(birds_levers());
+        let mut b = a;
+        for i in 0..60 {
+            let at = Vec3::new(
+                i as f32 * 0.1,
+                0.0,
+                -(i as f32) * 0.3 - (i * i) as f32 * 0.01,
+            );
+            a.step(&WobbleInput::at(dt, at, kart(0.2)), &same);
+            b.step(
+                &WobbleInput {
+                    drifting: true,
+                    ..WobbleInput::at(dt, at, kart(0.2))
+                },
+                &same,
+            );
+        }
+        assert_eq!(a, b, "at 1, a drift is a turn");
     }
 
     /// A landing: the kart falls at 9 m/s (stretched in the air), then the suspension stops it in

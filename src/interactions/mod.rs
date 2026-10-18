@@ -51,6 +51,8 @@ pub use logic::{
     step_remote_paw, tether_accel, ticks,
 };
 pub use tuning::InteractionTuning;
+/// Issue #130: the drivers' acting is laid over what it writes.
+pub(crate) use visual::pose_drivers;
 #[cfg(test)]
 pub(crate) use visual::shown_arms;
 pub use visual::{InteractionVisualPlugin, PawArm, PawGauge, PawPof, PawVisualAssets};

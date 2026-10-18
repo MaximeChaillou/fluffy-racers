@@ -868,6 +868,7 @@ pub fn step_walker_wobbles(
             rotation: transform.rotation,
             hit: None,
             struck: Some((look.knocks, toward)),
+            drifting: false,
         };
         wobble.0.step(&input, &tuning);
     }
