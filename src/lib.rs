@@ -76,8 +76,8 @@ impl Plugin for SimulationPlugin {
 /// (issue #19, `modes::ModesPlugin`: the race menu, the Grand Prix), and with a renderer the home
 /// screen and the menu opened from the game (issues #56 and #89, `menu::MainMenuPlugin`, with the
 /// home's background), the time trial (issue #76, `modes::TimeTrialPlugin`), the reel of the
-/// item slots' roulette (issue #102, `ui::RoulettePlugin`) and the sound design (issue #103,
-/// `audio::SoundDesignPlugin`). `LevelPlugin`
+/// item slots' roulette (issue #102, `ui::RoulettePlugin`), the sound design (issue #103,
+/// `audio::SoundDesignPlugin`) and the music (issue #104, `audio::MusicPlugin`). `LevelPlugin`
 /// restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -142,6 +142,9 @@ impl Plugin for GamePlugin {
             // Issue #103: the sound design (engines, drift, boosts, items, hits, cries, screens).
             // Only on screen: nothing audio in the bot races' world.
             app.add_plugins(audio::SoundDesignPlugin);
+            // Issue #104: the music (a piece per circuit, the home's, the lobby's, the finish's
+            // and the podium's). Only on screen too.
+            app.add_plugins(audio::MusicPlugin);
         }
     }
 }

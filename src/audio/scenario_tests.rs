@@ -40,8 +40,9 @@ fn record(
 /// The game on `track` with `bots` bots and the sound design, the player's kart spawned.
 fn sound_app(track: TrackChoice, bots: usize) -> App {
     let mut app = game_app_unloaded(track, bots);
-    // With the reel of the roulette, as in the game (both only with a renderer there).
-    app.add_plugins((crate::ui::RoulettePlugin, SoundDesignPlugin))
+    // With the reel of the roulette and the music (issue #104), as in the game (all of them only
+    // with a renderer there).
+    app.add_plugins((crate::ui::RoulettePlugin, SoundDesignPlugin, MusicPlugin))
         .init_resource::<Asked>()
         .add_systems(PostUpdate, record.before(mix));
     wait_for_the_player(&mut app);
@@ -678,10 +679,25 @@ fn the_paws_and_the_bumps_sound() {
 }
 
 /// Issue #103 acceptance: the player's last lap, then its finish: the podium's jingle and its
-/// animal's cheer (alone, it wins).
+/// animal's cheer (alone, it wins). Issue #104: the jingles are the music's now (`MusicPlugin`,
+/// the « Musique » volume): on the last lap, the circuit's music goes out quickly, its jingle
+/// plays once, then the circuit's faster version (a higher tempo: the last lap changes the
+/// music's speed); at the finish, the race's music goes out (slowly: it does not stop dead), the
+/// « best » jingle plays (alone, it wins), then the results' music; the cheer is still the sound
+/// design's.
 #[test]
 fn the_last_lap_and_the_finish_have_their_jingles() {
     let (mut app, kart) = started(0);
+    let catalog = music_catalog().unwrap();
+    let voice = |app: &mut App| {
+        let world = app.world_mut();
+        let voices: Vec<MusicVoice> = world.query::<&MusicVoice>().iter(world).copied().collect();
+        assert!(voices.len() <= 1, "{voices:?}");
+        voices.first().copied()
+    };
+    let prairie = catalog.index("pure-raceway").unwrap();
+    run(&mut app, 2);
+    assert_eq!(voice(&mut app).unwrap().piece, prairie);
     let (checkpoints, laps) = {
         let course = app.world().resource::<Course>();
         (course.checkpoint_count(), course.laps)
@@ -691,19 +707,65 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
         .get_mut::<RaceProgress>(kart)
         .unwrap()
         .passed = (laps - 1) * checkpoints + 1;
-    run(&mut app, 2);
-    assert_eq!(asked(&app, SoundEffect::FinalLap), 1, "{:?}", sounds(&app));
-    run(&mut app, 2);
-    assert_eq!(asked(&app, SoundEffect::FinalLap), 1, "once");
+    let tuning = app.world().resource::<MusicTuning>().clone();
+    let frames = |seconds: f64| (seconds * 60.0).round() as usize;
+    let sounding = |app: &App| {
+        let now = app.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let heard = app.world().resource::<Jukebox>().deck.heard?;
+        Some(heard.sounding(now, |p| catalog.seconds(p)))
+    };
+    run(&mut app, frames(f64::from(tuning.jingle_fade)) + 2);
+    let faster = voice(&mut app).unwrap();
+    assert_eq!(Some(faster.piece), catalog.faster(prairie), "{faster:?}");
+    assert!(catalog.pieces[faster.piece].bpm > catalog.pieces[prairie].bpm);
+    assert_eq!(faster.intro, Some(catalog.final_lap), "after its jingle");
+    assert!(!faster.jingle);
+    assert_eq!(sounding(&app), Some(catalog.final_lap));
+    run(&mut app, frames(catalog.seconds(catalog.final_lap)) - 4);
+    assert_eq!(
+        sounding(&app),
+        Some(catalog.final_lap),
+        "once, for its length"
+    );
+    run(&mut app, 6);
+    assert_eq!(
+        sounding(&app),
+        catalog.faster(prairie),
+        "then the faster music"
+    );
+    assert_eq!(
+        voice(&mut app).unwrap().number,
+        faster.number,
+        "on the same voice"
+    );
+    assert_eq!(cries(&app, Mood::Win), 0);
     {
         let mut progress = app.world_mut().get_mut::<RaceProgress>(kart).unwrap();
         progress.passed = laps * checkpoints + 1;
         progress.finish = Some(1000);
     }
     run(&mut app, 3);
-    assert_eq!(asked(&app, SoundEffect::FinishWin), 1, "{:?}", sounds(&app));
-    assert_eq!(asked(&app, SoundEffect::FinishConsolation), 0);
     assert_eq!(cries(&app, Mood::Win), 1);
+    // The race's music goes out over `finish_fade`, down frame after frame.
+    let mut levels = Vec::new();
+    while let Some(v) = voice(&mut app).filter(|v| v.number == faster.number) {
+        levels.push(v.level);
+        app.update();
+        assert!(levels.len() < 200, "it never went out");
+    }
+    assert!(levels.windows(2).all(|w| w[1] < w[0]), "{levels:?}");
+    assert!(
+        levels.len() + 3 >= frames(f64::from(tuning.finish_fade)) - 2,
+        "not dead: {} frames",
+        levels.len()
+    );
+    let (best, results) = catalog.finish(Tier::Best);
+    let then = voice(&mut app).unwrap();
+    assert_eq!((then.piece, then.intro), (results, Some(best)));
+    assert_eq!(sounding(&app), Some(best));
+    run(&mut app, frames(catalog.seconds(best)) + 2);
+    assert_eq!(sounding(&app), Some(results));
+    assert_eq!(voice(&mut app).unwrap().number, then.number);
 }
 
 /// Issue #103 acceptance: with 12 karts racing (11 bots, the player driving straight on into

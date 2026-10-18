@@ -106,3 +106,51 @@ impl SoundTuning {
         .clamp(0.0, 2.0)
     }
 }
+
+/// Issue #104: the music's mix and its transitions (admin panel, « à régler »). The player's
+/// own volume of the music is in the options (`PlayerOptions::music_volume`, with the general
+/// one), kept in the browser.
+#[derive(Resource, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Resource, Default)]
+pub struct MusicTuning {
+    /// The music in the mix (0 to 2; 1: the pieces at their full level). Each piece has its own
+    /// level in `assets/data/music.ron` (measured: they sound as loud as each other).
+    pub volume: f32,
+    /// A screen's music (the home, the lobby) comes in over this long (s)...
+    pub fade_in: f32,
+    /// ...and the music heard goes out over this long when the screen changes (s).
+    pub fade_out: f32,
+    /// At the finish, the race's music goes out over this long before the finish's jingle (s):
+    /// it does not stop dead.
+    pub finish_fade: f32,
+    /// On the last lap, the race's music goes out this quickly before its jingle (s).
+    pub jingle_fade: f32,
+    /// During the pause (solo), the music is this much quieter (0 to 1)...
+    pub pause_volume: f32,
+    /// ...going down and back up at this rate (1/s).
+    pub pause_response: f32,
+    /// On the last lap, a piece without a faster version (`faster` in `music.ron`) plays this much
+    /// faster (playback speed: a little higher too).
+    pub final_lap_speed: f32,
+    /// At the finish, the « best » jingle and music up to this place...
+    pub best_place: u32,
+    /// ...the « good » ones up to this one, the « bad » ones after it.
+    pub good_place: u32,
+}
+
+impl Default for MusicTuning {
+    fn default() -> Self {
+        Self {
+            volume: 0.5,
+            fade_in: 0.6,
+            fade_out: 0.8,
+            finish_fade: 1.2,
+            jingle_fade: 0.3,
+            pause_volume: 0.35,
+            pause_response: 6.0,
+            final_lap_speed: 1.06,
+            best_place: 1,
+            good_place: 3,
+        }
+    }
+}

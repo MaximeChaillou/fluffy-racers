@@ -34,14 +34,11 @@ pub enum SoundEffect {
     TrickBoost,
     Slipstream,
     SpinBoost,
-    // The start and the finish (GD § 1 and 4): the countdown's beeps and its « GO », the engine
-    // that stalls, the last lap, the finish's jingle (on the podium, or the consolation).
+    // The start (GD § 1 and 4): the countdown's beeps and its « GO », the engine that stalls.
+    // The last lap's and the finish's jingles are the music's since #104 (`audio::music`).
     CountdownBeep,
     CountdownGo,
     Stall,
-    FinalLap,
-    FinishWin,
-    FinishConsolation,
     /// A trick off a ramp (GD § 5): the flip.
     Trick,
     // The items (GD § 8): thrown, dropped, what they do.
@@ -171,7 +168,7 @@ pub enum Family {
     Items,
     /// Hits, shocks, falls.
     Hits,
-    /// The countdown, the laps, the jingles, the croquettes and the roulette (the HUD's).
+    /// The countdown, the croquettes and the roulette (the HUD's).
     Race,
     /// The animals' cries.
     Voices,
@@ -193,7 +190,7 @@ pub enum Clip {
 
 /// Every file the game plays (issue #103), with its length (s): all of them, and only them, are
 /// in `assets/audio/` (the test checks it, and their lines in `assets/CREDITS.md`).
-pub const FILES: [(&str, f32); 33] = [
+pub const FILES: [(&str, f32); 30] = [
     ("audio/impact-sounds/impactPunch_medium_001.ogg", 0.405),
     ("audio/impact-sounds/impactWood_medium_001.ogg", 0.341),
     ("audio/impact-sounds/impactSoft_heavy_000.ogg", 0.527),
@@ -224,9 +221,6 @@ pub const FILES: [(&str, f32); 33] = [
     ("audio/rpg-audio/cloth2.ogg", 0.416),
     ("audio/rpg-audio/cloth4.ogg", 0.385),
     ("audio/rpg-audio/cloth1.ogg", 0.661),
-    ("audio/music-jingles/jingles_PIZZI02.ogg", 0.956),
-    ("audio/music-jingles/jingles_PIZZI14.ogg", 0.924),
-    ("audio/music-jingles/jingles_PIZZI10.ogg", 0.798),
 ];
 
 /// The file of `FILES` named `path`, as a clip.
@@ -437,9 +431,6 @@ impl SoundEffect {
             S::Grab => file(27),
             S::GliderOpen => file(28),
             S::Trick => file(29),
-            S::FinishWin => file(30),
-            S::FinishConsolation => file(31),
-            S::FinalLap => file(32),
             S::DriftTier(tier) => Clip::Synth(Synth::Tone(tier_chime(tier))),
             S::MiniTurbo(tier) => Clip::Synth(Synth::Noise(fwoosh(tier))),
             S::Piment => Clip::Synth(Synth::Noise(Noise {
@@ -552,10 +543,7 @@ impl SoundEffect {
             | S::RouletteStop
             | S::CountdownBeep
             | S::CountdownGo
-            | S::Stall
-            | S::FinalLap
-            | S::FinishWin
-            | S::FinishConsolation => Family::Race,
+            | S::Stall => Family::Race,
             S::Cry(..) => Family::Voices,
             S::UiHover | S::UiChange | S::UiConfirm | S::UiBack => Family::Screens,
             S::Landing | S::GliderOpen | S::Splash | S::Footstep(_) | S::FootJump => Family::World,
@@ -632,24 +620,19 @@ impl SoundEffect {
             S::Grab,
             S::GliderOpen,
             S::Trick,
-            S::FinishWin,
-            S::FinishConsolation,
-            S::FinalLap,
         ]
         .into_iter()
     }
 }
 
-/// How loud a sound is mixed, before the volumes (0 to 1): the jingles and the countdown over
-/// the rest, the footsteps and the hover under it.
+/// How loud a sound is mixed, before the volumes (0 to 1): the countdown over the rest, the
+/// footsteps and the hover under it.
 pub fn base_volume(sound: SoundEffect) -> f32 {
     use SoundEffect as S;
     match sound {
         S::UiHover | S::Footstep(_) | S::RouletteTick => 0.45,
         S::PeloteBounce | S::Landing | S::PawSwing => 0.6,
-        S::CountdownBeep | S::CountdownGo | S::FinalLap | S::FinishWin | S::FinishConsolation => {
-            0.9
-        }
+        S::CountdownBeep | S::CountdownGo => 0.9,
         _ => 0.75,
     }
 }

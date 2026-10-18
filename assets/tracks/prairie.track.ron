@@ -9,6 +9,8 @@
     // the same every time (seed), and a few pieces placed by hand (`props`: a model, where along
     // the track, which side, its height and footprint in meters, its gap beyond the walls).
     biome: "Prairie",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "pure-raceway",
     decor_seed: 11,
     props: [
         // Two grandstands along the grid, outside, and the checkered flags at the start line,

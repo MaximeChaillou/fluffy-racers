@@ -7,9 +7,10 @@
 //!   boosts and their source, its hits, its tricks, the pelican, the environments, its items'
 //!   effects, its paw), and the messages of the rules are read (the boxes, the items thrown and
 //!   their blasts, the paws' strikes and tethers, the bumps between karts). Each frame, the race
-//!   (the countdown, the last lap, the finish), the screens (their focus, their changes) and the
-//!   lobby's characters on foot. Each sound asked for is an entity: its [`SoundEffect`] and its
-//!   [`Cue`] (which kart, where, the player's own or not).
+//!   (the countdown, the cheer on the podium), the screens (their focus, their changes) and the
+//!   lobby's characters on foot (the music, its jingles of the last lap and of the finish
+//!   included, is `audio::jukebox`'s since #104). Each sound asked for is an entity: its
+//!   [`SoundEffect`] and its [`Cue`] (which kart, where, the player's own or not).
 //! - **The mixer** ([`mix`], in `PostUpdate`): each new sound gets a voice, at most
 //!   `SoundTuning::max_sounds` at once (`mixer::admit`: the player's own and the screens' first,
 //!   then the closest; a farther one is cut, or the new one is not played), its clip (a Kenney
@@ -728,8 +729,9 @@ struct RaceMemory {
     finished: bool,
 }
 
-/// Each frame: the countdown's beeps and its GO, the player's last lap and its finish (a jingle
-/// for the podium, another one after it, and on the podium its animal's cheer).
+/// Each frame: the countdown's beeps and its GO, and the player's finish on the podium: its
+/// animal's cheer. The last lap's and the finish's jingles are the music's (issue #104,
+/// `audio::jukebox`).
 fn watch_race(
     mut commands: Commands,
     tuning: Res<SoundTuning>,
@@ -771,17 +773,8 @@ fn watch_race(
         memory.finished = finished;
         return;
     }
-    if laps > memory.laps && !finished && course.laps > 1 && laps + 1 == course.laps {
-        play(&mut commands, SoundEffect::FinalLap, Cue::front(Some(kart)));
-    }
     if finished && !memory.finished {
         let podium = progress.rank >= 1 && progress.rank <= 3;
-        let jingle = if podium {
-            SoundEffect::FinishWin
-        } else {
-            SoundEffect::FinishConsolation
-        };
-        play(&mut commands, jingle, Cue::front(Some(kart)));
         if podium && let Some(mut sounds) = sounds {
             let now = time.elapsed_secs();
             cry(

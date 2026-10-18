@@ -12,6 +12,8 @@
     // #79), a watch tower by the grid, a pirate ship moored beside the start straight and a wreck
     // beyond the south straight.
     biome: "Plage",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "sunny-city",
     decor_seed: 7,
     props: [
         (model: "pirate-kit/flag-pirate", at: 0.0, side: Both, height: 4.0, radius: 1.0, gap: 1.8),
