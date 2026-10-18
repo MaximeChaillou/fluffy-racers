@@ -36,8 +36,9 @@ use crate::items::{ItemKind, ItemSlots, ItemTuning, Slot};
 use crate::menu::anim;
 use crate::race::{seconds_to_ticks, ticks_to_seconds};
 
-/// The reel: the sixteen items, two neighbours never alike (their colors, then their shapes,
-/// `ui::icon_shape`), so that each one is seen passing.
+/// The reel: the sixteen items, two neighbours never alike (their colors, then their shapes:
+/// `ui::icon_shape`'s, and the colors of their icons as rendered, issue #106), so that each one
+/// is seen passing.
 pub const REEL: [ItemKind; 16] = [
     ItemKind::Pelure,
     ItemKind::Pelote,

@@ -523,3 +523,74 @@ fn a_boost_widens_the_view_and_draws_speed_lines() {
         "{kick:?}"
     );
 }
+
+/// Issue #106: the player drives into a gift box: it bursts (it swells, its lid pops off, then it
+/// is gone) and its confetti fly out, as many as the tuning says for each box taken; it pops back
+/// in later, its lid back on.
+#[test]
+fn a_gift_box_taken_bursts_into_confetti() {
+    use crate::items::{ItemBox, ItemBoxLook, ItemStats};
+    let (mut app, kart) = started(0);
+    let impact = app.world().resource::<VfxTuning>().impact.clone();
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    let mut taken = 0;
+    for _ in 0..600 {
+        app.update();
+        taken = app.world().get::<ItemStats>(kart).unwrap().boxes;
+        if taken > 0 {
+            break;
+        }
+    }
+    assert!(taken > 0, "no box on the way");
+    let confetti = new_particles(&app)
+        .iter()
+        .filter(|p| Paint::CONFETTI.contains(&p.paint))
+        .count() as u32;
+    assert_eq!(confetti, impact.gift_confetti * taken);
+    // The boxes taken: their look swells while it bursts, its lid rises, then it hides.
+    let looks = |app: &mut App| {
+        let world = app.world_mut();
+        let mut looks: Vec<(Entity, Vec3, Visibility, f32)> = Vec::new();
+        let mut query =
+            world.query::<(&ChildOf, &ItemBoxLook, &Transform, &Visibility, &Children)>();
+        let rows: Vec<_> = query
+            .iter(world)
+            .map(|(parent, look, transform, visibility, children)| {
+                (
+                    parent.parent(),
+                    look.gone_for,
+                    transform.scale,
+                    *visibility,
+                    children[0],
+                )
+            })
+            .collect();
+        for (item_box, gone_for, scale, visibility, lid) in rows {
+            if world
+                .get::<ItemBox>(item_box)
+                .is_some_and(|b| !b.available())
+            {
+                let lid_y = world.get::<Transform>(lid).unwrap().translation.y;
+                looks.push((item_box, scale, visibility, lid_y));
+                assert!(gone_for.is_finite() || visibility == Visibility::Hidden);
+            }
+        }
+        looks
+    };
+    app.update();
+    let bursting = looks(&mut app);
+    assert_eq!(bursting.len() as u32, taken);
+    for (_, scale, visibility, _) in &bursting {
+        assert_eq!(*visibility, Visibility::Inherited, "seen while it bursts");
+        assert!(scale.x > 1.0, "it swells: {scale}");
+    }
+    run(&mut app, 4);
+    let later = looks(&mut app);
+    for ((_, scale, _, lid), (_, before, _, lid_before)) in later.iter().zip(&bursting) {
+        assert!(scale.x > before.x && lid > lid_before, "{scale} {lid}");
+    }
+    run(&mut app, 20);
+    for (_, _, visibility, _) in looks(&mut app) {
+        assert_eq!(visibility, Visibility::Hidden, "gone after its burst");
+    }
+}

@@ -131,6 +131,8 @@ fn the_pool_and_the_emitters_allocate_nothing() {
             emit::stall_puffs(pool, frame, boost);
             emit::shock(pool, frame.position, Vec3::X, frame.velocity, 6, 6, impact);
             emit::confetti(pool, frame.position, 4.0, impact);
+            // Issue #106: a gift box taken.
+            emit::gift(pool, frame.position, frame.velocity, impact);
             emit::cream(pool, frame, impact);
             emit::landing(pool, frame, world);
             emit::wind_burst(pool, frame, 14);

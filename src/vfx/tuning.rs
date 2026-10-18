@@ -225,6 +225,12 @@ pub struct ImpactVfx {
     pub confetti_life: f32,
     pub confetti_size: f32,
     pub blast_puffs: u32,
+    /// Issue #106: a gift box taken bursts into this many confetti (those of an explosion, a
+    /// little shorter-lived), thrown out this fast, and carried along by the kart that took it
+    /// (this share of its speed).
+    pub gift_confetti: u32,
+    pub gift_speed: f32,
+    pub gift_carry: f32,
     /// A chantilly on a kart: this many blobs of cream splash off it, this big, this fast, this
     /// long.
     pub cream_blobs: u32,
@@ -270,6 +276,9 @@ impl Default for ImpactVfx {
             confetti_life: 1.6,
             confetti_size: 0.16,
             blast_puffs: 10,
+            gift_confetti: 28,
+            gift_speed: 6.0,
+            gift_carry: 0.5,
             cream_blobs: 16,
             cream_size: 0.22,
             cream_speed: 5.0,

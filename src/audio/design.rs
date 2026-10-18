@@ -791,12 +791,18 @@ fn watch_race(
     memory.finished = finished;
 }
 
-/// What the screens' watcher remembers: each screen open, its focus, the last choice.
+/// What the screens' watcher remembers: each screen open, its focus, the last choice, the last
+/// « retour ».
 #[derive(Default)]
 struct ScreenMemory {
     screens: [(bool, usize); 5],
     confirmed_at: f64,
+    backed_at: Option<f64>,
 }
+
+/// A screen's close is seen twice when this system runs between the screen's systems (its
+/// action one frame, its state closed the next): one « retour » for both, within this long (s).
+const SAME_BACK: f64 = 0.1;
 
 /// Each frame: the screens (docs/UI_CHARTE.md): the focus moves (survol), a value changes, a
 /// choice (validation), a screen closes (retour). Their actions and their state, read: the
@@ -895,7 +901,11 @@ fn watch_screens(
     }
     let sound = if confirm {
         Some(SoundEffect::UiConfirm)
-    } else if back && now - memory.confirmed_at > 0.4 {
+    } else if back
+        && now - memory.confirmed_at > 0.4
+        && memory.backed_at.is_none_or(|at| now - at > SAME_BACK)
+    {
+        memory.backed_at = Some(now);
         Some(SoundEffect::UiBack)
     } else if change {
         Some(SoundEffect::UiChange)

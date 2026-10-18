@@ -1,8 +1,9 @@
-//! Croquette visuals in primitive shapes (GD § 14: a "pop" at each croquette), all sharing one
-//! mesh and a handful of materials.
+//! Croquette visuals (GD § 14: a "pop" at each croquette), all sharing one mesh and a handful of
+//! materials.
 //!
-//! - A croquette is a golden-brown ring of kibble standing on its edge, spinning slowly. Taken,
-//!   it disappears; back, it pops in (grows with a little overshoot).
+//! - A croquette is a puffy ring of kibble standing on its edge, golden brown, toasted at its rim
+//!   (issue #106: its model, `items::models`), spinning slowly. Taken, it disappears; back, it
+//!   pops in (grows with a little overshoot).
 //! - A scattered croquette hops from the kart to the ground (smoothly between two ticks), spins
 //!   fast while flying, and blinks before it vanishes.
 //! - Picking one up: a burst, the croquette jumping up as it shrinks and four golden sparks.
@@ -14,10 +15,9 @@ use bevy::prelude::*;
 use super::CroquettePickedUp;
 use super::logic::{LooseCroquette, TrackCroquette};
 use super::tuning::CroquetteTuning;
+use crate::items::models::{Look, model};
+use crate::track::circuit::to_mesh;
 
-/// Size of a croquette: a ring (torus) of this major and minor radius (m).
-const RING_RADIUS: f32 = 0.22;
-const RING_THICKNESS: f32 = 0.11;
 /// Spin of a croquette on the track, and of a flying one (rad/s).
 const SPIN: f32 = 2.5;
 const FLYING_SPIN: f32 = 12.0;
@@ -85,19 +85,14 @@ fn create_croquette_visual_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Low poly: 8 × 14 segments (224 triangles).
-    let ring = Torus::new(RING_RADIUS - RING_THICKNESS, RING_RADIUS + RING_THICKNESS)
-        .mesh()
-        .minor_resolution(8)
-        .major_resolution(14)
-        .build()
-        // Standing on its edge, facing the karts.
-        .rotated_by(Quat::from_rotation_x(TAU / 4.0));
+    // Issue #106: its model, standing on its edge, facing the karts (low poly: 224 triangles),
+    // its colors in its vertices.
+    let kibble = model(Look::Croquette).body;
     commands.insert_resource(CroquetteVisualAssets {
-        mesh: meshes.add(ring),
+        mesh: meshes.add(to_mesh(&kibble)),
         material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.85, 0.52, 0.2),
-            emissive: LinearRgba::rgb(0.35, 0.18, 0.02),
+            base_color: Color::WHITE,
+            emissive: LinearRgba::rgb(0.3, 0.15, 0.02),
             perceptual_roughness: 0.6,
             ..default()
         }),

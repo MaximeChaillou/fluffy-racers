@@ -1,44 +1,64 @@
-//! Item visuals in primitive shapes (GD § 8 and 14: dangerous items are recognized at once), all
-//! sharing a handful of meshes and materials, until the real models (issue #11).
+//! Item visuals (GD § 8 and 14: dangerous items are recognized at once). Issue #106: each item
+//! is its model (`models.rs`: soft shapes built in code, or a CC0 file), one mesh per model
+//! shared by every instance, drawn with one material of vertex colors; a few parts move on their
+//! own.
 //!
-//! - **Box**: a translucent cube turning on itself, sky blue (gold for a double box), with a
-//!   white core. Broken, it disappears; back, it pops in. Hidden when the items are switched off.
-//! - **Pelure**: two yellow strips in a V, flat on the ground. **Pelote de laine**: a pink ball
-//!   wrapped in a darker band, rolling. **Abeille**: a yellow and black ball with two white wings,
-//!   facing where it flies, its wings beating.
-//! - The items out move smoothly between two ticks (their simulated `position` and `previous`).
-//! - **Phase 2** (issue #18): **bombe à confettis**, a navy ball with a yellow fuse and its spark;
-//!   **oreiller géant**, a big white cushion edged in blue with four tufts; an **explosion**
-//!   ([`Blast`]), a burst of confetti around a pale flash; the **klaxon-canard**, an orange ring
-//!   that spreads out; a **super câlin**, a pink glow around the kart; a **fusée à confettis**,
-//!   an orange shell with a white nose around the kart.
-//! - **Phase 3** (issue #21): the **boomerang-os**, a cream bone (a shaft and four knobs)
-//!   spinning flat as it flies; the **piñata**'s eight items around the kart, each in its own
-//!   shape (the piment, the chantilly, the super câlin and the croquette dorée have one too, out
-//!   only in a piñata); the **pie voleuse**'s ghost: the kart vanishes, a white ghost with two
-//!   eyes stands for it, plain for its own player, barely there for the others.
+//! - **Box**: a gift box with its bow (sky blue, gold for a double box), turning slowly and
+//!   bouncing softly, its lid wobbling at each bounce. Broken, it bursts (it swells, its lid
+//!   pops off, then it is gone; the confetti are `vfx`'s); back, it pops in. Hidden when the
+//!   items are switched off.
+//! - **The items out**: the pelure lying on the ground, wobbling like jelly; the pelote rolling;
+//!   the abeille facing where it flies, its wings beating; the bombe blinking red, faster and
+//!   faster, its spark crackling; the oreiller géant floating, rocking; the boomerang-os spinning
+//!   flat; the piñata's items around the kart, the super câlin's heart beating. They move
+//!   smoothly between two ticks (their simulated `position` and `previous`).
+//! - **Phase 2** (issue #18): an **explosion** ([`Blast`]), a burst of confetti around a pale
+//!   flash; the **klaxon-canard**, an orange ring that spreads out; a **super câlin**, a pink
+//!   glow around the kart; a **fusée à confettis**, its rocket strapped to the kart's back.
+//! - **Phase 3** (issue #21): the **pie voleuse**'s ghost: the kart vanishes, a white ghost with
+//!   two eyes stands for it, plain for its own player, barely there for the others.
+//! - **With a renderer** ([`ItemModelPlugin`], issue #106): the models from files once baked
+//!   (they take the place of the built ones, in the same meshes, and their icons too); an item
+//!   used pops up over its kart (its model, half a second); the admin panel's showcase, every
+//!   model side by side. The headless game (the bot races) has none of it.
 
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::collections::HashMap;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
+use super::icons::{ItemIcons, icon_view};
+use super::models::{ItemModel, Look, MODEL_FILES, from_file, model};
 use super::table::ItemKind;
-use super::{Blast, Honked, ItemBox, ItemObject, ItemTuning};
+use super::{Blast, Honked, ItemBox, ItemObject, ItemStats, ItemTuning, Motion};
+use crate::camera::ChaseCamera;
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
 use crate::kart::{ItemEffects, PlayerKart};
 use crate::level::LevelScoped;
+use crate::models::{Keep, ModelSystems, Models};
 use crate::race::Course;
 use crate::track::ItemBoxSpot;
+use crate::track::circuit::to_mesh;
 
-/// Size of a box (m).
+/// Size of a box (its model is about 1 m wide).
 const BOX_SIZE: f32 = 1.0;
 /// A box turns this fast (rad/s); back on the track, it pops in this long (s).
-const BOX_SPIN: f32 = 1.6;
+const BOX_SPIN: f32 = 1.1;
 const BOX_POP_IN: f32 = 0.3;
-/// An abeille's wings beat this fast (rad/s).
+/// A box bounces this high (m), this often (bounces a second), squashed this much as it lands.
+const BOX_BOUNCE: f32 = 0.16;
+const BOX_BOUNCE_HZ: f32 = 1.1;
+const BOX_SQUASH: f32 = 0.09;
+/// A box bursts this long when it is taken (s): it swells by this much, its lid flies up this
+/// high (m).
+const BOX_BURST: f32 = 0.18;
+const BOX_BURST_SWELL: f32 = 0.45;
+const BOX_LID_JUMP: f32 = 0.9;
+/// An abeille's wings beat this fast (rad/s), this wide (rad).
 const WING_BEAT: f32 = 60.0;
+const WING_SWING: f32 = 0.6;
 /// Confetti pieces of an explosion, and how fast they fly out (m/s).
 const CONFETTI: usize = 14;
 const CONFETTI_SPEED: f32 = 9.0;
@@ -46,6 +66,27 @@ const CONFETTI_SPEED: f32 = 9.0;
 const HONK_TIME: f32 = 0.4;
 /// A boomerang-os spins this fast as it flies (rad/s, issue #21).
 const BOOMERANG_SPIN: f32 = 22.0;
+/// The bombe blinks this many times a second when it comes out, this many more at the end of its
+/// fuse (`ItemTuning::bombe_fuse`); lit this share of each blink.
+const BLINK_HZ: f32 = 2.5;
+const BLINK_HZ_GAIN: f32 = 7.5;
+const BLINK_LIT: f32 = 0.4;
+/// The oreiller géant floats this much up and down (in its radius), this often (Hz).
+const PILLOW_FLOAT: f32 = 0.12;
+const PILLOW_FLOAT_HZ: f32 = 0.9;
+/// An item used pops up over its kart (issue #106): this long (s), this high over it (m), this
+/// big (m across).
+const FLOURISH_TIME: f32 = 0.75;
+const FLOURISH_HEIGHT: f32 = 1.9;
+const FLOURISH_SIZE: f32 = 0.95;
+/// The showcase (issue #106): every model this big (m), this far apart (m), this far in front of
+/// the camera (m), five in a row.
+const SHOWCASE_SIZE: f32 = 1.0;
+const SHOWCASE_STEP: Vec2 = Vec2::new(1.6, 1.2);
+const SHOWCASE_DISTANCE: f32 = 10.0;
+/// Its lowest row is this high over the kart the camera follows (m).
+const SHOWCASE_LIFT: f32 = 0.8;
+const SHOWCASE_COLUMNS: usize = 5;
 /// The confetti colors (GD § 14: bright).
 const CONFETTI_COLORS: [Color; 5] = [
     Color::srgb(1.0, 0.25, 0.45),
@@ -55,45 +96,75 @@ const CONFETTI_COLORS: [Color; 5] = [
     Color::srgb(0.75, 0.4, 1.0),
 ];
 
+/// The meshes of a model: its body, its moving parts and where they sit (in the model's space).
+#[derive(Clone, Debug)]
+pub struct LookMeshes {
+    pub body: Handle<Mesh>,
+    pub wing: Option<(Handle<Mesh>, Vec3)>,
+    pub spark: Option<(Handle<Mesh>, Vec3)>,
+    pub lid: Option<(Handle<Mesh>, Vec3)>,
+}
+
+impl LookMeshes {
+    fn new(meshes: &mut Assets<Mesh>, model: &ItemModel) -> Self {
+        let mut part = |part: &Option<(crate::track::mesh::MeshData, Vec3)>| {
+            part.as_ref()
+                .map(|(mesh, at)| (meshes.add(to_mesh(mesh)), *at))
+        };
+        let (wing, spark, lid) = (part(&model.wing), part(&model.spark), part(&model.lid));
+        Self {
+            body: meshes.add(to_mesh(&model.body)),
+            wing,
+            spark,
+            lid,
+        }
+    }
+
+    /// The same meshes, drawn again from `model` (a file's), in place: every entity showing them
+    /// follows.
+    fn replace(&mut self, meshes: &mut Assets<Mesh>, model: &ItemModel) {
+        let _ = meshes.insert(self.body.id(), to_mesh(&model.body));
+        for (mine, theirs) in [
+            (&mut self.wing, &model.wing),
+            (&mut self.spark, &model.spark),
+            (&mut self.lid, &model.lid),
+        ] {
+            match (mine.as_mut(), theirs) {
+                (Some((handle, at)), Some((mesh, new_at))) => {
+                    let _ = meshes.insert(handle.id(), to_mesh(mesh));
+                    *at = *new_at;
+                }
+                (None, Some((mesh, at))) => *mine = Some((meshes.add(to_mesh(mesh)), *at)),
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Shared meshes and materials of the items.
 #[derive(Resource, Clone)]
 pub struct ItemVisualAssets {
+    /// Every model's meshes (issue #106), built in code at startup; a file's model takes their
+    /// place once baked ([`ItemModelPlugin`]).
+    looks: HashMap<Look, LookMeshes>,
+    /// The models' material: their vertex colors, lit, a little glossy (candy).
+    model_material: Handle<StandardMaterial>,
+    /// The same, glowing (the golden items).
+    glow_material: Handle<StandardMaterial>,
+    /// The same, glowing red (the bombe's blink).
+    blink_material: Handle<StandardMaterial>,
+    /// The abeille's wings: pale, see-through, both sides.
+    wing_material: Handle<StandardMaterial>,
+    /// The bombe's spark: unlit (it glows in the shade too).
+    spark_material: Handle<StandardMaterial>,
     cube: Handle<Mesh>,
     ball: Handle<Mesh>,
-    band: Handle<Mesh>,
-    strip: Handle<Mesh>,
-    wing: Handle<Mesh>,
-    box_material: Handle<StandardMaterial>,
-    double_box_material: Handle<StandardMaterial>,
-    core_material: Handle<StandardMaterial>,
-    pelure_material: Handle<StandardMaterial>,
-    pelote_material: Handle<StandardMaterial>,
-    pelote_band_material: Handle<StandardMaterial>,
-    abeille_material: Handle<StandardMaterial>,
-    stripe_material: Handle<StandardMaterial>,
-    wing_material: Handle<StandardMaterial>,
-    // Issue #18.
-    fuse: Handle<Mesh>,
     ring: Handle<Mesh>,
     shell: Handle<Mesh>,
-    bombe_material: Handle<StandardMaterial>,
-    fuse_material: Handle<StandardMaterial>,
-    spark_material: Handle<StandardMaterial>,
-    pillow_material: Handle<StandardMaterial>,
-    pillow_edge_material: Handle<StandardMaterial>,
     flash_material: Handle<StandardMaterial>,
     confetti_materials: [Handle<StandardMaterial>; 5],
     honk_material: Handle<StandardMaterial>,
     calin_material: Handle<StandardMaterial>,
-    rocket_material: Handle<StandardMaterial>,
-    rocket_nose_material: Handle<StandardMaterial>,
-    // Issue #21.
-    bone_material: Handle<StandardMaterial>,
-    chili_material: Handle<StandardMaterial>,
-    stem_material: Handle<StandardMaterial>,
-    cream_material: Handle<StandardMaterial>,
-    hug_material: Handle<StandardMaterial>,
-    gold_material: Handle<StandardMaterial>,
     ghost_material: Handle<StandardMaterial>,
     faint_ghost_material: Handle<StandardMaterial>,
     ghost_eye_material: Handle<StandardMaterial>,
@@ -106,33 +177,35 @@ impl ItemVisualAssets {
             alpha_mode: AlphaMode::Blend,
             ..default()
         };
+        let candy = StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.55,
+            reflectance: 0.45,
+            ..default()
+        };
         Self {
+            looks: Look::all()
+                .map(|look| (look, LookMeshes::new(meshes, &model(look))))
+                .collect(),
+            model_material: materials.add(candy.clone()),
+            glow_material: materials.add(StandardMaterial {
+                emissive: LinearRgba::rgb(0.32, 0.22, 0.02),
+                ..candy.clone()
+            }),
+            blink_material: materials.add(StandardMaterial {
+                emissive: LinearRgba::rgb(1.6, 0.12, 0.08),
+                ..candy
+            }),
+            wing_material: materials.add(StandardMaterial {
+                double_sided: true,
+                cull_mode: None,
+                ..translucent(Color::srgba(1.0, 1.0, 1.0, 0.6))
+            }),
+            spark_material: materials.add(unlit(Color::WHITE)),
             cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
             ball: meshes.add(Sphere::new(1.0)),
-            band: meshes.add(Torus::new(0.85, 1.05)),
-            strip: meshes.add(Capsule3d::new(0.09, 0.45)),
-            wing: meshes.add(Sphere::new(1.0)),
-            box_material: materials.add(translucent(Color::srgba(0.4, 0.8, 1.0, 0.55))),
-            double_box_material: materials.add(translucent(Color::srgba(1.0, 0.82, 0.25, 0.6))),
-            core_material: materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                emissive: LinearRgba::rgb(0.6, 0.6, 0.6),
-                ..default()
-            }),
-            pelure_material: materials.add(Color::srgb(1.0, 0.86, 0.15)),
-            pelote_material: materials.add(Color::srgb(0.95, 0.35, 0.6)),
-            pelote_band_material: materials.add(Color::srgb(0.7, 0.15, 0.4)),
-            abeille_material: materials.add(Color::srgb(1.0, 0.8, 0.1)),
-            stripe_material: materials.add(Color::srgb(0.1, 0.08, 0.05)),
-            wing_material: materials.add(translucent(Color::srgba(0.95, 0.97, 1.0, 0.8))),
-            fuse: meshes.add(Capsule3d::new(0.06, 0.25)),
             ring: meshes.add(Torus::new(0.9, 1.0)),
             shell: meshes.add(Capsule3d::new(1.0, 1.6)),
-            bombe_material: materials.add(Color::srgb(0.16, 0.2, 0.5)),
-            fuse_material: materials.add(Color::srgb(1.0, 0.85, 0.3)),
-            spark_material: materials.add(unlit(Color::srgb(1.0, 0.6, 0.1))),
-            pillow_material: materials.add(Color::srgb(0.97, 0.97, 1.0)),
-            pillow_edge_material: materials.add(Color::srgb(0.4, 0.6, 1.0)),
             flash_material: materials.add(StandardMaterial {
                 unlit: true,
                 ..translucent(Color::srgba(1.0, 0.97, 0.85, 0.35))
@@ -146,20 +219,6 @@ impl ItemVisualAssets {
                 unlit: true,
                 ..translucent(Color::srgba(1.0, 0.45, 0.75, 0.35))
             }),
-            rocket_material: materials.add(Color::srgb(1.0, 0.45, 0.1)),
-            rocket_nose_material: materials.add(Color::srgb(0.98, 0.98, 0.95)),
-            bone_material: materials.add(Color::srgb(0.98, 0.93, 0.8)),
-            chili_material: materials.add(Color::srgb(0.9, 0.12, 0.08)),
-            stem_material: materials.add(Color::srgb(0.2, 0.65, 0.2)),
-            cream_material: materials.add(Color::srgb(1.0, 0.97, 0.88)),
-            hug_material: materials.add(StandardMaterial {
-                emissive: LinearRgba::rgb(0.5, 0.15, 0.3),
-                ..StandardMaterial::from(Color::srgb(1.0, 0.45, 0.75))
-            }),
-            gold_material: materials.add(StandardMaterial {
-                emissive: LinearRgba::rgb(0.35, 0.25, 0.02),
-                ..StandardMaterial::from(Color::srgb(1.0, 0.78, 0.15))
-            }),
             ghost_material: materials.add(StandardMaterial {
                 unlit: true,
                 ..translucent(Color::srgba(0.95, 0.97, 1.0, 0.4))
@@ -169,6 +228,53 @@ impl ItemVisualAssets {
                 ..translucent(Color::srgba(0.95, 0.97, 1.0, 0.07))
             }),
             ghost_eye_material: materials.add(unlit(Color::srgb(0.12, 0.12, 0.2))),
+        }
+    }
+
+    /// The meshes of `look`.
+    pub fn look(&self, look: Look) -> &LookMeshes {
+        &self.looks[&look]
+    }
+
+    /// The material `look`'s body is drawn with: the models', glowing for the golden items.
+    pub fn body_material(&self, look: Look) -> Handle<StandardMaterial> {
+        match look {
+            Look::Item(ItemKind::PimentDore | ItemKind::CroquetteDoree) => {
+                self.glow_material.clone()
+            }
+            _ => self.model_material.clone(),
+        }
+    }
+
+    /// `look`'s model as children of `parent`, at `scale` (its unit in meters): its body (the
+    /// first child), its wings, its spark.
+    fn spawn_model(&self, parent: &mut ChildSpawnerCommands, look: Look, scale: f32) {
+        let meshes = self.look(look);
+        parent.spawn((
+            Mesh3d(meshes.body.clone()),
+            MeshMaterial3d(self.body_material(look)),
+            Transform::from_scale(Vec3::splat(scale)),
+        ));
+        if let Some((wing, hinge)) = &meshes.wing {
+            for side in [-1.0f32, 1.0] {
+                parent.spawn((
+                    AbeilleWing { side },
+                    Mesh3d(wing.clone()),
+                    MeshMaterial3d(self.wing_material.clone()),
+                    NotShadowCaster,
+                    Transform::from_translation(*hinge * Vec3::new(side, 1.0, 1.0) * scale)
+                        .with_scale(Vec3::new(side, 1.0, 1.0) * scale),
+                ));
+            }
+        }
+        if let Some((spark, at)) = &meshes.spark {
+            parent.spawn((
+                BombeSpark,
+                Mesh3d(spark.clone()),
+                MeshMaterial3d(self.spark_material.clone()),
+                NotShadowCaster,
+                Transform::from_translation(*at * scale).with_scale(Vec3::splat(scale)),
+            ));
         }
     }
 }
@@ -207,7 +313,7 @@ pub struct HonkLook {
 pub enum EffectKind {
     /// Super câlin: a pink glow.
     Calin,
-    /// Fusée à confettis: an orange shell.
+    /// Fusée à confettis: its rocket on the kart's back.
     Rocket,
     /// Pie voleuse (issue #21): a ghost in the kart's place (plain for its own player, faint for
     /// the others).
@@ -221,18 +327,24 @@ pub struct EffectLook {
     pub kind: EffectKind,
 }
 
-/// The turning part of a box (its child), and how long it has been back.
+/// The turning part of a box (its child; its lid is its child), how long it has been back, and
+/// how long ago it was taken (issue #106: it bursts).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ItemBoxLook {
     pub phase: f32,
     pub shown_for: f32,
+    pub gone_for: f32,
 }
 
-/// An abeille's wing (a child of the item): it beats.
+/// An abeille's wing (a child of its item): it beats.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct AbeilleWing {
     pub side: f32,
 }
+
+/// The bombe's spark (a child of its item, issue #106): it crackles, and the bombe blinks.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct BombeSpark;
 
 pub struct ItemVisualPlugin;
 
@@ -252,7 +364,12 @@ impl Plugin for ItemVisualPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (place_items, beat_wings, animate_blasts, animate_effects)
+                (
+                    (place_items, animate_items).chain(),
+                    beat_wings,
+                    animate_blasts,
+                    animate_effects,
+                )
                     .after(InterpolationSystems)
                     .before(TransformSystems::Propagate),
             );
@@ -267,7 +384,7 @@ fn create_item_visual_assets(
     commands.insert_resource(ItemVisualAssets::new(&mut meshes, &mut materials));
 }
 
-/// A new box of the track: its turning cube and white core.
+/// A new box of the track: its gift box and, on it, its lid with the bow.
 fn dress_boxes(
     mut commands: Commands,
     assets: Res<ItemVisualAssets>,
@@ -275,70 +392,134 @@ fn dress_boxes(
 ) {
     for (entity, spot, transform) in &boxes {
         let phase = transform.translation.x * 0.37 + transform.translation.z * 0.23;
-        let material = if spot.double {
-            assets.double_box_material.clone()
+        let look = if spot.double {
+            Look::DoubleGiftBox
         } else {
-            assets.box_material.clone()
+            Look::GiftBox
         };
+        let meshes = assets.look(look);
+        let lid = meshes.lid.clone();
         commands.entity(entity).with_children(|item_box| {
             item_box
                 .spawn((
                     ItemBoxLook {
                         phase,
                         shown_for: BOX_POP_IN,
+                        gone_for: f32::INFINITY,
                     },
-                    Mesh3d(assets.cube.clone()),
-                    MeshMaterial3d(material),
+                    Mesh3d(meshes.body.clone()),
+                    MeshMaterial3d(assets.model_material.clone()),
                     Transform::from_scale(Vec3::splat(BOX_SIZE)),
                     Visibility::default(),
                 ))
-                .with_children(|cube| {
-                    cube.spawn((
-                        Mesh3d(assets.cube.clone()),
-                        MeshMaterial3d(assets.core_material.clone()),
-                        Transform::from_scale(Vec3::splat(0.35))
-                            .with_rotation(Quat::from_rotation_z(0.6)),
-                    ));
+                .with_children(|gift| {
+                    if let Some((lid, at)) = lid {
+                        gift.spawn((
+                            Mesh3d(lid),
+                            MeshMaterial3d(assets.model_material.clone()),
+                            Transform::from_translation(at),
+                        ));
+                    }
                 });
         });
     }
 }
 
-/// Boxes turn; a broken one is hidden, then pops back in; all hidden without items.
+/// How a box looks `t` seconds into its bounce (`phase` its own): how high (m) and its scale
+/// (squashed as it lands, a little wider).
+pub fn box_bounce(t: f32, phase: f32) -> (f32, Vec3) {
+    let s = (PI * (t * BOX_BOUNCE_HZ + phase)).sin().abs();
+    let landing = (1.0 - s).powi(4);
+    let squash = BOX_SQUASH * landing;
+    (
+        BOX_BOUNCE * s,
+        Vec3::new(1.0 + squash * 0.5, 1.0 - squash, 1.0 + squash * 0.5),
+    )
+}
+
+/// Boxes turn and bounce, their lids wobble as they land; a box taken bursts (it swells, its lid
+/// pops off), is hidden, then pops back in; all hidden without items.
 fn animate_boxes(
     time: Res<Time>,
     tuning: Res<ItemTuning>,
-    boxes: Query<&ItemBox>,
-    mut looks: Query<(&ChildOf, &mut ItemBoxLook, &mut Transform, &mut Visibility)>,
+    assets: Res<ItemVisualAssets>,
+    boxes: Query<(&ItemBox, &ItemBoxSpot)>,
+    mut looks: Query<(
+        &ChildOf,
+        &mut ItemBoxLook,
+        &mut Transform,
+        &mut Visibility,
+        Option<&Children>,
+    )>,
+    mut lids: Query<&mut Transform, Without<ItemBoxLook>>,
 ) {
     let dt = time.delta_secs();
     let now = time.elapsed_secs();
-    for (child_of, mut look, mut transform, mut visibility) in &mut looks {
-        let Ok(item_box) = boxes.get(child_of.parent()) else {
+    for (child_of, mut look, mut transform, mut visibility, children) in &mut looks {
+        let Ok((item_box, spot)) = boxes.get(child_of.parent()) else {
             continue;
         };
+        let lid_at = assets
+            .look(if spot.double {
+                Look::DoubleGiftBox
+            } else {
+                Look::GiftBox
+            })
+            .lid
+            .as_ref()
+            .map_or(Vec3::ZERO, |(_, at)| *at);
         let shown = tuning.enabled && item_box.available();
-        visibility.set_if_neq(if shown {
+        if tuning.enabled && !shown && look.gone_for.is_infinite() && look.shown_for > 0.0 {
+            // Just taken: it bursts.
+            look.gone_for = 0.0;
+        }
+        let bursting = !shown && look.gone_for < BOX_BURST;
+        visibility.set_if_neq(if shown || bursting {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
-        if !shown {
-            look.shown_for = 0.0;
+        let angle = now * BOX_SPIN + look.phase;
+        if bursting {
+            look.gone_for += dt;
+            let t = (look.gone_for / BOX_BURST).min(1.0);
+            transform.scale = Vec3::splat(BOX_SIZE * (1.0 + BOX_BURST_SWELL * t));
+            transform.rotation = Quat::from_rotation_y(angle);
+            for child in children.into_iter().flatten() {
+                if let Ok(mut lid) = lids.get_mut(*child) {
+                    lid.translation = lid_at + Vec3::Y * BOX_LID_JUMP * t;
+                    lid.rotation = Quat::from_rotation_z(0.9 * t) * Quat::from_rotation_x(0.5 * t);
+                }
+            }
             continue;
         }
+        if !shown {
+            look.shown_for = 0.0;
+            look.gone_for = f32::INFINITY;
+            continue;
+        }
+        look.gone_for = f32::INFINITY;
         look.shown_for += dt;
         let t = (look.shown_for / BOX_POP_IN).min(1.0);
         // Grows with a little overshoot.
-        let scale = BOX_SIZE * (t + 0.25 * (std::f32::consts::PI * t).sin());
-        let angle = now * BOX_SPIN + look.phase;
-        transform.rotation = Quat::from_rotation_y(angle) * Quat::from_rotation_x(0.6);
-        transform.translation.y = 0.12 * (now * 2.0 + look.phase).sin();
-        transform.scale = Vec3::splat(scale.max(0.01));
+        let pop = BOX_SIZE * (t + 0.25 * (PI * t).sin());
+        let (height, squash) = box_bounce(now, look.phase);
+        transform.rotation = Quat::from_rotation_y(angle);
+        transform.translation.y = height;
+        transform.scale = squash * pop.max(0.01);
+        // The lid wobbles as the box lands, like jelly.
+        let wobble = (1.0 - squash.y) / BOX_SQUASH;
+        for child in children.into_iter().flatten() {
+            if let Ok(mut lid) = lids.get_mut(*child) {
+                lid.translation = lid_at;
+                lid.rotation = Quat::from_rotation_z(0.12 * wobble * (now * 9.0).sin())
+                    * Quat::from_rotation_x(0.08 * wobble * (now * 7.0).cos());
+            }
+        }
     }
 }
 
-/// A new item out: its shape.
+/// A new item out: its model.
 fn dress_items(
     mut commands: Commands,
     assets: Res<ItemVisualAssets>,
@@ -347,176 +528,9 @@ fn dress_items(
 ) {
     for (entity, item) in &items {
         let radius = item.radius(&tuning);
-        commands
-            .entity(entity)
-            .with_children(|parts| match item.item {
-                ItemKind::Pelure => {
-                    // Two strips in a V, flat on the ground.
-                    for side in [-1.0f32, 1.0] {
-                        parts.spawn((
-                            Mesh3d(assets.strip.clone()),
-                            MeshMaterial3d(assets.pelure_material.clone()),
-                            Transform::from_xyz(side * 0.15, -radius * 0.5, 0.0).with_rotation(
-                                Quat::from_rotation_y(side * 0.5)
-                                    * Quat::from_rotation_x(FRAC_PI_2),
-                            ),
-                        ));
-                    }
-                }
-                ItemKind::Pelote => {
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.pelote_material.clone()),
-                        Transform::from_scale(Vec3::splat(radius)),
-                    ));
-                    for tilt in [0.0f32, 1.1] {
-                        parts.spawn((
-                            Mesh3d(assets.band.clone()),
-                            MeshMaterial3d(assets.pelote_band_material.clone()),
-                            Transform::from_scale(Vec3::splat(radius * 0.98))
-                                .with_rotation(Quat::from_rotation_z(FRAC_PI_2 + tilt)),
-                        ));
-                    }
-                }
-                ItemKind::Abeille => {
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.abeille_material.clone()),
-                        Transform::from_scale(Vec3::new(radius, radius, radius * 1.3)),
-                    ));
-                    for z in [-0.12f32, 0.12] {
-                        parts.spawn((
-                            Mesh3d(assets.band.clone()),
-                            MeshMaterial3d(assets.stripe_material.clone()),
-                            Transform::from_xyz(0.0, 0.0, z * radius * 3.0)
-                                .with_scale(Vec3::new(radius * 0.97, radius * 0.4, radius * 0.97))
-                                .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
-                        ));
-                    }
-                    for side in [-1.0f32, 1.0] {
-                        parts.spawn((
-                            AbeilleWing { side },
-                            Mesh3d(assets.wing.clone()),
-                            MeshMaterial3d(assets.wing_material.clone()),
-                            Transform::from_xyz(side * radius * 0.9, radius * 0.8, 0.0)
-                                .with_scale(Vec3::new(radius * 0.9, radius * 0.12, radius * 0.5)),
-                        ));
-                    }
-                }
-                ItemKind::Bombe => {
-                    // A navy ball, a yellow fuse on top and its spark.
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.bombe_material.clone()),
-                        Transform::from_scale(Vec3::splat(radius)),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.fuse.clone()),
-                        MeshMaterial3d(assets.fuse_material.clone()),
-                        Transform::from_xyz(0.0, radius * 1.05, 0.0)
-                            .with_rotation(Quat::from_rotation_z(0.4)),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.spark_material.clone()),
-                        Transform::from_xyz(radius * 0.25, radius * 1.45, 0.0)
-                            .with_scale(Vec3::splat(0.09)),
-                    ));
-                }
-                ItemKind::Boomerang => {
-                    // Issue #21: a cream bone, flat: a shaft and two knobs at each end.
-                    parts.spawn((
-                        Mesh3d(assets.strip.clone()),
-                        MeshMaterial3d(assets.bone_material.clone()),
-                        Transform::from_rotation(Quat::from_rotation_z(FRAC_PI_2))
-                            .with_scale(Vec3::new(1.3, 1.0, 1.3) * radius * 2.2),
-                    ));
-                    for x in [-1.0f32, 1.0] {
-                        for z in [-1.0f32, 1.0] {
-                            parts.spawn((
-                                Mesh3d(assets.ball.clone()),
-                                MeshMaterial3d(assets.bone_material.clone()),
-                                Transform::from_xyz(x * radius * 1.25, 0.0, z * radius * 0.28)
-                                    .with_scale(Vec3::splat(radius * 0.36)),
-                            ));
-                        }
-                    }
-                }
-                ItemKind::Piment => {
-                    // Issue #21 (out in a piñata only): a red chili, a green stem.
-                    parts.spawn((
-                        Mesh3d(assets.strip.clone()),
-                        MeshMaterial3d(assets.chili_material.clone()),
-                        Transform::from_rotation(Quat::from_rotation_z(0.5))
-                            .with_scale(Vec3::new(1.8, 0.9, 1.8)),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.stem_material.clone()),
-                        Transform::from_xyz(-0.17, 0.3, 0.0).with_scale(Vec3::splat(0.09)),
-                    ));
-                }
-                ItemKind::Chantilly => {
-                    // A swirl of cream: two white balls, one on the other.
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.cream_material.clone()),
-                        Transform::from_scale(Vec3::new(0.32, 0.22, 0.32)),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.cream_material.clone()),
-                        Transform::from_xyz(0.0, 0.2, 0.0).with_scale(Vec3::splat(0.17)),
-                    ));
-                }
-                ItemKind::SuperCalin => {
-                    // A pink heart: two balls side by side over a point.
-                    for side in [-1.0f32, 1.0] {
-                        parts.spawn((
-                            Mesh3d(assets.ball.clone()),
-                            MeshMaterial3d(assets.hug_material.clone()),
-                            Transform::from_xyz(side * 0.12, 0.08, 0.0)
-                                .with_scale(Vec3::splat(0.17)),
-                        ));
-                    }
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.hug_material.clone()),
-                        Transform::from_xyz(0.0, -0.1, 0.0).with_scale(Vec3::new(0.2, 0.16, 0.13)),
-                    ));
-                }
-                ItemKind::CroquetteDoree => {
-                    // A golden ring, standing.
-                    parts.spawn((
-                        Mesh3d(assets.band.clone()),
-                        MeshMaterial3d(assets.gold_material.clone()),
-                        Transform::from_rotation(Quat::from_rotation_x(FRAC_PI_2))
-                            .with_scale(Vec3::splat(0.26)),
-                    ));
-                }
-                ItemKind::OreillerGeant => {
-                    // A big white cushion edged in blue, four tufts at its corners.
-                    parts.spawn((
-                        Mesh3d(assets.cube.clone()),
-                        MeshMaterial3d(assets.pillow_material.clone()),
-                        Transform::from_scale(Vec3::new(2.2, 0.7, 1.5) * radius),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.cube.clone()),
-                        MeshMaterial3d(assets.pillow_edge_material.clone()),
-                        Transform::from_scale(Vec3::new(2.25, 0.25, 1.55) * radius),
-                    ));
-                    for (x, z) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                        parts.spawn((
-                            Mesh3d(assets.ball.clone()),
-                            MeshMaterial3d(assets.pillow_material.clone()),
-                            Transform::from_xyz(x * 1.1 * radius, 0.0, z * 0.75 * radius)
-                                .with_scale(Vec3::splat(0.3 * radius)),
-                        ));
-                    }
-                }
-                _ => {}
-            });
+        commands.entity(entity).with_children(|parts| {
+            assets.spawn_model(parts, Look::Item(item.item), radius);
+        });
     }
 }
 
@@ -633,7 +647,7 @@ fn animate_blasts(
     }
 }
 
-/// A kart in a super câlin glows pink, a kart in a fusée wears its shell (issue #18): shown
+/// A kart in a super câlin glows pink, a kart in a fusée wears its rocket (issue #18): shown
 /// while it lasts, around the kart's interpolated pose.
 fn show_effects(
     mut commands: Commands,
@@ -679,17 +693,14 @@ fn show_effects(
                     ));
                 }
                 EffectKind::Rocket => {
+                    // Issue #106: the fusée's rocket strapped to the kart's back, its nose
+                    // forward (−Z), its nozzle out behind.
                     parts.spawn((
-                        Mesh3d(assets.shell.clone()),
-                        MeshMaterial3d(assets.rocket_material.clone()),
-                        Transform::from_xyz(0.0, 0.25, 0.2)
-                            .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
-                            .with_scale(Vec3::new(0.95, 1.0, 0.75)),
-                    ));
-                    parts.spawn((
-                        Mesh3d(assets.ball.clone()),
-                        MeshMaterial3d(assets.rocket_nose_material.clone()),
-                        Transform::from_xyz(0.0, 0.25, -1.55).with_scale(Vec3::new(0.7, 0.55, 0.6)),
+                        Mesh3d(assets.look(Look::Item(ItemKind::Fusee)).body.clone()),
+                        MeshMaterial3d(assets.model_material.clone()),
+                        Transform::from_xyz(0.0, 0.62, 0.75)
+                            .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
+                            .with_scale(Vec3::splat(0.68)),
                     ));
                 }
                 EffectKind::Ghost => {
@@ -742,9 +753,10 @@ fn animate_effects(
 }
 
 /// Every item out, between its last two simulated positions; a pelote rolls, an abeille faces
-/// where it flies, a pelure turns slowly on the ground. Issue #96: over the road of an
-/// anti-gravity zone, the same in the road's frame (its normal as the item's up: a pelure lies
-/// flat on a wall, a boomerang-os spins flat over a ceiling); only on a circuit with a zone.
+/// where it flies (its model's front, +Z), a pelure turns slowly on the ground. Issue #96: over
+/// the road of an anti-gravity zone, the same in the road's frame (its normal as the item's up: a
+/// pelure lies flat on a wall, a boomerang-os spins flat over a ceiling); only on a circuit with a
+/// zone.
 fn place_items(
     fixed_time: Res<Time<Fixed>>,
     tuning: Res<ItemTuning>,
@@ -774,7 +786,8 @@ fn place_items(
                 Quat::from_axis_angle(axis, angle % TAU)
             }
             ItemKind::Abeille if velocity.length() > 0.1 => {
-                Transform::default().looking_to(velocity, Vec3::Y).rotation
+                // Its front (+Z) where it flies.
+                Transform::default().looking_to(-velocity, Vec3::Y).rotation
             }
             // Issue #21: the boomerang-os spins flat as it flies.
             ItemKind::Boomerang => Quat::from_rotation_y(item.age * BOOMERANG_SPIN),
@@ -792,9 +805,500 @@ fn place_items(
     }
 }
 
+/// How lit a bombe is `age` seconds after it came out (issue #106): it blinks, faster and faster
+/// to the end of its fuse (`fuse` seconds).
+pub fn bombe_lit(age: f32, fuse: f32) -> bool {
+    let gain = BLINK_HZ_GAIN / fuse.max(0.1);
+    // The blinks so far: the integral of a frequency growing from BLINK_HZ.
+    let blinks = BLINK_HZ * age + 0.5 * gain * age * age;
+    blinks.fract() < BLINK_LIT
+}
+
+/// The items' own motions (issue #106), on their model's parts: the pelure wobbles like jelly,
+/// the oreiller géant floats and rocks, the super câlin's heart beats, the bombe blinks and its
+/// spark crackles, the abeille bobs as it flies.
+fn animate_items(
+    time: Res<Time>,
+    tuning: Res<ItemTuning>,
+    assets: Res<ItemVisualAssets>,
+    items: Query<(&ItemObject, &Children)>,
+    mut parts: Query<
+        (
+            &mut Transform,
+            Option<&mut MeshMaterial3d<StandardMaterial>>,
+            Has<BombeSpark>,
+        ),
+        Without<AbeilleWing>,
+    >,
+) {
+    let now = time.elapsed_secs();
+    for (item, children) in &items {
+        let radius = item.radius(&tuning);
+        let t = item.age;
+        // The body's motion: its offset (in its radius), its scale and its turn.
+        let (offset, scale, turn) = match item.item {
+            ItemKind::Pelure => {
+                let w = (t * 7.0).sin() * (-t * 0.6).exp().max(0.25);
+                (
+                    Vec3::ZERO,
+                    Vec3::new(1.0 + 0.05 * w, 1.0 - 0.08 * w, 1.0 + 0.05 * w),
+                    Quat::IDENTITY,
+                )
+            }
+            ItemKind::OreillerGeant => (
+                Vec3::Y * PILLOW_FLOAT * (TAU * PILLOW_FLOAT_HZ * now).sin(),
+                Vec3::ONE,
+                Quat::from_rotation_z(0.08 * (TAU * 0.7 * now).sin())
+                    * Quat::from_rotation_x(0.06 * (TAU * 0.55 * now).cos()),
+            ),
+            ItemKind::SuperCalin => {
+                let beat = (TAU * 1.4 * now).sin().max(0.0).powi(6);
+                (Vec3::ZERO, Vec3::splat(1.0 + 0.16 * beat), Quat::IDENTITY)
+            }
+            ItemKind::Abeille => (
+                Vec3::Y * 0.06 * (now * 18.0).sin(),
+                Vec3::ONE,
+                Quat::IDENTITY,
+            ),
+            ItemKind::Chantilly => {
+                let w = (now * 5.0).sin();
+                (
+                    Vec3::ZERO,
+                    Vec3::new(1.0 + 0.04 * w, 1.0 - 0.06 * w, 1.0 + 0.04 * w),
+                    Quat::IDENTITY,
+                )
+            }
+            _ => (Vec3::ZERO, Vec3::ONE, Quat::IDENTITY),
+        };
+        let blinking = item.item == ItemKind::Bombe
+            && !matches!(item.motion, Motion::Held(_))
+            && bombe_lit(t, tuning.bombe_fuse);
+        let spark_at = assets
+            .look(Look::Item(item.item))
+            .spark
+            .as_ref()
+            .map_or(Vec3::ZERO, |(_, at)| *at);
+        for (k, child) in children.iter().enumerate() {
+            let Ok((mut transform, material, spark)) = parts.get_mut(child) else {
+                continue;
+            };
+            if spark {
+                let crackle = 1.0 + 0.35 * (now * 47.0).sin() * (now * 31.0).cos();
+                let size = if blinking { 1.7 } else { crackle };
+                transform.translation = turn * (spark_at + offset) * radius;
+                transform.scale = Vec3::splat(radius * size);
+            } else if k == 0 {
+                // The body.
+                transform.translation = offset * radius;
+                transform.rotation = turn;
+                transform.scale = scale * radius;
+                if item.item == ItemKind::Bombe
+                    && let Some(mut material) = material
+                {
+                    let wanted = if blinking {
+                        &assets.blink_material
+                    } else {
+                        &assets.model_material
+                    };
+                    if material.0 != *wanted {
+                        material.0 = wanted.clone();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The abeilles' wings beat (an item's, a used one's, the showcase's).
 fn beat_wings(time: Res<Time>, mut wings: Query<(&AbeilleWing, &mut Transform)>) {
-    let beat = (time.elapsed_secs() * WING_BEAT).sin() * 0.6;
+    let beat = (time.elapsed_secs() * WING_BEAT).sin() * WING_SWING;
     for (wing, mut transform) in &mut wings {
+        // The left one is mirrored (its scale): turned the other way, both rise together.
         transform.rotation = Quat::from_rotation_z(wing.side * beat);
+    }
+}
+
+// --- With a renderer ----------------------------------------------------------------------------
+
+/// The items' models with a renderer (issue #106): their files, an item used popping up over its
+/// kart, the admin panel's showcase. Added by `GamePlugin` only on screen: the headless game
+/// keeps the models built in code, and the bot races their world.
+pub struct ItemModelPlugin;
+
+impl Plugin for ItemModelPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ItemShowcase>()
+            .add_systems(Startup, request_model_files)
+            .add_systems(
+                Update,
+                (
+                    take_model_files
+                        .after(ModelSystems)
+                        .run_if(resource_exists::<ItemVisualAssets>),
+                    show_flourishes,
+                    animate_flourishes,
+                    show_showcase,
+                    spin_showcase,
+                ),
+            );
+    }
+}
+
+/// Asks for the models' files (kept for the whole game), if the game can load them.
+fn request_model_files(
+    models: Option<ResMut<Models>>,
+    server: Res<AssetServer>,
+    gltfs: Option<Res<Assets<bevy::gltf::Gltf>>>,
+) {
+    if let Some(mut models) = models {
+        let server = gltfs.map(|_| &*server);
+        for (_, id) in MODEL_FILES {
+            models.request(id, Keep::Always, server);
+        }
+    }
+}
+
+/// Once the files are baked (or missing), each one's model takes the place of the built one: in
+/// its meshes, and in its icon (a file that is missing leaves the built model, said once by
+/// `models`). Once.
+fn take_model_files(
+    models: Option<Res<Models>>,
+    mut assets: ResMut<ItemVisualAssets>,
+    icons: Option<Res<ItemIcons>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: Option<ResMut<Assets<Image>>>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(models) = models else {
+        *done = true;
+        return;
+    };
+    if !MODEL_FILES.iter().all(|(_, id)| models.settled(id)) {
+        return;
+    }
+    *done = true;
+    for (look, id) in MODEL_FILES {
+        let Some(made) = models
+            .get(id)
+            .and_then(|baked| from_file(look, baked, &model(look)))
+        else {
+            continue;
+        };
+        if let Some(meshes_of) = assets.looks.get_mut(&look) {
+            meshes_of.replace(&mut meshes, &made);
+        }
+        if let (Look::Item(item), Some(icons), Some(images)) = (look, &icons, images.as_mut()) {
+            icons.replace(images, item, &made);
+        }
+    }
+}
+
+/// An item used, popping up over its kart (issue #106): its age (s).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Flourish {
+    pub age: f32,
+}
+
+/// The items shown over their kart when used (they act at once: nothing of them on the track).
+fn flourishes(item: ItemKind) -> bool {
+    matches!(
+        item,
+        ItemKind::Piment
+            | ItemKind::PimentDore
+            | ItemKind::CroquetteDoree
+            | ItemKind::Chantilly
+            | ItemKind::SuperCalin
+            | ItemKind::Fusee
+            | ItemKind::Degonflage
+            | ItemKind::KlaxonCanard
+            | ItemKind::PieVoleuse
+            | ItemKind::Pinata
+    )
+}
+
+/// What a kart held last frame: its items used so far, the item ready in its hand, its piñata.
+#[derive(Clone, Copy, Debug, Default)]
+struct Held {
+    used: u32,
+    hand: Option<ItemKind>,
+    pinata: u8,
+}
+
+/// Each item a kart uses that acts at once pops up over it (issue #106): its model grows, turns
+/// and rises, then shrinks away. Each press of a piment doré, each piment of a « x3 »; the
+/// piñata on its first press only (its items then show around the kart).
+fn show_flourishes(
+    mut commands: Commands,
+    assets: Res<ItemVisualAssets>,
+    karts: Query<(Entity, &ItemStats, &super::ItemSlots)>,
+    mut held: Local<HashMap<Entity, Held>>,
+) {
+    for (kart, stats, slots) in &karts {
+        let now = Held {
+            used: stats.used,
+            hand: match slots.hand {
+                super::Slot::Ready { item, .. } => Some(item),
+                _ => None,
+            },
+            pinata: slots.pinata,
+        };
+        let Some(before) = held.insert(kart, now) else {
+            continue;
+        };
+        let Some(item) = before.hand.filter(|item| flourishes(*item)) else {
+            continue;
+        };
+        if now.used <= before.used || (item == ItemKind::Pinata && before.pinata != 0) {
+            continue;
+        }
+        commands
+            .spawn((
+                Name::new("Item used"),
+                Flourish { age: 0.0 },
+                InterpolatedFrom(kart),
+                LevelScoped,
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .with_children(|parent| {
+                parent
+                    .spawn((
+                        Transform::from_scale(Vec3::ZERO),
+                        Visibility::default(),
+                        NotShadowCaster,
+                    ))
+                    .with_children(|holder| {
+                        assets.spawn_model(holder, Look::Item(item), FLOURISH_SIZE / 2.0);
+                    });
+            });
+    }
+    if held.len() > 64 {
+        held.retain(|kart, _| karts.contains(*kart));
+    }
+}
+
+/// How an item used looks `t` seconds after it popped up: its scale (it grows with an
+/// overshoot, stays, then shrinks away) and how high it is over its kart.
+pub fn flourish_pose(t: f32) -> (f32, f32) {
+    let x = (t / FLOURISH_TIME).clamp(0.0, 1.0);
+    // Eased out with an overshoot (about 15 %) over its first 30 %, gone over its last 30 %.
+    let grow = (x / 0.3).min(1.0) - 1.0;
+    let overshoot = 2.6;
+    let pop = 1.0 + (overshoot + 1.0) * grow.powi(3) + overshoot * grow.powi(2);
+    let shrink = ((1.0 - x) / 0.3).min(1.0);
+    (pop * shrink, FLOURISH_HEIGHT + 0.5 * x * x)
+}
+
+fn animate_flourishes(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut flourishes: Query<(Entity, &mut Flourish, &Children)>,
+    mut holders: Query<&mut Transform, Without<Flourish>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut flourish, children) in &mut flourishes {
+        flourish.age += dt;
+        if flourish.age >= FLOURISH_TIME {
+            commands.entity(entity).try_despawn();
+            continue;
+        }
+        let (scale, height) = flourish_pose(flourish.age);
+        for child in children.iter() {
+            if let Ok(mut holder) = holders.get_mut(child) {
+                holder.translation = Vec3::Y * height;
+                holder.rotation = Quat::from_rotation_y(flourish.age * 7.0);
+                holder.scale = Vec3::splat(scale.max(1e-3));
+            }
+        }
+    }
+}
+
+/// The admin panel's showcase (issue #106): every model side by side in front of the camera, to
+/// look at them (`open`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItemShowcase {
+    pub open: bool,
+}
+
+/// A model of the showcase: its place in the row (its spin).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ShowcaseItem {
+    pub index: usize,
+    pub look: Look,
+}
+
+/// The showcase's root.
+#[derive(Component, Clone, Copy, Debug)]
+struct Showcase;
+
+/// The showcase opened: every model (the sixteen items, the croquette, the two boxes) in rows in
+/// front of the camera, facing it; closed, gone.
+fn show_showcase(
+    mut commands: Commands,
+    showcase: Res<ItemShowcase>,
+    assets: Res<ItemVisualAssets>,
+    cameras: Query<(&GlobalTransform, &ChaseCamera)>,
+    targets: Query<&GlobalTransform>,
+    shown: Query<Entity, With<Showcase>>,
+) {
+    if !showcase.is_changed() {
+        return;
+    }
+    for entity in &shown {
+        commands.entity(entity).try_despawn();
+    }
+    if !showcase.open {
+        return;
+    }
+    let Some((camera, chase)) = cameras.iter().next() else {
+        return;
+    };
+    let camera = camera.compute_transform();
+    let looks: Vec<Look> = Look::all().collect();
+    let rows = looks.len().div_ceil(SHOWCASE_COLUMNS);
+    // Standing upright ahead of the camera, facing it, its lowest row over the kart it follows.
+    let forward = camera
+        .forward()
+        .as_vec3()
+        .with_y(0.0)
+        .normalize_or(Vec3::NEG_Z);
+    let ground = targets
+        .get(chase.target)
+        .map_or(camera.translation.y - 2.5, |kart| kart.translation().y);
+    let height = ground + SHOWCASE_LIFT + (rows - 1) as f32 / 2.0 * SHOWCASE_STEP.y;
+    let center = (camera.translation + forward * SHOWCASE_DISTANCE).with_y(height);
+    let root = Transform::from_translation(center).looking_to(forward, Vec3::Y);
+    commands
+        .spawn((
+            Name::new("Showcase"),
+            Showcase,
+            LevelScoped,
+            root,
+            Visibility::default(),
+        ))
+        .with_children(|row| {
+            for (index, look) in looks.into_iter().enumerate() {
+                let (column, line) = (index % SHOWCASE_COLUMNS, index / SHOWCASE_COLUMNS);
+                let x = (column as f32 - (SHOWCASE_COLUMNS - 1) as f32 / 2.0) * SHOWCASE_STEP.x;
+                let y = ((rows - 1) as f32 / 2.0 - line as f32) * SHOWCASE_STEP.y;
+                // The models' unit: an item's radius (about half of it across), or meters.
+                let scale = match look {
+                    Look::Item(_) => SHOWCASE_SIZE * 0.4,
+                    Look::Croquette => SHOWCASE_SIZE * 1.4,
+                    Look::GiftBox | Look::DoubleGiftBox => SHOWCASE_SIZE * 0.8,
+                };
+                row.spawn((
+                    ShowcaseItem { index, look },
+                    // Facing the camera: the root looks along `forward` (its −Z), the models'
+                    // front (+Z) toward the camera.
+                    Transform::from_xyz(x, y, 0.0),
+                    Visibility::default(),
+                ))
+                .with_children(|holder| {
+                    assets.spawn_model(holder, look, scale);
+                    if let Some((lid, at)) = assets.look(look).lid.clone() {
+                        holder.spawn((
+                            Mesh3d(lid),
+                            MeshMaterial3d(assets.model_material.clone()),
+                            Transform::from_translation(at * scale).with_scale(Vec3::splat(scale)),
+                        ));
+                    }
+                });
+            }
+        });
+}
+
+/// The showcase's models swing slowly, each a little behind the one before.
+fn spin_showcase(time: Res<Time>, mut items: Query<(&ShowcaseItem, &mut Transform)>) {
+    let now = time.elapsed_secs();
+    for (item, mut transform) in &mut items {
+        // Seen from its icon's side (its best one), swinging a little.
+        let mut view = icon_view(item.look);
+        view.yaw += 0.5 * (now * 0.8 + item.index as f32 * 0.4).sin();
+        transform.rotation = view.rotation();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A box bounces softly: up and down, never below its place, squashed only as it lands.
+    #[test]
+    fn a_box_bounces_softly() {
+        let mut lowest_squash = f32::MAX;
+        for k in 0..200 {
+            let t = k as f32 / 100.0;
+            let (height, scale) = box_bounce(t, 0.3);
+            assert!((0.0..=BOX_BOUNCE + 1e-5).contains(&height));
+            assert!(scale.y <= 1.0 && scale.x >= 1.0);
+            if height > BOX_BOUNCE * 0.6 {
+                assert!(scale.y > 0.995, "squashed in the air at {t}");
+            }
+            lowest_squash = lowest_squash.min(scale.y);
+        }
+        assert!((lowest_squash - (1.0 - BOX_SQUASH)).abs() < 0.01);
+    }
+
+    /// The bombe blinks faster and faster to the end of its fuse.
+    #[test]
+    fn the_bombe_blinks_faster_and_faster() {
+        let fuse = 3.0;
+        let blinks = |from: f32, to: f32| {
+            let mut count = 0;
+            let mut was = bombe_lit(from, fuse);
+            let mut t = from;
+            while t < to {
+                t += 0.002;
+                let lit = bombe_lit(t, fuse);
+                if lit && !was {
+                    count += 1;
+                }
+                was = lit;
+            }
+            count
+        };
+        let (first, last) = (blinks(0.0, 1.0), blinks(2.0, 3.0));
+        assert!((2..=4).contains(&first), "{first}");
+        assert!(last > first * 2, "{first} then {last}");
+    }
+
+    /// An item used pops up with an overshoot, stays, then shrinks away as it rises.
+    #[test]
+    fn an_item_used_pops_up_and_away() {
+        let (start, _) = flourish_pose(0.0);
+        assert!(start.abs() < 1e-6);
+        let peak = (1..60)
+            .map(|k| flourish_pose(FLOURISH_TIME * k as f32 / 60.0).0)
+            .fold(0.0f32, f32::max);
+        assert!(peak > 1.1 && peak < 1.5, "{peak}");
+        let (end, high) = flourish_pose(FLOURISH_TIME);
+        assert!(end.abs() < 1e-6 && high > FLOURISH_HEIGHT);
+    }
+
+    /// Every look has its meshes, the files' looks too; the golden items glow.
+    #[test]
+    fn every_look_has_its_meshes() {
+        let mut meshes = Assets::<Mesh>::default();
+        let mut materials = Assets::<StandardMaterial>::default();
+        let assets = ItemVisualAssets::new(&mut meshes, &mut materials);
+        for look in Look::all() {
+            let look_meshes = assets.look(look);
+            assert!(meshes.get(&look_meshes.body).is_some(), "{look:?}");
+        }
+        assert!(assets.look(Look::Item(ItemKind::Abeille)).wing.is_some());
+        assert!(assets.look(Look::Item(ItemKind::Bombe)).spark.is_some());
+        assert!(assets.look(Look::GiftBox).lid.is_some());
+        assert_eq!(
+            assets.body_material(Look::Item(ItemKind::PimentDore)),
+            assets.glow_material
+        );
+        assert_eq!(
+            assets.body_material(Look::Item(ItemKind::Pelure)),
+            assets.model_material
+        );
     }
 }

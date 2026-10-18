@@ -5,11 +5,14 @@
 //!
 //! - Each slot holds a cell per item ([`ReelCell`], sixteen, built once and hidden), in place of
 //!   the single icon; at most two are seen at a time: the item in the window and the next one
-//!   coming in from the top. They move with `UiTransform` only (a share of their own height):
-//!   nothing is laid out again while the reel turns. The slot clips them (`Overflow::clip`).
+//!   coming in from the top. Issue #106: each cell is the item's icon, its model rendered once
+//!   (`items::icons`), [`ICON_SIDE`] px (bigger in the hand, smaller in the reserve). They move
+//!   with `UiTransform` only (a share of their own height): nothing is laid out again while the
+//!   reel turns. The slot clips them (`Overflow::clip`).
 //! - While it spins, its window is darker (the bright icons read better on the sky).
 //! - At the stop, the « ding »: the slot squashes and bounces back (its `UiTransform`), a ring
 //!   bursts out of it (its `Outline`), its window flashes; the stop's sound.
+//! - Issue #106: the croquette counter's dot is the croquette's icon too.
 //! - A tick for each item that passes, a « ding » at the stop (`audio::RouletteSounds`): only for
 //!   the player's own kart (not the home screen's race), one of each at most per frame (a double
 //!   box turns both reels together).
@@ -17,9 +20,9 @@
 use bevy::prelude::*;
 
 use super::roulette::{self, REEL, ReelFrame, RouletteClock};
-use super::{ICON_SCALES, ItemIcon, ItemSlot, PANEL_COLOR, followed, icon_shape};
+use super::{CroquetteCounter, ICON_SCALES, ItemIcon, ItemSlot, PANEL_COLOR, followed};
 use crate::audio::{RouletteSounds, SoundEffect, play_roulette};
-use crate::items::{ItemKind, ItemSlots, ItemTuning, Slot};
+use crate::items::{ItemIconPlugin, ItemIcons, ItemKind, ItemSlots, ItemTuning, Slot};
 use crate::kart::PlayerKart;
 use crate::menu::style::palette;
 use crate::race::{Race, RaceProgress, Racer};
@@ -29,12 +32,23 @@ pub struct RoulettePlugin;
 
 impl Plugin for RoulettePlugin {
     fn build(&self, app: &mut App) {
+        // Issue #106: the items' icons. Their images need a renderer's storage of images (the
+        // headless tests have none: made here).
+        if !app.world().contains_resource::<Assets<Image>>() {
+            app.init_asset::<Image>();
+        }
+        if !app.is_plugin_added::<ItemIconPlugin>() {
+            app.add_plugins(ItemIconPlugin);
+        }
         app.add_systems(Startup, create_sounds).add_systems(
             Update,
-            (build_reels, spin_reels)
-                .chain()
-                .after(super::update_item_slots)
-                .run_if(resource_exists::<Race>),
+            (
+                (build_reels, spin_reels)
+                    .chain()
+                    .after(super::update_item_slots)
+                    .run_if(resource_exists::<Race>),
+                dress_croquette_counter,
+            ),
         );
     }
 }
@@ -50,6 +64,12 @@ pub struct ReelCell {
     pub item: ItemKind,
 }
 
+/// An item's icon in a cell (px), before the slot's scale (`ICON_SCALES`): 79 px in the hand,
+/// 49 in the reserve.
+pub const ICON_SIDE: f32 = 66.0;
+/// The croquette counter's icon (px).
+const COUNTER_ICON_SIDE: f32 = 34.0;
+
 /// The window of a spinning slot is this dark (Myrtille, a little more opaque than the panel).
 const SPIN_PANEL: Color = Color::srgba(0.227, 0.173, 0.431, 0.88);
 /// The flash of the stop, and the ring that bursts out (the charter's Mangue: what pops).
@@ -63,6 +83,7 @@ fn create_sounds(mut commands: Commands) {
 /// The reel of each new slot: its cells, in place of the single icon.
 fn build_reels(
     mut commands: Commands,
+    item_icons: Res<ItemIcons>,
     mut slots: Query<(Entity, &ItemSlot, &mut Node, &Children), Without<Reel>>,
     icons: Query<(), With<ItemIcon>>,
 ) {
@@ -77,7 +98,6 @@ fn build_reels(
         let cells: Vec<Entity> = REEL
             .iter()
             .map(|&item| {
-                let (size, fill, edge, width, degrees) = icon_shape(item);
                 commands
                     .spawn((
                         ReelCell {
@@ -96,18 +116,14 @@ fn build_reels(
                         },
                         Visibility::Hidden,
                         children![(
+                            ImageNode::new(item_icons.get(item).clone()),
                             Node {
-                                width: px(size.x),
-                                height: px(size.y),
-                                border: UiRect::all(px(width)),
-                                border_radius: BorderRadius::MAX,
+                                width: px(ICON_SIDE),
+                                height: px(ICON_SIDE),
                                 ..default()
                             },
-                            BackgroundColor(fill),
-                            BorderColor::all(edge),
                             UiTransform {
                                 scale: Vec2::splat(scale),
-                                rotation: Rot2::degrees(degrees),
                                 ..default()
                             },
                         )],
@@ -119,6 +135,31 @@ fn build_reels(
         commands.entity(entity).insert_children(0, &cells).insert((
             Reel,
             Outline::new(px(roulette::BURST_WIDTH), px(0), Color::NONE),
+        ));
+    }
+}
+
+/// Issue #106: the croquette counter shows the croquette's icon (its model rendered) in place of
+/// its dot (once).
+fn dress_croquette_counter(
+    mut commands: Commands,
+    icons: Res<ItemIcons>,
+    counters: Query<&Children, With<CroquetteCounter>>,
+    mut dots: Query<&mut Node, (With<BackgroundColor>, Without<ImageNode>, Without<Text>)>,
+) {
+    for children in &counters {
+        let Some(dot) = children.iter().find(|child| dots.contains(*child)) else {
+            continue;
+        };
+        if let Ok(mut node) = dots.get_mut(dot) {
+            node.width = px(COUNTER_ICON_SIDE);
+            node.height = px(COUNTER_ICON_SIDE);
+            node.border = UiRect::ZERO;
+        }
+        commands.entity(dot).insert((
+            ImageNode::new(icons.croquette.clone()),
+            BackgroundColor(Color::NONE),
+            BorderColor::all(Color::NONE),
         ));
     }
 }

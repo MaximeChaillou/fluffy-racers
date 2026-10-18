@@ -546,6 +546,33 @@ pub fn confetti(pool: &mut ParticlePool, at: Vec3, radius: f32, impact: &ImpactV
     }
 }
 
+/// A gift box taken (issue #106): it bursts into confetti, carried along a little by `carrier`
+/// (the kart that took it).
+pub fn gift(pool: &mut ParticlePool, at: Vec3, carrier: Vec3, impact: &ImpactVfx) {
+    let floor = at.y - 0.6;
+    for k in 0..impact.gift_confetti {
+        let direction = pool.rng.cone(Vec3::Y, 1.35);
+        let mut piece = Particle::new(
+            Shape::Cube,
+            Paint::CONFETTI[k as usize % 5],
+            at + direction * 0.35,
+            impact.confetti_life * pool.rng.range(0.6, 1.0),
+            impact.confetti_size * pool.rng.range(0.7, 1.2),
+        );
+        piece.curve = Curve::Pop;
+        piece.facing = Facing::Tumble;
+        piece.velocity =
+            carrier * impact.gift_carry + direction * impact.gift_speed * pool.rng.range(0.5, 1.0);
+        piece.gravity = 6.0;
+        piece.drag = 1.4;
+        piece.stretch = 0.25;
+        piece.axis = pool.rng.direction();
+        piece.spin = pool.rng.range(6.0, 13.0);
+        piece.floor = floor;
+        pool.spawn(piece);
+    }
+}
+
 /// A chantilly on a kart: blobs of cream splash off its top and land on the road around it.
 pub fn cream(pool: &mut ParticlePool, frame: &KartFrame, impact: &ImpactVfx) {
     let at = frame.point(TOP);
@@ -817,5 +844,23 @@ mod tests {
         let mut small = ParticlePool::new(10);
         rocket_smoke(&mut small, &f, &tuning.boost);
         assert_eq!(small.live(), 10, "never more than the cap");
+    }
+
+    /// Issue #106: a gift box taken bursts into its confetti, flying up and carried along by the
+    /// kart that took it.
+    #[test]
+    fn a_gift_box_bursts_into_confetti_carried_by_its_kart() {
+        let tuning = VfxTuning::default();
+        let mut pool = ParticlePool::new(ParticlePool::SLOTS);
+        let carrier = Vec3::new(0.0, 0.0, -20.0);
+        gift(&mut pool, Vec3::Y, carrier, &tuning.impact);
+        assert_eq!(pool.live() as u32, tuning.impact.gift_confetti);
+        assert!(
+            pool.alive()
+                .all(|p| p.shape == Shape::Cube && p.floor < 1.0)
+        );
+        let along = pool.alive().map(|p| p.velocity.z).sum::<f32>() / pool.live() as f32;
+        let up = pool.alive().map(|p| p.velocity.y).sum::<f32>() / pool.live() as f32;
+        assert!(along < -5.0 && up > 1.0, "{along} {up}");
     }
 }
