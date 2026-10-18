@@ -12,6 +12,8 @@
     // #79), a giant decorated fir by the grid, a giant snowman on the plateau and a reindeer at
     // the ramp.
     biome: "Neige",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "blossom-mountain",
     decor_seed: 19,
     props: [
         (model: "holiday-kit/nutcracker", at: 0.0, side: Both, height: 3.5, radius: 0.9, gap: 1.8),

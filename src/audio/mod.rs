@@ -13,6 +13,13 @@
 //!   are original); what plays what is `catalog.rs`, the mixer's rules `mixer.rs`, what a kart's
 //!   tick sounds like `cues.rs`, the admin panel's mix `tuning.rs` ([`SoundTuning`]).
 //!
+//! - **The music** (issue #104): a piece per circuit, in a loop, faster on the last lap; the
+//!   home's, the lobby's, the finish's jingles and the results' music by place, the podium's:
+//!   [`MusicPlugin`] (`jukebox.rs`), **only with a renderer** too. What each screen plays and the
+//!   fades are `music.rs` (pure: the catalog of `assets/data/music.ron`, [`MusicScene`], [`Program`],
+//!   [`Deck`]); each piece is a file of `assets/music/` (CC0), decoded as it plays and looping
+//!   without a gap (`stream.rs`, [`MusicStream`]); its mix is [`MusicTuning`].
+//!
 //! The sounds play only with Bevy's `AudioPlugin` (the game, not the headless tests: there the
 //! sounds are entities all the same, a [`SoundEffect`] each, which the tests check, but nothing
 //! plays them). On the web, the browser only lets sound out after a first click or key press in
@@ -22,10 +29,15 @@ mod catalog;
 mod cues;
 mod design;
 mod dsp;
+mod jukebox;
 mod mixer;
+mod music;
+mod stream;
 mod synth;
 mod tuning;
 
+#[cfg(test)]
+mod music_tests;
 #[cfg(test)]
 mod scenario_tests;
 
@@ -39,9 +51,17 @@ pub use dsp::{
     ENGINE_HZ, LoopKind, LoopSound, Noise, SQUEAL_HZ, Synth, SynthSound, Tone, Voice as CryVoice,
     Wave, render,
 };
+pub use jukebox::{
+    Jukebox, MusicOutput, MusicPlugin, MusicSystems, MusicVoice, circuit_music, play_the_music,
+    watch_the_scene,
+};
 pub use mixer::{Admission, Revs, admit, engine_note, nearest, option_gain, priority};
+pub use music::{
+    Catalog, Deck, Heard, MUSIC_RON, MusicScene, Piece, Program, Tier, catalog as music_catalog,
+};
+pub use stream::{Looper, MusicStream, SEAM_FRAMES};
 pub use synth::{Blip, BlipDecoder, SAMPLE_RATE, blip_sample};
-pub use tuning::SoundTuning;
+pub use tuning::{MusicTuning, SoundTuning};
 
 use bevy::audio::{AddAudioSource, AudioPlugin, PlaybackSettings, Volume};
 use bevy::prelude::*;

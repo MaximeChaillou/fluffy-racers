@@ -15,6 +15,8 @@
 //   for the small ones: they cost little without shadows.
 // - `rows`: pieces in a row along the walls, every `spacing` meters from `offset`, facing the
 //   track (`yaw` in degrees turns them more), `gap` m beyond the walls. `models` in turn.
+// - `music` (issue #104): the music of its circuits that name none of their own, a piece of
+//   `assets/data/music.ron`.
 // - Pieces never stand on the road, the curbs, the shoulders or the walls: where there is no
 //   room (a tight hairpin), a piece is moved or left out. No piece higher than 1.6 m stands
 //   inside a tight turn (below 40 m of radius): the road out of the turn stays in sight.
@@ -22,6 +24,7 @@
     (
         // A meadow with a racing circuit's dressing (Nature Kit and Racing Kit).
         name: "Prairie",
+        music: "pure-raceway",
         palette: (
             sky: (0.55, 0.80, 0.95),
             ambient: (0.92, 0.96, 1.0),
@@ -63,6 +66,7 @@
     (
         // A pastry land: giant sweets (Food Kit) and candy canes (Holiday Kit).
         name: "Guimauve",
+        music: "sky-blue-street",
         palette: (
             sky: (0.80, 0.76, 0.96),
             ambient: (1.0, 0.92, 0.96),
@@ -104,6 +108,7 @@
         // A snowy mountain pass (issue #19): snowy firs, snowmen and reindeer (Holiday Kit), tall
         // dark pines and grey stones (Nature Kit). Snow patches for the off-road.
         name: "Neige",
+        music: "blossom-mountain",
         palette: (
             sky: (0.70, 0.80, 0.92),
             ambient: (0.90, 0.95, 1.0),
@@ -150,6 +155,7 @@
         // A pirates' cove (issue #19): palm trees, sandy rocks, barrels, crates, chests and cannons
         // (Pirate Kit), and beach plants (Nature Kit).
         name: "Plage",
+        music: "sunny-city",
         palette: (
             sky: (0.48, 0.82, 0.98),
             ambient: (1.0, 0.97, 0.90),
@@ -193,6 +199,7 @@
         // rocks and old statues (Nature Kit), rowing boats pulled up on the shore and beach
         // grass (Pirate Kit). The water itself is the circuit's (its lakes).
         name: "Lagon",
+        music: "joyful-jungle",
         palette: (
             sky: (0.40, 0.76, 0.96),
             ambient: (0.94, 1.0, 0.98),

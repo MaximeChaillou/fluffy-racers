@@ -17,6 +17,8 @@
     // Dressing (issue #11): the pastry land (`assets/data/biomes.ron`), the same every time
     // (seed), and a giant cake in the infield.
     biome: "Guimauve",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "fever-stadium",
     decor_seed: 78,
     props: [
         (model: "food-kit/cake-birthday", at: 19.5, side: Right, height: 5.0, radius: 6.5, gap: 18.0),

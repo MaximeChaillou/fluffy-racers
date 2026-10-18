@@ -152,6 +152,10 @@ pub struct BiomeData {
     pub rows: Vec<PropRow>,
     #[serde(default)]
     pub scatter: Vec<ScatterGroup>,
+    /// Issue #104: the music of its circuits that name none of their own (a piece of
+    /// `assets/data/music.ron`).
+    #[serde(default)]
+    pub music: Option<String>,
 }
 
 impl BiomeData {
@@ -268,7 +272,10 @@ fn check_models(models: &[String]) -> Result<(), String> {
 
 /// Reads and checks the biomes' file: each biome valid, no name twice.
 pub fn parse_biomes(text: &str) -> Result<Vec<BiomeData>, String> {
-    let biomes: Vec<BiomeData> = ron::from_str(text).map_err(|e| format!("biomes.ron: {e}"))?;
+    let biomes: Vec<BiomeData> = ron::Options::default()
+        .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+        .from_str(text)
+        .map_err(|e| format!("biomes.ron: {e}"))?;
     for (i, biome) in biomes.iter().enumerate() {
         biome.validate()?;
         if biomes[..i].iter().any(|b| b.name == biome.name) {

@@ -1,0 +1,89 @@
+// The music (issue #104, GD § 14 « La musique »): every piece the game plays. Compiled into the
+// game, like the biomes: a test checks every name below, that each file is in `assets/music/`
+// with its line in `assets/CREDITS.md`, that its length is the decoded one, and that every
+// circuit of `assets/tracks/index.ron` has a piece of its own.
+//
+// - `pieces`: `id` (named by the circuits, the biomes and the screens below), `file` (under
+//   `assets/`, OGG Vorbis, CC0 only), `seconds` (its length: what loops, measured on the decoded
+//   file), `bpm` (its tempo, for a loop), `volume` (0 to 1: from its measured loudness, so that the pieces
+//   sound as loud as each other), `faster` (the version of the last lap: the same music at a
+//   higher tempo; without one, the piece itself plays a little faster,
+//   `MusicTuning::final_lap_speed`), `jingle: true` (played once, then the music after it).
+// - A circuit names its piece in its file (`music: "id"` in its `.track.ron`), or takes its
+//   biome's (`music` in `assets/data/biomes.ron`).
+// - A new circuit's music: its file in `assets/music/<source>/` with the source's licence, its
+//   line here (its length and level measured: `docs/ARCHITECTURE.md`, « La musique »), its name
+//   in the circuit's file, and its line in `assets/CREDITS.md`.
+//
+// Today: the racing game soundtrack of MintoDog (OpenGameArt, CC0): a piece per circuit, each with
+// its « Climax » for the last lap, the title (the home), the menu (the lobby), the finish's jingles
+// and their loops (the results), the last lap's jingle, the « best » result (the podium).
+(
+    home: "racing-game-title",
+    salon: "racing-game-menu",
+    final_lap: "final-lap",
+    finish: (
+        best: (jingle: "finish-best", music: "results-best"),
+        good: (jingle: "finish-good", music: "results-good"),
+        bad: (jingle: "finish-bad", music: "results-bad"),
+    ),
+    podium: (jingle: "finish-best", music: "podium"),
+    pieces: [
+        // The circuits.
+        // Prairie Pompon: « Assuming the first course », bright synths.
+        (id: "pure-raceway", file: "music/mintodog/pure_raceway_bpm160.ogg",
+         seconds: 96.0, bpm: 160.0, volume: 0.90, faster: "pure-raceway-climax"),
+        (id: "pure-raceway-climax", file: "music/mintodog/pure_raceway_climax_bpm175.ogg",
+         seconds: 87.771429, bpm: 175.0, volume: 0.91),
+        // Anneau Guimauve: « positive, sky, happy ».
+        (id: "sky-blue-street", file: "music/mintodog/sky_blue_street_bpm165.ogg",
+         seconds: 116.363651, bpm: 165.0, volume: 1.0, faster: "sky-blue-street-climax"),
+        (id: "sky-blue-street-climax", file: "music/mintodog/sky_blue_street_climax_bpm180.ogg",
+         seconds: 106.666667, bpm: 180.0, volume: 1.0),
+        // Crique Câline: saxophone and piano, « bright and joyful ».
+        (id: "sunny-city", file: "music/mintodog/sunny_city_bpm120.ogg",
+         seconds: 80.0, bpm: 120.0, volume: 0.78, faster: "sunny-city-climax"),
+        (id: "sunny-city-climax", file: "music/mintodog/sunny_city_climax_bpm135.ogg",
+         seconds: 71.111088, bpm: 135.0, volume: 0.79),
+        // Col des Moufles: a mountain, bright; its climax adds a harp and a tambourine.
+        (id: "blossom-mountain", file: "music/mintodog/blossom_mountain_remake_bpm140.ogg",
+         seconds: 102.857143, bpm: 140.0, volume: 0.75, faster: "blossom-mountain-climax"),
+        (id: "blossom-mountain-climax",
+         file: "music/mintodog/blossom_mountain_climax_remake_bpm155.ogg",
+         seconds: 92.90322, bpm: 155.0, volume: 0.87),
+        // Lagon Duvet: « a bright music with jungle theme ».
+        (id: "joyful-jungle", file: "music/mintodog/joyful_jungle_bpm140.ogg",
+         seconds: 85.714308, bpm: 140.0, volume: 0.79, faster: "joyful-jungle-climax"),
+        (id: "joyful-jungle-climax", file: "music/mintodog/joyful_jungle_climax_bpm155.ogg",
+         seconds: 77.419365, bpm: 155.0, volume: 0.77),
+        // Ruban Réglisse (the anti-gravity): eurobeat, « exciting ».
+        (id: "fever-stadium", file: "music/mintodog/fever_stadium_bpm165.ogg",
+         seconds: 85.818186, bpm: 165.0, volume: 0.79, faster: "fever-stadium-climax"),
+        (id: "fever-stadium-climax", file: "music/mintodog/fever_stadium_climax_bpm180.ogg",
+         seconds: 78.666667, bpm: 180.0, volume: 0.91),
+
+        // The screens.
+        (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",
+         seconds: 59.999977, bpm: 140.0, volume: 0.74),
+        (id: "racing-game-menu", file: "music/mintodog/racing_game_menu_bpm165.ogg",
+         seconds: 116.363651, bpm: 165.0, volume: 0.76),
+        (id: "podium", file: "music/mintodog/racing_game_result_best_bpm140.ogg",
+         seconds: 62.896553, bpm: 140.0, volume: 0.92),
+
+        // The jingles, and the results' loops.
+        (id: "final-lap", file: "music/mintodog/final_lap_jingle.ogg",
+         seconds: 4.949116, volume: 0.97, jingle: true),
+        (id: "finish-best", file: "music/mintodog/race_finish_best_jingle.ogg",
+         seconds: 5.0, volume: 0.90, jingle: true),
+        (id: "finish-good", file: "music/mintodog/race_finish_good_jingle.ogg",
+         seconds: 3.69229, volume: 0.83, jingle: true),
+        (id: "finish-bad", file: "music/mintodog/race_finish_bad_jingle.ogg",
+         seconds: 5.999977, volume: 0.76, jingle: true),
+        (id: "results-best", file: "music/mintodog/race_finish_best_loop_bpm132.ogg",
+         seconds: 41.818186, bpm: 132.0, volume: 0.87),
+        (id: "results-good", file: "music/mintodog/race_finish_good_loop_bpm130.ogg",
+         seconds: 40.615374, bpm: 130.0, volume: 0.95),
+        (id: "results-bad", file: "music/mintodog/race_finish_bad_loop_bpm100.ogg",
+         seconds: 43.2, bpm: 100.0, volume: 0.83),
+    ],
+)

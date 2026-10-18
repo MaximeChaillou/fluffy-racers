@@ -9,6 +9,8 @@
     // Dressing (issue #11): a pastry land (`assets/data/biomes.ron`), the same every time (seed),
     // and pieces placed by hand: a giant cake in the infield, gingerbread men at the start line.
     biome: "Guimauve",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "sky-blue-street",
     decor_seed: 5,
     props: [
         (model: "food-kit/cake-birthday", at: 9.0, side: Right, height: 5.0, radius: 6.5, gap: 15.0),

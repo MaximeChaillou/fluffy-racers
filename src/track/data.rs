@@ -76,6 +76,10 @@ pub struct TrackData {
     /// biome's.
     #[serde(default)]
     pub props: Vec<PropData>,
+    /// Issue #104: its music, a piece of `assets/data/music.ron` (`music: "id"`). None: its
+    /// biome's (see [`TrackData::music_id`]).
+    #[serde(default)]
+    pub music: Option<String>,
     /// Issue #19: this is the mirror image of the file ([`TrackData::mirrored`]), never written in
     /// a file. The starting grid follows (the pole on the other side).
     #[serde(skip)]
@@ -297,6 +301,16 @@ impl std::fmt::Display for InvalidTrack {
 impl std::error::Error for InvalidTrack {}
 
 impl TrackData {
+    /// Issue #104: the name of its music: its own, or its biome's (`music` in `biomes.ron`).
+    pub fn music_id(&self) -> Option<&str> {
+        self.music.as_deref().or_else(|| {
+            self.biome
+                .as_deref()
+                .and_then(biome::biome)
+                .and_then(|biome| biome.music.as_deref())
+        })
+    }
+
     /// Parses a track file. Misspelled fields are errors, not silently ignored. An optional
     /// field is written as its value (`biome: "Prairie"`, not `Some("Prairie")`).
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {

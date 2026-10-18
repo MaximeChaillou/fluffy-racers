@@ -12,6 +12,8 @@
     // Dressing (issue #11): the lagoon (`assets/data/biomes.ron`), the same every time (seed),
     // and pieces placed by hand: a wreck on the north beach and a lookout tower at the landing.
     biome: "Lagon",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "joyful-jungle",
     decor_seed: 20,
     props: [
         (model: "pirate-kit/ship-wreck", at: 8.2, side: Left, height: 8.0, radius: 6.0, gap: 6.0, yaw: -20.0),
