@@ -450,6 +450,48 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 - **Sur le web**, elle ne s'entend qu'après le premier clic ou la première touche, comme les sons.
 - **Pas encore fait** : un jingle d'intro du circuit avant le compte à rebours (MintoDog en a deux, « Course Intro » et « Start Grid », non utilisés : le compte à rebours garde ses bips dans le silence).
 
+### Les effets visuels (#105)
+
+« Améliorer les animations et en rajouter pour rendre le jeu plus agréable et plus qualitatif. Par exemple autour du dérapage avec les étincelles qui augmentent, le boost et tout » (Max). Des **particules** en formes simples : des bâtonnets (les étincelles, les traits), des boules (la fumée, la poussière, les braises, la crème), des étoiles et des anneaux. Elles brillent, sauf la fumée, la poussière et la crème, que le soleil éclaire. Toutes les valeurs sont « à régler » (`VfxTuning`, panneau d'admin).
+
+- **Le dérapage** (§ 3) : les étincelles jaillissent des deux roues arrière, vers l'arrière, le haut et l'extérieur, puis retombent et restent derrière le kart. Elles **montent en puissance** :
+  - à chaque palier, elles sont plus nombreuses (26, 42 puis 66 par roue et par seconde), plus grosses, plus longues, plus rapides et durent plus longtemps ;
+  - dans un palier, leur nombre augmente à mesure que la charge approche du palier suivant (de 65 à 100 %) ;
+  - **leur couleur change net à chaque palier** : bleu, orange, violet ; il n'y en a aucune avant le bleu ;
+  - **le passage d'un palier** : une gerbe d'étincelles de sa couleur à chaque roue, un éclair blanc à chaque roue et un anneau de sa couleur autour de l'arrière du kart ;
+  - les pneus **fument** pendant tout le drift ;
+  - **le relâchement** (le « fwoosh ») : une gerbe d'étincelles du palier sort de l'échappement, avec un éclair et un anneau soufflé derrière le kart ; tant que dure le mini-turbo, une **traînée** de sa couleur sort des pots, et **les flammes prennent sa couleur**.
+- **Les boosts** (§ 2) : des **braises** sortent des pots d'échappement avec les flammes. Leur nombre et leur taille suivent celle des flammes, qui suit déjà l'intensité du boost et sa durée restante (#13). **Chaque source a son effet et la couleur de ses flammes** :
+  - le mini-turbo : son palier (ci-dessus) ;
+  - le piment : rouge, avec une gerbe d'étincelles rouges ;
+  - le plot : orange, avec une gerbe d'étincelles ; cyan en anti-gravité ;
+  - le départ fusée : un **nuage de fumée** qui reste sur la grille ;
+  - la figure : une gerbe d'étoiles dorées au départ de la figure, une autre au boost de l'atterrissage ;
+  - l'aspiration : des traits de vent qui filent devant le kart (pendant la charge, les lignes de vent de #13 restent) ;
+  - le spin boost de l'anti-gravité : des étincelles cyan tout autour du kart ;
+  - la croquette : son mini-boost garde ses étincelles dorées (ci-dessous).
+- **La caméra en boost** (le kart qu'elle suit) : des **lignes de vitesse** qui filent au bord de l'écran (jamais en bas, sur la route), d'autant plus nombreuses que le boost est fort ; le champ de vision **4° plus large** (en plus des 6° de la caméra, selon l'intensité) ; un **coup de zoom** de 5° au départ du boost (×0,6, ×0,8 et ×1 selon le palier d'un mini-turbo, ×0,7 pour l'aspiration et le spin boost, rien pour une croquette). Pas sur le podium, ni derrière l'accueil.
+- **Les chocs et les objets** :
+  - deux karts qui se touchent : des étoiles jaunes et des « pof » blancs là où ils se touchent, de 3 à 8 étoiles selon la violence du choc ;
+  - un muret (une perte de 6 m/s en un tick) : des étoiles et des « pof » du côté du muret ;
+  - un kart frappé par une patte : des étoiles sur lui (le « pof » de la patte, #34, reste) ;
+  - une explosion : 40 confettis de plus que ceux de l'objet, qui retombent et restent un instant au sol, et un nuage ;
+  - une chantilly : des éclaboussures de crème jaillissent du kart touché et retombent sur la route ;
+  - un tête-à-queue ou une culbute : **des étoiles tournent au-dessus de la tête**, pendant le choc et 1,2 s après (le personnage est **sonné**) ; aussi 0,9 s après une patte ou un choc violent (12 m/s) ;
+  - **l'écran du joueur tremble** un peu sur un choc entre karts (selon sa violence), un muret ou un objet (la patte avait déjà le sien, #34).
+- **Les croquettes** (§ 7) : une croquette ramassée lance des étincelles dorées ; des croquettes perdues, d'autres qui s'envolent.
+- **Le sol** (§ 10) : de la **poussière** derrière les roues en hors-piste (selon la vitesse et la part des roues dehors), un nuage de poussière à l'atterrissage (après 0,35 s en l'air), des **étincelles cyan** sous les roues en anti-gravité et des **traits de vent** au bout des ailes du planeur.
+- **La fluidité d'abord** :
+  - **un plafond de 900 particules** (1 536 au plus), jamais dépassé : quand tout est plein, une nouvelle particule prend la place de la plus ancienne ;
+  - les particules et leurs entités sont faites une fois, au lancement, avec 4 maillages et 19 matériaux partagés ; **rien n'est alloué en course** (un test le compte) ;
+  - aucune particule ne projette d'ombre, et un kart à plus de 80 m de la caméra n'en lance aucune ;
+  - aucune n'a besoin d'un compute shader : tout reste en WebGL2.
+- **Purement visuel** : rien ne change dans la course. Les courses de bots n'ont rien de ces effets. En ligne, chaque pair les voit d'après l'état des karts des autres, qu'il a déjà : rien n'est envoyé.
+- **Pas encore fait** (#130) :
+  - les animations des personnages : se pencher et tanguer, squash and stretch du kart à l'atterrissage, une animation de figure, se retourner quand on est dépassé ou qu'on lance derrière, célébrer ou bouder à l'arrivée, être sonné (les étoiles sont là) ;
+  - les éclaboussures dans l'eau (la gerbe de #20 reste) ;
+  - la vibration de la manette.
+
 ## 15. Interactions entre karts
 
 Une mécanique propre à Fluffy Racers : depuis son kart, le personnage peut **donner un coup de patte** à un voisin pour le faire dévier, ou **l'attraper** pour se faire remorquer. C'est de l'humour physique (bras élastiques, déséquilibres, ragdoll) autant qu'un outil de course.

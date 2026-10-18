@@ -20,6 +20,7 @@ pub mod race;
 pub mod salon;
 pub mod track;
 pub mod ui;
+pub mod vfx;
 
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
@@ -77,7 +78,8 @@ impl Plugin for SimulationPlugin {
 /// screen and the menu opened from the game (issues #56 and #89, `menu::MainMenuPlugin`, with the
 /// home's background), the time trial (issue #76, `modes::TimeTrialPlugin`), the reel of the
 /// item slots' roulette (issue #102, `ui::RoulettePlugin`), the sound design (issue #103,
-/// `audio::SoundDesignPlugin`) and the music (issue #104, `audio::MusicPlugin`). `LevelPlugin`
+/// `audio::SoundDesignPlugin`), the music (issue #104, `audio::MusicPlugin`) and the particles
+/// (issue #105, `vfx::VfxPlugin`). `LevelPlugin`
 /// restarts the level or switches tracks (issue #36).
 ///
 /// The race (`RacePlugin`) is not part of `SimulationPlugin`: the kart scenarios drive freely,
@@ -145,6 +147,9 @@ impl Plugin for GamePlugin {
             // Issue #104: the music (a piece per circuit, the home's, the lobby's, the finish's
             // and the podium's). Only on screen too.
             app.add_plugins(audio::MusicPlugin);
+            // Issue #105: the particles (the drift's sparks, the boosts, the shocks, the dust).
+            // Only on screen: nothing of them in the bot races' world.
+            app.add_plugins(vfx::VfxPlugin);
         }
     }
 }
