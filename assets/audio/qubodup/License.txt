@@ -1,0 +1,10 @@
+Sounds by qubodup, from OpenGameArt.org.
+
+- "Crash / collision": https://opengameart.org/content/crash-collision
+  Files here: crash.ogg (from qubodup-crash.ogg)
+
+License: Creative Commons Zero (CC0 1.0 Universal), as stated on each page above
+(checked on 2026-10-18): https://creativecommons.org/publicdomain/zero/1.0/
+
+Re-encoded for Fluffy Racers (issue #135): OGG Vorbis, mono, 44.1 kHz, quality 5, no tags.
+The sounds themselves are not changed (but cut where said).

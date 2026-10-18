@@ -20,12 +20,21 @@
 //!   [`Deck`]); each piece is a file of `assets/music/` (CC0), decoded as it plays and looping
 //!   without a gap (`stream.rs`, [`MusicStream`]); its mix is [`MusicTuning`].
 //!
+//! - **The sound picker** (issue #135): every place of the sound design (a [`Slot`]: the engine,
+//!   the drift's squeal, each item...) has its candidates (`choice.rs`: the sound of #103, CC0
+//!   files, other syntheses); Max chooses and listens to them in the admin panel (P, « Sons »),
+//!   in a race too ([`SoundChoices`], [`PreviewSound`]); his choices are kept in the browser
+//!   ([`SoundChoicesStoragePlugin`], with a renderer only). The engine and the squeal by default
+//!   are new ones (Max found #103's horrible). The karts are heard only in a race
+//!   ([`RaceSounds`]): not on the home screen, in the lobby, the pause or after the finish.
+//!
 //! The sounds play only with Bevy's `AudioPlugin` (the game, not the headless tests: there the
 //! sounds are entities all the same, a [`SoundEffect`] each, which the tests check, but nothing
 //! plays them). On the web, the browser only lets sound out after a first click or key press in
 //! the page.
 
 mod catalog;
+mod choice;
 mod cues;
 mod design;
 mod dsp;
@@ -42,20 +51,26 @@ mod music_tests;
 mod scenario_tests;
 
 pub use catalog::{Animal, Clip, FILES, Family, Mood, SoundEffect, base_volume, cry};
+pub use choice::{
+    Candidate, Group, Pick, Picked, SOUND_CHOICES_KEY, Slot, SoundChoices, Source, pick,
+};
 pub use cues::{Cues, KartSnapshot, TickEvents, kart_cues};
 pub use design::{
-    Cue, KartSounds, LoopVoice, MixerStats, SoundBank, SoundDesignPlugin, SoundDesignSystems,
-    SoundOutput, Voice, mix, sound_level,
+    Cue, KartSounds, LoopPreview, LoopVoice, MixerStats, Preview, PreviewSound, SoundBank,
+    SoundDesignPlugin, SoundDesignSystems, SoundOutput, Voice, mix, preview_note, sound_level,
 };
 pub use dsp::{
-    ENGINE_HZ, LoopKind, LoopSound, Noise, SQUEAL_HZ, Synth, SynthSound, Tone, Voice as CryVoice,
-    Wave, render,
+    ENGINE_HZ, LoopKind, LoopSound, LoopTimbre, Noise, SOFT_SQUEAL_HZ, SQUEAL_HZ, Synth,
+    SynthSound, Tone, Voice as CryVoice, Wave, render, seamless_loop,
 };
 pub use jukebox::{
     Jukebox, MusicOutput, MusicPlugin, MusicSystems, MusicVoice, circuit_music, play_the_music,
     watch_the_scene,
 };
-pub use mixer::{Admission, Revs, admit, engine_note, nearest, option_gain, priority};
+pub use mixer::{
+    Admission, RaceSounds, Revs, Stage, admit, engine_note, nearest, option_gain, priority,
+    race_sounds,
+};
 pub use music::{
     Catalog, Deck, Heard, MUSIC_RON, MusicScene, Piece, Program, Tier, catalog as music_catalog,
 };
@@ -114,6 +129,48 @@ pub struct RouletteSounds;
 pub fn play_roulette(commands: &mut Commands, _sounds: &RouletteSounds, sound: SoundEffect) {
     if matches!(sound, SoundEffect::RouletteTick | SoundEffect::RouletteStop) {
         commands.spawn((sound, Cue::front(None)));
+    }
+}
+
+/// Issue #135: Max's choices of sounds (the admin panel's « Sons ») kept between sessions: in
+/// the browser's local storage on the web (a file natively, `admin::storage`), under
+/// [`SOUND_CHOICES_KEY`], as the text he copies ([`SoundChoices::export`]). Only in the game with
+/// a renderer (`GamePlugin`): the tests never touch the storage.
+pub struct SoundChoicesStoragePlugin;
+
+impl Plugin for SoundChoicesStoragePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(PreStartup, load_sound_choices)
+            .add_systems(Last, keep_sound_choices);
+    }
+}
+
+/// The choices kept from the previous sessions (what is not understood any more is left out).
+fn load_sound_choices(choices: Option<ResMut<SoundChoices>>) {
+    let (Some(mut choices), Some(text)) =
+        (choices, crate::admin::storage::load_key(SOUND_CHOICES_KEY))
+    else {
+        return;
+    };
+    let (stored, ignored) = SoundChoices::import(&text);
+    for line in ignored {
+        warn!("sounds: a stored choice left out: {line}");
+    }
+    *choices = stored;
+}
+
+/// Every change is kept at once (not the choices loaded at startup).
+fn keep_sound_choices(choices: Option<Res<SoundChoices>>) {
+    if let Some(choices) = choices
+        && choices.is_changed()
+        && !choices.is_added()
+    {
+        let text = if choices.changed().next().is_none() {
+            String::new()
+        } else {
+            choices.export()
+        };
+        crate::admin::storage::save_key(SOUND_CHOICES_KEY, &text);
     }
 }
 

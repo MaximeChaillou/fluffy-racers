@@ -26,6 +26,7 @@ use bevy_rapier3d::prelude::Velocity;
 use super::tracks::{self, TEST_GROUND_LABEL, TrackEntry};
 use super::tuning::{Field, Value, fields};
 use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_now, storage};
+use crate::audio::{Group, PreviewSound, Slot as SoundSlot, SoundChoices};
 use crate::camera::ChaseCamera;
 use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
@@ -164,6 +165,8 @@ pub(super) struct PanelState {
     message: String,
     /// When « Copier mes réglages » was last clicked (egui time, s).
     copied_at: Option<f64>,
+    /// Issue #135: when « Copier mes sons » was last clicked (egui time, s).
+    sounds_copied_at: Option<f64>,
     /// The item « Donner » gives (issue #18).
     gift: Prize,
 }
@@ -179,6 +182,7 @@ impl Default for PanelState {
             paste: String::new(),
             message: String::new(),
             copied_at: None,
+            sounds_copied_at: None,
             gift: Prize::Pelure,
         }
     }
@@ -445,6 +449,15 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
             section(
                 ui,
                 state,
+                "Sons",
+                "Sons (choisir, écouter)",
+                |ui, state| {
+                    sounds_section(ui, world, state);
+                },
+            );
+            section(
+                ui,
+                state,
                 "Télémétrie",
                 "Télémétrie (ton kart)",
                 |ui, _| {
@@ -682,6 +695,114 @@ fn items_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
             ""
         }
     ));
+}
+
+/// Issue #135: each sound of the sound design (`audio::Slot`) with its candidates; the choice
+/// plays at once (in a race too: the engine and the squeal change at once) and is kept in the
+/// browser (`audio::SoundChoicesStoragePlugin`); « ▶ Écouter » plays the sound chosen, even out of
+/// a race (the engine: a short rev); « Copier mes sons » gives the text to paste in an issue.
+fn sounds_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
+    let Some(choices) = world.get_resource::<SoundChoices>().cloned() else {
+        ui.label("Pas de son ici (le jeu sans sortie audio).");
+        return;
+    };
+    let mut chosen = choices.clone();
+    let mut listen = None;
+    let changed = choices.changed().count();
+    ui.horizontal(|ui| {
+        let now = ui.input(|i| i.time);
+        if ui.button("Copier mes sons").clicked() {
+            ui.ctx().copy_text(choices.export());
+            state.sounds_copied_at = Some(now);
+        }
+        if state.sounds_copied_at.is_some_and(|at| now - at < 4.0) {
+            ui.label(RichText::new("copié !").color(MODIFIED));
+        }
+        if ui
+            .add_enabled(changed > 0, egui::Button::new("Tous par défaut"))
+            .clicked()
+        {
+            chosen = SoundChoices::default();
+        }
+        let text = match changed {
+            0 => "tous les sons par défaut".to_string(),
+            1 => "1 son changé".to_string(),
+            n => format!("{n} sons changés"),
+        };
+        ui.label(RichText::new(text).color(if changed > 0 {
+            MODIFIED
+        } else {
+            ui.visuals().weak_text_color()
+        }));
+    });
+    ui.small(
+        "Le son choisi s'entend tout de suite, en course aussi, et reste dans le navigateur. \
+         « ▶ Écouter » le joue, même hors course. Survole un nom pour le son par défaut.",
+    );
+    for group in Group::ALL {
+        // Not the label: « Objets » is the key of the panel's own section of the items.
+        let key = group.key();
+        let open = state.open.contains(key);
+        let response = egui::CollapsingHeader::new(group.label())
+            .id_salt(("admin-sounds", key))
+            .open(Some(open))
+            .show(ui, |ui| {
+                egui::Grid::new(("admin-sounds-grid", key))
+                    .num_columns(3)
+                    .striped(true)
+                    .spacing([8.0, 3.0])
+                    .show(ui, |ui| {
+                        for slot in SoundSlot::ALL.into_iter().filter(|s| s.group() == group) {
+                            let candidates = slot.candidates();
+                            let index = chosen.index(slot);
+                            let name = if index != 0 {
+                                RichText::new(slot.label()).color(MODIFIED).strong()
+                            } else {
+                                RichText::new(slot.label())
+                            };
+                            ui.label(name)
+                                .on_hover_text(format!("par défaut : {}", candidates[0].name));
+                            let mut selected = index;
+                            egui::ComboBox::from_id_salt(("admin-sound", slot.id()))
+                                .width(280.0)
+                                .selected_text(candidates[index].name)
+                                .show_ui(ui, |ui| {
+                                    for (i, candidate) in candidates.iter().enumerate() {
+                                        ui.selectable_value(&mut selected, i, candidate.name);
+                                    }
+                                });
+                            if selected != index && chosen.choose(slot, selected) {
+                                // The new one, heard at once.
+                                listen = Some(slot);
+                            }
+                            if ui.button("▶ Écouter").clicked() {
+                                listen = Some(slot);
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+        if response.header_response.clicked() {
+            toggle(&mut state.open, key);
+        }
+    }
+    ui.label("Mes sons, à coller dans une issue (seulement ceux qui ne sont pas par défaut) :");
+    let export = choices.export();
+    let mut shown = export.as_str();
+    ui.add(
+        egui::TextEdit::multiline(&mut shown)
+            .font(egui::TextStyle::Monospace)
+            .desired_rows(3)
+            .desired_width(f32::INFINITY),
+    );
+    if chosen != choices
+        && let Some(mut choices) = world.get_resource_mut::<SoundChoices>()
+    {
+        *choices = chosen;
+    }
+    if let Some(slot) = listen {
+        world.write_message(PreviewSound(slot));
+    }
 }
 
 fn difficulty_label(name: &str) -> &str {

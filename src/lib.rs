@@ -145,6 +145,8 @@ impl Plugin for GamePlugin {
             // Issue #103: the sound design (engines, drift, boosts, items, hits, cries, screens).
             // Only on screen: nothing audio in the bot races' world.
             app.add_plugins(audio::SoundDesignPlugin);
+            // Issue #135: the sounds Max chose in the admin panel, kept in the browser.
+            app.add_plugins(audio::SoundChoicesStoragePlugin);
             // Issue #104: the music (a piece per circuit, the home's, the lobby's, the finish's
             // and the podium's). Only on screen too.
             app.add_plugins(audio::MusicPlugin);

@@ -26,8 +26,6 @@ pub struct SoundTuning {
     pub screen_volume: f32,
     /// The environments (glider, water, off the road, landings) and the lobby on foot.
     pub world_volume: f32,
-    /// Behind the home screen (its background race): everything this much quieter.
-    pub home_volume: f32,
     /// A kart's sound is at full volume this close to the camera (m), then fades as the square
     /// of the distance (Bevy's spatial audio: a quarter at twice this distance)...
     pub full_volume_distance: f32,
@@ -50,8 +48,12 @@ pub struct SoundTuning {
     /// The engine's volume (0 to 1) at rest, and how much the load (accelerator, speed) adds.
     pub engine_idle_volume: f32,
     pub engine_load_volume: f32,
-    /// How fast the engine's pitch and volume follow the revs (1/s).
+    /// How fast the engine's pitch and volume follow the revs (1/s); the loops fade out at this
+    /// rate out of a race too (issue #135).
     pub engine_response: f32,
+    /// Issue #135: a loop whose sound is changed in the admin panel fades out this fast (1/s)
+    /// before the new one comes in.
+    pub switch_response: f32,
     /// A kart does not cry more often than this (s).
     pub cry_interval: f32,
     /// A shock against a wall makes a sound from this loss of speed (m/s in a tick).
@@ -71,7 +73,6 @@ impl Default for SoundTuning {
             voice_volume: 0.85,
             screen_volume: 0.7,
             world_volume: 0.7,
-            home_volume: 0.35,
             full_volume_distance: 7.0,
             range: 70.0,
             max_sounds: 16,
@@ -84,6 +85,7 @@ impl Default for SoundTuning {
             engine_idle_volume: 0.35,
             engine_load_volume: 0.45,
             engine_response: 10.0,
+            switch_response: 40.0,
             cry_interval: 0.8,
             wall_hit_speed: 5.0,
             landing_air_time: 0.35,

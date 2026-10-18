@@ -12,6 +12,9 @@
 //!   engine ([`LoopKind::Engine`], a wavetable of two periods of a small kart engine), the drift's
 //!   squeal, the glider's wind and the rumble off the road. Their pitch and volume are the sink's
 //!   (`AudioSinkPlayback::set_speed`, `set_volume`), changed every frame by the mixer.
+//! - **Issue #135**: other timbres for them ([`LoopTimbre`]: a softer engine, a softer squeal, a
+//!   plush rubbing), and **recorded loops**: a file decoded once ([`seamless_loop`]: its channels
+//!   mixed, its end crossfaded into its start, its level matched), played over and over.
 
 use std::f32::consts::{PI, TAU};
 use std::num::NonZero;
@@ -426,7 +429,7 @@ impl Decodable for SynthSound {
     }
 }
 
-/// The continuous sounds.
+/// The continuous sounds (their role: what they follow).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LoopKind {
     /// A small kart engine at [`ENGINE_HZ`] (playback speed 1): its pitch follows the revs.
@@ -446,38 +449,189 @@ pub const SQUEAL_HZ: f32 = 1150.0;
 /// The engine's wavetable: two periods (its « putt-putt » every other firing).
 const TABLE: usize = 1024;
 
-/// A continuous sound (never ends): the engine's wavetable is built once, with the asset.
+impl LoopKind {
+    pub const ALL: [Self; 4] = [
+        LoopKind::Engine,
+        LoopKind::Squeal,
+        LoopKind::Wind,
+        LoopKind::Rumble,
+    ];
+}
+
+/// What a continuous sound sounds like (issues #103 and #135).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LoopTimbre {
+    /// #103's engine: a wavetable of two periods, all its harmonics, a little rough noise.
+    Engine,
+    /// A softer engine (#135): five harmonics falling fast, a deeper « putt », a low rumble.
+    SoftEngine,
+    /// #103's squeal: a wobbling tone at [`SQUEAL_HZ`] and its octave, with hiss.
+    Squeal,
+    /// A softer squeal (#135): mostly a « shhh » of the tyres (noise in a band around 1.45 times
+    /// [`SOFT_SQUEAL_HZ`]), a faint pure tone at [`SOFT_SQUEAL_HZ`] wobbling slowly: much less
+    /// above 1.5 kHz than #103's (a test measures it).
+    SoftSqueal,
+    /// Plush rubbing (#135): low noise (under 550 Hz), fluttering: a slide, not a squeal.
+    Plush,
+    Wind,
+    Rumble,
+    /// A recorded loop ([`LoopSound::recorded`]): its samples, over and over.
+    Recorded,
+}
+
+impl LoopTimbre {
+    /// The timbres synthesized (all but [`LoopTimbre::Recorded`]).
+    pub const SYNTHESIZED: [Self; 7] = [
+        LoopTimbre::Engine,
+        LoopTimbre::SoftEngine,
+        LoopTimbre::Squeal,
+        LoopTimbre::SoftSqueal,
+        LoopTimbre::Plush,
+        LoopTimbre::Wind,
+        LoopTimbre::Rumble,
+    ];
+}
+
+impl From<LoopKind> for LoopTimbre {
+    /// #103's timbre of each loop.
+    fn from(kind: LoopKind) -> Self {
+        match kind {
+            LoopKind::Engine => LoopTimbre::Engine,
+            LoopKind::Squeal => LoopTimbre::Squeal,
+            LoopKind::Wind => LoopTimbre::Wind,
+            LoopKind::Rumble => LoopTimbre::Rumble,
+        }
+    }
+}
+
+/// The soft squeal's tone at playback speed 1 (Hz): lower than #103's.
+pub const SOFT_SQUEAL_HZ: f32 = 620.0;
+
+/// A continuous sound (never ends): the engine's wavetable is built once, with the asset; a
+/// recorded loop holds its samples (decoded once).
 #[derive(Asset, TypePath, Clone, Debug)]
 pub struct LoopSound {
-    pub kind: LoopKind,
+    pub timbre: LoopTimbre,
     table: Arc<[f32]>,
 }
 
 impl LoopSound {
+    /// #103's sound of `kind`.
     pub fn new(kind: LoopKind) -> Self {
-        let table: Arc<[f32]> = match kind {
-            LoopKind::Engine => engine_table().into(),
+        Self::synth(kind.into())
+    }
+
+    /// A synthesized timbre (a [`LoopTimbre::Recorded`] one is silent: see [`Self::recorded`]).
+    pub fn synth(timbre: LoopTimbre) -> Self {
+        let table: Arc<[f32]> = match timbre {
+            LoopTimbre::Engine => engine_table(&ENGINE_HARMONICS, 0.32).into(),
+            LoopTimbre::SoftEngine => engine_table(&SOFT_ENGINE_HARMONICS, 0.5).into(),
             _ => Arc::from(Vec::new()),
         };
-        Self { kind, table }
+        Self { timbre, table }
+    }
+
+    /// A recorded loop: `samples` (mono, at [`SAMPLE_RATE`], made seamless: [`seamless_loop`]).
+    pub fn recorded(samples: Vec<f32>) -> Self {
+        Self {
+            timbre: LoopTimbre::Recorded,
+            table: samples.into(),
+        }
+    }
+
+    /// Its samples, for a recorded loop (empty for a synthesized one but the engines').
+    pub fn samples(&self) -> &[f32] {
+        &self.table
     }
 }
 
-/// Two periods of the engine: its harmonics, the second firing a little weaker (the beat of a
-/// single cylinder), peaking at 0.8.
-fn engine_table() -> Vec<f32> {
-    const HARMONICS: [f32; 8] = [1.0, 0.62, 0.48, 0.3, 0.22, 0.12, 0.08, 0.05];
+/// A recording made into a seamless loop (issue #135), at [`SAMPLE_RATE`]: `interleaved` samples
+/// of `channels` channels at `rate` Hz, mixed down to mono (and resampled if `rate` is not
+/// [`SAMPLE_RATE`]), low-passed at `lowpass` Hz (two poles; 0: not), then its last `fade` seconds
+/// crossfaded (equal power) into the ones just before its start: it starts again without a step
+/// or a click. Its level is brought to `rms`, its peak kept under 0.95. Pure: tested.
+pub fn seamless_loop(
+    interleaved: &[f32],
+    channels: usize,
+    rate: u32,
+    lowpass: f32,
+    fade: f32,
+    rms: f32,
+) -> Vec<f32> {
+    let channels = channels.max(1);
+    let mono: Vec<f32> = interleaved
+        .chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+        .collect();
+    let mut x = if rate == SAMPLE_RATE || rate == 0 {
+        mono
+    } else {
+        let ratio = f64::from(rate) / f64::from(SAMPLE_RATE);
+        let len = (mono.len() as f64 / ratio).floor() as usize;
+        (0..len)
+            .map(|i| {
+                let at = i as f64 * ratio;
+                let j = at as usize;
+                let frac = (at - j as f64) as f32;
+                let a = mono.get(j).copied().unwrap_or(0.0);
+                let b = mono.get(j + 1).copied().unwrap_or(a);
+                a + (b - a) * frac
+            })
+            .collect()
+    };
+    let n = x.len();
+    if n < 8 {
+        return x;
+    }
+    if lowpass > 0.0 {
+        // A periodic sound: the filter runs over it twice, the second pass kept (no start-up
+        // transient where the loop begins).
+        let mut filter = Svf::new(lowpass, std::f32::consts::FRAC_1_SQRT_2);
+        for sample in &x {
+            filter.step(*sample);
+        }
+        for sample in &mut x {
+            *sample = filter.step(*sample).1;
+        }
+    }
+    let f = ((fade.max(0.0) * RATE) as usize).clamp(1, n / 4);
+    let mut out: Vec<f32> = x[f..].to_vec();
+    let m = out.len();
+    for j in 0..f {
+        let a = (j as f32 + 0.5) / f as f32;
+        let (fade_out, fade_in) = ((1.0 - a).sqrt(), a.sqrt());
+        out[m - f + j] = x[n - f + j] * fade_out + x[j] * fade_in;
+    }
+    let level = (out.iter().map(|s| s * s).sum::<f32>() / m as f32).sqrt();
+    let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+    if level > 1e-6 {
+        let gain = (rms / level).min(0.95 / peak.max(1e-6));
+        for sample in &mut out {
+            *sample *= gain;
+        }
+    }
+    out
+}
+
+/// #103's engine: its harmonics.
+const ENGINE_HARMONICS: [f32; 8] = [1.0, 0.62, 0.48, 0.3, 0.22, 0.12, 0.08, 0.05];
+/// The soft engine's (#135): five, falling fast (nothing bright).
+const SOFT_ENGINE_HARMONICS: [f32; 5] = [1.0, 0.45, 0.18, 0.07, 0.03];
+
+/// Two periods of an engine: its `harmonics`, the second firing weaker by `beat` (the « putt »
+/// of a single cylinder), peaking at 0.8.
+fn engine_table(harmonics: &[f32], beat: f32) -> Vec<f32> {
     let mut table: Vec<f32> = (0..TABLE)
         .map(|i| {
             // Two periods of the fundamental along the table, and its half (the beat).
             let x = i as f32 / TABLE as f32;
             let phase = TAU * 2.0 * x;
-            let tone: f32 = HARMONICS
+            let tone: f32 = harmonics
                 .iter()
                 .enumerate()
                 .map(|(n, a)| a * ((n + 1) as f32 * phase + n as f32 * 0.7).sin())
                 .sum();
-            tone * (1.0 + 0.32 * (TAU * x).sin()) + 0.18 * (TAU * x).sin()
+            tone * (1.0 + beat * (TAU * x).sin()) + 0.18 * (TAU * x).sin()
         })
         .collect();
     let peak = table.iter().fold(0.0f32, |m, s| m.max(s.abs()));
@@ -489,7 +643,7 @@ fn engine_table() -> Vec<f32> {
 
 /// Plays a [`LoopSound`]: one sample after the other, forever.
 pub struct LoopDecoder {
-    kind: LoopKind,
+    timbre: LoopTimbre,
     table: Arc<[f32]>,
     phase: f32,
     rng: Rng,
@@ -497,46 +651,87 @@ pub struct LoopDecoder {
     wobble: f32,
     slow: f32,
     index: u32,
+    at: usize,
 }
 
 impl LoopDecoder {
     pub fn new(sound: &LoopSound) -> Self {
-        let filter = match sound.kind {
-            LoopKind::Engine => Svf::new(900.0, 0.7),
-            LoopKind::Squeal => Svf::new(3200.0, 2.0),
-            LoopKind::Wind => Svf::new(520.0, 0.9),
-            LoopKind::Rumble => Svf::new(240.0, 0.7),
+        let filter = match sound.timbre {
+            LoopTimbre::Engine => Svf::new(900.0, 0.7),
+            LoopTimbre::SoftEngine => Svf::new(260.0, 0.7),
+            LoopTimbre::Squeal => Svf::new(3200.0, 2.0),
+            LoopTimbre::SoftSqueal => Svf::new(SOFT_SQUEAL_HZ * 1.45, 1.3),
+            LoopTimbre::Plush => Svf::new(550.0, 0.8),
+            LoopTimbre::Wind => Svf::new(520.0, 0.9),
+            LoopTimbre::Rumble | LoopTimbre::Recorded => Svf::new(240.0, 0.7),
         };
         Self {
-            kind: sound.kind,
+            timbre: sound.timbre,
             table: sound.table.clone(),
             phase: 0.0,
-            rng: Rng::new(0x100b_0001 ^ sound.kind as u32),
+            rng: Rng::new(0x100b_0001 ^ sound.timbre as u32),
             filter,
             wobble: 0.0,
             slow: 0.0,
             index: 0,
+            at: 0,
         }
+    }
+
+    /// The engine's wavetable at its phase (two periods along the table: it turns at half the
+    /// firing frequency).
+    fn wavetable(&mut self) -> f32 {
+        let len = self.table.len().max(1);
+        let at = self.phase * len as f32;
+        let i = at as usize % len;
+        let next = (i + 1) % len;
+        let frac = at.fract();
+        let tone = self.table.get(i).copied().unwrap_or(0.0) * (1.0 - frac)
+            + self.table.get(next).copied().unwrap_or(0.0) * frac;
+        self.phase = (self.phase + ENGINE_HZ * 0.5 / RATE) % 1.0;
+        tone
     }
 
     fn sample(&mut self) -> f32 {
         let t = self.index as f32 / RATE;
         self.index = self.index.wrapping_add(1) % (SAMPLE_RATE * 600);
-        match self.kind {
-            LoopKind::Engine => {
-                // Two periods along the table: it turns at half the firing frequency.
-                let len = self.table.len().max(1);
-                let at = self.phase * len as f32;
-                let i = at as usize % len;
-                let next = (i + 1) % len;
-                let frac = at.fract();
-                let tone = self.table.get(i).copied().unwrap_or(0.0) * (1.0 - frac)
-                    + self.table.get(next).copied().unwrap_or(0.0) * frac;
-                self.phase = (self.phase + ENGINE_HZ * 0.5 / RATE) % 1.0;
+        match self.timbre {
+            LoopTimbre::Engine => {
+                let tone = self.wavetable();
                 let (_, rough) = self.filter.step(self.rng.next());
                 tone + 0.25 * rough
             }
-            LoopKind::Squeal => {
+            LoopTimbre::SoftEngine => {
+                // Rounder: a low rumble instead of the rough noise.
+                let tone = self.wavetable();
+                let (_, low) = self.filter.step(self.rng.next());
+                0.9 * tone + 0.35 * low
+            }
+            LoopTimbre::SoftSqueal => {
+                // The « shhh » of the tyres, breathing a little, and a faint tone wobbling slowly.
+                self.wobble += (self.rng.next() - self.wobble) * (6.0 / RATE);
+                let hz =
+                    SOFT_SQUEAL_HZ * (1.0 + 0.12 * self.wobble + 0.012 * (TAU * 5.0 * t).sin());
+                self.phase = (self.phase + hz / RATE) % 1.0;
+                let (band, _) = self.filter.step(self.rng.next());
+                let breath = 0.8 + 0.2 * (TAU * 3.0 * t).sin();
+                0.75 * band * breath + 0.2 * (TAU * self.phase).sin()
+            }
+            LoopTimbre::Plush => {
+                // Low noise (under 550 Hz), fluttering (smoothed noise): rubbing on a cushion.
+                self.slow += (self.rng.next() - self.slow) * (25.0 / RATE);
+                let (band, low) = self.filter.step(self.rng.next());
+                (0.3 * band + low) * (0.75 + 1.5 * self.slow).clamp(0.2, 1.4) * 2.2
+            }
+            LoopTimbre::Recorded => {
+                let sample = self.table.get(self.at).copied().unwrap_or(0.0);
+                self.at += 1;
+                if self.at >= self.table.len() {
+                    self.at = 0;
+                }
+                sample
+            }
+            LoopTimbre::Squeal => {
                 // A wobbling pitch (smoothed noise), and some hiss.
                 self.wobble += (self.rng.next() - self.wobble) * (30.0 / RATE);
                 let hz =
@@ -545,7 +740,7 @@ impl LoopDecoder {
                 let (hiss, _) = self.filter.step(self.rng.next());
                 0.55 * (TAU * self.phase).sin() + 0.2 * (TAU * 2.0 * self.phase).sin() + 0.3 * hiss
             }
-            LoopKind::Wind => {
+            LoopTimbre::Wind => {
                 // Gusts: the band's center and the volume drift slowly.
                 self.slow += (self.rng.next() - self.slow) * (2.0 / RATE);
                 if self.index.is_multiple_of(64) {
@@ -557,7 +752,7 @@ impl LoopDecoder {
                 let (band, _) = self.filter.step(self.rng.next());
                 band * (0.75 + 0.25 * (TAU * 0.23 * t).sin()) * 1.6
             }
-            LoopKind::Rumble => {
+            LoopTimbre::Rumble => {
                 // Low noise, shaken quickly (the bumps of the grass).
                 let (_, low) = self.filter.step(self.rng.next());
                 low * (0.55 + 0.45 * (TAU * 23.0 * t).sin().abs()) * 2.2
@@ -711,5 +906,107 @@ mod tests {
         for other in [70.0, 90.0, 130.0, 150.0, 300.0] {
             assert!(fundamental > power(other) * 4.0, "{other} Hz");
         }
+    }
+
+    /// The share of `samples`' energy above `hz` (a two-pole high-pass: what the filter's
+    /// band-pass and low-pass leave).
+    fn bright_share(samples: &[f32], hz: f32) -> f32 {
+        let mut filter = Svf::new(hz, std::f32::consts::FRAC_1_SQRT_2);
+        let (mut all, mut high) = (0.0f32, 0.0f32);
+        for s in samples {
+            let (band, low) = filter.step(*s);
+            let high_pass = s - band - low;
+            all += s * s;
+            high += high_pass * high_pass;
+        }
+        high / all.max(1e-9)
+    }
+
+    /// Issue #135: the softer timbres never end, stay bounded and audible, and are softer than
+    /// #103's: less energy above 1.5 kHz; the soft engine still hums at its firing frequency.
+    #[test]
+    fn the_softer_loops_are_softer_and_never_end() {
+        let render = |timbre: LoopTimbre| -> Vec<f32> {
+            let sound = LoopSound::synth(timbre);
+            let decoder = sound.decoder();
+            assert_eq!(decoder.total_duration(), None);
+            decoder.take(SAMPLE_RATE as usize * 2).collect()
+        };
+        for timbre in LoopTimbre::SYNTHESIZED {
+            let samples = render(timbre);
+            assert_eq!(samples.len(), SAMPLE_RATE as usize * 2, "{timbre:?}");
+            assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+            let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+            assert!(rms > 0.05, "{timbre:?} audible: {rms}");
+        }
+        let bright = |timbre| bright_share(&render(timbre), 1500.0);
+        assert!(
+            bright(LoopTimbre::SoftEngine) < bright(LoopTimbre::Engine) * 0.5,
+            "{} {}",
+            bright(LoopTimbre::SoftEngine),
+            bright(LoopTimbre::Engine)
+        );
+        for soft in [LoopTimbre::SoftSqueal, LoopTimbre::Plush] {
+            assert!(
+                bright(soft) < bright(LoopTimbre::Squeal) * 0.5,
+                "{soft:?}: {} {}",
+                bright(soft),
+                bright(LoopTimbre::Squeal)
+            );
+        }
+        let samples = render(LoopTimbre::SoftEngine);
+        let power = |hz: f32| {
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, s) in samples.iter().enumerate() {
+                let a = TAU * hz * i as f32 / RATE;
+                re += s * a.cos();
+                im += s * a.sin();
+            }
+            re * re + im * im
+        };
+        for other in [70.0, 90.0, 150.0, 220.0, 330.0] {
+            assert!(power(ENGINE_HZ) > power(other) * 4.0, "{other} Hz");
+        }
+    }
+
+    /// Issue #135: a recording becomes a loop that starts again without a step: a stereo tone at
+    /// 48 kHz that does not fit its length (its end and its start do not meet) is mixed down,
+    /// resampled to 44.1 kHz, its end crossfaded into its start; the step where it loops is no
+    /// bigger than its ordinary steps; its level is the one asked for; the decoder plays it over
+    /// and over. A low-pass takes its brightness away.
+    #[test]
+    fn a_recording_loops_without_a_step() {
+        let frames = 48_000;
+        let mut stereo = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let t = i as f32 / 48_000.0;
+            let s = 0.6 * (TAU * 441.3 * t).sin() + 0.2 * (TAU * 5300.0 * t).sin();
+            stereo.extend([s, s * 0.5]);
+        }
+        let out = seamless_loop(&stereo, 2, 48_000, 0.0, 0.03, 0.2);
+        let expected =
+            (frames as f32 * SAMPLE_RATE as f32 / 48_000.0) as usize - (0.03 * RATE) as usize;
+        assert!(
+            out.len().abs_diff(expected) <= 2,
+            "{} {expected}",
+            out.len()
+        );
+        let biggest = out
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        let seam = (out[0] - out[out.len() - 1]).abs();
+        assert!(seam <= biggest * 1.05, "{seam} {biggest}");
+        let rms = (out.iter().map(|s| s * s).sum::<f32>() / out.len() as f32).sqrt();
+        assert!((rms - 0.2).abs() < 0.01, "{rms}");
+        assert!(out.iter().all(|s| s.abs() <= 0.95));
+        // Played over and over.
+        let sound = LoopSound::recorded(out.clone());
+        let played: Vec<f32> = sound.decoder().take(out.len() * 2 + 10).collect();
+        assert_eq!(&played[..out.len()], &out[..]);
+        assert_eq!(&played[out.len()..out.len() * 2], &out[..]);
+        // A low-pass at 1 kHz: the 5.3 kHz tone mostly gone.
+        let soft = seamless_loop(&stereo, 2, 48_000, 1000.0, 0.03, 0.2);
+        assert!(bright_share(&soft, 3000.0) < bright_share(&out, 3000.0) * 0.2);
     }
 }

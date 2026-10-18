@@ -1123,16 +1123,28 @@ fn every_synthesized_sound_renders_bounded() {
     }
 }
 
-/// Issue #103 (CLAUDE.md, « Assets »): every sound file the game plays is in `assets/audio/`,
-/// with its pack's CC0 licence and its line in `assets/CREDITS.md`; its length is the one the
-/// mixer counts (decoded here); no other file is there.
+/// Issue #103 (CLAUDE.md, « Assets »), extended by issue #135: every sound file the game plays,
+/// and every file of the sound picker's candidates, is in `assets/audio/`, with its source's
+/// CC0 licence next to it (`License.txt`: Kenney's packs, or the page of each file on
+/// OpenGameArt) and its line in `assets/CREDITS.md` (Kenney's pack, or the OpenGameArt page,
+/// and « CC0 »); its length is the one the mixer counts (decoded here); no other file is there.
 #[test]
 fn every_sound_file_is_there_with_its_licence_and_its_credits() {
     let credits = std::fs::read_to_string(format!("{ASSETS}/CREDITS.md")).unwrap();
+    let mut files: Vec<(&str, f32)> = FILES.to_vec();
+    for slot in Slot::ALL {
+        for candidate in slot.candidates() {
+            files.extend(candidate.files());
+            files.extend(candidate.recording());
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(b.0));
+    files.dedup_by(|a, b| a.0 == b.0);
+    assert!(files.len() > FILES.len() + 60, "{}", files.len());
     let mut wanted = BTreeSet::new();
     let mut packs = BTreeSet::new();
     let mut mismatches = Vec::new();
-    for (path, length) in FILES {
+    for (path, length) in files {
         let pack = path.split('/').nth(1).unwrap();
         let file = path.rsplit('/').next().unwrap();
         packs.insert(pack);
@@ -1152,10 +1164,10 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
             .find(|line| line.contains(&format!("`audio/{pack}/")))
             .unwrap_or_else(|| panic!("no line for audio/{pack}/ in assets/CREDITS.md"));
         assert!(line.contains(file), "{file} not in: {line}");
+        assert!(line.contains("CC0"), "{line}");
         assert!(
-            line.contains("Kenney")
-                && line.contains("CC0")
-                && line.contains(&format!("https://kenney.nl/assets/{pack}")),
+            (line.contains("Kenney") && line.contains(&format!("https://kenney.nl/assets/{pack}")))
+                || line.contains("https://opengameart.org/content/"),
             "{line}"
         );
     }
@@ -1164,7 +1176,9 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
         let licence = std::fs::read_to_string(format!("{ASSETS}/audio/{pack}/License.txt"))
             .unwrap_or_else(|_| panic!("assets/audio/{pack}/License.txt"));
         assert!(
-            licence.contains("CC0") && licence.contains("Kenney"),
+            licence.contains("CC0")
+                && (licence.contains("Kenney")
+                    || licence.contains("https://opengameart.org/content/")),
             "{pack}"
         );
         wanted.insert(format!("audio/{pack}/License.txt"));
@@ -1187,14 +1201,17 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
         }
     }
     assert_eq!(present, wanted, "only the files the game plays");
-    // Nothing of Mario Kart or of any brand: Kenney's packs only (and our syntheses).
+    // Nothing of Mario Kart or of any brand: Kenney's packs, CC0 files of OpenGameArt (and our
+    // syntheses).
     assert!(packs.len() >= 5, "{packs:?}");
 }
 
-/// Issue #103: behind the home screen, its background race makes no sound but its engines,
-/// quieter (`SoundTuning::home_volume`): nothing of the race reaches the menu.
+/// Issue #103, changed by issue #135: behind the home screen, its background race makes no sound
+/// at all (#103 let its engines hum at 35 %, `home_volume`; Max: « Ils doivent être coupés [...]
+/// sur l'accueil »): its karts are there, the engines' voices follow them, silent; no short sound
+/// either. The home screen has its music only.
 #[test]
-fn the_home_background_only_hums() {
+fn the_home_background_is_silent() {
     let mut app = game_app_unloaded(TrackChoice::TestGround, 0);
     app.add_plugins(crate::menu::MainMenuPlugin { at_launch: true })
         .add_plugins(SoundDesignPlugin)
@@ -1214,23 +1231,323 @@ fn the_home_background_only_hums() {
     }
     assert!(app.world().resource::<crate::menu::MainMenu>().on_home());
     forget(&mut app);
-    run(&mut app, 600);
+    let mut loudest = 0.0f32;
+    for _ in 0..600 {
+        app.update();
+        loudest = loops(&mut app)
+            .iter()
+            .fold(loudest, |most, voice| most.max(voice.volume));
+    }
     assert!(sounds(&app).is_empty(), "{:?}", sounds(&app));
-    let tuning = app.world().resource::<SoundTuning>().clone();
-    let options = *app.world().resource::<PlayerOptions>();
-    let loud = tuning.home_volume
-        * tuning.engine_volume
-        * option_gain(options.master_volume)
-        * option_gain(options.effects_volume);
+    assert_eq!(loudest, 0.0, "no loop heard on the home screen");
     let engines: Vec<LoopVoice> = loops(&mut app)
         .into_iter()
         .filter(|v| v.kind == LoopKind::Engine && v.kart.is_some())
         .collect();
-    assert!(!engines.is_empty(), "the karts hum");
-    assert!(
-        engines
-            .iter()
-            .all(|v| !v.foreground && v.volume <= loud + 1e-4),
-        "{engines:?} under {loud}"
+    assert!(!engines.is_empty(), "the karts are there");
+    assert_eq!(
+        *app.world().resource::<RaceSounds>(),
+        RaceSounds::default(),
+        "nothing of the karts heard"
     );
+}
+
+/// The loudest of each loop now (the player's and the others').
+fn loudness(app: &mut App, kind: LoopKind) -> f32 {
+    loops(app)
+        .iter()
+        .filter(|v| v.kind == kind)
+        .fold(0.0, |most, v| most.max(v.volume))
+}
+
+/// Issue #135 acceptance: the engine and the drift are heard only during a race: silent on the
+/// grid, heard from the countdown, the squeal while drifting; the pause fades them out (not cut
+/// dead: down frame after frame) and back; after the player's finish (its results), they fade
+/// out for good, and the karts' short sounds stop too.
+#[test]
+fn the_engine_and_the_drift_are_heard_only_in_a_race() {
+    let (mut app, kart) = race_app(3);
+    use crate::race::RacePhase;
+    let phase = |app: &App| app.world().resource::<Race>().phase();
+    // On the grid: nothing yet.
+    let mut on_grid = 0;
+    while phase(&app) == RacePhase::Grid {
+        assert_eq!(loudness(&mut app, LoopKind::Engine), 0.0, "on the grid");
+        app.update();
+        on_grid += 1;
+        assert!(on_grid < 2000);
+    }
+    assert!(on_grid > 10, "{on_grid}");
+    // The countdown: the engines idle.
+    for _ in 0..30 {
+        app.update();
+    }
+    assert_eq!(phase(&app), RacePhase::Countdown);
+    let idle = front_loop(&mut app, LoopKind::Engine);
+    assert_eq!(idle.kart, Some(kart));
+    assert!(idle.volume > 0.03, "{idle:?}");
+    // GO, and a drift: the squeal.
+    assert!(skip_countdown_now(app.world_mut()));
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 60);
+    hold_keys(
+        &mut app,
+        &[KeyCode::ArrowUp, KeyCode::Space, KeyCode::ArrowLeft],
+    );
+    let mut squeal = 0.0f32;
+    for _ in 0..90 {
+        app.update();
+        squeal = squeal.max(front_loop(&mut app, LoopKind::Squeal).volume);
+    }
+    assert!(squeal > 0.05, "{squeal}");
+    // The pause: a short fade out, then nothing; back after it.
+    let before = front_loop(&mut app, LoopKind::Engine).volume;
+    assert!(before > 0.03);
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    let mut levels = Vec::new();
+    for _ in 0..60 {
+        app.update();
+        levels.push(front_loop(&mut app, LoopKind::Engine).volume);
+    }
+    assert!(levels[0] > 0.0 && levels[0] < before, "a fade: {levels:?}");
+    assert!(levels.windows(2).all(|w| w[1] <= w[0]), "{levels:?}");
+    assert!(
+        levels
+            .iter()
+            .position(|v| *v == 0.0)
+            .is_some_and(|at| at < 45),
+        "short: {levels:?}"
+    );
+    assert_eq!(loudness(&mut app, LoopKind::Squeal), 0.0);
+    app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+    run(&mut app, 30);
+    assert!(front_loop(&mut app, LoopKind::Engine).volume > 0.03);
+    // The player finishes: its results; the engines and the squeals fade out for good.
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    {
+        let (checkpoints, laps) = {
+            let course = app.world().resource::<Course>();
+            (course.checkpoint_count(), course.laps)
+        };
+        let mut progress = app.world_mut().get_mut::<RaceProgress>(kart).unwrap();
+        progress.passed = laps * checkpoints + 1;
+        progress.finish = Some(1000);
+    }
+    run(&mut app, 60);
+    let mut loudest = 0.0f32;
+    for _ in 0..300 {
+        app.update();
+        for kind in LoopKind::ALL {
+            loudest = loudest.max(loudness(&mut app, kind));
+        }
+    }
+    assert_eq!(loudest, 0.0, "after the finish");
+    // Nor the karts' short sounds (a bump between two bots, a drift of the player's kart).
+    let bots: Vec<Entity> = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<Bot>>()
+            .iter(world)
+            .collect()
+    };
+    forget(&mut app);
+    app.world_mut().write_message(KartBump {
+        kart: bots[0],
+        by: bots[1],
+        closing_speed: 12.0,
+    });
+    run(&mut app, 3);
+    assert_eq!(asked(&app, SoundEffect::KartBump), 0, "{:?}", sounds(&app));
+    assert_eq!(*app.world().resource::<RaceSounds>(), RaceSounds::default());
+}
+
+/// The same bump during a race: heard (what the finish silences above).
+#[test]
+fn a_bump_is_heard_during_a_race() {
+    let (mut app, _) = started(2);
+    let bots: Vec<Entity> = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<Bot>>()
+            .iter(world)
+            .collect()
+    };
+    run(&mut app, 2);
+    forget(&mut app);
+    app.world_mut().write_message(KartBump {
+        kart: bots[0],
+        by: bots[1],
+        closing_speed: 12.0,
+    });
+    run(&mut app, 3);
+    assert_eq!(asked(&app, SoundEffect::KartBump), 1, "{:?}", sounds(&app));
+}
+
+/// Issue #135 acceptance: in the lobby, no engine: driving on the test ground, the engine hums;
+/// in the lobby's level (on foot), every loop is silent.
+#[test]
+fn no_engine_in_the_lobby() {
+    let mut app = game_app_unloaded(TrackChoice::TestGround, 0);
+    app.add_plugins(crate::salon::SalonPlugin)
+        .add_plugins(SoundDesignPlugin)
+        .init_resource::<Asked>()
+        .add_systems(PostUpdate, record.before(mix));
+    wait_for_the_player(&mut app);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 60);
+    assert!(front_loop(&mut app, LoopKind::Engine).volume > 0.03);
+    app.world_mut().write_message(crate::level::LoadLevel::on(
+        TrackChoice::Salon,
+        crate::race::RaceMode::FreeRoam,
+    ));
+    run(&mut app, 30);
+    assert_eq!(count::<With<crate::salon::PlayerWalker>>(&mut app), 1);
+    // (The engine's short fade out, then nothing.)
+    run(&mut app, 60);
+    let mut loudest = 0.0f32;
+    for _ in 0..120 {
+        app.update();
+        for kind in LoopKind::ALL {
+            loudest = loudest.max(loudness(&mut app, kind));
+        }
+    }
+    assert_eq!(loudest, 0.0);
+    assert_eq!(*app.world().resource::<RaceSounds>(), RaceSounds::default());
+}
+
+/// Issue #135 acceptance: a choice in the admin panel (`SoundChoices`, what its list writes)
+/// changes the sound played in a race: the player's engine fades out quickly, takes the new
+/// candidate and comes back; the squeal the same; a short sound plays its new clip (its voice
+/// holds the new clip's length).
+#[test]
+fn a_choice_in_the_panel_changes_the_sound_in_a_race() {
+    let (mut app, kart) = started(0);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 60);
+    let engine = front_loop(&mut app, LoopKind::Engine);
+    assert_eq!((engine.kart, engine.source), (Some(kart), Some(0)));
+    assert!(engine.volume > 0.03, "{engine:?}");
+    assert!(
+        app.world_mut()
+            .resource_mut::<SoundChoices>()
+            .choose(Slot::Engine, 2)
+    );
+    let mut frames = 0;
+    let mut silent = false;
+    while front_loop(&mut app, LoopKind::Engine).source != Some(2) {
+        app.update();
+        frames += 1;
+        let voice = front_loop(&mut app, LoopKind::Engine);
+        silent |= voice.volume == 0.0;
+        assert!(frames < 20, "changed at once: {voice:?}");
+    }
+    assert!(silent, "faded out before the new one");
+    run(&mut app, 60);
+    let changed = front_loop(&mut app, LoopKind::Engine);
+    assert_eq!(changed.source, Some(2));
+    assert!(changed.volume > 0.03, "{changed:?}");
+    // The others' engines too.
+    assert!(
+        loops(&mut app)
+            .iter()
+            .filter(|v| v.kind == LoopKind::Engine)
+            .all(|v| v.source == Some(2))
+    );
+    // The squeal.
+    app.world_mut()
+        .resource_mut::<SoundChoices>()
+        .choose(Slot::Squeal, 3);
+    run(&mut app, 3);
+    assert_eq!(front_loop(&mut app, LoopKind::Squeal).source, Some(3));
+    // A short sound: its new clip (qubodup's crash, 0.6 s, instead of Kenney's 0.341 s).
+    let voice_length = |app: &mut App| {
+        app.world_mut()
+            .spawn((SoundEffect::KartBump, Cue::front(Some(kart))));
+        app.update();
+        let world = app.world_mut();
+        let voice = world
+            .query_filtered::<&Voice, With<SoundEffect>>()
+            .iter(world)
+            .filter(|v| v.ends_at - v.started > 0.0)
+            .map(|v| v.ends_at - v.started)
+            .fold(0.0f64, f64::max);
+        world
+            .query_filtered::<Entity, With<Voice>>()
+            .iter(world)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|e| {
+                world.despawn(e);
+            });
+        voice
+    };
+    let before = voice_length(&mut app);
+    assert!((before - (0.341 + 0.05)).abs() < 1e-3, "{before}");
+    app.world_mut()
+        .resource_mut::<SoundChoices>()
+        .choose(Slot::KartBump, 1);
+    // (Not the same sound of the same kart twice in 80 ms.)
+    run(&mut app, 6);
+    let after = voice_length(&mut app);
+    let crash = Slot::KartBump.candidates()[1].files()[0];
+    assert_eq!(crash.0, "audio/qubodup/crash.ogg");
+    assert!((after - f64::from(crash.1 + 0.05)).abs() < 1e-3, "{after}");
+}
+
+/// Issue #135: « ▶ Écouter » plays a sound at once, even out of a race (here: paused, on the
+/// test ground): a short sound in front, the drift's chimes in their time; the engine a short
+/// rev (up, then down) that goes away by itself.
+#[test]
+fn listening_plays_a_sound_at_once_even_out_of_a_race() {
+    let mut app = sound_app(TrackChoice::TestGround, 0);
+    run(&mut app, 3);
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    run(&mut app, 3);
+    forget(&mut app);
+    app.world_mut().write_message(PreviewSound(Slot::Splotch));
+    run(&mut app, 2);
+    assert_eq!(asked(&app, SoundEffect::Splotch), 1, "{:?}", sounds(&app));
+    assert!(
+        app.world()
+            .resource::<Asked>()
+            .0
+            .iter()
+            .all(|(_, cue)| cue.foreground)
+    );
+    forget(&mut app);
+    app.world_mut().write_message(PreviewSound(Slot::DriftTier));
+    let mut heard = Vec::new();
+    for _ in 0..120 {
+        app.update();
+        for sound in sounds(&app) {
+            if !heard.contains(&sound) {
+                heard.push(sound);
+            }
+        }
+    }
+    assert_eq!(heard, MiniTurbo::ALL.map(SoundEffect::DriftTier), "in turn");
+    // The engine: a rev.
+    app.world_mut().write_message(PreviewSound(Slot::Engine));
+    let mut pitches = Vec::new();
+    let mut frames = 0;
+    loop {
+        app.update();
+        frames += 1;
+        let world = app.world_mut();
+        let Some(preview) = world.query::<&LoopPreview>().iter(world).next().copied() else {
+            break;
+        };
+        assert_eq!(preview.kind, LoopKind::Engine);
+        pitches.push(preview.pitch);
+        assert!(frames < 400, "it goes away");
+    }
+    assert!(frames > 60, "{frames}");
+    let top = pitches.iter().copied().fold(0.0f32, f32::max);
+    assert!(top > pitches[1] + 0.4, "up: {pitches:?}");
+    assert!(
+        *pitches.last().unwrap() < top - 0.2,
+        "and down: {pitches:?}"
+    );
+    // The race's loops stay silent meanwhile (paused).
+    assert_eq!(loudness(&mut app, LoopKind::Engine), 0.0);
 }
