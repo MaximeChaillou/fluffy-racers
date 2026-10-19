@@ -322,7 +322,7 @@ pub(super) fn panel(app: &App) -> Option<crate::salon::SalonView> {
 /// Issue #136: the banner's button (`crate::salon::SalonBannerPill`: a click, or Entrée in the
 /// scene, opens the panel) is shown in `app`. It took the place of the line of keys at the bottom
 /// of the scene (`SalonKeys`, gone: « Commandes » in the panel lists them).
-fn banner_shown(app: &App) -> bool {
+pub(super) fn banner_shown(app: &App) -> bool {
     app.world()
         .iter_entities()
         .any(|e| e.contains::<crate::salon::SalonBannerPill>())

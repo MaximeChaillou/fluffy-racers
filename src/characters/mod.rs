@@ -94,10 +94,12 @@ use bevy::prelude::*;
 
 use crate::kart::{DriverLook, KartColor, KeyboardLayout, PlayerInputMuted};
 use crate::level::{LoadLevel, Online};
-use crate::menu::MainMenu;
+use crate::menu::{MainMenu, Showcase};
 use crate::modes::RaceMenu;
+use crate::net::{LobbyWindow, OnlineRace};
 use crate::options::{OptionsMenu, OptionsSystems};
-use crate::race::RaceMode;
+use crate::race::{Race, RaceMode};
+use crate::salon::Behind;
 
 /// Opens (and closes) the selection screen: « G » for garage, a letter at the same place and
 /// with the same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
@@ -448,7 +450,10 @@ pub fn apply_selection_actions(
 /// screen it is opening) is open (the fixed 60 Hz simulation does not run), and runs again once
 /// all are closed. Online (issue #9, Max's decision), no pause: the game runs on, and the
 /// player's kart coasts while a menu is open (its keys are the menu's). Issue #89: never on the
-/// home screen, nor over it: its background is the game, running.
+/// home screen, nor over it: its background is the game, running. Issue #141: the lobby's panel
+/// too, over a race (L): it holds the game as the others do (`salon::Behind::held_by_the_lobby`:
+/// not over the home's background, the lobby's scene or free driving, nor over the end of a race
+/// in a room, where it waits hidden).
 #[allow(clippy::too_many_arguments)]
 fn pause_in_menus(
     screen: Res<SelectionScreen>,
@@ -456,6 +461,12 @@ fn pause_in_menus(
     race_menu: Option<Res<RaceMenu>>,
     main_menu: Option<Res<MainMenu>>,
     online: Option<Res<Online>>,
+    (lobby, race, background, room_race): (
+        Option<Res<LobbyWindow>>,
+        Option<Res<Race>>,
+        Option<Res<Showcase>>,
+        Option<Res<OnlineRace>>,
+    ),
     muted: Option<ResMut<PlayerInputMuted>>,
     mut was_open: Local<bool>,
     mut time: ResMut<Time<Virtual>>,
@@ -463,11 +474,24 @@ fn pause_in_menus(
     // Issue #89: the home screen's background (its karts) runs behind it, and behind the screens
     // it opens.
     let home = main_menu.as_ref().is_some_and(|menu| menu.on_home());
+    // Opened over the pause (L), the pause comes back once it closes, at the end of the frame
+    // (`menu::follow_the_screens`): it holds the game until then.
+    let over_the_pause = main_menu
+        .as_ref()
+        .is_some_and(|menu| menu.in_game && menu.child == Some(crate::menu::Screen::Lobby));
+    let lobby = (lobby.is_some_and(|window| window.open) || over_the_pause)
+        && Behind::of(
+            race.as_deref(),
+            background.is_some(),
+            room_race.is_some_and(|race| race.shared.over().is_some()),
+        )
+        .held_by_the_lobby(online.is_some());
     let open = !home
         && (screen.open
             || options.is_some_and(|menu| menu.open)
             || race_menu.is_some_and(|menu| menu.open)
-            || main_menu.is_some_and(|menu| menu.holds_the_game()));
+            || main_menu.is_some_and(|menu| menu.holds_the_game())
+            || lobby);
     let pause = open && online.is_none();
     if pause && !time.is_paused() {
         time.pause();

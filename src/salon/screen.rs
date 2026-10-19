@@ -14,12 +14,15 @@
 //!   Issue #136: no line of keys under it. Up and down (or Z/S, W/S) go through its lines and
 //!   buttons, left and right change a line, Entrée (Espace, A) chooses, Échap or L (B, Start)
 //!   close it: then our character walks again.
-//! - **The banner** (#64) at the top while the panel is closed, in a room (not during a race nor
-//!   over its results). Issue #136: it is the panel's button (a click opens it; Entrée too, in
-//!   the scene), instead of « (L) » in its text and of the line of keys at the bottom of the
-//!   scene.
+//! - **The banner** (#64) at the top while the panel is closed, in a room (not during a race we
+//!   run nor over its results). Issue #136: it is the panel's button (a click opens it; Entrée
+//!   too, in the scene), instead of « (L) » in its text and of the line of keys at the bottom of
+//!   the scene.
 //! - **One screen at a time**: not while « Pilote », the options, « Jouer solo » or the pause are
-//!   open (it comes back after them), nor over a race's results.
+//!   open (it comes back after them), nor over a race's end in a room (its results, standings,
+//!   podium: the room comes back to the lobby after them). Issue #141 ([`Behind`]): over the
+//!   home's background (« Multijoueur »: a race of bots, not ours) and over a race (L): in solo
+//!   the game waits under it, online our kart coasts (`characters::pause_in_menus`).
 //!
 //! **Closed, nothing is left** (its nodes are `MenuNode`s); its resource ([`SalonMenu`]) comes the
 //! first time it opens.
@@ -33,8 +36,9 @@ use super::scene::SalonRoot;
 use super::view::{ButtonKind, SalonRow, SalonView, ViewInput, salon_view};
 use crate::characters::{PlayerLoadout, Roster, SelectionAction, SelectionScreen};
 use crate::kart::KeyboardLayout;
+use crate::level::Online;
 use crate::menu::style::{self, ButtonState, palette, size, u};
-use crate::menu::{MainMenu, MenuAssets, MenuNode, StickLatch, anim, kit};
+use crate::menu::{MainMenu, MenuAssets, MenuNode, Showcase, StickLatch, anim, kit};
 use crate::modes::Catalog;
 use crate::modes::RaceMenu;
 use crate::net::{
@@ -42,7 +46,7 @@ use crate::net::{
     invitation, is_local_signal, loopback_page, now_ms,
 };
 use crate::options::{OptionsAction, OptionsMenu};
-use crate::race::{GrandPrixTuning, Race};
+use crate::race::{GrandPrixTuning, Race, RacePhase};
 
 /// What the player does with the lobby's screen: the keys and the gamepad (`salon_keys`), the
 /// mouse (its nodes' observers).
@@ -281,7 +285,54 @@ fn now(time: &Time<Real>) -> f64 {
     time.elapsed_secs_f64()
 }
 
-/// The screen is wanted: the window open, no other screen over it, not over a race's results.
+/// Issue #141: what the lobby's screen (its panel, its banner) would show over. Before #141, any
+/// race hid them, and the home's background is a race (`menu::Showcase`): « Multijoueur » on the
+/// home showed nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Behind {
+    /// No race we play: the lobby's scene, free driving, a level being built, or the home's
+    /// background (a race of bots behind the home, never ours: issue #89).
+    NoRace,
+    /// A race we play (or, online, watch), until its finish.
+    Race,
+    /// Its end: its finish, its results, a championship's standings and podium (the end screens of
+    /// #136); online, from the moment the host ended it (our race ends a tick later).
+    End,
+}
+
+impl Behind {
+    /// From the level's race (`race`), whether it is the home's background, and whether the
+    /// room's race is over (the host ended it).
+    pub fn of(race: Option<&Race>, background: bool, room_race_over: bool) -> Self {
+        match race {
+            None => Behind::NoRace,
+            Some(_) if background => Behind::NoRace,
+            Some(_) if room_race_over => Behind::End,
+            Some(race) => match race.phase() {
+                RacePhase::Finished | RacePhase::Results => Behind::End,
+                RacePhase::Grid | RacePhase::Countdown | RacePhase::Racing => Behind::Race,
+            },
+        }
+    }
+
+    /// The lobby's screen shows over it: anything but the end of a race in a room (`online`): the
+    /// room comes back to the lobby after its end screens, the panel waits for them to go (the
+    /// charter). Out of a room, nothing comes after them: L opens the panel over them, as N or G
+    /// open their screens.
+    pub fn shows_the_lobby(self, online: bool) -> bool {
+        !(online && self == Behind::End)
+    }
+
+    /// The panel shown over it holds the game, as the other screens do over a race: in solo the
+    /// game waits; online our kart coasts (its keys are the panel's). Not over no race: the home's
+    /// background never waits (#89), our character in the lobby's scene waits by itself (#101).
+    pub fn held_by_the_lobby(self, online: bool) -> bool {
+        self != Behind::NoRace && self.shows_the_lobby(online)
+    }
+}
+
+/// The screen is wanted: the window open, no other screen over it, and (issue #141) over what it
+/// can show over ([`Behind::shows_the_lobby`]: not over the end of a race in a room).
 #[allow(clippy::too_many_arguments)]
 pub fn screen_wanted(
     window: &LobbyWindow,
@@ -289,14 +340,15 @@ pub fn screen_wanted(
     options: Option<&OptionsMenu>,
     race_menu: Option<&RaceMenu>,
     main_menu: Option<&MainMenu>,
-    race: bool,
+    behind: Behind,
+    online: bool,
 ) -> bool {
     window.open
         && !selection.is_some_and(|s| s.open)
         && !options.is_some_and(|o| o.open)
         && !race_menu.is_some_and(|r| r.open)
         && !main_menu.is_some_and(|m| m.open)
-        && !race
+        && behind.shows_the_lobby(online)
 }
 
 /// The screen's systems run: it is wanted, or something of it is shown (to go), or the banner
@@ -544,12 +596,16 @@ pub fn sync_salon_tree(
     window: Res<LobbyWindow>,
     session: Option<Res<NetSession>>,
     race: Option<Res<OnlineRace>>,
-    (selection, options, race_menu, main_menu, racing): (
+    (selection, options, race_menu, main_menu): (
         Option<Res<SelectionScreen>>,
         Option<Res<OptionsMenu>>,
         Option<Res<RaceMenu>>,
         Option<Res<MainMenu>>,
+    ),
+    (racing, background, online): (
         Option<Res<Race>>,
+        Option<Res<Showcase>>,
+        Option<Res<Online>>,
     ),
     (roster, settings, loadout, assets, cups): (
         Res<Roster>,
@@ -568,17 +624,27 @@ pub fn sync_salon_tree(
         || options.as_deref().is_some_and(|o| o.open)
         || race_menu.as_deref().is_some_and(|r| r.open)
         || main_menu.as_deref().is_some_and(|m| m.open);
+    // Issue #141: over the home's background too (a race, not ours), not over a room's race end.
+    let behind = Behind::of(
+        racing.as_deref(),
+        background.is_some(),
+        race.as_deref()
+            .is_some_and(|race| race.shared.over().is_some()),
+    );
+    let online = online.is_some();
     let wanted = screen_wanted(
         &window,
         selection.as_deref(),
         options.as_deref(),
         race_menu.as_deref(),
         main_menu.as_deref(),
-        racing.is_some(),
+        behind,
+        online,
     ) && !cameras.is_empty();
     let (medium, semibold) = kit::faces(assets.as_deref());
-    // The banner (#64): in a room, the panel closed, out of a race and its results.
-    let banner = (window.banner && !window.open && !others && racing.is_none())
+    // The banner (#64): in a room, out of a race we run (`net::banner_shown`), the panel closed;
+    // issue #141: like the panel, not over a race's end in a room, and over the home's background.
+    let banner = (window.banner && !window.open && !others && behind.shows_the_lobby(online))
         .then(|| {
             RoomFacts::of(session.as_deref(), race.as_deref(), now_ms(&time))
                 .and_then(|facts| facts.banner())
@@ -1687,5 +1753,114 @@ pub fn refresh_salon_tree(
             .and_then(|player| player.color)
             .map_or(palette::BRUME_FONCEE, |color| color.color());
         fill.set_if_neq(BackgroundColor(color));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::race::RaceTuning;
+
+    /// A race at tick `tick`, over at `over_at` (its awaited racers finished).
+    fn race_at(tick: u32, over_at: Option<u32>) -> Race {
+        let mut race = Race::new(&RaceTuning::default());
+        race.flow.tick = tick;
+        race.flow.over_at = over_at;
+        race
+    }
+
+    /// Issue #141: what is behind the lobby's screen. No race, or the home's background (a race,
+    /// not ours, whatever its phase): nothing. A race before its finish: a race; from its finish
+    /// (or the host's end, online, a tick before ours): its end.
+    #[test]
+    fn behind_the_lobby_is_a_race_its_end_or_nothing() {
+        let timings = race_at(0, None).timings;
+        let racing = race_at(timings.before_go() + 60, None);
+        assert_eq!(racing.phase(), RacePhase::Racing);
+        let finished = race_at(timings.before_go() + 60, Some(timings.before_go() + 50));
+        assert_eq!(finished.phase(), RacePhase::Finished);
+        let results = race_at(timings.before_go() + 600, Some(timings.before_go() + 50));
+        assert_eq!(results.phase(), RacePhase::Results);
+        let grid = race_at(1, None);
+        assert_eq!(grid.phase(), RacePhase::Grid);
+
+        assert_eq!(Behind::of(None, false, false), Behind::NoRace);
+        assert_eq!(Behind::of(None, true, false), Behind::NoRace);
+        for race in [&grid, &racing, &finished, &results] {
+            assert_eq!(
+                Behind::of(Some(race), true, false),
+                Behind::NoRace,
+                "{race:?}"
+            );
+        }
+        assert_eq!(Behind::of(Some(&grid), false, false), Behind::Race);
+        assert_eq!(Behind::of(Some(&racing), false, false), Behind::Race);
+        assert_eq!(Behind::of(Some(&finished), false, false), Behind::End);
+        assert_eq!(Behind::of(Some(&results), false, false), Behind::End);
+        assert_eq!(
+            Behind::of(Some(&racing), false, true),
+            Behind::End,
+            "the host's end"
+        );
+    }
+
+    /// Issue #141: the lobby's screen shows over anything but the end of a race in a room; its
+    /// panel holds the game over a race only (solo: the game waits; online: our kart coasts).
+    #[test]
+    fn the_lobby_shows_over_all_but_a_room_s_race_end_and_holds_a_race() {
+        // (behind, in a room): shows, holds.
+        let cases = [
+            ((Behind::NoRace, false), (true, false)),
+            ((Behind::NoRace, true), (true, false)),
+            ((Behind::Race, false), (true, true)),
+            ((Behind::Race, true), (true, true)),
+            ((Behind::End, false), (true, true)),
+            ((Behind::End, true), (false, false)),
+        ];
+        for ((behind, online), (shows, holds)) in cases {
+            assert_eq!(behind.shows_the_lobby(online), shows, "{behind:?} {online}");
+            assert_eq!(
+                behind.held_by_the_lobby(online),
+                holds,
+                "{behind:?} {online}"
+            );
+        }
+        // The panel: the window open, no other screen over it, over what it shows over.
+        let open = LobbyWindow {
+            open: true,
+            banner: false,
+        };
+        let wanted = |window: &LobbyWindow, menu: Option<&MainMenu>, behind, online| {
+            screen_wanted(window, None, None, None, menu, behind, online)
+        };
+        assert!(
+            wanted(&open, None, Behind::NoRace, false),
+            "the home's « Multijoueur »"
+        );
+        assert!(wanted(&open, None, Behind::Race, false), "L in a race");
+        assert!(
+            wanted(&open, None, Behind::End, false),
+            "L on a race's results, solo"
+        );
+        assert!(
+            wanted(&open, None, Behind::NoRace, true),
+            "the lobby's scene"
+        );
+        assert!(!wanted(&open, None, Behind::End, true), "a room's results");
+        assert!(!wanted(
+            &LobbyWindow::default(),
+            None,
+            Behind::NoRace,
+            false
+        ));
+        let pause = MainMenu {
+            open: true,
+            in_game: true,
+            ..default()
+        };
+        assert!(
+            !wanted(&open, Some(&pause), Behind::Race, false),
+            "one screen at a time"
+        );
     }
 }
