@@ -20,8 +20,9 @@ use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_play
 use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice, TrackLayout};
 
 /// A circuit of the guide with a shortcut of each kind (issue #107: the Corniche Cannelle; issue
-/// #108: Prairie Pompon redrawn), and where the tests start their bot before each shortcut (m
-/// before its start along the centerline: on the road, at speed, after the turn before it).
+/// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn), and where the tests
+/// start their bot before each shortcut (m before its start along the centerline: on the road, at
+/// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
 struct Circuit {
     path: &'static str,
@@ -31,7 +32,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 2] = [
+const CIRCUITS: [Circuit; 3] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -44,6 +45,15 @@ const CIRCUITS: [Circuit; 2] = [
     Circuit {
         path: "tracks/prairie.track.ron",
         name: "Prairie Pompon",
+        jump_approach: 25.0,
+        grass_approach: 20.0,
+        road_approach: 20.0,
+    },
+    // The jump from the switchback before it (on the pass), the snow path from out of the last
+    // switchback, the hidden road from the tight left turn after the summit.
+    Circuit {
+        path: "tracks/col.track.ron",
+        name: "Col des Moufles",
         jump_approach: 25.0,
         grass_approach: 20.0,
         road_approach: 20.0,
