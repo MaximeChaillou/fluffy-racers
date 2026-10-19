@@ -9,6 +9,9 @@ pub mod circuit;
 pub mod data;
 pub mod decor;
 pub mod dressing;
+pub mod hazard;
+mod hazard_visual;
+pub mod hazards;
 pub mod layout;
 pub mod mesh;
 pub mod shortcut;
@@ -26,8 +29,12 @@ pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, GlideRamp, ITEM_BOX_HEIGHT,
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,
 };
-pub use data::{EdgeSide, OffroadZone, PropData, ShortcutKind, TrackData};
+pub use data::{
+    BreakableKind, EdgeSide, NpcKind, ObstacleKind, OffroadZone, PropData, ShortcutKind, TrackData,
+};
 pub use dressing::CircuitDecor;
+pub use hazard::{Capsule, Hazard, HazardKind, kart_capsule};
+pub use hazards::{Breakable, HazardBody, HazardSystems, HazardVisualPlugin};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
 pub use shortcut::{OpenEdge, Shortcut};
 pub use start_line::StartLine;
@@ -239,3 +246,6 @@ mod tests {
 
 #[cfg(test)]
 mod scenario_tests;
+
+#[cfg(test)]
+mod hazard_tests;

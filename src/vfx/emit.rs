@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use super::cues::SparkStyle;
 use super::pool::{Curve, Facing, Paint, Particle, ParticlePool, Shape};
 use super::tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxTuning, WorldVfx};
+use crate::track::BreakableKind;
 
 /// Where the sparks leave a rear wheel (the right one; the left one at −x), in the kart's frame
 /// (its front is −Z): behind and under it, on the road.
@@ -570,6 +571,48 @@ pub fn gift(pool: &mut ParticlePool, at: Vec3, carrier: Vec3, impact: &ImpactVfx
         piece.spin = pool.rng.range(6.0, 13.0);
         piece.floor = floor;
         pool.spawn(piece);
+    }
+}
+
+/// Issue #144: what a thing to drive through bursts into: straw, rubber, splinters.
+pub fn debris_paints(kind: BreakableKind) -> [Paint; 2] {
+    match kind {
+        BreakableKind::HayBale => [Paint::Star, Paint::Sand],
+        BreakableKind::Balloon => [Paint::Piment, Paint::Hot],
+        BreakableKind::Crate => [Paint::Ground, Paint::Dust],
+    }
+}
+
+/// Issue #144: a thing to drive through bursts: bits of it fly up and out, carried on by the
+/// kart that went through, and fall back on the road (as many as a gift box's confetti).
+pub fn debris(
+    pool: &mut ParticlePool,
+    at: Vec3,
+    carrier: Vec3,
+    paints: [Paint; 2],
+    impact: &ImpactVfx,
+) {
+    let floor = at.y - 0.6;
+    for k in 0..impact.gift_confetti {
+        let direction = pool.rng.cone(Vec3::Y, 1.4);
+        let mut bit = Particle::new(
+            Shape::Cube,
+            paints[k as usize % 2],
+            at + direction * 0.4,
+            impact.confetti_life * pool.rng.range(0.6, 1.0),
+            impact.confetti_size * pool.rng.range(0.8, 1.5),
+        );
+        bit.curve = Curve::Pop;
+        bit.facing = Facing::Tumble;
+        bit.velocity =
+            carrier * impact.gift_carry + direction * impact.gift_speed * pool.rng.range(0.4, 1.0);
+        bit.gravity = 9.0;
+        bit.drag = 1.2;
+        bit.stretch = 0.6;
+        bit.axis = pool.rng.direction();
+        bit.spin = pool.rng.range(5.0, 11.0);
+        bit.floor = floor;
+        pool.spawn(bit);
     }
 }
 

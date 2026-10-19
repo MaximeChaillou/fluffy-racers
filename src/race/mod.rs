@@ -44,7 +44,7 @@ pub use progress::{ProgressEvent, RaceProgress};
 pub use ranking::{RankEntry, distance_to_leader, rank, rank_by_order};
 pub use results::{ResultLine, ResultTime, Standing, close_results, estimate_finish};
 pub use tow::{Carry, Tow, TowObservation, TowReason, tow_pose};
-pub use tuning::{RaceTuning, seconds_to_ticks, ticks_to_seconds};
+pub use tuning::{HazardTuning, RaceTuning, seconds_to_ticks, ticks_to_seconds};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::{PhysicsSet, Velocity};

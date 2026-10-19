@@ -137,6 +137,13 @@ pub struct BotTuning {
     /// The racing line keeps this much more room on each side (m), for the lanes, the wobble
     /// and the overtaking.
     pub line_margin: f32,
+    /// Issue #144: a kart's center keeps this far from an obstacle or a passer-by (m, from the
+    /// ground it may cover: its whole motion)...
+    pub hazard_margin: f32,
+    /// ...from this far before it to this far after it along the track (m): the bots aim 13 to
+    /// 15 m ahead at full speed, the lane must stay clear until the kart itself has passed.
+    pub hazard_before: f32,
+    pub hazard_after: f32,
     /// In a drift, the bot counts on this share of the drift's tightest turn rate (planning).
     pub drift_turn_margin: f32,
 
@@ -225,6 +232,15 @@ pub struct BotTuning {
 impl BotTuning {
     pub fn skill(&self, difficulty: BotDifficulty) -> &BotSkill {
         &self.skills[difficulty.index()]
+    }
+
+    /// Issue #144: how the racing line keeps clear of the obstacles and the passers-by.
+    pub fn hazard_clearance(&self) -> super::line::HazardClearance {
+        super::line::HazardClearance {
+            margin: self.hazard_margin,
+            before: self.hazard_before,
+            after: self.hazard_after,
+        }
     }
 }
 
@@ -338,6 +354,9 @@ impl Default for BotTuning {
             sand_margin: 1.2,
             void_margin: 1.5,
             line_margin: 1.5,
+            hazard_margin: 1.6,
+            hazard_before: 8.0,
+            hazard_after: 18.0,
             drift_turn_margin: 0.9,
 
             avoid_distance: 14.0,

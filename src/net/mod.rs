@@ -82,6 +82,8 @@ mod end_tests;
 #[cfg(test)]
 mod guide_tests;
 #[cfg(test)]
+mod hazard_tests;
+#[cfg(test)]
 mod item_tests;
 #[cfg(test)]
 mod paint_tests;

@@ -133,14 +133,35 @@ impl Branch {
     }
 }
 
+/// Issue #144: how the lanes keep clear of an obstacle or a passer-by (`BotTuning`): this far
+/// from its footprint (its whole motion), from this far before it to this far after it along the
+/// track (m). The bots aim ahead of them (`BotSkill::aim_base`, `aim_per_speed`): the lane must
+/// stay clear until the kart itself has passed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HazardClearance {
+    pub margin: f32,
+    pub before: f32,
+    pub after: f32,
+}
+
 /// Issue #107: the lane limits (`limits`, per sample of `center`) kept `margin` clear of the
 /// footprint `corners` (on the ground plane) beside the centerline, on the side with the most room
-/// (like a sand patch): along it, and [`SAND_BUFFER`] before and after.
-fn keep_clear_of(center: &CenterLine, limits: &mut [[f32; 2]], corners: &[Vec2], margin: f32) {
+/// (like a sand patch): along it, and `before` and `after` it (issue #144; [`SAND_BUFFER`] for a
+/// ramp).
+fn keep_clear_of(
+    center: &CenterLine,
+    limits: &mut [[f32; 2]],
+    corners: &[Vec2],
+    margin: f32,
+    (before, after): (f32, f32),
+) {
     for (s, limit) in center.samples().iter().zip(limits.iter_mut()) {
         let forward = s.forward.xz().normalize_or_zero();
         let right = Vec2::new(-forward.y, forward.x);
-        if corners.iter().all(|c| c.distance(s.position.xz()) > 60.0) {
+        if corners
+            .iter()
+            .all(|c| c.distance(s.position.xz()) > 60.0 + before.max(after))
+        {
             continue;
         }
         let (mut along, mut across) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
@@ -150,7 +171,7 @@ fn keep_clear_of(center: &CenterLine, limits: &mut [[f32; 2]], corners: &[Vec2],
             along = (along.0.min(a), along.1.max(a));
             across = (across.0.min(l), across.1.max(l));
         }
-        if along.0 > SAND_BUFFER || along.1 < -SAND_BUFFER {
+        if along.0 > before || along.1 < -after {
             continue;
         }
         let room_left = across.0 - limit[0];
@@ -171,13 +192,15 @@ impl RacingLine {
     /// Builds the racing line of `layout`. `road_margin`: a kart's center stays this far inside
     /// the road edge; `sand_margin`: this far from sand; `void_margin`: this much farther inside a
     /// side without wall (issue #107); `line_margin`: the racing line keeps this much more room on
-    /// each side.
+    /// each side; `hazard`: how the lanes keep clear of the obstacles and the passers-by (issue
+    /// #144).
     pub fn new(
         layout: &TrackLayout,
         road_margin: f32,
         sand_margin: f32,
         void_margin: f32,
         line_margin: f32,
+        hazard: HazardClearance,
     ) -> Self {
         let center = layout.center.clone();
         let samples = center.samples();
@@ -239,8 +262,26 @@ impl RacingLine {
         // clear of them, like of the sand (only a bot going for the jump drives onto one).
         for shortcut in &layout.shortcuts {
             if let Some(ramp) = shortcut.ramp {
-                keep_clear_of(&center, &mut limits, &ramp.footprint(), sand_margin);
+                keep_clear_of(
+                    &center,
+                    &mut limits,
+                    &ramp.footprint(),
+                    sand_margin,
+                    (SAND_BUFFER, SAND_BUFFER),
+                );
             }
+        }
+
+        // Issue #144: the obstacles and the passers-by (their whole motion), like the jumps'
+        // ramps (the things to drive through are not in the way: the bots go through them).
+        for obstacle in layout.hazards.iter().filter(|h| h.kind.in_the_way()) {
+            keep_clear_of(
+                &center,
+                &mut limits,
+                &obstacle.footprint(),
+                hazard.margin,
+                (hazard.before, hazard.after),
+            );
         }
 
         // --- Racing line: least curvature within the narrower limits.
@@ -711,6 +752,7 @@ pub(crate) mod tests {
             t.sand_margin,
             t.void_margin,
             t.line_margin,
+            t.hazard_clearance(),
         );
         (layout, line)
     }
@@ -869,6 +911,7 @@ pub(crate) mod tests {
             t.sand_margin,
             t.void_margin,
             t.line_margin,
+            t.hazard_clearance(),
         );
         (layout, line)
     }

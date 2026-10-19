@@ -57,6 +57,8 @@ pub enum LossCause {
     /// Struck by another kart's paw, or thrown by it (GD § 15, issue #34): 1, with the same 1 s
     /// of protection as a bump (a strike and the bump it causes cost one croquette).
     Strike,
+    /// Issue #144: knocked over by a moving obstacle or a passer-by of the circuit: 2.
+    Knocked,
 }
 
 impl LossCause {
@@ -66,6 +68,7 @@ impl LossCause {
             LossCause::ItemHit => tuning.item_hit_loss,
             LossCause::Bump => tuning.bump_loss,
             LossCause::Strike => tuning.strike_loss,
+            LossCause::Knocked => tuning.knock_loss,
         }
     }
 

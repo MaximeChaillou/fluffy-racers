@@ -215,6 +215,9 @@ struct KartLog {
     /// it did.
     last_contact: Option<u32>,
     contact_ticks: u32,
+    /// Issue #144: knocked over (spun out or tumbling from a tick to the next): in the races
+    /// without items nor interactions, only by a hazard of the circuit.
+    knocks: u32,
 }
 
 impl KartLog {
@@ -331,6 +334,9 @@ impl RaceLog {
             // Issue #16: hit by an item is an incident too (never in the races without items).
             if state.is_hit() {
                 log.last_contact = Some(self.ticks);
+                if !log.previous.is_some_and(|p| p.is_hit()) {
+                    log.knocks += 1;
+                }
             }
             // Issue #34: struck by a paw (its protection runs for 1 s after) or in a tether, too
             // (never in the races without interactions).
@@ -1020,6 +1026,11 @@ impl RaceResult {
     }
 
     /// Issue #107: shortcuts taken by all the karts (road, grass, jump).
+    /// Issue #144: times a kart was knocked over (all the karts).
+    fn knocks(&self) -> u32 {
+        self.karts.iter().map(|k| k.log.knocks).sum()
+    }
+
     fn shortcuts(&self) -> [u32; 3] {
         self.karts.iter().fold([0; 3], |sum, k| {
             [
@@ -2186,6 +2197,8 @@ struct CircuitRun {
     /// The circuit was built mirrored, its centerline the mirror image of the file's.
     mirrored: bool,
     length: f32,
+    /// Issue #144: the circuit has obstacles or passers-by in the way.
+    hazards: bool,
 }
 
 fn run_on_circuit(path: &str, mirror: bool, seed: u64) -> CircuitRun {
@@ -2206,6 +2219,7 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
         race: RaceResult::of(&app, &log, &label),
         mirrored: layout.mirrored,
         length: layout.center.length(),
+        hazards: layout.hazards.iter().any(|h| h.kind.in_the_way()),
     }
 }
 
@@ -2213,6 +2227,11 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 /// one of #107; the circuits redone or added after it join the list). Their races check the
 /// guide's figures too ([`guide_checks`]).
 const GUIDE_CIRCUITS: [&str; 1] = ["Corniche Cannelle"];
+
+/// Issue #144: knocks by a hazard in a race of 12 Normal bots (the karts' total), at worst and
+/// on average over the seeds.
+const HAZARD_KNOCKS_WORST: f32 = 8.0;
+const HAZARD_KNOCKS: f32 = 3.5;
 
 /// Issue #107: the guide's thresholds for a race of Normal bots, on average over the seeds (Max's
 /// comment on #107: 4 drifts and 2 orange mini-turbos a lap), and in every race. Never lowered to
@@ -2341,6 +2360,18 @@ fn bots_race_every_circuit_and_its_mirror() {
             if GUIDE_CIRCUITS.contains(&entry.name.as_str()) {
                 guide_checks(&mut checks, &tows);
             }
+            // Issue #144: the bots keep clear of the obstacles and the passers-by (their lanes):
+            // knocked over seldom, by a push of the pack (no items nor paws in these races: a
+            // knock is a hazard's). Checked on the circuits that have some (the tables of the
+            // others stay those of before #144).
+            if mine[0].hazards {
+                checks.at_most(
+                    "knocked over by a hazard (all the karts)",
+                    &per_race(&mine, |r| r.race.knocks() as f32),
+                    Some(HAZARD_KNOCKS_WORST),
+                    Some(HAZARD_KNOCKS),
+                );
+            }
             println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
             failures.append(&mut checks.failures);
         }
@@ -2396,6 +2427,13 @@ fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
             }),
             Some(0.5),
             Some(0.25),
+        );
+        // Issue #144: they keep clear of the obstacles and the passers-by too.
+        checks.at_most(
+            "knocked over by a hazard (all the karts)",
+            &per_race(&runs, |r| r.race.knocks() as f32),
+            Some(HAZARD_KNOCKS_WORST),
+            Some(HAZARD_KNOCKS),
         );
         println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
         failures.append(&mut checks.failures);

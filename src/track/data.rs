@@ -63,6 +63,21 @@ pub struct TrackData {
     /// right (`crate::race::Course::project`); the bots take them by level (`crate::bots`).
     #[serde(default)]
     pub shortcuts: Vec<ShortcutData>,
+    /// Issue #144 (GD « Conception des circuits », step 2): obstacles on the road, fixed (a rock,
+    /// a trunk, a pillar: the karts bump into them like into a wall) or moving (a rolling log, a
+    /// swinging stone: they knock a kart over). Their motion comes from the race clock and the
+    /// race seed: the same on every peer (`crate::track::hazard`).
+    #[serde(default)]
+    pub obstacles: Vec<ObstacleData>,
+    /// Issue #144: passers-by (original creatures) that cross or guard a part of the road, back
+    /// and forth: they knock a kart over.
+    #[serde(default)]
+    pub npcs: Vec<NpcData>,
+    /// Issue #144: things to drive through (hay bales, balloons, crates), in rows across the road
+    /// like the item boxes: they burst, slow the kart down a little (or not at all), and come
+    /// back after a while.
+    #[serde(default)]
+    pub breakables: Vec<BreakableRow>,
     /// Boost pads on the ground (GD § 2, issue #13).
     #[serde(default)]
     pub boost_pads: Vec<Spot>,
@@ -284,6 +299,109 @@ fn default_jump_ramp_length() -> f32 {
 }
 fn default_jump_ramp_angle() -> f32 {
     15.0
+}
+
+/// Issue #144: what an obstacle is. The first three stand still (a static collider: the karts
+/// bump into them like into a wall); the last two move (no collider: touched, they knock a kart
+/// over).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ObstacleKind {
+    /// A boulder, about 2.2 m wide and 1.6 m high (at `size` 1).
+    Rock,
+    /// A fallen trunk lying on the road, about 5.9 m long (turned by `yaw` from the road's
+    /// direction).
+    Trunk,
+    /// A pillar of rock, about 1.6 m wide and 6 m high.
+    Pillar,
+    /// A log lying along the road, rolling across it back and forth over `sweep`.
+    RollingLog,
+    /// A stone hanging over the road from an arch, swinging across it over `sweep`.
+    SwingingStone,
+}
+
+impl ObstacleKind {
+    /// Whether it moves (and knocks a kart over) rather than stands still.
+    pub fn moves(self) -> bool {
+        matches!(self, ObstacleKind::RollingLog | ObstacleKind::SwingingStone)
+    }
+}
+
+/// Issue #144: an obstacle on the road, at the spline parameter `at`, `offset` across it (-1 the
+/// left edge, 1 the right one; up to 1.3: on the shoulder).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ObstacleData {
+    pub kind: ObstacleKind,
+    pub at: f32,
+    #[serde(default)]
+    pub offset: f32,
+    /// Its scale (1: the sizes of [`ObstacleKind`]).
+    #[serde(default = "default_hazard_size")]
+    pub size: f32,
+    /// Turned this much from the road's direction (degrees, a fixed obstacle).
+    #[serde(default)]
+    pub yaw: f32,
+    /// A moving one: how far it goes on each side of `offset` (the same unit: 1 = half the
+    /// road's width). 0 for a fixed one.
+    #[serde(default)]
+    pub sweep: f32,
+    /// A moving one: the time of a whole back and forth (s).
+    #[serde(default = "default_hazard_period")]
+    pub period: f32,
+}
+
+/// Issue #144: the passers-by, original creatures (never a character of another brand).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NpcKind {
+    /// A big round woolly bison, slow and stubborn: it guards a passage, pacing across it.
+    Bison,
+}
+
+/// Issue #144: a passer-by, pacing back and forth across the road at the spline parameter `at`,
+/// between `offset - sweep` and `offset + sweep` (1 = half the road's width), stopping a moment
+/// at each end; touched, it knocks a kart over.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NpcData {
+    pub kind: NpcKind,
+    pub at: f32,
+    #[serde(default)]
+    pub offset: f32,
+    #[serde(default)]
+    pub sweep: f32,
+    /// The time of a whole back and forth, its stops included (s).
+    #[serde(default = "default_hazard_period")]
+    pub period: f32,
+    #[serde(default = "default_hazard_size")]
+    pub size: f32,
+}
+
+/// Issue #144: what bursts when a kart drives through it.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BreakableKind {
+    /// A bale of hay: a cloud of straw, a little slower.
+    HayBale,
+    /// A balloon on a string: it pops, no slower.
+    Balloon,
+    /// A wooden crate: splinters, a very little slower.
+    Crate,
+}
+
+/// Issue #144: a row of things to drive through, across the road at the spline parameter `at`
+/// (like a row of item boxes).
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BreakableRow {
+    pub kind: BreakableKind,
+    pub at: f32,
+    pub offsets: Vec<f32>,
+}
+
+fn default_hazard_size() -> f32 {
+    1.0
+}
+fn default_hazard_period() -> f32 {
+    6.0
 }
 
 /// The steepest banking outside the anti-gravity zones (degrees): the karts drive there with the
@@ -561,6 +679,7 @@ impl TrackData {
             }
         }
         self.validate_edges_and_shortcuts()?;
+        self.validate_hazards()?;
         for prop in &self.props {
             if !biome::is_model_id(&prop.model)
                 || !(0.1..=30.0).contains(&prop.height)
@@ -689,6 +808,76 @@ impl TrackData {
         Ok(())
     }
 
+    /// Issue #144: the obstacles, the passers-by and the things to drive through: on the road
+    /// (out of the gaps and the anti-gravity zones), a sensible size, a moving one with its sweep
+    /// and its period, a fixed one without; the road's free part never closed (a moving one or a
+    /// passer-by sweeps one side of the road at most: from 0.1 off the middle).
+    fn validate_hazards(&self) -> Result<(), InvalidTrack> {
+        let fail = |message: String| Err(InvalidTrack(message));
+        let n = self.points.len() as f32;
+        let within =
+            |from: f32, to: f32, p: f32| (p - from).rem_euclid(n) <= (to - from).rem_euclid(n);
+        let placed = |at: f32| {
+            at.is_finite()
+                && !self.gaps.iter().any(|g| within(g.from, g.to, at))
+                && !self.anti_gravity.iter().any(|z| within(z.from, z.to, at))
+        };
+        // A sweep leaves the other side of the road free: it never crosses the middle by more
+        // than this (in half widths).
+        const MIDDLE: f32 = 0.1;
+        let one_side = |offset: f32, sweep: f32| {
+            let (low, high) = (offset - sweep, offset + sweep);
+            high <= 1.3 && low >= -1.3 && (low >= -MIDDLE || high <= MIDDLE)
+        };
+        for (k, o) in self.obstacles.iter().enumerate() {
+            let moving = o.kind.moves();
+            let motion = if moving {
+                (0.05..=1.0).contains(&o.sweep)
+                    && (1.0..=30.0).contains(&o.period)
+                    && one_side(o.offset, o.sweep)
+            } else {
+                o.sweep == 0.0
+            };
+            if !placed(o.at)
+                || !(-1.3..=1.3).contains(&o.offset)
+                || !(0.3..=4.0).contains(&o.size)
+                || !o.yaw.is_finite()
+                || !motion
+            {
+                return fail(format!(
+                    "obstacle {k} ({:?}): at {} (on the road, out of the gaps and the anti-gravity                      zones), offset {} (1.3 at most), size {} (0.3 to 4), sweep {} (0 when fixed;                      0.05 to 1 when moving, on one side of the road), period {} (1 to 30 s)",
+                    o.kind, o.at, o.offset, o.size, o.sweep, o.period
+                ));
+            }
+        }
+        for (k, npc) in self.npcs.iter().enumerate() {
+            if !placed(npc.at)
+                || !(0.0..=1.0).contains(&npc.sweep)
+                || !(1.0..=30.0).contains(&npc.period)
+                || !(0.5..=2.0).contains(&npc.size)
+                || !one_side(npc.offset, npc.sweep)
+            {
+                return fail(format!(
+                    "passer-by {k} ({:?}): at {}, offset {} and sweep {} (on one side of the                      road), period {} (1 to 30 s), size {} (0.5 to 2)",
+                    npc.kind, npc.at, npc.offset, npc.sweep, npc.period, npc.size
+                ));
+            }
+        }
+        for (k, row) in self.breakables.iter().enumerate() {
+            if !placed(row.at)
+                || row.offsets.is_empty()
+                || row.offsets.iter().any(|o| !(-1.0..=1.0).contains(o))
+            {
+                return fail(format!(
+                    "row of things to drive through {k} ({:?}): at {}, offsets {:?} (at least \
+                     one, each from -1 to 1)",
+                    row.kind, row.at, row.offsets
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Issue #78: the first spline parameter (in steps of 1/16) where the road banks beyond
     /// [`MAX_BANK`] out of every anti-gravity zone, if there is one. The banking blends between
     /// two control points (`layout::bank_between`), so a steep point banks its neighbouring
@@ -765,6 +954,20 @@ impl TrackData {
         for shortcut in &mut data.shortcuts {
             for point in &mut shortcut.points {
                 point.0 = -point.0;
+            }
+        }
+        // Issue #144: the obstacles, the passers-by and the things to drive through on the other
+        // side of the road, turned the other way.
+        for obstacle in &mut data.obstacles {
+            obstacle.offset = flip(obstacle.offset);
+            obstacle.yaw = -obstacle.yaw;
+        }
+        for npc in &mut data.npcs {
+            npc.offset = flip(npc.offset);
+        }
+        for row in &mut data.breakables {
+            for offset in &mut row.offsets {
+                *offset = flip(*offset);
             }
         }
         data
@@ -911,6 +1114,59 @@ mod tests {
         let mirrored = base.mirrored();
         assert_eq!(mirrored.open_edges[0].side, EdgeSide::Left);
         assert_eq!(mirrored.shortcuts[0].points[0], (-5.0, 0.0, -25.0));
+        assert_eq!(mirrored.validate(), Ok(()));
+        assert_eq!(mirrored.mirrored(), base);
+    }
+
+    /// Issue #144: the obstacles, the passers-by and the things to drive through are checked: on
+    /// the road, out of the gaps, a sensible size; a moving one sweeps one side of the road only,
+    /// with a period; a fixed one does not sweep; a row has something in it. Mirrored, they go to
+    /// the other side of the road, turned the other way; mirrored twice, the file comes back.
+    #[test]
+    fn obstacles_passers_by_and_things_to_drive_through_that_make_no_sense_are_rejected() {
+        let base = TrackData::from_ron(&MINIMAL.replace(
+            "(name:",
+            "(gaps: [(from: 2.2, to: 2.6)], \
+             obstacles: [(kind: Rock, at: 0.5, offset: 0.8, yaw: 20.0), \
+             (kind: SwingingStone, at: 1.5, offset: 0.5, sweep: 0.4, period: 4.0)], \
+             npcs: [(kind: Bison, at: 3.5, offset: -0.5, sweep: 0.3)], \
+             breakables: [(kind: HayBale, at: 0.8, offsets: [-0.5, 0.5])], name:",
+        ))
+        .unwrap();
+        assert_eq!(base.validate(), Ok(()));
+        assert_eq!(base.obstacles[0].size, 1.0, "the default size");
+        assert_eq!(base.npcs[0].period, 6.0, "the default period");
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = base.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.obstacles[0].at = 2.4), "in a gap");
+        assert!(broken(&|d| d.obstacles[0].at = f32::NAN));
+        assert!(broken(&|d| d.obstacles[0].offset = 1.5));
+        assert!(broken(&|d| d.obstacles[0].size = 0.1));
+        assert!(
+            broken(&|d| d.obstacles[0].sweep = 0.3),
+            "a rock does not move"
+        );
+        assert!(
+            broken(&|d| d.obstacles[1].sweep = 0.0),
+            "a swinging stone does"
+        );
+        assert!(broken(&|d| d.obstacles[1].period = 0.2));
+        // Across the middle of the road: the whole road closed at times.
+        assert!(broken(&|d| d.obstacles[1].offset = 0.0));
+        assert!(!broken(&|d| d.obstacles[1].offset = 0.45));
+        assert!(broken(&|d| d.npcs[0].sweep = 0.8));
+        assert!(broken(&|d| d.npcs[0].size = 3.0));
+        assert!(broken(&|d| d.npcs[0].at = 2.3), "in a gap");
+        assert!(broken(&|d| d.breakables[0].offsets.clear()));
+        assert!(broken(&|d| d.breakables[0].offsets[0] = 1.2));
+        let mirrored = base.mirrored();
+        assert_eq!(mirrored.obstacles[0].offset, -0.8);
+        assert_eq!(mirrored.obstacles[0].yaw, -20.0);
+        assert_eq!(mirrored.npcs[0].offset, 0.5);
+        assert_eq!(mirrored.breakables[0].offsets, vec![0.5, -0.5]);
         assert_eq!(mirrored.validate(), Ok(()));
         assert_eq!(mirrored.mirrored(), base);
     }

@@ -655,6 +655,7 @@ Dans le salon en 3D (§ 13), le même bouton Interaction donne **un coup de patt
 - **Les donuts géants** renvoient en l'air (12 m/s) qui atterrit dessus, à terre compris.
 - **En ligne** : comme en course, **la victime décide** (`docs/ARCHITECTURE.md` § « Le salon en 3D ») : le frappeur juge la portée sur son écran, la victime vérifie qu'elle était à portée (plus 0,75 m) au moment où il l'a vue, et que le coup a moins de 0,3 s.
 - **Le ragdoll servira encore** : pour les passants des circuits (l'étape 2 de #107, § 16) et le ragdoll léger quand on se fait toucher en course (Vision du jeu).
+- **En course (#144)** : un kart renversé par un PNJ ou un obstacle mobile (§ 16) fait **la culbute des objets** (§ 8 : le kart qui se retourne, le pilote qui ballotte, le mini-ragdoll de #12 et son cri), pas le ragdoll du salon : le pilote reste dans son kart, et la culbute est déjà vue et entendue par les autres pairs (l'état du kart). Le corps rigide du salon servira à un PNJ que l'on bouscule, plus tard.
 
 ## 16. Conception des circuits (#107)
 
@@ -676,7 +677,12 @@ Le plan : **24 circuits en 6 coupes de 4** (§ 1, #99). Ce guide vaut pour chaqu
 5. **Peu de murets** : seulement là où une sortie serait injuste (le bout de la grande ligne droite, l'extérieur d'un virage rapide, la grille de départ). Ailleurs, **des bords sans muret**, avec un vide ou un talus en dessous : un kart qui tombe fait venir le pélican, qui le dépose **avant le tronçon**. Ce que la Corniche Cannelle a appris : **un vide d'au moins 5 m** (`RaceTuning::fall_depth`) sous un bord sans muret, sinon le kart tombé roule sous la route sans être vu tombé (un talus est au niveau de la route, pas 2 m plus bas) ; **un bas-côté large** (4 m) au-dessus d'un vide long, pour rattraper une poussette ; **des murets là où le peloton se serre** (un lacet qui monte) : les karts s'y poussent, et le tableau des pélicans des bots dépasse vite ses seuils ; **pas de tremplin à figures juste avant l'eau** (les karts retombaient en grappe dans le gué et passaient par-dessus ses murets) ; **une réception de saut large** (20 m), où un kart trop rapide atterrit plus loin et de travers.
 6. **Des passages risqués** : un saut au-dessus d'un vide, hors de la ligne centrale. Réussi, il fait gagner du temps ; raté, le kart tombe, et le pélican le ramène avant le saut.
 7. **Des raccourcis un peu cachés** (derrière une aiguille de roche, une cascade, dans un tunnel), et **des raccourcis dans l'herbe**, rentables **seulement avec un boost** (§ 2 : un boost ignore le hors-piste) : plus lents sans, plus rapides avec.
-8. **Des obstacles, des PNJ qui renversent, des objets à traverser** (bottes de foin, ballons, caisses qui éclatent) : l'étape 2 (voir « La suite »).
+8. **Des obstacles, des PNJ qui renversent, des objets à traverser** (bottes de foin, ballons, caisses qui éclatent ; #144, voir « Notre implémentation (#144, étape 2) ») :
+   - **d'un seul côté de la route** : un obstacle mobile ou un PNJ balaie au plus une moitié de la route (le fichier est refusé s'il dépasse le milieu de plus de 0,1 demi-largeur), l'autre reste libre ; les bots y passent ;
+   - **là où il ne gêne pas la trajectoire du virage qui suit** : avant un virage à droite, à droite (les karts se placent à l'extérieur, à gauche), et inversement ; jamais sur l'apex d'un virage serré, jamais à l'embouchure d'un raccourci, jamais sur la réception d'un saut ni juste après un tremplin ;
+   - **lisible** : on le voit venir (sur une ligne droite ou en sortie de virage, au moins 3 s avant) ; pas au bord d'un vide (un kart renversé et poussé tomberait) ;
+   - **un obstacle fixe** au bord de la route ou sur le bas-côté (un rocher, un tronc, un pilier) : il resserre, il ne ferme pas ;
+   - **des objets à traverser** où l'on veut, même sur la trajectoire : ils ne coûtent presque rien (un ballon, rien du tout).
 9. **Toutes les mécaniques**, sur l'ensemble des circuits et souvent dans un même circuit : de vrais virages à drifter, des tremplins à figures, des plots, une ligne droite pour l'aspiration, le planeur, l'eau, l'anti-gravité, les croquettes et les boîtes.
 
 ### Ce qu'on retient de MK8DX (des principes et des chiffres, aucun tracé)
@@ -714,9 +720,30 @@ Un canyon couleur cannelle (le biome « Corniche », § 14 : des aiguilles de ro
 
 ![La route cachée, sans muret, derrière le renflement](img/corniche-route-cachee.jpg)
 
+### Notre implémentation (#144, étape 2)
+
+- **Dans le fichier du circuit** (`TrackData`, comme `open_edges` et `shortcuts`), nulle part ailleurs :
+  - `obstacles: [(kind, at, offset, size, yaw, sweep, period)]` : **fixes**, `Rock` (un rocher de 2,2 m sur 1,6 m), `Trunk` (un tronc couché de 5,9 m, tourné de `yaw` degrés), `Pillar` (un pilier de roche de 1,6 m sur 6 m) : des colliders simples (boîte, capsule, cylindre), un mur pour les karts (ils rebondissent, sans culbute) ; **mobiles**, `RollingLog` (un rondin couché le long de la route, qui roule d'un bord à l'autre de `offset - sweep` à `offset + sweep`) et `SwingingStone` (une pierre pendue à une potence au-delà du bord, qui balance au-dessus de la route sur la même largeur) : sans collider, ils **renversent** le kart qu'ils touchent ;
+  - `npcs: [(kind, at, offset, sweep, period, size)]` : **les PNJ**, des créatures originales. Le premier : **le bison** (`Bison`), gros, rond et laineux, une crinière sombre, de petites cornes, le nez rose : il fait les cent pas en travers d'un côté de la route, s'arrête 30 % du temps aux deux bouts en regardant venir les karts, et **renverse** celui qu'il touche ;
+  - `breakables: [(kind, at, offsets)]` : **les objets à traverser**, en rangées comme les boîtes : `HayBale` (une botte de foin), `Balloon` (un ballon sur sa ficelle), `Crate` (une caisse) ;
+  - `offset` et `sweep` en demi-largeurs de route (comme les autres `offset`), `period` en secondes (un aller-retour, 6 s par défaut), `size` l'échelle (1 par défaut) ; le miroir les passe de l'autre côté. Le fichier est refusé s'ils sont dans un vide ou une zone d'anti-gravité, trop grands, ou si un mobile balaie les deux côtés de la route.
+- **Déterministes** : la position d'un obstacle mobile ou d'un PNJ ne dépend que de l'horloge de course (le tick de la course, celui de la room en ligne ; en roulage libre, l'horloge commune de la room, ou celle du jeu en solo) et de sa phase, tirée de `RaceGrid::seed` et de son numéro dans le fichier : le même endroit au même tick chez tous les pairs, une autre phase à chaque graine.
+- **Renversé** (un mobile ou un PNJ) : une **culbute** d'1,4 s (`KartState::Hit`, comme la pelote, § 8 : le drift et le boost perdus, le pilote qui ballotte, le mini-ragdoll de § 14, son cri), le kart garde 30 % de sa vitesse et part à 4 m/s à l'écart de ce qui l'a touché, perd **2 croquettes**, puis son invincibilité (sa stat). Immunisés comme pour les objets : un kart déjà touché, invincible, avec le pélican ou arrivé ; un kart en l'air passe au-dessus (le contact compte la hauteur). **La victime décide**, en ligne aussi.
+- **Traversé** (un objet) : il éclate (des brins de paille, des bouts de ballon, des éclats de bois, un « pof »), le kart perd **8 % de sa vitesse** pour une botte de foin, **4 %** pour une caisse, **rien** pour un ballon ; il réapparaît **5 s** après (il « pope »).
+- **Les bots les évitent** : leur voie se tient à 1,6 m de ce qu'un obstacle ou un PNJ peut couvrir (tout son mouvement), de 8 m avant à 18 m après (ils visent 13 à 15 m devant eux : la voie reste libre jusqu'à ce que le kart soit passé), du côté où il y a le plus de place, comme du tremplin d'un saut ; ils traversent les objets.
+- **Réglages** (panneau d'admin) : `RaceTuning::hazards` (`knock_seconds` 1,4, `knock_speed_kept` 0,3, `knock_push` 4 m/s, `contact_margin` 0, `respawn_seconds` 5, `hay_slowdown` 0,08, `crate_slowdown` 0,04, `balloon_slowdown` 0) ; `CroquetteTuning::knock_loss` (2) ; `BotTuning::hazard_margin` (1,6 m), `hazard_before` (8 m), `hazard_after` (18 m).
+- **Fluidité** : un maillage par sorte (des primitives, partagées par toutes les instances, un seul matériau), des colliders simples pour les fixes, aucun pour les autres (un test de capsules par kart et par tick), rien d'alloué par image. **Rien de nouveau sur un circuit qui n'en déclare pas** : ni entité, ni composant, ni Resource, ni système (leurs systèmes ne sont ajoutés qu'avec le premier circuit qui en a).
+- **La Corniche Cannelle** les reçoit : **le bison qui garde le gué**, à gauche avant l'eau (les karts passent à droite, où le premier lacet, à gauche, les veut) ; **une pierre qui balance** au-dessus de la droite de la grande ligne droite (pendue à une potence au-delà du muret ; les karts sont à gauche pour l'épingle) ; **un rondin qui roule** sur la gauche du bord du canyon, avant la longue courbe à gauche (les karts sont à droite, à son extérieur) ; **un tronc tombé** sur le bas-côté de la ligne droite ; **un rocher et un pilier** aux bords de la réception au fond du canyon ; **des ballons** juste après la ligne de départ (le peloton les éclate au GO), **une botte de foin** à la sortie de l'épingle du fond, **des caisses** sur la remontée vers le bord.
+
+![Le bison qui garde le gué, à gauche avant l'eau](img/corniche-bison.jpg)
+
+![La pierre qui balance au-dessus de la droite de la grande ligne droite, pendue à sa potence](img/corniche-pierre.jpg)
+
+![Le rondin qui roule sur la gauche du bord du canyon, avant la longue courbe](img/corniche-rondin.jpg)
+
 ### La suite
 
-- **Étape 2** (#144, avant les circuits refaits de #108) : **les obstacles** (fixes : rochers, troncs, piliers ; mobiles : un rondin qui roule, une pierre qui balance, au mouvement tiré de l'horloge de course et de `RaceGrid::seed`, le même chez tous les pairs), **les PNJ** qui traversent ou gardent un passage et renversent un kart (le ragdoll léger, § 15 ; la victime décide, en ligne aussi), **les objets à traverser** (bottes de foin, ballons, caisses : ils éclatent, ralentissent un peu ou pas, et réapparaissent), et les bots qui les évitent. La Corniche Cannelle les recevra.
+- ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
 - Puis les six premiers circuits refaits selon ce guide, et les nouveaux, jusqu'à 24.
 
 ## 17. Priorités
