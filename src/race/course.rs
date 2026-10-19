@@ -12,7 +12,8 @@ use bevy::prelude::*;
 use super::tuning::RaceTuning;
 use crate::track::mesh::{FACING_UP_TOLERANCE, WALL_HEIGHT, WALL_THICKNESS, wall_offset};
 use crate::track::{
-    AntiGravityZone, CenterLine, GRID_HEIGHT, Gap, TrackLayout, TrackSample, gap_at,
+    AntiGravityZone, CenterLine, GRID_HEIGHT, Gap, Shortcut, ShortcutKind, TrackLayout,
+    TrackSample, gap_at,
 };
 
 /// Where a kart is, relative to the stretch of track its progress allows (see
@@ -35,6 +36,12 @@ pub struct Projection {
     /// 90°): its normal points below the horizontal (`FACING_UP_TOLERANCE`: not a wall at 90°), a
     /// kart falling off it falls away from it (`height` grows).
     pub upside_down: bool,
+    /// Issue #107: on a shortcut (its index in [`Course::shortcuts`]), off the road: `distance` is
+    /// where its path stands for along the centerline, `lateral` across its path, `wall` its half
+    /// width (no wall: beyond it, the kart is out of it); over a jump (`gap`), `height` is above
+    /// its lower end. No checkpoint is crossed there: they are on the road, where the shortcut
+    /// comes back to it.
+    pub shortcut: Option<usize>,
 }
 
 /// The circuit as the race rules see it. Built once per track from the [`TrackLayout`].
@@ -58,6 +65,11 @@ pub struct Course {
     /// Issue #78: the anti-gravity zones (`TrackLayout::anti_gravity`): where the items find the
     /// road's normal ([`Course::up_at`]).
     pub anti_gravity: Vec<AntiGravityZone>,
+    /// Issue #107: the shortcuts (`TrackLayout::shortcuts`), and how a kart off the road is
+    /// counted on them (see [`RaceTuning`]).
+    pub shortcuts: Vec<Shortcut>,
+    pub shortcut_margin: f32,
+    pub shortcut_exit_reach: f32,
 }
 
 impl Course {
@@ -83,6 +95,9 @@ impl Course {
             gate_height: tuning.gate_height,
             gaps: layout.gaps.clone(),
             anti_gravity: layout.anti_gravity.clone(),
+            shortcuts: layout.shortcuts.clone(),
+            shortcut_margin: tuning.shortcut_margin,
+            shortcut_exit_reach: tuning.shortcut_exit_reach,
         }
     }
 
@@ -133,7 +148,70 @@ impl Course {
             wall: wall_offset(s),
             gap: gap.is_some(),
             upside_down: gap.is_none() && s.up.y < -FACING_UP_TOLERANCE,
+            shortcut: None,
         }
+    }
+
+    /// Issue #107: where `position` is on shortcut `k`, whose start stands for race distance
+    /// `start` (its end for `start + span`): on its path (from its start to its end, within its
+    /// half width and [`Course::shortcut_margin`]), or nowhere on it.
+    fn on_shortcut(&self, k: usize, start: f32, position: Vec3) -> Option<Projection> {
+        let shortcut = &self.shortcuts[k];
+        let here = shortcut.locate(position);
+        let length = shortcut.length();
+        let reach = shortcut.half_width + self.shortcut_margin;
+        if here.along < -self.shortcut_margin
+            || here.along > length + self.shortcut_margin
+            || here.lateral.abs() > reach
+        {
+            return None;
+        }
+        let jump = shortcut.kind == ShortcutKind::Jump;
+        Some(Projection {
+            distance: start + shortcut.span * shortcut.share(here.along),
+            lateral: here.lateral,
+            height: if jump {
+                position.y - shortcut.low
+            } else {
+                here.height
+            },
+            wall: shortcut.half_width,
+            gap: jump,
+            upside_down: false,
+            shortcut: Some(k),
+        })
+    }
+
+    /// Issue #107: a kart off the road of its window (`start` to `end`, race distances) may be on
+    /// a shortcut that leaves from there: on its path, or back on the road around its end (within
+    /// [`Course::shortcut_exit_reach`] of it), where its checkpoints are crossed. The road there
+    /// first (the shortcut is over), then the path closest to the kart (across).
+    fn off_the_road(&self, start: f32, end: f32, position: Vec3) -> Option<Projection> {
+        let length = self.length();
+        let mut best: Option<(f32, Projection)> = None;
+        for (k, shortcut) in self.shortcuts.iter().enumerate() {
+            let lap = ((start - shortcut.from) / length).floor();
+            for lap in [lap, lap + 1.0] {
+                let from = lap * length + shortcut.from;
+                let to = from + shortcut.span;
+                if to < start || from > end {
+                    continue;
+                }
+                let reach = self.shortcut_exit_reach;
+                let back = self.project_between(to - reach, to + reach, position);
+                let candidates = [
+                    (!back.gap && !self.outside_walls(&back, 0.0)).then_some((-1.0, back)),
+                    self.on_shortcut(k, from, position)
+                        .map(|p| (p.lateral.abs() / shortcut.half_width.max(0.1), p)),
+                ];
+                for (score, projection) in candidates.into_iter().flatten() {
+                    if best.is_none_or(|(b, _)| score < b) {
+                        best = Some((score, projection));
+                    }
+                }
+            }
+        }
+        best.map(|(_, projection)| projection)
     }
 
     pub fn length(&self) -> f32 {
@@ -188,6 +266,17 @@ impl Course {
     /// of the track (shortcut, the loop passing close to itself).
     pub fn project(&self, passed: u32, position: Vec3) -> Projection {
         let (start, end) = self.window(passed);
+        let road = self.project_between(start, end, position);
+        // Issue #107: off the road (beyond its walls, out of a gap), on a shortcut maybe.
+        if self.shortcuts.is_empty() || road.gap || !self.outside_walls(&road, 0.0) {
+            return road;
+        }
+        self.off_the_road(start, end, position).unwrap_or(road)
+    }
+
+    /// The closest centerline point to `position` between race distances `start` and `end`, as a
+    /// projection there.
+    fn project_between(&self, start: f32, end: f32, position: Vec3) -> Projection {
         let samples = self.center.samples();
         let count = samples.len() as i64;
         let step = self.length() / count as f32;
@@ -214,13 +303,26 @@ impl Course {
         let samples = self.center.samples();
         let s = &samples[self.center.nearest_index(position)];
         let along = (position - s.position).dot(s.forward);
-        self.projection(s, s.distance + along, position)
+        let road = self.projection(s, s.distance + along, position);
+        // Issue #107: off the road, on a shortcut maybe (the closest path across).
+        if self.shortcuts.is_empty() || road.gap || !self.outside_walls(&road, 0.0) {
+            return road;
+        }
+        (0..self.shortcuts.len())
+            .filter_map(|k| self.on_shortcut(k, self.shortcuts[k].from, position))
+            .min_by(|a, b| {
+                let ratio = |p: &Projection| p.lateral.abs() / p.wall.max(0.1);
+                ratio(a).total_cmp(&ratio(b))
+            })
+            .unwrap_or(road)
     }
 
     /// Whether a kart there is inside the gate of its next checkpoint (laterally and in height;
     /// over a gap, issue #20, at any height: a glider flies high or low).
     pub fn inside_gate(&self, projection: &Projection) -> bool {
-        projection.lateral.abs() <= projection.wall + self.gate_margin
+        // Issue #107: not on a shortcut (its checkpoints are crossed back on the road).
+        projection.shortcut.is_none()
+            && projection.lateral.abs() <= projection.wall + self.gate_margin
             && (projection.gap || projection.height.abs() <= self.gate_height)
     }
 
@@ -261,6 +363,18 @@ pub(crate) mod tests {
     pub(crate) fn prairie() -> (TrackData, Course) {
         let data =
             TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap();
+        let course = Course::new(&TrackLayout::new(&data), &RaceTuning::default());
+        (data, course)
+    }
+
+    /// Issue #107: the Corniche Cannelle (its sides without wall, its shortcuts), as written or
+    /// mirrored.
+    pub(crate) fn corniche(mirrored: bool) -> (TrackData, Course) {
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/corniche.track.ron")).unwrap();
+        // An invalid file would fall back to another circuit in the game: say so here.
+        data.validate().unwrap();
+        let data = if mirrored { data.mirrored() } else { data };
         let course = Course::new(&TrackLayout::new(&data), &RaceTuning::default());
         (data, course)
     }

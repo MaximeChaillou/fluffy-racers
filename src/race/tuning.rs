@@ -47,6 +47,12 @@ pub struct RaceTuning {
     pub gate_margin: f32,
     /// A kart more than this above or below the road does not cross a gate.
     pub gate_height: f32,
+    /// Issue #107: a kart off the road is on a shortcut while within this much of its path
+    /// (beyond its half width, before its start, after its end; m)...
+    pub shortcut_margin: f32,
+    /// ...and back on the road where it ends within this much of its end (m, along the
+    /// centerline): there it crosses the checkpoints the shortcut passed by.
+    pub shortcut_exit_reach: f32,
 
     // --- Tow pelican (GD § 2) ------------------------------------------------------------------
     /// Time lost with the tow pelican, from the pickup to the drop (GD § 2: about 2.5 s).
@@ -98,6 +104,8 @@ impl Default for RaceTuning {
             backward_window: 30.0,
             gate_margin: 1.0,
             gate_height: 10.0,
+            shortcut_margin: 1.5,
+            shortcut_exit_reach: 30.0,
 
             tow_seconds: 2.5,
             tow_lift_share: 0.3,

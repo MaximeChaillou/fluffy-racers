@@ -53,6 +53,16 @@ pub struct TrackData {
     /// fly off it.
     #[serde(default)]
     pub anti_gravity: Vec<AntiGravityData>,
+    /// Issue #107 (GD « Conception des circuits »): stretches with no wall on one side of the road
+    /// or both: its shoulder ends on a drop (or a slope). A kart that goes over falls, and the tow
+    /// pelican drops it back **before** the stretch (no drop point in it).
+    #[serde(default)]
+    pub open_edges: Vec<OpenEdgeData>,
+    /// Issue #107: shortcuts off the centerline (a hidden road, a grass path, a risky jump over
+    /// a drop), from the centerline at `from` to the centerline at `to`. The race counts them
+    /// right (`crate::race::Course::project`); the bots take them by level (`crate::bots`).
+    #[serde(default)]
+    pub shortcuts: Vec<ShortcutData>,
     /// Boost pads on the ground (GD § 2, issue #13).
     #[serde(default)]
     pub boost_pads: Vec<Spot>,
@@ -180,6 +190,100 @@ pub struct GapData {
 pub struct AntiGravityData {
     pub from: f32,
     pub to: f32,
+}
+
+/// Issue #107: the side(s) of the road a stretch without wall is on (seen by the driver).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeSide {
+    Left,
+    Right,
+    Both,
+}
+
+impl EdgeSide {
+    /// The same side on the mirrored circuit (issue #19): left and right swap.
+    pub fn mirrored(self) -> Self {
+        match self {
+            EdgeSide::Left => EdgeSide::Right,
+            EdgeSide::Right => EdgeSide::Left,
+            EdgeSide::Both => EdgeSide::Both,
+        }
+    }
+
+    /// Whether it opens the side `sign` of the road (-1 left, 1 right).
+    pub fn opens(self, sign: f32) -> bool {
+        match self {
+            EdgeSide::Both => true,
+            EdgeSide::Left => sign < 0.0,
+            EdgeSide::Right => sign > 0.0,
+        }
+    }
+}
+
+/// Issue #107: a stretch of the road with no wall on `side`, between two spline parameters.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OpenEdgeData {
+    pub from: f32,
+    pub to: f32,
+    pub side: EdgeSide,
+}
+
+/// Issue #107: what a shortcut is made of.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ShortcutKind {
+    /// A road (asphalt and curbs), no wall: a hidden way, behind the decor.
+    Road,
+    /// A grass path, no wall: off-road (GD § 2: about 55 % of the top speed), worth it only with
+    /// a boost (which ignores the off-road).
+    Grass,
+    /// A risky jump: a trick ramp on the road, then nothing (the drop) until the landing on the
+    /// road further on. Short, and the kart falls.
+    Jump,
+}
+
+/// Issue #107: a shortcut off the centerline, from the centerline at `from` to the centerline
+/// at `to` (spline parameters), along `points`: its first point on the road near `from`, its
+/// last one on the road near `to`, both on a side of the road without wall (`open_edges`). A
+/// `Road` or `Grass` shortcut is built `width` meters wide along its points (their height its
+/// surface's); a `Jump` is built as its trick ramp only: from `points[1]` toward `points[2]`
+/// (`points[0]`, on the road before it, lines the karts up with it), the flight over the drop
+/// to the landing near its last point.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ShortcutData {
+    pub from: f32,
+    pub to: f32,
+    pub kind: ShortcutKind,
+    /// Its path, (x, y, z) in meters, at least 2 points (4 for a jump).
+    pub points: Vec<(f32, f32, f32)>,
+    /// Its width (m): what is built, and the corridor the race counts on.
+    #[serde(default = "default_shortcut_width")]
+    pub width: f32,
+    /// A jump's trick ramp: its width, length (m) and slope (degrees).
+    #[serde(default = "default_ramp_width")]
+    pub ramp_width: f32,
+    #[serde(default = "default_jump_ramp_length")]
+    pub ramp_length: f32,
+    #[serde(default = "default_jump_ramp_angle")]
+    pub ramp_angle: f32,
+}
+
+impl ShortcutData {
+    pub fn point(&self, i: usize) -> Vec3 {
+        let (x, y, z) = self.points[i];
+        Vec3::new(x, y, z)
+    }
+}
+
+fn default_shortcut_width() -> f32 {
+    9.0
+}
+fn default_jump_ramp_length() -> f32 {
+    8.0
+}
+fn default_jump_ramp_angle() -> f32 {
+    15.0
 }
 
 /// The steepest banking outside the anti-gravity zones (degrees): the karts drive there with the
@@ -456,6 +560,7 @@ impl TrackData {
                 }
             }
         }
+        self.validate_edges_and_shortcuts()?;
         for prop in &self.props {
             if !biome::is_model_id(&prop.model)
                 || !(0.1..=30.0).contains(&prop.height)
@@ -467,6 +572,118 @@ impl TrackData {
                      out of range",
                     prop.model, prop.height, prop.radius, prop.gap
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Issue #107: the stretches without wall (each on a side, out of the anti-gravity zones and
+    /// the gaps, half the circuit at most) and the shortcuts (each from one side of the road
+    /// without wall to another, its points apart, as wide as a lane at least; a jump with its
+    /// ramp). Their mouths are checked on the centerline: the first point near the road at
+    /// `from`, the last one near the road at `to`, on a side without wall there.
+    fn validate_edges_and_shortcuts(&self) -> Result<(), InvalidTrack> {
+        let fail = |message: String| Err(InvalidTrack(message));
+        let n = self.points.len() as f32;
+        let within =
+            |from: f32, to: f32, p: f32| (p - from).rem_euclid(n) <= (to - from).rem_euclid(n);
+        for edge in &self.open_edges {
+            let length = (edge.to - edge.from).rem_euclid(n);
+            if !(edge.from.is_finite() && edge.to.is_finite()) || length < 0.05 || length > n / 2.0
+            {
+                return fail(format!(
+                    "open edge {}..{}: empty, or more than half the circuit",
+                    edge.from, edge.to
+                ));
+            }
+            let overlaps = |from: f32, to: f32| {
+                within(from, to, edge.from) || within(edge.from, edge.to, from)
+            };
+            if self.anti_gravity.iter().any(|z| overlaps(z.from, z.to))
+                || self.gaps.iter().any(|g| overlaps(g.from, g.to))
+            {
+                return fail(format!(
+                    "open edge {}..{} on an anti-gravity zone or a gap",
+                    edge.from, edge.to
+                ));
+            }
+        }
+        if self.shortcuts.is_empty() {
+            return Ok(());
+        }
+        let center = super::layout::CenterLine::of(self);
+        for (k, shortcut) in self.shortcuts.iter().enumerate() {
+            let span = (shortcut.to - shortcut.from).rem_euclid(n);
+            let least = if shortcut.kind == ShortcutKind::Jump {
+                4
+            } else {
+                2
+            };
+            let finite = shortcut.from.is_finite()
+                && shortcut.to.is_finite()
+                && shortcut
+                    .points
+                    .iter()
+                    .all(|(x, y, z)| x.is_finite() && y.is_finite() && z.is_finite());
+            if !finite
+                || shortcut.points.len() < least
+                || span < 0.05
+                || span > n / 2.0
+                || !(4.0..=30.0).contains(&shortcut.width)
+            {
+                return fail(format!(
+                    "shortcut {k}: {} points ({least} at least), {}..{} (empty, or more than half \
+                     the circuit), width {} (4 to 30 m)",
+                    shortcut.points.len(),
+                    shortcut.from,
+                    shortcut.to,
+                    shortcut.width
+                ));
+            }
+            if shortcut
+                .points
+                .windows(2)
+                .any(|w| Vec3::from(w[0]).distance(Vec3::from(w[1])) < 1.0)
+            {
+                return fail(format!("shortcut {k}: two points on top of each other"));
+            }
+            if shortcut.kind == ShortcutKind::Jump
+                && (!(2.0..=20.0).contains(&shortcut.ramp_length)
+                    || !(3.0..=30.0).contains(&shortcut.ramp_angle)
+                    || !(2.0..=shortcut.width).contains(&shortcut.ramp_width))
+            {
+                return fail(format!(
+                    "shortcut {k}: its ramp {} m long (2 to 20), {}° (3 to 30), {} m wide (2 to \
+                     its width)",
+                    shortcut.ramp_length, shortcut.ramp_angle, shortcut.ramp_width
+                ));
+            }
+            // Its mouths: near the road at `from` and `to`, on a side without wall there.
+            let ends = [
+                (shortcut.from, shortcut.point(0)),
+                (shortcut.to, shortcut.point(shortcut.points.len() - 1)),
+            ];
+            for (param, point) in ends {
+                let s = center.at(center.param_to_distance(param));
+                let offset = point - s.position;
+                let (along, lateral, height) =
+                    (offset.dot(s.forward), offset.dot(s.right), offset.dot(s.up));
+                let reach = super::mesh::wall_offset(&s) + shortcut.width;
+                let open = self
+                    .open_edges
+                    .iter()
+                    .any(|edge| edge.side.opens(lateral) && within(edge.from, edge.to, param));
+                if along.abs() > shortcut.width
+                    || height.abs() > 3.0
+                    || lateral.abs() > reach
+                    || !open
+                {
+                    return fail(format!(
+                        "shortcut {k}: its end at {param} is not by the road there ({along:.1} m \
+                         along, {lateral:.1} m across, {reach:.1} at most, {height:.1} m above), \
+                         or not on a side without wall"
+                    ));
+                }
             }
         }
         Ok(())
@@ -503,7 +720,8 @@ impl TrackData {
     /// swapped: every control point mirrored across the X = 0 plane (x → -x), its banking turned
     /// the other way, everything placed across the road on the other side (offsets, sand patches),
     /// the props on the other side, the lakes across the X = 0 plane (issue #20; the gaps are
-    /// along the track: they do not move, nor do the anti-gravity zones of issue #78). The centerline of the mirror is exactly the mirror image of
+    /// along the track: they do not move, nor do the anti-gravity zones of issue #78; issue #107: the
+    /// sides without wall swap, the shortcuts move across the plane). The centerline of the mirror is exactly the mirror image of
     /// the original (Catmull-Rom is linear in its points), the same length: a point `offset`
     /// across the road at the same spline parameter is the mirror image of the original's at
     /// `-offset`. Mirrored twice, the file comes back.
@@ -538,6 +756,16 @@ impl TrackData {
         for prop in &mut data.props {
             prop.side = prop.side.mirrored();
             prop.yaw = -prop.yaw;
+        }
+        // Issue #107: the stretches without wall on the other side, the shortcuts across the
+        // X = 0 plane.
+        for edge in &mut data.open_edges {
+            edge.side = edge.side.mirrored();
+        }
+        for shortcut in &mut data.shortcuts {
+            for point in &mut shortcut.points {
+                point.0 = -point.0;
+            }
         }
         data
     }
@@ -620,6 +848,69 @@ mod tests {
         assert_eq!(mirrored.lakes[0].center, (-25.0, -25.0));
         assert_eq!(mirrored.gaps, base.gaps);
         assert_eq!(mirrored.glide_ramps[0].offset, -0.2);
+        assert_eq!(mirrored.validate(), Ok(()));
+        assert_eq!(mirrored.mirrored(), base);
+    }
+
+    /// Issue #107: the sides without wall and the shortcuts are checked: a stretch on a side, out
+    /// of the gaps, not empty; a shortcut with its points apart, as wide as a lane, a jump with
+    /// its ramp, each end by the road at its parameter and on a side without wall there. Mirrored,
+    /// the sides swap, the shortcuts move across, the file comes back mirrored twice.
+    #[test]
+    fn sides_without_wall_and_shortcuts_that_make_no_sense_are_rejected() {
+        // The square: 50 m sides, its first side heading north (-Z), the right side east.
+        let base = TrackData::from_ron(&MINIMAL.replace(
+            "(name:",
+            "(open_edges: [(from: 0.3, to: 1.7, side: Right)], \
+             shortcuts: [(from: 0.5, to: 1.5, kind: Road, \
+             points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])], name:",
+        ))
+        .unwrap();
+        assert_eq!(base.validate(), Ok(()));
+        assert_eq!(base.shortcuts[0].width, 9.0, "the default width");
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = base.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.open_edges[0].to = d.open_edges[0].from));
+        assert!(broken(&|d| d.open_edges[0].from = f32::NAN));
+        assert!(broken(&|d| d.gaps.push(GapData { from: 1.0, to: 1.2 })));
+        // Its mouth on a side with its wall: refused.
+        assert!(broken(&|d| d.open_edges[0].side = EdgeSide::Left));
+        assert!(broken(&|d| d.open_edges[0].to = 0.4));
+        assert!(!broken(&|d| d.open_edges[0].side = EdgeSide::Both));
+        // Far from the road at its end, or above it.
+        assert!(broken(&|d| d.shortcuts[0].points[2] = (60.0, 0.0, -45.0)));
+        assert!(broken(&|d| d.shortcuts[0].points[0].1 = 5.0));
+        assert!(broken(&|d| d.shortcuts[0].points.truncate(1)));
+        assert!(broken(
+            &|d| d.shortcuts[0].points[1] = d.shortcuts[0].points[0]
+        ));
+        assert!(broken(&|d| d.shortcuts[0].width = 2.0));
+        assert!(broken(&|d| d.shortcuts[0].to = d.shortcuts[0].from));
+        // A jump: four points at least, and a ramp that makes sense.
+        assert!(broken(&|d| d.shortcuts[0].kind = ShortcutKind::Jump));
+        let jump = |change: &dyn Fn(&mut ShortcutData)| {
+            let mut data = base.clone();
+            let shortcut = &mut data.shortcuts[0];
+            shortcut.kind = ShortcutKind::Jump;
+            shortcut.points = vec![
+                (3.0, 0.0, -18.0),
+                (5.0, 0.0, -25.0),
+                (12.0, 0.0, -30.0),
+                (25.0, 0.0, -45.0),
+            ];
+            change(shortcut);
+            data.validate().is_err()
+        };
+        assert!(!jump(&|_| {}));
+        assert!(jump(&|s| s.ramp_angle = 45.0));
+        assert!(jump(&|s| s.ramp_length = 1.0));
+        assert!(jump(&|s| s.ramp_width = 20.0));
+        let mirrored = base.mirrored();
+        assert_eq!(mirrored.open_edges[0].side, EdgeSide::Left);
+        assert_eq!(mirrored.shortcuts[0].points[0], (-5.0, 0.0, -25.0));
         assert_eq!(mirrored.validate(), Ok(()));
         assert_eq!(mirrored.mirrored(), base);
     }

@@ -164,7 +164,8 @@ fn clamp_to_window(course: &Course, passed: u32, distance: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::race::course::tests::{at, prairie};
+    use crate::race::course::tests::{at, corniche, prairie};
+    use crate::track::{GRID_HEIGHT, ShortcutKind};
 
     /// A kart driven along the centerline by moving its position directly.
     struct Driver<'a> {
@@ -284,6 +285,163 @@ mod tests {
         assert_eq!(p.lap_times.iter().sum::<u32>(), p.finish.unwrap());
         assert_eq!(p.best_lap(), Some(lap2));
         assert!(lap2 < lap1 && lap2 < lap3);
+    }
+
+    /// Issue #107 acceptance (« un raccourci compte juste »), on the Corniche Cannelle and its
+    /// mirror: a kart that drives along a shortcut, from the road before it to the road after it
+    /// (the jump in its air, its path's height), is never off the track nor fallen on it, crosses
+    /// no checkpoint on it (its race distance stays at most at its window's next checkpoint), and
+    /// back on the road crosses every checkpoint the shortcut passed by, one per tick, in order:
+    /// then its progress is the one of a kart that came by the road.
+    #[test]
+    fn the_shortcuts_count_right() {
+        for mirrored in [false, true] {
+            let (_, course) = corniche(mirrored);
+            let tuning = crate::race::RaceTuning::default();
+            assert_eq!(course.shortcuts.len(), 3);
+            for (k, shortcut) in course.shortcuts.iter().enumerate() {
+                let from = shortcut.from;
+                let to = from + shortcut.span;
+                let mut kart = Driver::on_grid(&course, 0);
+                kart.drive(-5.0, from - 40.0, 0.45, 0.0);
+                // To its start along the road, then along its path.
+                let start = shortcut.samples()[0].position;
+                let entry =
+                    (start - course.center.at(from).position).dot(course.center.at(from).right);
+                kart.drive(from - 40.0, from, 0.45, entry * 0.6);
+                let passed = kart.progress.passed;
+                let mut along = 0.0;
+                while along < shortcut.length() {
+                    let s = shortcut.at(along);
+                    let lift = if shortcut.kind == ShortcutKind::Jump {
+                        // In the air, a parabola over the drop.
+                        let t = along / shortcut.length();
+                        GRID_HEIGHT + 6.0 * t * (1.0 - t)
+                    } else {
+                        GRID_HEIGHT
+                    };
+                    let position = s.position + Vec3::Y * lift;
+                    let projection = course.project(kart.progress.passed, position);
+                    let event = kart.step(position);
+                    assert!(
+                        !course.outside_walls(&projection, tuning.outside_margin),
+                        "shortcut {k} (mirror {mirrored}): off the track at {along:.0} m: \
+                         {projection:?}"
+                    );
+                    assert!(projection.height > -tuning.fall_depth, "{projection:?}");
+                    if projection.shortcut.is_some() {
+                        assert_eq!(event, None, "a checkpoint crossed on shortcut {k}");
+                        assert!(
+                            kart.progress.distance
+                                <= course.checkpoint_distance(kart.progress.passed as i64)
+                        );
+                    }
+                    along += 0.45;
+                }
+                // At most the checkpoints of the road under its ends.
+                // Back on the road: the checkpoints it passed by, one per tick.
+                let back = course.center.at(to);
+                let lateral =
+                    (shortcut.samples().last().unwrap().position - back.position).dot(back.right);
+                kart.drive(to, to + 40.0, 0.45, lateral * 0.6);
+                let crossed = (passed as i64..)
+                    .take_while(|g| course.checkpoint_distance(*g) <= to + 39.0)
+                    .count() as u32;
+                assert!(
+                    crossed >= 1,
+                    "shortcut {k} passes checkpoints by: {crossed}"
+                );
+                assert!(
+                    course.checkpoint_distance(passed as i64) < to - 25.0,
+                    "shortcut {k}: off the road, checkpoints left to cross"
+                );
+                assert_eq!(
+                    kart.progress.passed,
+                    passed + crossed,
+                    "shortcut {k} (mirror {mirrored})"
+                );
+                assert!((kart.progress.distance - (to + 40.0)).abs() < 1.0);
+                // The same as a kart that came by the road.
+                let mut road = Driver::on_grid(&course, 0);
+                road.drive(-5.0, to + 40.0, 0.45, 0.0);
+                assert_eq!(road.progress.passed, kart.progress.passed);
+            }
+        }
+    }
+
+    /// Issue #107: a shortcut is no way to skip the race: a kart further back than its window
+    /// reaches (80 m before it), put at its end or past it, is not on it, and crosses none of the
+    /// checkpoints it passes by (at most the next one, whose gate it may cross on the way), its race
+    /// distance short of the shortcut.
+    #[test]
+    fn a_shortcut_far_ahead_does_not_count() {
+        for mirrored in [false, true] {
+            let (_, course) = corniche(mirrored);
+            for shortcut in &course.shortcuts {
+                let mut kart = Driver::on_grid(&course, 0);
+                kart.drive(-5.0, shortcut.from - 80.0, 0.45, 0.0);
+                let passed = kart.progress.passed;
+                let end = shortcut.samples().last().unwrap().position + Vec3::Y * GRID_HEIGHT;
+                let after = course
+                    .center
+                    .at(shortcut.from + shortcut.span + 10.0)
+                    .point(0.0, GRID_HEIGHT);
+                for position in [end, after] {
+                    for _ in 0..30 {
+                        let projection = course.project(kart.progress.passed, position);
+                        assert_eq!(projection.shortcut, None, "{projection:?}");
+                        kart.step(position);
+                    }
+                }
+                assert!(
+                    kart.progress.passed <= passed + 1,
+                    "{} > {passed} + 1",
+                    kart.progress.passed
+                );
+                assert!(
+                    kart.progress.distance < shortcut.from,
+                    "{:?}",
+                    kart.progress
+                );
+            }
+        }
+    }
+
+    /// Issue #107: the pelican drops a kart that fell from a side without wall before the stretch
+    /// (no drop point in it), and one that fell from a shortcut (a jump that fell short) before
+    /// the shortcut: its last checkpoint is before it, and its drop point too. Mirrored too.
+    #[test]
+    fn a_kart_that_fell_is_dropped_before_the_stretch_or_the_shortcut() {
+        for mirrored in [false, true] {
+            let (data, course) = corniche(mirrored);
+            let layout = crate::track::TrackLayout::new(&data);
+            let center = &course.center;
+            assert_eq!(layout.open_edges.len(), 4);
+            for edge in &layout.open_edges {
+                for (g, checkpoint) in course.checkpoints.iter().enumerate() {
+                    if !edge.contains(center, *checkpoint) {
+                        continue;
+                    }
+                    let drop = course.drop_distance(g as i64 + course.checkpoints.len() as i64);
+                    let drop = center.wrap(drop);
+                    assert!(
+                        !edge.contains(center, drop),
+                        "checkpoint {g}: dropped at {drop:.0} m, in the stretch {edge:?}"
+                    );
+                }
+            }
+            for shortcut in &course.shortcuts {
+                let mut kart = Driver::on_grid(&course, 0);
+                kart.drive(-5.0, shortcut.from, 0.45, 0.0);
+                let last = kart.progress.passed as i64 - 1;
+                assert!(course.checkpoint_distance(last) <= shortcut.from);
+                assert!(course.drop_distance(last) <= shortcut.from);
+                // Out on its path, nothing more counts.
+                let middle = shortcut.at(shortcut.length() / 2.0).position + Vec3::Y;
+                assert_eq!(kart.step(middle), None);
+                assert_eq!(kart.progress.passed as i64 - 1, last);
+            }
+        }
     }
 
     #[test]

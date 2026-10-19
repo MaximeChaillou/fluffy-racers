@@ -24,7 +24,7 @@ use bevy::prelude::*;
 
 use crate::kart::DriftSide;
 use crate::track::mesh::wall_offset;
-use crate::track::{CenterLine, TrackLayout, TrackSample, anti_gravity_at};
+use crate::track::{CenterLine, Shortcut, ShortcutKind, TrackLayout, TrackSample, anti_gravity_at};
 
 /// A curvature below this (radius above 70 m) is a straight for the turn detection (1/m).
 const TURN_MIN_CURVATURE: f32 = 1.0 / 70.0;
@@ -84,13 +84,101 @@ pub struct RacingLine {
     turns: Vec<Turn>,
     /// Per sample: its turn (index into `turns`) and the angle turned since the turn's start.
     turn_of: Vec<Option<(usize, f32)>>,
+    /// Issue #107: the circuit's shortcuts, as the bots follow them.
+    branches: Vec<Branch>,
+}
+
+/// Issue #107: a shortcut of the circuit (`TrackLayout::shortcuts`), as a bot follows it: its
+/// path, the lane to be in before it, and how its path turns.
+#[derive(Clone, Debug)]
+pub struct Branch {
+    pub shortcut: Shortcut,
+    /// Where its path starts, across the road at its start (m, right positive): the lane a bot
+    /// going for it moves to.
+    pub entry_lateral: f32,
+    /// Signed curvature of its path, per sample (1/m, right turns positive), seen from above.
+    curvature: Vec<f32>,
+}
+
+impl Branch {
+    fn new(center: &CenterLine, shortcut: &Shortcut) -> Self {
+        let start = center.at(shortcut.from);
+        let first = shortcut.samples()[0].position;
+        let samples = shortcut.samples();
+        let flat = |s: &TrackSample| Vec2::new(s.forward.x, s.forward.z).normalize_or_zero();
+        let curvature = (0..samples.len())
+            .map(|i| {
+                let (a, b) = (
+                    &samples[i.saturating_sub(1)],
+                    &samples[(i + 1).min(samples.len() - 1)],
+                );
+                let along = a.position.distance(b.position).max(1e-3);
+                flat(a).angle_to(flat(b)) / along
+            })
+            .collect();
+        Self {
+            shortcut: shortcut.clone(),
+            entry_lateral: (first - start.position).dot(start.right),
+            curvature,
+        }
+    }
+
+    pub fn kind(&self) -> ShortcutKind {
+        self.shortcut.kind
+    }
+
+    /// The curvature of its path at sample `i` (1/m, right positive).
+    pub fn curvature(&self, i: usize) -> f32 {
+        self.curvature[i.min(self.curvature.len() - 1)]
+    }
+}
+
+/// Issue #107: the lane limits (`limits`, per sample of `center`) kept `margin` clear of the
+/// footprint `corners` (on the ground plane) beside the centerline, on the side with the most room
+/// (like a sand patch): along it, and [`SAND_BUFFER`] before and after.
+fn keep_clear_of(center: &CenterLine, limits: &mut [[f32; 2]], corners: &[Vec2], margin: f32) {
+    for (s, limit) in center.samples().iter().zip(limits.iter_mut()) {
+        let forward = s.forward.xz().normalize_or_zero();
+        let right = Vec2::new(-forward.y, forward.x);
+        if corners.iter().all(|c| c.distance(s.position.xz()) > 60.0) {
+            continue;
+        }
+        let (mut along, mut across) = ((f32::MAX, f32::MIN), (f32::MAX, f32::MIN));
+        for c in corners {
+            let to = *c - s.position.xz();
+            let (a, l) = (to.dot(forward), to.dot(right));
+            along = (along.0.min(a), along.1.max(a));
+            across = (across.0.min(l), across.1.max(l));
+        }
+        if along.0 > SAND_BUFFER || along.1 < -SAND_BUFFER {
+            continue;
+        }
+        let room_left = across.0 - limit[0];
+        let room_right = limit[1] - across.1;
+        if room_left >= room_right {
+            limit[1] = limit[1].min(across.0 - margin);
+        } else {
+            limit[0] = limit[0].max(across.1 + margin);
+        }
+        if limit[0] > limit[1] {
+            let middle = (limit[0] + limit[1]) / 2.0;
+            *limit = [middle, middle];
+        }
+    }
 }
 
 impl RacingLine {
     /// Builds the racing line of `layout`. `road_margin`: a kart's center stays this far inside
-    /// the road edge; `sand_margin`: this far from sand; `line_margin`: the racing line keeps this
-    /// much more room on each side.
-    pub fn new(layout: &TrackLayout, road_margin: f32, sand_margin: f32, line_margin: f32) -> Self {
+    /// the road edge; `sand_margin`: this far from sand; `void_margin`: this much farther inside a
+    /// side without wall (issue #107); `line_margin`: the racing line keeps this much more room on
+    /// each side.
+    pub fn new(
+        layout: &TrackLayout,
+        road_margin: f32,
+        sand_margin: f32,
+        void_margin: f32,
+        line_margin: f32,
+    ) -> Self {
         let center = layout.center.clone();
         let samples = center.samples();
         let n = samples.len();
@@ -128,6 +216,30 @@ impl RacingLine {
                     let middle = (limit[0] + limit[1]) / 2.0;
                     *limit = [middle, middle];
                 }
+            }
+        }
+
+        // Issue #107: a side without wall is a drop: the lanes keep farther from its edge (a bot
+        // going for a shortcut there leaves its lane for the road's edge).
+        for edge in &layout.open_edges {
+            for (s, limit) in samples.iter().zip(limits.iter_mut()) {
+                if !edge.contains(&center, s.distance) {
+                    continue;
+                }
+                if edge.side.opens(-1.0) {
+                    limit[0] = (limit[0] + void_margin).min(limit[1]);
+                }
+                if edge.side.opens(1.0) {
+                    limit[1] = (limit[1] - void_margin).max(limit[0]);
+                }
+            }
+        }
+
+        // Issue #107: the trick ramps of the risky jumps, off the centerline: the lanes keep
+        // clear of them, like of the sand (only a bot going for the jump drives onto one).
+        for shortcut in &layout.shortcuts {
+            if let Some(ramp) = shortcut.ramp {
+                keep_clear_of(&center, &mut limits, &ramp.footprint(), sand_margin);
             }
         }
 
@@ -185,6 +297,11 @@ impl RacingLine {
             developed.as_ref().map(|d| (&d.points[..], &d.zoned[..])),
         );
         let (turns, turn_of) = find_turns(&curvature, &angles);
+        let branches = layout
+            .shortcuts
+            .iter()
+            .map(|shortcut| Branch::new(&center, shortcut))
+            .collect();
 
         Self {
             center,
@@ -195,7 +312,13 @@ impl RacingLine {
             center_curvature,
             turns,
             turn_of,
+            branches,
         }
+    }
+
+    /// Issue #107: the shortcuts the bots may take.
+    pub fn branches(&self) -> &[Branch] {
+        &self.branches
     }
 
     pub fn center(&self) -> &CenterLine {
@@ -582,7 +705,13 @@ pub(crate) mod tests {
             TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap();
         let layout = TrackLayout::new(&data);
         let t = BotTuning::default();
-        let line = RacingLine::new(&layout, t.road_margin, t.sand_margin, t.line_margin);
+        let line = RacingLine::new(
+            &layout,
+            t.road_margin,
+            t.sand_margin,
+            t.void_margin,
+            t.line_margin,
+        );
         (layout, line)
     }
 
@@ -734,7 +863,13 @@ pub(crate) mod tests {
     fn line_of(data: &TrackData) -> (TrackLayout, RacingLine) {
         let layout = TrackLayout::new(data);
         let t = BotTuning::default();
-        let line = RacingLine::new(&layout, t.road_margin, t.sand_margin, t.line_margin);
+        let line = RacingLine::new(
+            &layout,
+            t.road_margin,
+            t.sand_margin,
+            t.void_margin,
+            t.line_margin,
+        );
         (layout, line)
     }
 
@@ -790,6 +925,44 @@ pub(crate) mod tests {
                     "{i}: {o}"
                 );
             }
+        }
+    }
+
+    /// Issue #107 (GD « Conception des circuits »): on the Corniche Cannelle and its mirror, the
+    /// lanes keep `void_margin` more room from a side without wall (a drop) than from a wall; and
+    /// its racing line has at least five turns of 120° or more, the ones a Normal bot drifts
+    /// (`BotSkill::min_drift_angle`: the guide's drifts per lap).
+    #[test]
+    fn the_lanes_keep_away_from_a_drop_and_the_reference_circuit_has_turns_to_drift() {
+        let t = BotTuning::default();
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/corniche.track.ron")).unwrap();
+        for data in [data.clone(), data.mirrored()] {
+            let (layout, line) = line_of(&data);
+            let center = &layout.center;
+            assert!(!layout.open_edges.is_empty());
+            for edge in &layout.open_edges {
+                let middle = edge.from + edge.length(center) / 2.0;
+                let i = center.nearest_index(center.at(middle).position);
+                let half = center.samples()[i].half_width - t.road_margin;
+                let [lo, hi] = line.limits(i);
+                let (open, walled) = if edge.side.opens(1.0) {
+                    (hi, -lo)
+                } else {
+                    (-lo, hi)
+                };
+                assert!(
+                    open <= half - t.void_margin + 1e-3,
+                    "{edge:?}: {open} of {half}"
+                );
+                assert!(walled > half - 1e-3, "{edge:?}: {walled} of {half}");
+            }
+            let big = line
+                .turns()
+                .iter()
+                .filter(|turn| turn.angle >= 120f32.to_radians())
+                .count();
+            assert!(big >= 5, "{:?}", line.turns());
         }
     }
 

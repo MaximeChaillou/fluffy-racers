@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use super::anti_gravity::AntiGravityZone;
 use super::data::{AntiGravityData, ControlPoint, OffroadZone, TrackData};
+use super::shortcut::{OpenEdge, Shortcut};
 use super::water::{Gap, Lake};
 
 /// One point of the sampled centerline.
@@ -349,6 +350,9 @@ pub struct TrackLayout {
     pub lakes: Vec<Lake>,
     /// Issue #78: the anti-gravity zones (the karts drive on the walls there).
     pub anti_gravity: Vec<AntiGravityZone>,
+    /// Issue #107: the stretches without wall, and the shortcuts.
+    pub open_edges: Vec<OpenEdge>,
+    pub shortcuts: Vec<Shortcut>,
 }
 
 /// Racers on the grid (GD § 1).
@@ -361,7 +365,8 @@ impl TrackLayout {
         let respawns = if data.respawns.is_empty() {
             // One per checkpoint, except where a kart must not be dropped: on a ramp, in sand, in
             // a gap (issue #20: no road there) or just before one, in an anti-gravity zone (issue
-            // #78: on a wall, maybe).
+            // #78: on a wall, maybe), along a stretch without wall (issue #107: the pelican drops
+            // a kart that fell from it before it).
             let blocked: Vec<(f32, f32)> = data
                 .trick_ramps
                 .iter()
@@ -372,6 +377,7 @@ impl TrackLayout {
                         .iter()
                         .map(|g| (g.from, g.to))
                         .chain(data.anti_gravity.iter().map(|z| (z.from, z.to)))
+                        .chain(data.open_edges.iter().map(|e| (e.from, e.to)))
                         .map(|(from_param, to_param)| {
                             let from = center.param_to_distance(from_param);
                             let to = center.param_to_distance(to_param);
@@ -414,6 +420,16 @@ impl TrackLayout {
                 .anti_gravity
                 .iter()
                 .map(|z| AntiGravityZone::new(&center, z))
+                .collect(),
+            open_edges: data
+                .open_edges
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect(),
+            shortcuts: data
+                .shortcuts
+                .iter()
+                .map(|s| Shortcut::new(&center, s))
                 .collect(),
             center,
         }

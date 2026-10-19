@@ -69,6 +69,16 @@ pub struct BotSkill {
     /// Chance to press jump/drift right after leaving a trick ramp (a trick).
     pub trick_chance: f32,
 
+    // --- Shortcuts (issue #107, GD « Conception des circuits ») -----------------------------------
+    /// Chance to take a road shortcut (decided once per pass)...
+    pub shortcut_chance: f32,
+    /// ...a grass one, only with a boost long enough to reach it and cross part of it
+    /// (`BotTuning::grass_boost_share`)...
+    pub grass_chance: f32,
+    /// ...and a risky jump, only fast enough (`BotTuning::jump_speed_share`). GD: only the Hard
+    /// bots try the jumps.
+    pub jump_chance: f32,
+
     // --- Items (GD § 8 and 12, issue #16) -------------------------------------------------------
     /// It waits this long once an item is ready before using it (s): how often it uses items.
     pub item_delay: f32,
@@ -120,6 +130,10 @@ pub struct BotTuning {
     pub road_margin: f32,
     /// A kart's center stays this far from a sand patch (m): its wheels stay on the asphalt.
     pub sand_margin: f32,
+    /// Issue #107: and this much farther inside a side without wall (m, a drop: GD « Conception
+    /// des circuits »): a bump there would send it over (on the Corniche Cannelle, most of the
+    /// falls of a pack).
+    pub void_margin: f32,
     /// The racing line keeps this much more room on each side (m), for the lanes, the wobble
     /// and the overtaking.
     pub line_margin: f32,
@@ -188,6 +202,18 @@ pub struct BotTuning {
     /// faster along the bot's heading (m/s): a boost, mostly.
     pub grab_min_speed_gain: f32,
 
+    // --- Shortcuts (issue #107) -----------------------------------------------------------------
+    /// A bot decides whether it takes a shortcut this far before it (m), and moves to its lane.
+    pub shortcut_lookahead: f32,
+    /// It takes a grass shortcut only with a boost that lasts the way to it and at least this
+    /// share of its path, at its speed of the moment. 0.35: on the Corniche Cannelle, an orange
+    /// mini-turbo fired 20 m before the grass bridge (about 1 s gained), not a boost pad's 1 s
+    /// fired 9 m before it (about nothing gained).
+    pub grass_boost_share: f32,
+    /// It tries a risky jump only at this share of its top speed or faster, from the decision
+    /// to the ramp.
+    pub jump_speed_share: f32,
+
     // --- Recovery -----------------------------------------------------------------------------
     /// Slower than this (m/s) while trying to drive for `stuck_seconds`: the bot backs up for
     /// `reverse_seconds`, steering away. The tow pelican (3 s) remains the last resort.
@@ -225,6 +251,9 @@ impl Default for BotTuning {
                     start_delay_min: 0.2,
                     start_delay_max: 1.3,
                     trick_chance: 0.4,
+                    shortcut_chance: 0.25,
+                    grass_chance: 0.25,
+                    jump_chance: 0.0,
                     item_delay: 2.5,
                     item_aim: 0.18,
                     item_shield: 0.2,
@@ -253,6 +282,9 @@ impl Default for BotTuning {
                     start_delay_min: 0.05,
                     start_delay_max: 0.7,
                     trick_chance: 0.8,
+                    shortcut_chance: 0.6,
+                    grass_chance: 0.7,
+                    jump_chance: 0.0,
                     item_delay: 1.2,
                     item_aim: 0.1,
                     item_shield: 0.6,
@@ -281,6 +313,9 @@ impl Default for BotTuning {
                     start_delay_min: 0.0,
                     start_delay_max: 0.22,
                     trick_chance: 1.0,
+                    shortcut_chance: 0.9,
+                    grass_chance: 1.0,
+                    jump_chance: 0.6,
                     item_delay: 0.5,
                     item_aim: 0.06,
                     item_shield: 0.9,
@@ -301,6 +336,7 @@ impl Default for BotTuning {
 
             road_margin: 0.4,
             sand_margin: 1.2,
+            void_margin: 1.5,
             line_margin: 1.5,
             drift_turn_margin: 0.9,
 
@@ -332,6 +368,10 @@ impl Default for BotTuning {
             interaction_retarget: 5.0,
             grab_min_speed_gain: 2.0,
 
+            shortcut_lookahead: 45.0,
+            grass_boost_share: 0.35,
+            jump_speed_share: 0.9,
+
             stuck_speed: 1.5,
             stuck_seconds: 0.6,
             reverse_seconds: 1.0,
@@ -360,6 +400,10 @@ mod tests {
             assert!(high.drift_chance >= low.drift_chance);
             assert!(high.start_delay_max < low.start_delay_max);
             assert!(high.trick_chance >= low.trick_chance);
+            // Issue #107: harder = takes more shortcuts.
+            assert!(high.shortcut_chance > low.shortcut_chance);
+            assert!(high.grass_chance > low.grass_chance);
+            assert!(high.jump_chance >= low.jump_chance);
             // Issue #16: harder = uses its items sooner, aims better, shields more.
             assert!(high.item_delay < low.item_delay);
             assert!(high.item_aim < low.item_aim);
@@ -395,5 +439,10 @@ mod tests {
         assert_eq!(t.skill(BotDifficulty::Hard).target_tier, MiniTurbo::Orange);
         assert!(t.skill(BotDifficulty::Hard).purple_when_possible);
         assert_eq!(BotDifficulty::default(), BotDifficulty::Normal);
+        // Issue #107 (GD « Conception des circuits »): only the Hard bots try the risky jumps.
+        let jumps: Vec<f32> = t.skills.iter().map(|s| s.jump_chance).collect();
+        assert_eq!(jumps[..2], [0.0, 0.0]);
+        assert!(jumps[2] > 0.0);
+        assert!(t.grass_boost_share > 0.0 && t.jump_speed_share > 0.5);
     }
 }

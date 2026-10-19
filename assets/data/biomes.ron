@@ -241,4 +241,52 @@
              count: 70, height: (0.4, 0.7), radius: 0.35, distance: (0.2, 12.0), shadows: false),
         ],
     ),
+    (
+        // A cinnamon canyon (issue #107): the circuit runs along its rim, high above its floor, and
+        // down into it. Giant needles of red rock (Nature Kit's tall rocks, at 15 to 26 m), its
+        // walls of cliffs, one with a waterfall, autumn trees, cacti and stones down there;
+        // checkered flags along the outside (Racing Kit). Pale pink sandstone on the floor, a
+        // reddish road, sage grass: the items stand out from all of them.
+        name: "Corniche",
+        music: "hot-roadway",
+        palette: (
+            sky: (0.96, 0.80, 0.62),
+            ambient: (1.0, 0.92, 0.84),
+            ambient_brightness: 700.0,
+            ground: (0.88, 0.70, 0.62),
+            asphalt: (0.32, 0.29, 0.31),
+            curbs: ((0.95, 0.50, 0.22), (0.98, 0.94, 0.86)),
+            shoulder: (0.47, 0.62, 0.40),
+            sand: (0.93, 0.80, 0.62),
+            walls: ((0.97, 0.93, 0.85), (0.88, 0.44, 0.26)),
+            wall_top: (0.99, 0.97, 0.93),
+            skirt: (0.72, 0.38, 0.26),
+        ),
+        rows: [
+            // Checkered flags along the outside of the loop.
+            (models: ["racing-kit/flagCheckers"], spacing: 48.0, offset: 30.0, height: 4.0,
+             radius: 1.0, gap: 0.6, side: Outside),
+            // The canyon's walls, far beyond the outside: cliffs, a cave, a waterfall.
+            (models: ["nature-kit/cliff_large_rock", "nature-kit/cliff_waterfall_rock",
+                      "nature-kit/cliff_large_rock", "nature-kit/cliff_cave_rock"],
+             spacing: 34.0, offset: 10.0, height: 22.0, radius: 11.0, gap: 32.0, side: Outside),
+        ],
+        scatter: [
+            // Giant needles of red rock, both sides, some close to the road.
+            (models: ["nature-kit/rock_tallD", "nature-kit/rock_tallF", "nature-kit/rock_tallH",
+                      "nature-kit/rock_tallJ"],
+             count: 26, height: (15.0, 26.0), radius: 8.0, distance: (3.0, 44.0)),
+            // Tall autumn trees.
+            (models: ["nature-kit/tree_plateau_fall", "nature-kit/tree_thin_fall",
+                      "nature-kit/tree_tall_fall"],
+             count: 40, height: (9.0, 20.0), radius: 3.6, distance: (2.0, 36.0)),
+            // Cacti.
+            (models: ["nature-kit/cactus_tall", "nature-kit/cactus_short"],
+             count: 34, height: (2.0, 5.0), radius: 1.2, distance: (1.0, 26.0)),
+            // Stones, old stumps and bushes: small, no shadows.
+            (models: ["nature-kit/rock_smallC", "nature-kit/stump_old",
+                      "nature-kit/plant_bushTriangle"],
+             count: 70, height: (0.6, 1.6), radius: 1.0, distance: (0.3, 18.0), shadows: false),
+        ],
+    ),
 ]

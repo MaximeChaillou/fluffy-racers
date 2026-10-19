@@ -33,6 +33,8 @@ use super::tuning::{BotSkill, BotTuning};
 use crate::kart::{
     DriftMotion, DriftSide, KartInput, KartState, KartTuning, MiniTurbo, drift_yaw_rate,
 };
+use crate::track::ShortcutKind;
+use crate::track::shortcut::OnPath;
 
 /// In a drift, "inward" is the kart's threshold (0.5) plus this, so that rounding never turns
 /// it into "outward".
@@ -98,6 +100,13 @@ const WIDE_MIN_SPEED: f32 = 12.0;
 const NEIGHBOUR_HEIGHT: f32 = 3.0;
 /// Mixed into a bot's seed for its technique draws (rocket start, tricks).
 const TECHNIQUE_SEED: u64 = 0x7EC4_1C0E_5EED_0013;
+/// Issue #107: mixed into a bot's seed for its shortcut draws.
+const ROUTE_SEED: u64 = 0x5407_7C07_5EED_0107;
+/// Issue #107: on a shortcut, a bot further than this beyond its half width has lost it (m).
+const LOST_MARGIN: f32 = 4.0;
+/// Issue #107: heading for a shortcut, a bot this far past its start along the road (m) goes
+/// onto it (its path may start beyond the road's edge).
+const MOUTH_REACH: f32 = 20.0;
 /// Gliding (issue #20), the bot keeps this high above its line (m): it dives when higher, glides
 /// level or climbs when lower...
 const GLIDE_HEIGHT: f32 = 2.0;
@@ -176,6 +185,18 @@ pub enum DriftPlan {
     Cooldown { ticks: u32 },
 }
 
+/// Issue #107: where a bot is going, by the shortcuts of the circuit (`RacingLine::branches`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Route {
+    /// Along the racing line.
+    #[default]
+    Main,
+    /// Heading for the start of shortcut `0`: its lane on the road.
+    Toward(usize),
+    /// On shortcut `0`, along its path.
+    On(usize),
+}
+
 /// A bot's memory between ticks.
 #[derive(Component, Clone, Debug)]
 pub struct BotBrain {
@@ -223,6 +244,13 @@ pub struct BotBrain {
     /// Whether it goes for a trick off the ramp it just left (drawn once per jump); `Some(false)`
     /// also once it pressed.
     trick_roll: Option<bool>,
+    /// Issue #107: the shortcut it heads for or drives on, and the last one it decided about
+    /// (once per pass).
+    pub route: Route,
+    decided_branch: Option<usize>,
+    /// Its draws for the shortcuts, apart from its other generators: they shift none of its
+    /// other choices (and a circuit without shortcut draws none).
+    route_rng: BotRng,
 }
 
 impl BotBrain {
@@ -260,6 +288,19 @@ impl BotBrain {
             technique_rng: BotRng::new(seed ^ TECHNIQUE_SEED),
             start_delay: None,
             trick_roll: None,
+            route: Route::Main,
+            decided_branch: None,
+            route_rng: BotRng::new(seed ^ ROUTE_SEED),
+        }
+    }
+
+    /// Issue #107: on (or heading for) a risky jump.
+    pub fn on_a_jump(&self, line: &RacingLine) -> bool {
+        match self.route {
+            Route::Toward(k) | Route::On(k) => {
+                line.branches().get(k).map(|b| b.kind()) == Some(ShortcutKind::Jump)
+            }
+            Route::Main => false,
         }
     }
 
@@ -273,6 +314,8 @@ impl BotBrain {
         self.slow_ticks = 0;
         self.reverse_ticks = 0;
         self.avoid = 0.0;
+        self.route = Route::Main;
+        self.decided_branch = None;
     }
 }
 
@@ -547,6 +590,17 @@ pub fn drive(
     if let Some(turn_rate) = senses.glide_turn_rate {
         return glide(brain, skill, line, senses, &here, turn_rate, speed);
     }
+    // Issue #107: the shortcuts, on a circuit that has some: the lane toward one, or along it.
+    let mut route_lane = None;
+    if !line.branches().is_empty() {
+        match choose_route(brain, skill, tuning, kart, line, senses, &here, speed) {
+            RouteStep::Line => {}
+            RouteStep::Lane(lane) => route_lane = Some(lane),
+            RouteStep::Follow(k, at) => {
+                return follow_branch(brain, skill, kart, line, senses, (k, at), speed);
+            }
+        }
+    }
 
     // --- Personal lane and precision wobble, slowly changing (variety).
     brain.lane_timer -= dt;
@@ -578,7 +632,7 @@ pub fn drive(
     // --- Where to aim: its lane, a bit ahead.
     let aim = skill.aim_base + skill.aim_per_speed * speed.max(0.0);
     let aim_distance = here.distance + aim;
-    let limits = line.limits_at(aim_distance);
+    let mut limits = line.limits_at(aim_distance);
     let mut wanted =
         (line.offset_at(aim_distance) * skill.line_fidelity + brain.lane + brain.wobble)
             .clamp(limits[0], limits[1]);
@@ -591,6 +645,12 @@ pub fn drive(
         let pull =
             (here.lateral + side - wanted).clamp(-tuning.item_box_pull, tuning.item_box_pull);
         wanted = (wanted + pull).clamp(limits[0], limits[1]);
+    }
+    // Issue #107: heading for a shortcut, its lane, anywhere on the road (a jump's ramp too).
+    if let Some(lane) = route_lane {
+        let half = (line.center().at(aim_distance).half_width - tuning.road_margin).max(0.0);
+        limits = [-half, half];
+        wanted = lane.clamp(-half, half);
     }
 
     // --- Avoidance: move aside to overtake the kart in front, or stay behind it.
@@ -699,6 +759,7 @@ pub fn drive(
                     here.lateral - limits_here[0]
                 };
                 (worth_drifting(t)
+                    && route_lane.is_none()
                     && in_time
                     && curved_enough
                     && inside_room >= HOP_INSIDE_ROOM
@@ -947,21 +1008,207 @@ pub fn drive(
     }
 
     // --- Trick (GD § 5): one press right after leaving a trick ramp, when not drifting.
+    trick(brain, skill, senses, &mut jump);
+
+    brain.last_jump = jump;
+    // The item button is the bot's item brain's (`items.rs`).
+    KartInput {
+        throttle,
+        brake,
+        steer,
+        jump_drift: jump,
+        item: false,
+        look_back: false,
+        interact: false,
+    }
+}
+
+/// Trick (GD § 5): one press of jump/drift right after leaving a trick ramp, when not drifting
+/// (drawn once per jump, with its skill).
+fn trick(brain: &mut BotBrain, skill: &BotSkill, senses: &Senses, jump: &mut bool) {
     if senses.trick_window {
         if brain.trick_roll.is_none() {
             brain.trick_roll = Some(brain.technique_rng.chance(skill.trick_chance));
         }
         let free = matches!(brain.drift, DriftPlan::Idle | DriftPlan::Cooldown { .. });
-        if brain.trick_roll == Some(true) && free && !jump && !brain.last_jump {
-            jump = true;
+        if brain.trick_roll == Some(true) && free && !*jump && !brain.last_jump {
+            *jump = true;
             brain.trick_roll = Some(false);
         }
     } else {
         brain.trick_roll = None;
     }
+}
 
+/// Issue #107: what the route says this tick.
+enum RouteStep {
+    /// Along the racing line.
+    Line,
+    /// Along the racing line, in this lane (m across the road): toward a shortcut.
+    Lane(f32),
+    /// Along shortcut `0`, there.
+    Follow(usize, OnPath),
+}
+
+/// Issue #107 (GD « Conception des circuits »): whether the bot takes the shortcuts ahead, once
+/// per pass and with its level (`BotSkill::shortcut_chance`, `grass_chance`, `jump_chance`): a
+/// road one at once; a grass one only with a boost that lasts most of it (it waits for one up to
+/// the shortcut: a mini-turbo fired before it counts); a risky jump only fast enough. Then the
+/// shortcut's lane, onto it at its start (the grass one only with the boost still on), along it
+/// to its end. Its draws come from its own generator.
+#[allow(clippy::too_many_arguments)]
+fn choose_route(
+    brain: &mut BotBrain,
+    skill: &BotSkill,
+    tuning: &BotTuning,
+    kart: &KartTuning,
+    line: &RacingLine,
+    senses: &Senses,
+    here: &crate::bots::Located,
+    speed: f32,
+) -> RouteStep {
+    let branches = line.branches();
+    let ahead_of = |k: usize| {
+        line.center()
+            .wrap(branches[k].shortcut.from - here.distance)
+    };
+    let boosted_enough = |k: usize, ahead: f32| {
+        let run = ahead + branches[k].shortcut.length() * tuning.grass_boost_share;
+        senses.boost_left * speed.max(1.0) >= run
+    };
+    let fast_enough = speed >= tuning.jump_speed_share * kart.max_speed * senses.speed_scale;
+    match brain.route {
+        Route::On(k) => {
+            let path = &branches[k].shortcut;
+            let at = path.locate(senses.position);
+            brain.sample = None;
+            if at.along < path.length() - 1.0 && at.lateral.abs() <= path.half_width + LOST_MARGIN {
+                return RouteStep::Follow(k, at);
+            }
+            brain.route = Route::Main;
+            RouteStep::Line
+        }
+        Route::Toward(k) => {
+            let path = &branches[k].shortcut;
+            let at = path.locate(senses.position);
+            // On its path, or past its start along the road (a path that starts beyond the
+            // road's edge: the grass bridge).
+            let past_its_start = line.center().wrap(here.distance - path.from) < MOUTH_REACH;
+            if (at.along >= -1.0 && at.lateral.abs() <= path.half_width) || past_its_start {
+                let go = branches[k].kind() != ShortcutKind::Grass || boosted_enough(k, 0.0);
+                if go {
+                    brain.route = Route::On(k);
+                    brain.sample = None;
+                    return RouteStep::Follow(k, at);
+                }
+                brain.route = Route::Main;
+                return RouteStep::Line;
+            }
+            if ahead_of(k) > tuning.shortcut_lookahead + 10.0 {
+                brain.route = Route::Main;
+                return RouteStep::Line;
+            }
+            RouteStep::Lane(branches[k].entry_lateral)
+        }
+        Route::Main => {
+            if let Some(k) = brain.decided_branch
+                && ahead_of(k) > tuning.shortcut_lookahead
+            {
+                brain.decided_branch = None;
+            }
+            for (k, branch) in branches.iter().enumerate() {
+                let ahead = ahead_of(k);
+                if ahead > tuning.shortcut_lookahead || brain.decided_branch == Some(k) {
+                    continue;
+                }
+                let (chance, ready) = match branch.kind() {
+                    ShortcutKind::Road => (skill.shortcut_chance, true),
+                    ShortcutKind::Grass => (skill.grass_chance, boosted_enough(k, ahead)),
+                    ShortcutKind::Jump => (skill.jump_chance, fast_enough),
+                };
+                if !ready {
+                    continue;
+                }
+                brain.decided_branch = Some(k);
+                if chance > 0.0 && brain.route_rng.chance(chance) {
+                    brain.route = Route::Toward(k);
+                    return RouteStep::Lane(branch.entry_lateral);
+                }
+                break;
+            }
+            RouteStep::Line
+        }
+    }
+}
+
+/// Issue #107: one tick of a bot on a shortcut: it steers to its path ahead (past its end, to
+/// its racing line), flat out over a jump, slowing for the turns of a road or a grass path; no
+/// drift (one going on is let go: its mini-turbo fires), a trick off the jump's ramp.
+fn follow_branch(
+    brain: &mut BotBrain,
+    skill: &BotSkill,
+    kart: &KartTuning,
+    line: &RacingLine,
+    senses: &Senses,
+    (k, at): (usize, OnPath),
+    speed: f32,
+) -> KartInput {
+    let branch = &line.branches()[k];
+    let path = &branch.shortcut;
+    let aim = skill.aim_base + skill.aim_per_speed * speed.max(0.0);
+    let ahead = at.along.max(0.0) + aim;
+    let target = if ahead <= path.length() {
+        path.at(ahead).position
+    } else {
+        let d = path.to + (ahead - path.length());
+        line.center()
+            .at(d)
+            .point(line.offset_at(d) * skill.line_fidelity, 0.0)
+    };
+    let (angle, yaw_right) = pursuit(senses.position, senses.forward, senses.right, target, speed);
+    let steer = steer_for_yaw(kart, yaw_right, speed, angle);
+    let target_speed = if branch.kind() == ShortcutKind::Jump {
+        f32::MAX
+    } else {
+        let top = kart.max_speed * senses.speed_scale;
+        let mut planned = if skill.cruise_speed >= 0.999 {
+            f32::MAX
+        } else {
+            top * skill.cruise_speed
+        };
+        let samples = path.samples().len();
+        let step = path.length() / (samples - 1).max(1) as f32;
+        let margin = skill.corner_margin * brain.pace;
+        let count = (skill.anticipation / step.max(0.1)).ceil() as usize;
+        for j in 0..=count {
+            let i = at.index + j;
+            if i >= samples {
+                break;
+            }
+            let corner = corner_speed(kart, branch.curvature(i)) * margin;
+            if corner < planned {
+                let allowed =
+                    (corner * corner + 2.0 * skill.planned_decel * j as f32 * step).sqrt();
+                planned = planned.min(allowed);
+            }
+        }
+        planned
+    };
+    let (throttle, brake) = if speed < target_speed - 0.3 {
+        (1.0, 0.0)
+    } else if speed < target_speed + BRAKE_BAND {
+        (0.0, 0.0)
+    } else {
+        (0.0, ((speed - target_speed) / 4.0).clamp(0.3, 1.0))
+    };
+    if !matches!(brain.drift, DriftPlan::Cooldown { .. }) {
+        brain.drift = DriftPlan::Cooldown {
+            ticks: DRIFT_COOLDOWN_TICKS,
+        };
+    }
+    let mut jump = false;
+    trick(brain, skill, senses, &mut jump);
     brain.last_jump = jump;
-    // The item button is the bot's item brain's (`items.rs`).
     KartInput {
         throttle,
         brake,
