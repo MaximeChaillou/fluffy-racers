@@ -202,7 +202,9 @@ fn the_results_follow_the_bots_that_finish_then_close_with_estimates() {
     }
     assert!(progress(&app, me).finished(), "{:?}", progress(&app, me));
     assert_eq!(progress(&app, me).rank, 1);
-    app.world_mut().resource_mut::<Drivers>().release = true;
+    // Issue #108: the bots wait on the grid until the screen is there (released before it, they
+    // rolled on into the first hairpin of Prairie Pompon redrawn, 120 m after the line, where the
+    // one stopped then was in the others' way).
     while race(&app).phase() != RacePhase::Results {
         app.update();
     }
@@ -224,6 +226,7 @@ fn the_results_follow_the_bots_that_finish_then_close_with_estimates() {
     // The first bot of the standings stops: the two others pass it and finish, live.
     let frozen = race(&app).standings[1];
     app.world_mut().resource_mut::<Drivers>().frozen = Some(frozen);
+    app.world_mut().resource_mut::<Drivers>().release = true;
     let mut previous = lines;
     let mut frozen_rows = vec![1];
     let mut finishes_seen = 0;
@@ -323,7 +326,8 @@ fn the_results_follow_the_bots_that_finish_then_close_with_estimates() {
     app.world_mut().resource_mut::<Drivers>().frozen = None;
     app.update();
     let closed = text_ticks(&mut app);
-    for _ in 0..(40.0 * TICK_HZ) as usize {
+    // Issue #108: a whole lap of Prairie Pompon redrawn from the grid (about 47 s).
+    for _ in 0..(70.0 * TICK_HZ) as usize {
         app.update();
         assert_eq!(rewritten(&mut app, &closed), 0, "the closed table moved");
         if progress(&app, frozen).finished() {

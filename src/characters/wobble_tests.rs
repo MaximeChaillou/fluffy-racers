@@ -121,7 +121,8 @@ fn the_landing_after_the_ramp_squashes_the_driver_and_the_physics_does_not_chang
         != Some(1)
     {
         ticks += 1;
-        assert!(ticks < 40 * 60, "never took off from the ramp");
+        // Issue #108: the trick ramp of Prairie Pompon redrawn, 1.2 km along the lap.
+        assert!(ticks < 60 * 60, "never took off from the ramp");
         lockstep(&mut soft, &mut still, None);
     }
     // In the air: stretched.
@@ -134,7 +135,7 @@ fn the_landing_after_the_ramp_squashes_the_driver_and_the_physics_does_not_chang
         == 0
     {
         ticks += 1;
-        assert!(ticks < 45 * 60, "never landed");
+        assert!(ticks < 65 * 60, "never landed");
         lockstep(&mut soft, &mut still, None);
         stretched = stretched.max(wobble(&soft, driver).pose.squash.y - 1.0);
     }

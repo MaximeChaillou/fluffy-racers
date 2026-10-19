@@ -58,8 +58,18 @@ impl Default for TrackChoice {
     }
 }
 
-/// The test circuit of issue #3.
+/// The game's first circuit (Prairie Pompon, issue #3, redrawn for issue #108): the one built
+/// when nothing else was chosen.
 pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
+
+/// Issue #108: the test circuit of the unit tests (`test_circuit.track.ron`, beside this file):
+/// the layout Prairie Pompon had from issue #3 to issue #108, kept as it was for the tests that
+/// check the track's geometry, the race's rules and the bots' line on a known circuit (its
+/// hairpin, its sand, its ramp, its chicane, its banked turn). Not a circuit of the game.
+#[cfg(test)]
+pub(crate) fn test_circuit() -> TrackData {
+    TrackData::from_ron(include_str!("test_circuit.track.ron")).unwrap()
+}
 
 /// The mirror mode (issue #19, GD § 1): the circuits are built as the mirror image of their file
 /// (`TrackData::mirrored`: the track, its spots, its decor and its grid; the bots' racing line

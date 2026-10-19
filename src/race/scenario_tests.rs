@@ -252,7 +252,7 @@ fn a_full_three_lap_race_then_results_and_restart() {
     // For each lap text: the biggest the counter grew while it showed, and whether it was gold.
     let mut pops: Vec<(f32, bool)> = Vec::new();
     let mut final_lap_banner = None;
-    let mut max_ticks = (150.0 * TICK_HZ) as usize;
+    let mut max_ticks = (200.0 * TICK_HZ) as usize;
     while race(&app).phase() != RacePhase::Finished {
         max_ticks -= 1;
         assert!(
@@ -290,10 +290,11 @@ fn a_full_three_lap_race_then_results_and_restart() {
     assert!(p.finished());
     assert_eq!(p.passed, course.checkpoints_to_finish());
     assert_eq!(p.lap_times.len(), 3);
-    // About 20 s a lap for this autopilot (#3); the first lap starts on the grid.
+    // About 46 s a lap for this autopilot on Prairie Pompon redrawn (issue #108; about 20 s on
+    // the circuit of #3, from 15 to 30 s); the first lap starts on the grid.
     for (i, lap) in p.lap_times.iter().enumerate() {
         let seconds = ticks_to_seconds(*lap);
-        assert!((15.0..30.0).contains(&seconds), "lap {i}: {seconds} s");
+        assert!((32.0..55.0).contains(&seconds), "lap {i}: {seconds} s");
     }
     let total = p.finish.unwrap();
     assert_eq!(p.lap_times.iter().sum::<u32>(), total);
@@ -743,11 +744,17 @@ fn the_circuit_boost_pads_and_trick_ramp_work() {
         .collect();
     assert_eq!(pads.len(), data.boost_pads.len());
     assert!(pads.len() >= 3, "{} pads", pads.len());
+    // Issue #107: a risky jump's ramp is a trick ramp too.
+    let jumps = data
+        .shortcuts
+        .iter()
+        .filter(|s| s.kind == crate::track::ShortcutKind::Jump)
+        .count();
     let ramps = world
         .query_filtered::<(), With<TrickRamp>>()
         .iter(world)
         .count();
-    assert_eq!(ramps, data.trick_ramps.len());
+    assert_eq!(ramps, data.trick_ramps.len() + jumps);
 
     // The pad of the start straight: the closest one ahead of the grid.
     until_go(&mut app);
@@ -863,6 +870,7 @@ impl KeyboardDrifter {
         let speed = velocity.dot(*transform.forward());
         let here = line.locate(transform.translation, self.sample);
         self.sample = Some(here.index);
+
         let aim = here.distance + 5.0 + 0.35 * speed.max(0.0);
         let target = line.center().at(aim).point(line.offset_at(aim), 0.0);
         let to = target - transform.translation;
@@ -907,7 +915,9 @@ impl KeyboardDrifter {
                     input.steer = line.turns()[turn].side.sign();
                 }
             }
-            _ => {
+            // Issue #108: on the ground only (a ramp just out of a big turn: in the air, the button
+            // would make a trick, not a hop).
+            KartState::Grounded => {
                 let lead = Self::HOP_LEAD * speed.max(0.0);
                 let ahead = line.turn_ahead(here.index, (lead / line.step()).ceil() as usize);
                 if let Some((turn, _)) = ahead
@@ -921,6 +931,7 @@ impl KeyboardDrifter {
                     input.steer = line.turns()[turn].side.sign();
                 }
             }
+            _ => {}
         }
         self.last_jump = input.jump_drift;
         (input, release)
@@ -930,9 +941,10 @@ impl KeyboardDrifter {
 /// Issue #30 acceptance: on Prairie Pompon, the hairpin and the banked turn both give an orange
 /// mini-turbo to a player, on every lap, and well before the end of the turn (the drift of #4
 /// gave a blue at best: about 130 units per radian of turn, 176° turns). Driven like a keyboard
-/// player: full inward or the stick released, nothing in between.
+/// player: full inward or the stick released, nothing in between. Issue #108: Prairie Pompon
+/// redrawn, its five hairpins (two of them before #108).
 #[test]
-fn a_keyboard_player_gets_an_orange_in_both_big_turns() {
+fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
     let (mut app, kart) = race_app();
     take_the_wheel(&mut app, kart);
     let line = app.world().resource::<RacingLine>().clone();
@@ -940,12 +952,12 @@ fn a_keyboard_player_gets_an_orange_in_both_big_turns() {
     let big: Vec<usize> = (0..line.turns().len())
         .filter(|t| line.turns()[*t].angle > 2.4)
         .collect();
-    assert_eq!(big.len(), 2, "{:?}", line.turns());
+    assert_eq!(big.len(), 5, "{:?}", line.turns());
     until_go(&mut app);
     let mut driver = KeyboardDrifter::default();
     let mut releases = Vec::new();
     let mut laps = 0;
-    for _ in 0..(70.0 * TICK_HZ) as usize {
+    for _ in 0..(150.0 * TICK_HZ) as usize {
         let world = app.world();
         let (input, release) = driver.input(
             &line,
@@ -974,9 +986,9 @@ fn a_keyboard_player_gets_an_orange_in_both_big_turns() {
     assert!(progress(&app, kart).finished());
     // One drift per big turn and per lap, each released at orange, at least 15 m before the
     // turn ends.
-    assert_eq!(releases.len(), 6, "{releases:?}");
+    assert_eq!(releases.len(), 3 * big.len(), "{releases:?}");
     for (i, release) in releases.iter().enumerate() {
-        assert_eq!(release.turn, big[i % 2], "{releases:?}");
+        assert_eq!(release.turn, big[i % big.len()], "{releases:?}");
         assert_eq!(release.tier, Some(MiniTurbo::Orange), "{release:?}");
         let turn = line.turns()[release.turn];
         let end = (turn.start + turn.len) as f32 * line.step();
@@ -985,9 +997,11 @@ fn a_keyboard_player_gets_an_orange_in_both_big_turns() {
             "{release:?}: the turn ends at {end} m"
         );
     }
-    // A lap stays around 17 s for this driver (laps 2 and 3, without the start).
+    // A lap stays around 42.5 s for this driver on Prairie Pompon redrawn (issue #108; around 17
+    // s on the circuit of #3, from 15 to 19.5 s: the same ratios), laps 2 and 3, without the
+    // start.
     for lap in &progress(&app, kart).lap_times[1..] {
         let seconds = ticks_to_seconds(*lap);
-        assert!((15.0..19.5).contains(&seconds), "{seconds} s");
+        assert!((37.5..49.0).contains(&seconds), "{seconds} s");
     }
 }

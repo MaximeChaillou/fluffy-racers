@@ -839,9 +839,9 @@ fn roundabout() -> TrackData {
     data
 }
 
-/// The two big turns of Prairie Pompon, the hairpin then the banked turn, as the stretch along
-/// the lap where a drift for them starts (m): from a little before the turn (a bot hops just
-/// before it) to its end.
+/// The big turns of Prairie Pompon (issue #108: its five hairpins; the hairpin and the banked
+/// turn of the circuit of #3 before), as the stretch along the lap where a drift for them starts
+/// (m): from a little before the turn (a bot hops just before it) to its end.
 fn big_turns(app: &App) -> Vec<(f32, f32)> {
     let line = app.world().resource::<RacingLine>();
     line.turns()
@@ -853,6 +853,9 @@ fn big_turns(app: &App) -> Vec<(f32, f32)> {
         })
         .collect()
 }
+
+/// Issue #108: the big turns of Prairie Pompon redrawn, its five hairpins (two before).
+const PRAIRIE_BIG_TURNS: usize = 5;
 
 fn set_difficulties(app: &mut App, difficulty: impl Fn(usize) -> BotDifficulty) {
     let world = app.world_mut();
@@ -1127,7 +1130,7 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         let mut log = RaceLog::new(&mut app);
         assert_eq!(log.karts.len(), 12);
         let started = std::time::Instant::now();
-        run_race(&mut app, &mut log, 120.0);
+        run_race(&mut app, &mut log, 220.0);
         let elapsed = started.elapsed().as_secs_f64();
         let mut result = RaceResult::of(&app, &log, "12 karts, Normal");
         result.report += &format!(
@@ -1183,64 +1186,69 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         runs.iter().map(|r| r.over),
     );
     let finishes = |r: &Run| r.race.finishes();
+    // Issue #108: the windows follow Prairie Pompon redrawn, about 2.5 times as long a lap (the
+    // same ratios to the values measured as before #108: 75, 50, 56.5 to 62.5 and 57.5 to 61.5
+    // then, for finishes of 53 to 64 s; the upper ones 4.4 % higher for its final layout, about
+    // 1370 m a lap: average finishes of 141.8 to 147.1 s measured).
     checks.below(
         "slowest finish (s)",
         &per_race(&runs, |r| highest(&finishes(r))),
-        Some(75.0),
+        Some(172.0),
         None,
     );
     checks.at_least(
         "fastest finish (s)",
         &per_race(&runs, |r| lowest(&finishes(r))),
-        Some(50.0),
+        Some(118.0),
         None,
     );
     checks.at_least(
         "average finish (s)",
         &per_race(&runs, |r| mean(&finishes(r))),
-        Some(56.5),
-        Some(57.5),
+        Some(133.0),
+        Some(134.0),
     );
     checks.at_most(
         "average finish (s)",
         &per_race(&runs, |r| mean(&finishes(r))),
-        Some(62.5),
-        Some(61.5),
+        Some(152.5),
+        Some(149.5),
     );
-    // About 19 s a lap; the first one starts from the grid, up to 38 m behind the line, in the
-    // traffic of the start. Issue #40: a lap where the kart was towed after a pack incident is
-    // timed without the pelican's own time (its wait and the carry).
+    // About 47 s a lap (issue #108; about 19 s on the circuit of #3); the first one starts from
+    // the grid, up to 38 m behind the line, in the traffic of the start. Issue #40: a lap where
+    // the kart was towed after a pack incident is timed without the pelican's own time (its wait
+    // and the carry). The slowest lap stays under the guide's minute (GD § 16).
     let first_laps = |r: &Run| r.race.laps_without_pelican(0..1);
     let later_laps = |r: &Run| r.race.laps_without_pelican(1..3);
     checks.below(
         "slowest first lap, without the pelican (s)",
         &per_race(&runs, |r| highest(&first_laps(r))),
-        Some(32.0),
+        Some(60.0),
         None,
     );
     checks.below(
         "slowest lap 2 or 3, without the pelican (s)",
         &per_race(&runs, |r| highest(&later_laps(r))),
-        Some(26.0),
+        Some(58.5),
         None,
     );
     checks.at_least(
         "fastest lap (s)",
         &per_race(&runs, |r| lowest(&r.race.laps(0..3))),
-        Some(16.0),
+        Some(37.0),
         None,
     );
     checks.at_least(
         "average lap 2 and 3 (s)",
         &per_race(&runs, |r| mean(&r.race.laps(1..3))),
-        Some(17.5),
-        Some(18.0),
+        Some(41.0),
+        Some(42.5),
     );
     checks.at_most(
         "average lap 2 and 3 (s)",
         &per_race(&runs, |r| mean(&r.race.laps(1..3))),
-        Some(20.5),
-        Some(20.0),
+        Some(51.0),
+        Some(49.4),
     );
     // Hardly ever towed: a pile-up at the start or a shunt in the pack may cost a few tows (a
     // kart thrown over a wall; far fewer since #27), the bots alone (almost) never.
@@ -1262,7 +1270,9 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         }),
     );
     // They drift. Since issue #30 the big turns of Prairie Pompon are long enough for an orange,
-    // which the Normal bots aim for: most of their mini-turbos are orange, in both turns.
+    // which the Normal bots aim for: most of their mini-turbos are orange, in every big turn.
+    // Issue #108: five big turns a lap instead of two: the counts scaled with the values measured
+    // (24 and 40 mini-turbos, 24 and 35 oranges before, for 41 to 61 and 38 to 56 measured).
     checks.at_least(
         "karts firing a mini-turbo",
         &per_race(&runs, |r| {
@@ -1282,14 +1292,14 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
     checks.at_least(
         "mini-turbos",
         &per_race(&runs, total),
-        Some(24.0),
-        Some(40.0),
+        Some(75.0),
+        Some(108.0),
     );
     checks.at_least(
         "orange mini-turbos",
         &per_race(&runs, oranges),
-        Some(24.0),
-        Some(35.0),
+        Some(70.0),
+        Some(98.0),
     );
     checks.at_least(
         "orange share of the mini-turbos",
@@ -1297,7 +1307,10 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         Some(0.5),
         Some(0.75),
     );
-    checks.every_race("two big turns", runs.iter().map(|r| r.turns.len() == 2));
+    checks.every_race(
+        "five big turns",
+        runs.iter().map(|r| r.turns.len() == PRAIRIE_BIG_TURNS),
+    );
     checks.at_least(
         "oranges in the big turn with the fewest",
         &per_race(&runs, |r| {
@@ -1314,7 +1327,7 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
                     .collect::<Vec<_>>(),
             )
         }),
-        Some(10.0),
+        Some(11.0),
         Some(15.0),
     );
     // The bots release their drifts themselves: hardly any drift breaks (wall, too slow).
@@ -1327,7 +1340,9 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
         Some(1.0),
     );
     // Issue #14: driving over them, the bots pick the croquettes of the circuit up (the leaders
-    // the most: the lines are empty for 10 s after them).
+    // the most: the lines are empty for 10 s after them). Issue #108: a longer lap, more lines
+    // (28 croquettes, 22 before): scaled with the values measured (2 and 4.2 karts, 12 and 20
+    // croquettes before, for 4 to 8 karts and 19 to 36 croquettes measured).
     checks.at_least(
         "karts picking croquettes up",
         &per_race(&runs, |r| {
@@ -1337,8 +1352,8 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
                 .filter(|k| k.log.croquettes_picked > 0)
                 .count() as f32
         }),
-        Some(2.0),
-        Some(4.2),
+        Some(4.0),
+        Some(6.5),
     );
     checks.at_least(
         "croquettes picked up",
@@ -1349,8 +1364,8 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
                 .map(|k| k.log.croquettes_picked)
                 .sum::<u32>() as f32
         }),
-        Some(12.0),
-        Some(20.0),
+        Some(19.0),
+        Some(32.0),
     );
     // No single file: spread across the straight, and spread at the finish.
     checks.above(
@@ -1403,7 +1418,7 @@ fn the_three_difficulties_drive_differently() {
         set_difficulties(&mut app, difficulty);
         player_becomes_a_bot(&mut app, difficulty(11));
         let mut log = RaceLog::new(&mut app);
-        run_race(&mut app, &mut log, 120.0);
+        run_race(&mut app, &mut log, 220.0);
         Run {
             race: RaceResult::of(&app, &log, "12 karts, mixed difficulties"),
             turns: big_turns(&app),
@@ -1416,7 +1431,10 @@ fn the_three_difficulties_drive_differently() {
         "every kart finishes",
         runs.iter().map(|r| r.race.all_finished()),
     );
-    checks.every_race("two big turns", runs.iter().map(|r| r.turns.len() == 2));
+    checks.every_race(
+        "five big turns",
+        runs.iter().map(|r| r.turns.len() == PRAIRIE_BIG_TURNS),
+    );
     use BotDifficulty::{Easy, Hard, Normal};
     let of = |r: &Run, d: BotDifficulty| r.race.of_difficulty(d).cloned().collect::<Vec<_>>();
     let average = |r: &Run, d| mean(&of(r, d).iter().filter_map(|k| k.finish).collect::<Vec<_>>());
@@ -1450,12 +1468,8 @@ fn the_three_difficulties_drive_differently() {
     );
     // Lap times (laps 2 and 3, out of the start, without the pelican's time after a pack
     // incident) in each difficulty's own window: tight on average, wider in a race (a shunt
-    // slows down the karts around it).
-    for (d, [low, mean_low, mean_high, high]) in [
-        (Easy, [18.5, 19.6, 20.9, 23.0]),
-        (Normal, [17.0, 18.2, 19.5, 21.0]),
-        (Hard, [15.5, 16.6, 17.8, 19.5]),
-    ] {
+    // slows down the karts around it). Issue #108: on Prairie Pompon redrawn ([`LAP_WINDOWS`]).
+    for (d, [low, mean_low, mean_high, high]) in LAP_WINDOWS {
         let laps = |r: &Run| {
             mean(
                 &of(r, d)
@@ -1477,7 +1491,9 @@ fn the_three_difficulties_drive_differently() {
         Some(0.0),
         None,
     );
-    // Two big turns a lap: 6 chances for a mini-turbo.
+    // Five big turns a lap: 15 chances for a mini-turbo (issue #108; 6 before, with 4 and 5
+    // mini-turbos a kart, 8 more for Hard than for Easy on average, for 5.75 to 7 and 15
+    // measured).
     let fired = |r: &Run, d| {
         of(r, d)
             .iter()
@@ -1493,8 +1509,8 @@ fn the_three_difficulties_drive_differently() {
     checks.at_least(
         "Hard: mini-turbos a kart",
         &per_race(&runs, |r| mean(&fired(r, Hard))),
-        Some(4.0),
-        Some(5.0),
+        Some(9.5),
+        Some(12.0),
     );
     checks.above(
         "Hard minus Easy, mini-turbos",
@@ -1502,7 +1518,7 @@ fn the_three_difficulties_drive_differently() {
             fired(r, Hard).iter().sum::<f32>() - fired(r, Easy).iter().sum::<f32>()
         }),
         Some(0.0),
-        Some(8.0),
+        Some(17.0),
     );
     tow_checks(
         &mut checks,
@@ -1510,8 +1526,9 @@ fn the_three_difficulties_drive_differently() {
         5.0,
         1.2,
     );
-    // The Hard bots get an orange in the hairpin and in the banked turn, three in the race (even
-    // after a tow on the first lap), the Normal bots some.
+    // The Hard bots get an orange in the big turns, at least half of them in the race (even after
+    // a tow on the first lap: three of the six on the circuit of #3, eight of the fifteen since
+    // issue #108), the Normal bots some.
     let in_turns = |r: &Run| -> Vec<usize> {
         of(r, Hard)
             .iter()
@@ -1538,29 +1555,41 @@ fn the_three_difficulties_drive_differently() {
             .collect::<Vec<_>>()
     };
     checks.at_least(
-        "Hard: share of karts with 3 oranges",
+        "Hard: share of karts with 8 oranges",
         &per_race(&runs, |r| {
             let o = oranges(r, Hard);
-            o.iter().filter(|n| **n >= 3.0).count() as f32 / o.len().max(1) as f32
+            o.iter().filter(|n| **n >= 8.0).count() as f32 / o.len().max(1) as f32
         }),
         Some(0.25),
         Some(0.8),
     );
-    // 4 Hard bots, 2 big turns, 3 laps: an orange in two thirds of the big turns.
+    // 4 Hard bots, 5 big turns, 3 laps: an orange in most of the big turns (issue #108: 12 and
+    // 18 for Hard, 5 and 12 for Normal with 2 big turns, for 18 to 24 and 12 to 20 measured).
     checks.at_least(
         "Hard: oranges",
         &per_race(&runs, |r| oranges(r, Hard).iter().sum()),
-        Some(12.0),
-        Some(18.0),
+        Some(29.0),
+        Some(45.0),
     );
     checks.at_least(
         "Normal: oranges",
         &per_race(&runs, |r| oranges(r, Normal).iter().sum()),
-        Some(5.0),
-        Some(12.0),
+        Some(16.0),
+        Some(33.0),
     );
     checks.finish();
 }
+
+/// Issue #108: each difficulty's window for its laps 2 and 3 on Prairie Pompon redrawn (lowest of
+/// a race, lowest mean, highest mean, highest of a race; s), the same ratios to the values
+/// measured as on the circuit of #3 (Easy 18.5, 19.6, 20.9, 23; Normal 17, 18.2, 19.5, 21; Hard
+/// 15.5, 16.6, 17.8, 19.5): about 1370 m a lap, its means measured at 49.5 s (Easy), 45.8 s
+/// (Normal) and 42.0 s (Hard).
+const LAP_WINDOWS: [(BotDifficulty, [f32; 4]); 3] = [
+    (BotDifficulty::Easy, [44.6, 48.2, 51.5, 57.3]),
+    (BotDifficulty::Normal, [42.0, 44.9, 48.1, 51.5]),
+    (BotDifficulty::Hard, [37.9, 40.9, 43.9, 48.6]),
+];
 
 /// Issue #6 acceptance: at the highest difficulty the bots chain orange mini-turbos, in a turn
 /// long enough for it (one endless turn), while Easy bots release at blue.
@@ -1685,7 +1714,7 @@ fn bots_race_with_items() {
         wait_for_the_bots(&mut app, 11);
         player_becomes_a_bot(&mut app, BotDifficulty::Normal);
         let mut log = RaceLog::new(&mut app);
-        run_race(&mut app, &mut log, 150.0);
+        run_race(&mut app, &mut log, 300.0);
         let race = RaceResult::of(&app, &log, "12 karts, Normal, with items");
         app.update();
         let over = race_phase(&app) == RacePhase::Finished;
@@ -1702,17 +1731,21 @@ fn bots_race_with_items() {
         "the race is over once all have finished",
         runs.iter().map(|r| r.over),
     );
+    // Issue #108: the windows and counts follow Prairie Pompon redrawn, about 2.5 times as long a
+    // lap, its four rows of boxes (the same ratios to the values measured as before #108: 85 and
+    // 70, 50; 15 and 25 boxes, 20 and 35 items used, 5 and 10 hits; the slowest finish 4.4 %
+    // higher for its final layout, about 1370 m a lap).
     let finishes = |r: &Run| r.race.finishes();
     checks.below(
         "slowest finish (s)",
         &per_race(&runs, |r| highest(&finishes(r))),
-        Some(85.0),
-        Some(70.0),
+        Some(188.0),
+        Some(164.0),
     );
     checks.at_least(
         "fastest finish (s)",
         &per_race(&runs, |r| lowest(&finishes(r))),
-        Some(50.0),
+        Some(118.0),
         None,
     );
     let items = |r: &Run| r.race.karts.iter().map(|k| k.items).collect::<Vec<_>>();
@@ -1728,8 +1761,8 @@ fn bots_race_with_items() {
     checks.at_least(
         "boxes taken",
         &per_race(&runs, |r| sum(r, |i| i.boxes)),
-        Some(15.0),
-        Some(25.0),
+        Some(28.0),
+        Some(45.0),
     );
     checks.at_least(
         "karts that used an item",
@@ -1740,14 +1773,14 @@ fn bots_race_with_items() {
     checks.at_least(
         "items used",
         &per_race(&runs, |r| sum(r, |i| i.used)),
-        Some(20.0),
-        Some(35.0),
+        Some(46.0),
+        Some(70.0),
     );
     checks.at_least(
         "hits (spins and tumbles)",
         &per_race(&runs, |r| sum(r, |i| i.hits_taken)),
-        Some(5.0),
-        Some(10.0),
+        Some(7.0),
+        Some(14.0),
     );
     checks.at_most(
         "tows (every cause)",
@@ -1787,7 +1820,7 @@ fn bots_race_with_interactions() {
         set_difficulties(&mut app, difficulty);
         player_becomes_a_bot(&mut app, difficulty(11));
         let mut log = RaceLog::new(&mut app);
-        run_race(&mut app, &mut log, 150.0);
+        run_race(&mut app, &mut log, 300.0);
         let race = RaceResult::of(&app, &log, "12 karts, mixed, with interactions");
         app.update();
         let over = race_phase(&app) == RacePhase::Finished;
@@ -1804,19 +1837,22 @@ fn bots_race_with_interactions() {
         "the race is over once all have finished",
         runs.iter().map(|r| r.over),
     );
+    // Issue #108: the windows follow Prairie Pompon redrawn, about 2.5 times as long a lap (the
+    // same ratios to the values measured as before #108: 85 and 70, 45; the slowest finish 4.4 %
+    // higher for its final layout, about 1370 m a lap).
     let finishes = |r: &Run| r.race.finishes();
     checks.below(
         "slowest finish (s)",
         &per_race(&runs, |r| highest(&finishes(r))),
-        Some(85.0),
-        Some(70.0),
+        Some(193.0),
+        Some(168.0),
     );
-    // The Hard bots in front: below 50 s (47.9 s at the fastest on the seeds 0 to 7). A tow
-    // never makes a lap shorter than that.
+    // The Hard bots in front: below 120 s (115.7 s at the fastest on the seeds 0 to 7; 47.9 s
+    // before #108). A tow never makes a lap shorter than that.
     checks.at_least(
         "fastest finish (s)",
         &per_race(&runs, |r| lowest(&finishes(r))),
-        Some(45.0),
+        Some(108.0),
         None,
     );
     let paws = |r: &Run| r.race.karts.iter().map(|k| k.paws).collect::<Vec<_>>();
@@ -1856,12 +1892,7 @@ fn bots_race_with_interactions() {
     );
     // Lap times (laps 2 and 3, without the pelican's time after a pack incident) no slower than
     // the windows of the race without interactions.
-    use BotDifficulty::{Easy, Hard, Normal};
-    for (d, [mean_high, high]) in [
-        (Easy, [20.9, 23.0]),
-        (Normal, [19.5, 21.0]),
-        (Hard, [17.8, 19.5]),
-    ] {
+    for (d, [_, _, mean_high, high]) in LAP_WINDOWS {
         let laps = |r: &Run| {
             mean(
                 &r.race
@@ -2054,7 +2085,7 @@ fn the_game_fills_the_grid_with_eleven_bots() {
         let from = log.ticks;
         let earlier_tows: usize = log.karts.iter().map(|(_, k)| k.tows.len()).sum();
         let mut pass_again = f32::INFINITY;
-        for _ in 0..(35.0 * TICK_HZ) as usize {
+        for _ in 0..(70.0 * TICK_HZ) as usize {
             step(&mut app, &mut log);
             if bots.iter().all(|(b, ..)| progress(&app, *b).passed > n + 2) {
                 pass_again = ticks_to_seconds(log.ticks - from);
@@ -2110,11 +2141,13 @@ fn the_game_fills_the_grid_with_eleven_bots() {
         Some(1.0),
         None,
     );
+    // Issue #108: a lap of Prairie Pompon redrawn, about 2.5 times as long (30 and 21 s before,
+    // for 16 to 21 s measured).
     checks.below(
         "all 11 bots past the idle player again (s)",
         &per_race(&runs, |r| r.pass_again),
-        Some(30.0),
-        Some(21.0),
+        Some(80.0),
+        Some(55.0),
     );
     checks.at_most(
         "tows while they pass the idle player again",
@@ -2224,9 +2257,9 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 }
 
 /// Issue #107 (GD « Conception des circuits »): the circuits that follow the guide (the reference
-/// one of #107; the circuits redone or added after it join the list). Their races check the
-/// guide's figures too ([`guide_checks`]).
-const GUIDE_CIRCUITS: [&str; 1] = ["Corniche Cannelle"];
+/// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon).
+/// Their races check the guide's figures too ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 2] = ["Prairie Pompon", "Corniche Cannelle"];
 
 /// Issue #144: knocks by a hazard in a race of 12 Normal bots (the karts' total), at worst and
 /// on average over the seeds.

@@ -93,13 +93,17 @@ impl HomeTuning {
 
     /// The skill of the background's karts: the Hard bots' (their driving, their throw), with
     /// these paws, and no aim at the walls (a kart pushed against one stops: the pack would
-    /// break up).
+    /// break up). Issue #108: no shortcut either (a kart on the hidden road or across the grass
+    /// leaves the pack, one short of a risky jump waits for the pelican).
     pub fn skill(&self, bots: &BotTuning) -> BotSkill {
         BotSkill {
             strike_chance: self.strike_chance.clamp(0.0, 1.0),
             grab_chance: self.grab_chance.clamp(0.0, 1.0),
             escape_delay: self.escape_delay.max(0.0),
             strike_edge_bias: 0.0,
+            shortcut_chance: 0.0,
+            grass_chance: 0.0,
+            jump_chance: 0.0,
             ..*bots.skill(BotDifficulty::Hard)
         }
     }
@@ -509,6 +513,12 @@ mod tests {
         assert!(skill.escape_delay > hard.escape_delay, "the arms are seen");
         assert_eq!(skill.line_fidelity, hard.line_fidelity);
         assert_eq!(skill.throw, hard.throw);
+        // Issue #108: the pack keeps to the road.
+        assert!(hard.shortcut_chance > 0.0 && hard.grass_chance > 0.0 && hard.jump_chance > 0.0);
+        assert_eq!(
+            (skill.shortcut_chance, skill.grass_chance, skill.jump_chance),
+            (0.0, 0.0, 0.0)
+        );
         assert!(t.blend_seconds < t.shot_seconds);
     }
 }

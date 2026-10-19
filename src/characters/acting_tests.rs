@@ -189,7 +189,9 @@ fn the_trick_ramp_the_figure_the_landing_and_the_physics_does_not_change() {
     let mut ticks = 0;
     while takeoff(&acted) != Some(1) {
         ticks += 1;
-        assert!(ticks < 40 * 60, "never took off from the ramp");
+        // Issue #108: Prairie Pompon redrawn, its trick ramp about 1.2 km along the lap (40 s
+        // before, for a ramp a few hundred meters along).
+        assert!(ticks < 60 * 60, "never took off from the ramp");
         let input = autopilot(&acted, kart);
         lockstep(&mut acted, &mut plain, input);
     }

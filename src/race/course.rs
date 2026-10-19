@@ -360,9 +360,9 @@ pub(crate) mod tests {
     use super::*;
     use crate::track::TrackData;
 
+    /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     pub(crate) fn prairie() -> (TrackData, Course) {
-        let data =
-            TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap();
+        let data = crate::track::test_circuit();
         let course = Course::new(&TrackLayout::new(&data), &RaceTuning::default());
         (data, course)
     }

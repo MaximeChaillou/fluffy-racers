@@ -375,8 +375,35 @@ mod tests {
         data.lakes.iter().map(Lake::new).collect()
     }
 
+    /// The decor of a circuit of the game, placed as the game places it (`dressing`): around its
+    /// shortcuts too (issue #107; issue #108: Prairie Pompon has some).
     fn plan_of(file: &str) -> (TrackData, CenterLine, DecorPlan) {
         let (data, center) = circuit(file);
+        let plan = plan_around(&data, &center, data.decor_seed);
+        (data, center, plan)
+    }
+
+    fn plan_around(data: &TrackData, center: &CenterLine, seed: u64) -> DecorPlan {
+        let shortcuts: Vec<Shortcut> = data
+            .shortcuts
+            .iter()
+            .map(|s| Shortcut::new(center, s))
+            .collect();
+        place_decor_around(
+            center,
+            data.biome(),
+            &data.props,
+            seed,
+            &lakes_of(data),
+            &shortcuts,
+        )
+    }
+
+    /// Issue #108: the test circuit (the layout Prairie Pompon had before #108, with the
+    /// Prairie's biome) and its decor.
+    fn test_circuit_plan() -> (TrackData, CenterLine, DecorPlan) {
+        let data = crate::track::test_circuit();
+        let center = CenterLine::of(&data);
         let plan = place_decor(
             &center,
             data.biome(),
@@ -387,11 +414,12 @@ mod tests {
         (data, center, plan)
     }
 
-    /// The tight turns: Prairie Pompon's hairpin (12 m at its apex) and banked turn, the oval's
-    /// two half circles (35 m, a little less where the spline cuts them); not the straights.
+    /// The tight turns: the test circuit's hairpin (12 m at its apex) and banked turn (issue
+    /// #108: the layout Prairie Pompon had before #108), the oval's two half circles (35 m, a
+    /// little less where the spline cuts them); not the straights.
     #[test]
     fn the_tight_turns_are_the_turns() {
-        let (_, prairie) = circuit("prairie.track.ron");
+        let prairie = CenterLine::of(&crate::track::test_circuit());
         let turns = tight_turns(&prairie);
         let smallest = turns.iter().map(|t| t.radius).fold(f32::MAX, f32::min);
         assert!((8.0..16.0).contains(&smallest), "{smallest}");
@@ -560,21 +588,9 @@ mod tests {
                     );
                 }
             }
-            let again = place_decor(
-                &center,
-                data.biome(),
-                &data.props,
-                data.decor_seed,
-                &lakes_of(&data),
-            );
+            let again = plan_around(&data, &center, data.decor_seed);
             assert_eq!(plan, again, "{file}: the same plan every time");
-            let other = place_decor(
-                &center,
-                data.biome(),
-                &data.props,
-                data.decor_seed + 1,
-                &lakes_of(&data),
-            );
+            let other = plan_around(&data, &center, data.decor_seed + 1);
             assert_ne!(
                 plan.pieces, other.pieces,
                 "{file}: another seed, other places"
@@ -658,10 +674,12 @@ mod tests {
     }
 
     /// The rows stand along the walls, facing the track: the model's front (+Z, turned by the
-    /// yaw) points at the centerline. Inside or outside, as the biome says.
+    /// yaw) points at the centerline. Inside or outside, as the biome says. Issue #108: on the
+    /// test circuit (the layout Prairie Pompon had before #108, with the Prairie's biome): the
+    /// new Prairie Pompon, a serpentine, has other legs of the track beyond many of its walls.
     #[test]
     fn rows_face_the_track_on_their_side() {
-        let (data, center, plan) = plan_of("prairie.track.ron");
+        let (data, center, plan) = test_circuit_plan();
         let biome = data.biome().unwrap();
         let row = &biome.rows[0];
         assert_eq!(row.side, Side::Outside);
@@ -690,9 +708,11 @@ mod tests {
     }
 
     /// Without a biome, only the file's props stand; a prop with no room is left out and named.
+    /// Issue #108: on the test circuit (the layout Prairie Pompon had before #108).
     #[test]
     fn without_a_biome_only_the_props_and_a_prop_without_room_is_left_out() {
-        let (data, center) = circuit("prairie.track.ron");
+        let data = crate::track::test_circuit();
+        let center = CenterLine::of(&data);
         let plan = place_decor(&center, None, &data.props, 0, &[]);
         assert_eq!(plan.pieces.len(), {
             data.props

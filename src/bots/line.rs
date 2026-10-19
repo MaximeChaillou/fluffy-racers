@@ -741,9 +741,10 @@ pub(crate) mod tests {
     use crate::bots::BotTuning;
     use crate::track::TrackData;
 
+    /// Issue #108: the racing line of the test circuit (the layout Prairie Pompon had before
+    /// #108).
     pub(crate) fn prairie_line() -> (TrackLayout, RacingLine) {
-        let data =
-            TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap();
+        let data = crate::track::test_circuit();
         let layout = TrackLayout::new(&data);
         let t = BotTuning::default();
         let line = RacingLine::new(
@@ -974,13 +975,19 @@ pub(crate) mod tests {
     /// Issue #107 (GD « Conception des circuits »): on the Corniche Cannelle and its mirror, the
     /// lanes keep `void_margin` more room from a side without wall (a drop) than from a wall; and
     /// its racing line has at least five turns of 120° or more, the ones a Normal bot drifts
-    /// (`BotSkill::min_drift_angle`: the guide's drifts per lap).
+    /// (`BotSkill::min_drift_angle`: the guide's drifts per lap). Issue #108: the same on Prairie
+    /// Pompon redrawn after the guide.
     #[test]
     fn the_lanes_keep_away_from_a_drop_and_the_reference_circuit_has_turns_to_drift() {
         let t = BotTuning::default();
-        let data =
-            TrackData::from_ron(include_str!("../../assets/tracks/corniche.track.ron")).unwrap();
-        for data in [data.clone(), data.mirrored()] {
+        let circuits = [
+            include_str!("../../assets/tracks/corniche.track.ron"),
+            include_str!("../../assets/tracks/prairie.track.ron"),
+        ];
+        for data in circuits.into_iter().flat_map(|text| {
+            let data = TrackData::from_ron(text).unwrap();
+            [data.clone(), data.mirrored()]
+        }) {
             let (layout, line) = line_of(&data);
             let center = &layout.center;
             assert!(!layout.open_edges.is_empty());
@@ -1005,7 +1012,7 @@ pub(crate) mod tests {
                 .iter()
                 .filter(|turn| turn.angle >= 120f32.to_radians())
                 .count();
-            assert!(big >= 5, "{:?}", line.turns());
+            assert!(big >= 5, "{}: {:?}", data.name, line.turns());
         }
     }
 

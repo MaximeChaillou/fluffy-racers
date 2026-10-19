@@ -30,6 +30,7 @@ use crate::tests::{
     follow_centerline, game_app_unloaded, hold_keys, player, single_threaded, wait_for_the_player,
 };
 use crate::track::mesh::{WALL_HEIGHT, WALL_THICKNESS, wall_offset};
+use crate::track::shortcut::walled;
 use crate::track::{Surface, TrackChoice, TrackLayout};
 
 /// The kart's parts: the default ones (every stat at the middle), or the roster's lightest and
@@ -337,13 +338,13 @@ fn no_crash_sends_a_kart_over_a_wall() {
             }
         }
     }
-    // Out of the hairpin (it ends about 125 m along the lap): into its outer wall on the left, or
-    // back into the right one.
+    // Out of the hairpin (it ends about 195 m along the lap since issue #108: 125 m before):
+    // into its outer wall on the left, or back into the right one.
     for build in [Build::Middle, Build::Heavy] {
         for (autopilot, steer, extra) in [
-            (130.0, -1.0, Extra::Boost),
-            (130.0, 1.0, Extra::Nothing),
-            (140.0, 1.0, Extra::Drift),
+            (200.0, -1.0, Extra::Boost),
+            (200.0, 1.0, Extra::Nothing),
+            (210.0, 1.0, Extra::Drift),
         ] {
             crashes.push(Crash {
                 build,
@@ -420,13 +421,14 @@ fn race_app(track: TrackChoice, bots: usize) -> (App, Entity) {
     panic!("the race or its bots never came");
 }
 
-/// The circuit's walls as the karts meet them: the one collider with `Surface::Wall`.
+/// The circuit's walls as the karts meet them: the one trimesh collider with `Surface::Wall`
+/// (issue #144: a fixed obstacle is a wall to the karts too, a simple shape).
 fn wall_collider(app: &mut App) -> Collider {
     let world = app.world_mut();
     let walls: Vec<Collider> = world
         .query::<(&Collider, &Surface)>()
         .iter(world)
-        .filter(|(_, surface)| **surface == Surface::Wall)
+        .filter(|(collider, surface)| **surface == Surface::Wall && collider.as_trimesh().is_some())
         .map(|(collider, _)| collider.clone())
         .collect();
     assert_eq!(walls.len(), 1, "one collider for the walls");
@@ -483,6 +485,15 @@ fn the_walls_are_solid_exactly_as_high_as_they_are_drawn() {
         let mut missed = Vec::new();
         for s in layout.center.samples() {
             for side in [-1.0, 1.0] {
+                // Issue #107: no wall on a side without wall (Prairie Pompon has some since
+                // issue #108), nor at the very end of a wall (a sample's quads on both sides
+                // agree: `mesh`'s test of the sides without wall).
+                if ![-1.5f32, 0.0, 1.5]
+                    .iter()
+                    .all(|o| walled(&layout.open_edges, &layout.center, s.distance + o, side))
+                {
+                    continue;
+                }
                 let top = s.point(side * wall_offset(s), WALL_HEIGHT);
                 if !drawn.contains(&mm(top)) {
                     missed.push(format!("not drawn at {top} ({:.0} m)", s.distance));
@@ -606,10 +617,21 @@ fn watch_the_view(
     let to_camera = eye.to_matrix().inverse();
     let center = &layout.center;
     let here = center.samples()[center.nearest_index(kart.translation)].distance;
+    // Issue #108: on a shortcut (the hidden road, the grass path of a circuit drawn after the
+    // guide), the road ahead is its path, then the road after its end.
+    let on_a_shortcut = layout.shortcuts.iter().find_map(|path| {
+        let at = path.locate(kart.translation);
+        (at.along >= 0.0 && at.along <= path.length() && at.lateral.abs() <= path.half_width)
+            .then_some((path, at.along))
+    });
     let (mut seen, mut lost) = (0, 0);
     for k in 0..29 {
         let ahead = 3.0 + 1.5 * k as f32;
-        let s = center.at(here + ahead);
+        let s = match on_a_shortcut {
+            Some((path, along)) if along + ahead <= path.length() => path.at(along + ahead),
+            Some((path, along)) => center.at(path.from + path.span + along + ahead - path.length()),
+            None => center.at(here + ahead),
+        };
         for across in [-0.8, 0.0, 0.8] {
             let p = s.point(across * s.half_width, 0.05);
             let local = to_camera.transform_point3(p);
@@ -711,6 +733,9 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 ///   other side of the hairpin's island, which the higher walls hide more of (Prairie Pompon:
 ///   0.5 to 0.6 % before, 1.3 to 1.6 % after, 2.5 % with walls of 1.6 m; Anneau Guimauve: 0 %
 ///   before, 0.05 to 0.4 % after).
+///
+/// Issue #108: a kart on a shortcut (Prairie Pompon redrawn has three) has its path ahead, then
+/// the road after it.
 #[test]
 fn the_chase_camera_sees_the_road_over_the_walls() {
     let runs: Vec<(TrackChoice, Driver)> = circuits()
