@@ -41,7 +41,7 @@ use crate::race::{
     TowReason, ticks_to_seconds,
 };
 use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
-use crate::track::{MirrorMode, TrackChoice, TrackData, TrackHandle, TrackLayout};
+use crate::track::{MirrorMode, ShortcutKind, TrackChoice, TrackData, TrackHandle, TrackLayout};
 use crate::ui::{DebugOverlay, HudText, SimulationCost};
 
 // --- Seeds -------------------------------------------------------------------------------------
@@ -116,6 +116,9 @@ enum TowCause {
     /// **Free driving**: no kart touched it in that time. The bot left the track or got stuck
     /// by itself: the sign of a real regression.
     FreeDriving,
+    /// Issue #107: **a risky jump that fell short**: the bot went for a jump (`Route`), and fell.
+    /// Counted apart: the jump's risk, not a bot leaving the track.
+    RiskyJump,
 }
 
 /// How long the pelican waits before coming for `reason` (s): the kart's trouble began that
@@ -199,6 +202,10 @@ struct KartLog {
     broken: u32,
     tows: Vec<TowEvent>,
     previous: Option<KartState>,
+    /// Issue #107: drifts started, shortcuts taken (road, grass, jump), and the route last tick.
+    drifts: u32,
+    shortcuts: [u32; 3],
+    route: Route,
     /// Croquettes picked up and lost (issue #14), most held at once.
     croquettes_picked: u32,
     croquettes_lost: u32,
@@ -338,7 +345,29 @@ impl RaceLog {
             let drifting = matches!(state, KartState::Drifting { .. });
             if drifting && !matches!(log.previous, Some(KartState::Drifting { .. })) {
                 log.drift_from = Some(course.center.wrap(progress.distance));
+                log.drifts += 1;
             }
+            // Issue #107: the shortcuts it takes, and whether it is going for a jump.
+            let route = world
+                .get::<BotBrain>(*entity)
+                .map_or(Route::Main, |b| b.route);
+            let line = world.get_resource::<RacingLine>();
+            if let (Route::On(k), Some(line)) = (route, line)
+                && log.route != route
+            {
+                let kind = line.branches()[k].kind();
+                log.shortcuts[match kind {
+                    ShortcutKind::Road => 0,
+                    ShortcutKind::Grass => 1,
+                    ShortcutKind::Jump => 2,
+                }] += 1;
+            }
+            let jumping = line.is_some_and(|line| {
+                world
+                    .get::<BotBrain>(*entity)
+                    .is_some_and(|brain| brain.on_a_jump(line))
+            });
+            log.route = route;
             if let Some(previous @ KartState::Drifting { .. }) = log.previous
                 && !drifting
             {
@@ -364,7 +393,11 @@ impl RaceLog {
                     .map(|tick| ticks_to_seconds(self.ticks - tick));
                 log.tows.push(TowEvent {
                     reason: carry.reason,
-                    cause: tow_cause(since_contact, counting),
+                    cause: if jumping {
+                        TowCause::RiskyJump
+                    } else {
+                        tow_cause(since_contact, counting)
+                    },
                     race_time,
                     since_contact,
                     lap: progress.lap_times.len(),
@@ -962,8 +995,39 @@ impl RaceResult {
         self.karts.iter().map(|k| k.log.tows_of(cause)).sum()
     }
 
+    /// The tows of a pack incident or in free driving (issue #107: the risky jumps that fell
+    /// short apart, [`TowCause::RiskyJump`]).
     fn tows(&self) -> usize {
         self.tows_of(TowCause::Pack) + self.tows_of(TowCause::FreeDriving)
+    }
+
+    /// Issue #107: per lap, on average over the karts, the drifts started, and the mini-turbos of
+    /// at least `tier` fired (over the laps each kart completed).
+    fn drifts_per_lap(&self) -> f32 {
+        mean(&self.per_kart_lap(|log| log.drifts))
+    }
+
+    fn mini_turbos_per_lap(&self, tier: MiniTurbo) -> f32 {
+        mean(&self.per_kart_lap(|log| log.mini_turbos[tier.index()..].iter().sum()))
+    }
+
+    fn per_kart_lap(&self, count: impl Fn(&KartLog) -> u32) -> Vec<f32> {
+        self.karts
+            .iter()
+            .filter(|k| !k.laps.is_empty())
+            .map(|k| count(&k.log) as f32 / k.laps.len() as f32)
+            .collect()
+    }
+
+    /// Issue #107: shortcuts taken by all the karts (road, grass, jump).
+    fn shortcuts(&self) -> [u32; 3] {
+        self.karts.iter().fold([0; 3], |sum, k| {
+            [
+                sum[0] + k.log.shortcuts[0],
+                sum[1] + k.log.shortcuts[1],
+                sum[2] + k.log.shortcuts[2],
+            ]
+        })
     }
 
     /// The times of the laps `laps` (0: the first) of every kart.
@@ -2125,7 +2189,15 @@ struct CircuitRun {
 }
 
 fn run_on_circuit(path: &str, mirror: bool, seed: u64) -> CircuitRun {
+    run_on_circuit_as(path, mirror, seed, BotDifficulty::Normal)
+}
+
+/// The same, every bot of `difficulty`.
+fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficulty) -> CircuitRun {
     let mut app = race_on_circuit(path, mirror, seed);
+    if difficulty != BotDifficulty::Normal {
+        set_difficulties(&mut app, |_| difficulty);
+    }
     let layout = app.world().resource::<TrackLayout>().clone();
     let mut log = RaceLog::new(&mut app);
     run_race(&mut app, &mut log, 180.0);
@@ -2137,12 +2209,59 @@ fn run_on_circuit(path: &str, mirror: bool, seed: u64) -> CircuitRun {
     }
 }
 
+/// Issue #107 (GD « Conception des circuits »): the circuits that follow the guide (the reference
+/// one of #107; the circuits redone or added after it join the list). Their races check the
+/// guide's figures too ([`guide_checks`]).
+const GUIDE_CIRCUITS: [&str; 1] = ["Corniche Cannelle"];
+
+/// Issue #107: the guide's thresholds for a race of Normal bots, on average over the seeds (Max's
+/// comment on #107: 4 drifts and 2 orange mini-turbos a lap), and in every race. Never lowered to
+/// let a circuit pass: the circuit changes.
+const GUIDE_DRIFTS: f32 = 4.0;
+const GUIDE_DRIFTS_WORST: f32 = 3.5;
+const GUIDE_ORANGES: f32 = 2.0;
+const GUIDE_ORANGES_WORST: f32 = 1.7;
+
+/// Issue #107: the guide's figures (GD « Conception des circuits »), for a race of Normal bots:
+/// a lap from 30 s to a minute (its fastest and its slowest laps, the pelican's time after a pack
+/// incident left out), at least [`GUIDE_DRIFTS`] drifts and [`GUIDE_ORANGES`] orange (or better)
+/// mini-turbos a lap, on average over the karts of a race.
+fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
+    checks.at_least(
+        "guide: fastest lap (s)",
+        &per_race(races, |r| lowest(&r.laps(0..3))),
+        Some(30.0),
+        None,
+    );
+    checks.at_most(
+        "guide: slowest lap, the pelican's time after an incident left out (s)",
+        &per_race(races, |r| highest(&r.laps_without_pelican(0..3))),
+        Some(60.0),
+        None,
+    );
+    checks.at_least(
+        "guide: drifts per lap (karts' mean)",
+        &per_race(races, |r| r.drifts_per_lap()),
+        Some(GUIDE_DRIFTS_WORST),
+        Some(GUIDE_DRIFTS),
+    );
+    checks.at_least(
+        "guide: orange or purple mini-turbos per lap (karts' mean)",
+        &per_race(races, |r| r.mini_turbos_per_lap(MiniTurbo::Orange)),
+        Some(GUIDE_ORANGES_WORST),
+        Some(GUIDE_ORANGES),
+    );
+}
+
 /// Issue #19 acceptance: the bots drive every circuit of the game (the two of issue #19 and the
 /// two before them) and the mirror image of each (GD § 1), 12 karts, Normal, 3 laps: every kart
 /// finishes, never towed in free driving (a bot leaving the track or stuck by itself), seldom
 /// towed at all, with reasonable lap times (an average speed of the fastest laps close to the
 /// karts' top speed, the slowest finish not far behind). The mirror image of a circuit has its
 /// length and is driven about as fast.
+///
+/// Issue #107: on the circuits that follow the guide ([`GUIDE_CIRCUITS`]), the guide's figures
+/// too ([`guide_checks`]).
 #[test]
 fn bots_race_every_circuit_and_its_mirror() {
     let seeds = circuit_seeds();
@@ -2219,9 +2338,67 @@ fn bots_race_every_circuit_and_its_mirror() {
                 Some(0.0),
                 None,
             );
+            if GUIDE_CIRCUITS.contains(&entry.name.as_str()) {
+                guide_checks(&mut checks, &tows);
+            }
             println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
             failures.append(&mut checks.failures);
         }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #107 (GD « Conception des circuits », § 12): Hard bots on the reference circuit and its
+/// mirror, 12 karts, 3 laps: every kart finishes; they take the hidden road, and try the risky
+/// jump (the Hard ones only: GD); most of their jumps land, a jump that fell short is counted
+/// apart ([`TowCause::RiskyJump`]); never towed in free driving.
+#[test]
+fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
+    let seeds = circuit_seeds();
+    let path = "tracks/corniche.track.ron";
+    let mut failures = Vec::new();
+    for mirror in [false, true] {
+        let runs = for_each_seed(&seeds, |seed| {
+            run_on_circuit_as(path, mirror, seed, BotDifficulty::Hard)
+        });
+        print_reports(&seeds, runs.iter().map(|r| &r.race));
+        let title = format!(
+            "Corniche Cannelle{}, 12 karts, Hard",
+            if mirror { " (miroir)" } else { "" }
+        );
+        let mut checks = Checks::new(&title, &seeds);
+        checks.every_race(
+            "every kart finishes",
+            runs.iter().map(|r| r.race.all_finished()),
+        );
+        checks.at_most(
+            "tows in free driving (none)",
+            &per_race(&runs, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+            Some(0.0),
+            None,
+        );
+        checks.at_least(
+            "hidden roads taken",
+            &per_race(&runs, |r| r.race.shortcuts()[0] as f32),
+            Some(6.0),
+            Some(12.0),
+        );
+        checks.at_least(
+            "risky jumps tried",
+            &per_race(&runs, |r| r.race.shortcuts()[2] as f32),
+            Some(3.0),
+            Some(8.0),
+        );
+        checks.at_most(
+            "risky jumps that fell short, per jump tried",
+            &per_race(&runs, |r| {
+                r.race.tows_of(TowCause::RiskyJump) as f32 / (r.race.shortcuts()[2] as f32).max(1.0)
+            }),
+            Some(0.5),
+            Some(0.25),
+        );
+        println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
+        failures.append(&mut checks.failures);
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

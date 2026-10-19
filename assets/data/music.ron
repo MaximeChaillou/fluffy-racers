@@ -61,6 +61,12 @@
          seconds: 85.818186, bpm: 165.0, volume: 0.79, faster: "fever-stadium-climax"),
         (id: "fever-stadium-climax", file: "music/mintodog/fever_stadium_climax_bpm180.ogg",
          seconds: 78.666667, bpm: 180.0, volume: 0.91),
+        // Corniche Cannelle (issue #107, the canyon): techno, « positive music » (both at
+        // -8.3 LUFS).
+        (id: "hot-roadway", file: "music/mintodog/hot_roadway_bpm160.ogg",
+         seconds: 120.0, bpm: 160.0, volume: 0.59, faster: "hot-roadway-climax"),
+        (id: "hot-roadway-climax", file: "music/mintodog/hot_roadway_climax_bpm175.ogg",
+         seconds: 109.714286, bpm: 175.0, volume: 0.59),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

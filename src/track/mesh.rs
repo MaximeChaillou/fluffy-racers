@@ -8,8 +8,9 @@ use bevy::prelude::*;
 
 use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
 use super::biome::{Palette, Rgb};
-use super::data::{OffroadZone, TrackData};
+use super::data::{OffroadZone, ShortcutKind, TrackData};
 use super::layout::{CenterLine, TrackSample};
+use super::shortcut::{OpenEdge, Shortcut, walled};
 use super::water::{Gap, Lake, ground_height};
 
 /// Width of the red and white curbs (m).
@@ -149,6 +150,10 @@ pub struct TrackMeshes {
     pub anti_gravity_road: MeshData,
     /// The same for their shoulders (`Surface::Offroad`, and `AntiGravity`).
     pub anti_gravity_offroad: MeshData,
+    /// Issue #107: the roads of the shortcuts (`Surface::Road`) and their grass paths
+    /// (`Surface::Offroad`). Empty on a circuit without one.
+    pub shortcut_road: MeshData,
+    pub shortcut_grass: MeshData,
 }
 
 impl TrackMeshes {
@@ -161,6 +166,8 @@ impl TrackMeshes {
         all.append(&self.decor);
         all.append(&self.anti_gravity_road);
         all.append(&self.anti_gravity_offroad);
+        all.append(&self.shortcut_road);
+        all.append(&self.shortcut_grass);
         all
     }
 }
@@ -191,11 +198,27 @@ pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
 }
 
+/// Issue #107: a shortcut's road or grass is built this much above its path, so that where it
+/// lies on the circuit's road or shoulders (its two ends) the wheels find it first, like the sand
+/// patches.
+pub const SHORTCUT_LIFT: f32 = 0.02;
+
 /// The circuit's meshes, in the colors of `palette` (its biome's, issue #11). Issue #20: nothing
 /// in its gaps (the ends of the road there closed by a face down to the ground), and the skirts
 /// down to the floor of a lake.
 pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> TrackMeshes {
     let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(center, g)).collect();
+    // Issue #107: the stretches without wall: whether the wall of side `sign` stands between two
+    // samples (their middle).
+    let edges: Vec<OpenEdge> = data
+        .open_edges
+        .iter()
+        .map(|e| OpenEdge::new(center, e))
+        .collect();
+    let walled_side = |sign: f32, s0: &TrackSample, s1: &TrackSample| {
+        let middle = s0.distance + center.wrap(s1.distance - s0.distance) / 2.0;
+        walled(&edges, center, middle, sign)
+    };
     let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
     let zones: Vec<AntiGravityZone> = data
         .anti_gravity
@@ -264,7 +287,8 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             );
         }
 
-        // Grass shoulders.
+        // Grass shoulders. Issue #107: where a side has no wall, its shoulder runs on to the
+        // wall's outer face (the skirt hangs from there: no slit between them).
         for (offroad, keep) in [
             (
                 &mut meshes.offroad,
@@ -278,7 +302,7 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
                 |s| s.point(-wall_offset(s), 0.0),
                 |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
                 |_| grass,
-                keep,
+                |s0, s1| keep(s0, s1) && walled_side(-1.0, s0, s1),
             );
             offroad.strip_where(
                 samples,
@@ -286,7 +310,23 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
                 |s| s.point(s.half_width + CURB_WIDTH, 0.0),
                 |s| s.point(wall_offset(s), 0.0),
                 |_| grass,
-                keep,
+                |s0, s1| keep(s0, s1) && walled_side(1.0, s0, s1),
+            );
+            offroad.strip_where(
+                samples,
+                closed,
+                |s| s.point(-outer(s), 0.0),
+                |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+                |_| grass,
+                |s0, s1| keep(s0, s1) && !walled_side(-1.0, s0, s1),
+            );
+            offroad.strip_where(
+                samples,
+                closed,
+                |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+                |s| s.point(outer(s), 0.0),
+                |_| grass,
+                |s0, s1| keep(s0, s1) && !walled_side(1.0, s0, s1),
             );
         }
 
@@ -310,8 +350,9 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             );
         }
 
-        // Low walls: inner face, top, outer face on each side.
-        wall_strips(&mut meshes.walls, samples, closed, palette);
+        // Low walls: inner face, top, outer face on each side (issue #107: not along the
+        // stretches without wall).
+        wall_strips(&mut meshes.walls, samples, closed, palette, &walled_side);
 
         // Skirts from the wall bottoms down to the ground (or the floor of a lake), so raised
         // parts do not float. Issue #94: only under a road that faces up (to the wall, 90°, at
@@ -376,6 +417,63 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
                 |_| rgba(ANTI_GRAVITY_STRIPE),
             );
         }
+    }
+
+    // Issue #107: the shortcuts' roads and grass paths, their skirts down to the ground.
+    for shortcut in &data.shortcuts {
+        let path = Shortcut::new(center, shortcut);
+        let samples = path.samples();
+        let half = path.half_width;
+        let lift = |s: &TrackSample, lateral: f32| s.point(lateral, SHORTCUT_LIFT);
+        match shortcut.kind {
+            ShortcutKind::Road => {
+                let road = &mut meshes.shortcut_road;
+                let inner = half - CURB_WIDTH;
+                road.strip(
+                    samples,
+                    false,
+                    |s| lift(s, -inner),
+                    |s| lift(s, inner),
+                    |_| asphalt,
+                );
+                road.strip(
+                    samples,
+                    false,
+                    |s| lift(s, -half),
+                    |s| lift(s, -inner),
+                    stripe,
+                );
+                road.strip(
+                    samples,
+                    false,
+                    |s| lift(s, inner),
+                    |s| lift(s, half),
+                    stripe,
+                );
+            }
+            ShortcutKind::Grass => meshes.shortcut_grass.strip(
+                samples,
+                false,
+                |s| lift(s, -half),
+                |s| lift(s, half),
+                |_| grass,
+            ),
+            ShortcutKind::Jump => continue,
+        }
+        meshes.decor.strip(
+            samples,
+            false,
+            |s| lift(s, half),
+            |s| ground(lift(s, half)),
+            |_| skirt,
+        );
+        meshes.decor.strip(
+            samples,
+            false,
+            |s| ground(lift(s, -half)),
+            |s| lift(s, -half),
+            |_| skirt,
+        );
     }
 
     // Issue #20: each end of the road at a gap is closed, from the top of its walls down to the
@@ -453,54 +551,70 @@ fn runs(center: &CenterLine, gaps: &[Gap]) -> Vec<(Vec<TrackSample>, bool)> {
 }
 
 /// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face. The faces
-/// alternate the palette's two wall colors in panels (the barriers' look, issue #11).
-fn wall_strips(mesh: &mut MeshData, samples: &[TrackSample], closed: bool, palette: &Palette) {
+/// alternate the palette's two wall colors in panels (the barriers' look, issue #11). Issue #107:
+/// a side's wall only between two samples where `walled` says it stands (`walled(sign, s0, s1)`,
+/// sign -1 for the left, 1 for the right); everywhere on a circuit without a stretch without wall.
+fn wall_strips(
+    mesh: &mut MeshData,
+    samples: &[TrackSample],
+    closed: bool,
+    palette: &Palette,
+    walled: &dyn Fn(f32, &TrackSample, &TrackSample) -> bool,
+) {
     let height = WALL_HEIGHT;
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
     let panel = |i: usize| panels[(i / WALL_PANEL) % 2];
     let top = rgba(palette.wall_top);
-    mesh.strip(
+    let right = |s0: &TrackSample, s1: &TrackSample| walled(1.0, s0, s1);
+    let left = |s0: &TrackSample, s1: &TrackSample| walled(-1.0, s0, s1);
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(wall_offset(s), 0.0),
         |s| s.point(wall_offset(s), height),
         panel,
+        right,
     );
-    mesh.strip(
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(wall_offset(s), height),
         |s| s.point(outer(s), height),
         |_| top,
+        right,
     );
-    mesh.strip(
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(outer(s), height),
         |s| s.point(outer(s), 0.0),
         panel,
+        right,
     );
-    mesh.strip(
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(-wall_offset(s), height),
         |s| s.point(-wall_offset(s), 0.0),
         panel,
+        left,
     );
-    mesh.strip(
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(-outer(s), height),
         |s| s.point(-wall_offset(s), height),
         |_| top,
+        left,
     );
-    mesh.strip(
+    mesh.strip_where(
         samples,
         closed,
         |s| s.point(-outer(s), 0.0),
         |s| s.point(-outer(s), height),
         panel,
+        left,
     );
 }
 
@@ -925,6 +1039,124 @@ mod tests {
             }
             assert!(ceilings >= 25, "{ceilings}");
         }
+    }
+
+    /// Issue #107: on the Corniche Cannelle and its mirror, a side without wall has no wall, and
+    /// its shoulder runs on to the wall's outer face (no slit between it and the skirt); every
+    /// other side has its wall (but over the gap); the road shortcut has its road and its curbs,
+    /// the grass one its grass, the jump nothing (its ramp is a box): each as long as its path,
+    /// lifted over it. A circuit without them builds none.
+    #[test]
+    fn the_sides_without_wall_have_none_and_the_shortcuts_their_road() {
+        use crate::track::shortcut::{OpenEdge, Shortcut, walled};
+        use std::collections::HashSet;
+        let key = |p: Vec3| {
+            [
+                (p.x * 100.0).round() as i64,
+                (p.y * 100.0).round() as i64,
+                (p.z * 100.0).round() as i64,
+            ]
+        };
+        let file =
+            TrackData::from_ron(include_str!("../../assets/tracks/corniche.track.ron")).unwrap();
+        for data in [file.clone(), file.mirrored()] {
+            let center = CenterLine::of(&data);
+            let meshes = generate(&center, &data, &Palette::default());
+            let edges: Vec<OpenEdge> = data
+                .open_edges
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect();
+            let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(&center, g)).collect();
+            let walls: HashSet<[i64; 3]> = meshes
+                .walls
+                .positions
+                .iter()
+                .map(|p| key(Vec3::from_array(*p)))
+                .collect();
+            let shoulders: HashSet<[i64; 3]> = meshes
+                .offroad
+                .positions
+                .iter()
+                .map(|p| key(Vec3::from_array(*p)))
+                .collect();
+            let (mut open, mut closed) = (0, 0);
+            for s in center.samples() {
+                // Clear of the gap and its ends (closed by their own faces).
+                if gaps.iter().any(|g| {
+                    g.contains(&center, s.distance + 2.0) || g.contains(&center, s.distance - 2.0)
+                }) {
+                    continue;
+                }
+                for side in [-1.0f32, 1.0] {
+                    // Clear of a stretch's ends (a sample's quads on both sides agree).
+                    let all = |d: f32| {
+                        [-1.5f32, 0.0, 1.5].iter().all(|o| {
+                            walled(&edges, &center, d + o, side) == walled(&edges, &center, d, side)
+                        })
+                    };
+                    if !all(s.distance) {
+                        continue;
+                    }
+                    let top = key(s.point(side * wall_offset(s), WALL_HEIGHT));
+                    let edge = key(s.point(side * (wall_offset(s) + WALL_THICKNESS), 0.0));
+                    if walled(&edges, &center, s.distance, side) {
+                        closed += 1;
+                        assert!(
+                            walls.contains(&top),
+                            "{:.0} m, side {side}: no wall",
+                            s.distance
+                        );
+                    } else {
+                        open += 1;
+                        assert!(
+                            !walls.contains(&top),
+                            "{:.0} m, side {side}: a wall",
+                            s.distance
+                        );
+                        assert!(shoulders.contains(&edge), "{:.0} m: a slit", s.distance);
+                    }
+                }
+            }
+            assert!(open > 250 && closed > 1500, "{open} open, {closed} walled");
+            let shortcuts: Vec<Shortcut> = data
+                .shortcuts
+                .iter()
+                .map(|s| Shortcut::new(&center, s))
+                .collect();
+            let quads = |kind: ShortcutKind| {
+                shortcuts
+                    .iter()
+                    .filter(|s| s.kind == kind)
+                    .map(|s| s.samples().len() - 1)
+                    .sum::<usize>()
+            };
+            assert_eq!(
+                meshes.shortcut_road.positions.len(),
+                3 * 4 * quads(ShortcutKind::Road)
+            );
+            assert_eq!(
+                meshes.shortcut_grass.positions.len(),
+                4 * quads(ShortcutKind::Grass)
+            );
+            assert!(quads(ShortcutKind::Road) > 50 && quads(ShortcutKind::Grass) > 30);
+            for (mesh, kind) in [
+                (&meshes.shortcut_road, ShortcutKind::Road),
+                (&meshes.shortcut_grass, ShortcutKind::Grass),
+            ] {
+                let path = shortcuts.iter().find(|s| s.kind == kind).unwrap();
+                for p in &mesh.positions {
+                    let here = path.locate(Vec3::from_array(*p));
+                    assert!((here.height - SHORTCUT_LIFT).abs() < 0.01, "{here:?}");
+                    assert!(here.lateral.abs() <= path.half_width + 0.01, "{here:?}");
+                }
+            }
+        }
+        let prairie = test_track();
+        let meshes = generate(&CenterLine::of(&prairie), &prairie, &Palette::default());
+        assert!(
+            meshes.shortcut_road.indices.is_empty() && meshes.shortcut_grass.indices.is_empty()
+        );
     }
 
     #[test]

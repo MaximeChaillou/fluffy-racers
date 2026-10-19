@@ -40,8 +40,12 @@ mod tuning;
 
 #[cfg(test)]
 pub(crate) mod scenario_tests;
+#[cfg(test)]
+mod shortcut_tests;
 
-pub use driver::{BotBrain, DriftPlan, Neighbor, Senses, catch_up_scale, charge_per_radian, drive};
+pub use driver::{
+    BotBrain, DriftPlan, Neighbor, Route, Senses, catch_up_scale, charge_per_radian, drive,
+};
 pub use interactions::{BotPawBrain, PawButtons, PawSenses, ReachKart, paw_buttons};
 pub use items::{BotItemBrain, ItemButtons, ItemSenses, boomerang_aim, item_buttons};
 pub use line::{Located, RacingLine, Turn};
@@ -166,6 +170,7 @@ fn build_racing_line(mut commands: Commands, layout: Res<TrackLayout>, tuning: R
         &layout,
         tuning.road_margin,
         tuning.sand_margin,
+        tuning.void_margin,
         tuning.line_margin,
     ));
 }

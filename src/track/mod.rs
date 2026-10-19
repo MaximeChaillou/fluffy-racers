@@ -11,6 +11,7 @@ pub mod decor;
 pub mod dressing;
 pub mod layout;
 pub mod mesh;
+pub mod shortcut;
 pub mod start_line;
 pub mod test_ground;
 pub mod water;
@@ -25,9 +26,10 @@ pub use circuit::{
     BOOST_PAD_SIZE, BoostPad, CROQUETTE_HEIGHT, CroquetteSpot, GlideRamp, ITEM_BOX_HEIGHT,
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,
 };
-pub use data::{OffroadZone, PropData, TrackData};
+pub use data::{EdgeSide, OffroadZone, PropData, ShortcutKind, TrackData};
 pub use dressing::CircuitDecor;
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
+pub use shortcut::{OpenEdge, Shortcut};
 pub use start_line::StartLine;
 pub use water::{Gap, Lake, gap_at, water_depth};
 

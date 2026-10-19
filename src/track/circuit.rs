@@ -208,6 +208,23 @@ pub fn build_circuit_when_loaded(
         }
     }
 
+    // Issue #107: the shortcuts' roads and grass paths, only on a circuit that has them (the
+    // same archetypes as the road's: nothing new elsewhere).
+    for (mesh, surface) in [
+        (&generated.shortcut_road, Surface::Road),
+        (&generated.shortcut_grass, Surface::Offroad),
+    ] {
+        if !mesh.indices.is_empty() {
+            spawn_trimesh(
+                &mut commands,
+                mesh,
+                surface,
+                0.0,
+                TriMeshFlags::FIX_INTERNAL_EDGES,
+            );
+        }
+    }
+
     spawn_ground(
         &mut commands,
         &mut meshes,
@@ -472,18 +489,30 @@ fn spawn_trick_ramps(
     });
     let stripe_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let half_thickness = 0.5;
-    for ramp in &data.trick_ramps {
-        let sample = layout.center.at(layout.center.param_to_distance(ramp.at));
-        let start = sample.point(ramp.offset * sample.half_width, 0.0);
-        let base = sample.transform(0.0, 0.0).rotation;
-        let transform = ramp_transform_on(
-            start,
-            base,
-            ramp.length,
-            ramp.angle.to_radians(),
-            half_thickness,
-        );
-        let half = Vec3::new(ramp.width / 2.0, half_thickness, ramp.length / 2.0);
+    // The file's trick ramps, along the centerline; then (issue #107) the risky jumps' ramps,
+    // along their shortcuts: the same ramps (a trick works off them).
+    let ramps = data
+        .trick_ramps
+        .iter()
+        .map(|ramp| {
+            let sample = layout.center.at(layout.center.param_to_distance(ramp.at));
+            let start = sample.point(ramp.offset * sample.half_width, 0.0);
+            let base = sample.transform(0.0, 0.0).rotation;
+            (
+                start,
+                base,
+                ramp.length,
+                ramp.angle.to_radians(),
+                ramp.width,
+            )
+        })
+        .chain(layout.shortcuts.iter().filter_map(|shortcut| {
+            let ramp = shortcut.ramp?;
+            Some((ramp.start, ramp.base(), ramp.length, ramp.angle, ramp.width))
+        }));
+    for (start, base, length, angle, width) in ramps {
+        let transform = ramp_transform_on(start, base, length, angle, half_thickness);
+        let half = Vec3::new(width / 2.0, half_thickness, length / 2.0);
         let entity = super::spawn_static_box(commands, transform, half, Surface::Road, 0.0);
         commands
             .entity(entity)

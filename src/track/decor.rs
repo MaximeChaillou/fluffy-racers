@@ -13,6 +13,7 @@ use super::biome::{BiomeData, Side};
 use super::data::PropData;
 use super::layout::{CenterLine, TrackSample};
 use super::mesh::{GROUND_HEIGHT, WALL_THICKNESS, wall_offset};
+use super::shortcut::Shortcut;
 use super::start_line::StartLine;
 use super::water::Lake;
 use crate::bots::BotRng;
@@ -224,6 +225,26 @@ pub fn place_decor(
     seed: u64,
     lakes: &[Lake],
 ) -> DecorPlan {
+    place_decor_around(center, biome, props, seed, lakes, &[])
+}
+
+/// The same, around the circuit's `shortcuts` too (issue #107): no piece on their roads, their
+/// grass paths, nor under the flight of a jump.
+pub fn place_decor_around(
+    center: &CenterLine,
+    biome: Option<&BiomeData>,
+    props: &[PropData],
+    seed: u64,
+    lakes: &[Lake],
+    shortcuts: &[Shortcut],
+) -> DecorPlan {
+    let samples = center.samples();
+    let clear_of_the_circuit = |samples: &[TrackSample], p: Vec2, radius: f32| {
+        clear_of_the_circuit(samples, p, radius)
+            && shortcuts
+                .iter()
+                .all(|shortcut| clear_of_the_circuit(shortcut.samples(), p, radius))
+    };
     let wet = |p: Vec2, radius: f32| {
         lakes.iter().any(|lake| {
             p.x + radius >= lake.min.x
@@ -232,7 +253,6 @@ pub fn place_decor(
                 && p.y - radius <= lake.max.y
         })
     };
-    let samples = center.samples();
     let inside = inside_sign(center);
     let turns = tight_turns(center);
     let line = StartLine::of(center);

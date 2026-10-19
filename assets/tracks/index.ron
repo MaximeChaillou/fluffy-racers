@@ -2,7 +2,8 @@
 // a folder, so every new `*.track.ron` file is added here too (a test checks it). `name` is the
 // circuit's `name`, `file` its file in this folder. The first one is the game's circuit. The
 // Lagon Duvet (issue #20) shows the special environments: the glider and the water; the Ruban
-// Réglisse (issue #78), the anti-gravity.
+// Réglisse (issue #78), the anti-gravity; the Corniche Cannelle (issue #107), the reference circuit
+// of the guide « Conception des circuits » (the sides without wall, the shortcuts, the risky jump).
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -17,6 +18,7 @@
         (name: "Col des Moufles", file: "col.track.ron"),
         (name: "Lagon Duvet", file: "lagon.track.ron"),
         (name: "Ruban Réglisse", file: "ruban.track.ron"),
+        (name: "Corniche Cannelle", file: "corniche.track.ron"),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),
