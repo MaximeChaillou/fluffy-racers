@@ -37,6 +37,9 @@ pub struct CroquetteTuning {
     /// Croquettes lost to a paw strike or a throw of another kart (GD § 7 and 15: 1, whatever
     /// the Weights).
     pub strike_loss: u8,
+    /// Issue #144: croquettes lost when knocked over by a moving obstacle or a passer-by of the
+    /// circuit (a tumble, between a bump's 1 and an item's 3).
+    pub knock_loss: u8,
     /// After a bump or a paw strike, the kart cannot lose croquettes to bumps or strikes for
     /// this long: one messy collision (bounces, karts rubbing), or a strike and the bump it
     /// causes, cost one croquette (GD § 15).
@@ -76,6 +79,7 @@ impl Default for CroquetteTuning {
             item_hit_loss: 3,
             bump_loss: 1,
             strike_loss: 1,
+            knock_loss: 2,
             bump_grace: 1.0,
 
             scatter_distance: 2.5,

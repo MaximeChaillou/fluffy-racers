@@ -40,7 +40,9 @@ use crate::level::LoadLevel;
 use crate::menu::MainMenu;
 use crate::race::{Race, RaceProgress};
 use crate::track::circuit::TrackHandle;
-use crate::track::{TrackData, TrackLayout, water_depth};
+use crate::track::{
+    Breakable, BreakableKind, HazardBody, HazardKind, TrackData, TrackLayout, water_depth,
+};
 
 /// What a kart throws all along: one carry each (`emit::take`).
 const SPARKS: usize = 0;
@@ -195,6 +197,13 @@ pub enum WorldBurst {
     Blast { at: Vec3, radius: f32 },
     /// A gift box taken (issue #106), by a kart going at `carrier`.
     Gift { at: Vec3, carrier: Vec3 },
+    /// Issue #144: a thing to drive through burst (a hay bale, a balloon, a crate), by a kart
+    /// going at `carrier`.
+    Burst {
+        at: Vec3,
+        carrier: Vec3,
+        kind: BreakableKind,
+    },
     /// A croquette picked up, or `count` lost.
     Croquette {
         at: Vec3,
@@ -491,6 +500,11 @@ pub(super) fn watch_world(
     karts: Query<(&Transform, Option<&KartVfx>), Or<(With<Kart>, With<Remote>)>>,
     spots: Query<&GlobalTransform>,
     mut ticked: Local<Ticked>,
+    // Issue #144: the things to drive through of the circuit (none on most circuits).
+    (breakables, layout): (
+        Query<(&HazardBody, &Transform, &Breakable)>,
+        Option<Res<TrackLayout>>,
+    ),
 ) {
     let pairs = &mut ticked.pairs;
     pairs.clear();
@@ -519,6 +533,32 @@ pub(super) fn watch_world(
                 radius: blast.radius,
             });
         }
+    }
+    // Issue #144: a thing to drive through burst: straw, rubber or splinters, and a « pof ».
+    for (body, transform, breakable) in &breakables {
+        let Some(kart) = breakable.burst_by else {
+            continue;
+        };
+        let kind = layout
+            .as_ref()
+            .and_then(|layout| layout.hazards.get(usize::from(body.0)))
+            .and_then(|hazard| match hazard.kind {
+                HazardKind::Breakable(kind) => Some(kind),
+                _ => None,
+            });
+        let (Some(kind), true) = (kind, room(&queue)) else {
+            continue;
+        };
+        let carrier = karts
+            .get(kart)
+            .ok()
+            .and_then(|(_, m)| m)
+            .map_or(Vec3::ZERO, |m| m.velocity);
+        queue.0.push(WorldBurst::Burst {
+            at: transform.translation + Vec3::Y * 0.7,
+            carrier,
+            kind,
+        });
     }
     // Issue #106: a gift box taken bursts into confetti.
     for taken in boxes.read() {
@@ -999,6 +1039,7 @@ pub(super) fn emit_world(
             WorldBurst::Bump { at, .. }
             | WorldBurst::Blast { at, .. }
             | WorldBurst::Gift { at, .. }
+            | WorldBurst::Burst { at, .. }
             | WorldBurst::Croquette { at, .. } => at,
         };
         if camera.is_some_and(|c| c.distance(at) > tuning.emit_range) {
@@ -1016,6 +1057,10 @@ pub(super) fn emit_world(
             }
             WorldBurst::Blast { at, radius } => emit::confetti(pool, at, radius, impact),
             WorldBurst::Gift { at, carrier } => emit::gift(pool, at, carrier, impact),
+            WorldBurst::Burst { at, carrier, kind } => {
+                emit::shock(pool, at, Vec3::Y, carrier, 2, impact.pof_puffs, impact);
+                emit::debris(pool, at, carrier, emit::debris_paints(kind), impact);
+            }
             WorldBurst::Croquette {
                 at,
                 carrier,

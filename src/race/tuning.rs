@@ -85,6 +85,50 @@ pub struct RaceTuning {
     /// Piments in the hand at the start of a time trial (GD § 1: 3, an « x3 »), and no other
     /// item. Read at each (re)start of the race.
     pub time_trial_chilis: u32,
+
+    // --- Obstacles and passers-by (GD § 16, issue #144) ------------------------------------------
+    /// What the hazards of a circuit do: the knock of a moving obstacle or a passer-by, the
+    /// things to drive through.
+    pub hazards: HazardTuning,
+}
+
+/// Issue #144 (GD « Conception des circuits »): the hazards of a circuit (`crate::track::hazard`).
+/// A field of [`RaceTuning`] rather than a resource of its own: a new resource is a new archetype
+/// in Bevy, which reorders the colliders in Rapier and changes every bot race (`STATUS.md`).
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+pub struct HazardTuning {
+    /// A moving obstacle or a passer-by knocks a kart over: a tumble this long (s; an item's
+    /// tumble is 1.6 s, GD § 8), its drift and boost lost, then its invincibility (its stat).
+    pub knock_seconds: f32,
+    /// The kart keeps this share of its speed...
+    pub knock_speed_kept: f32,
+    /// ...and is pushed this fast away from what knocked it (m/s, along the road).
+    pub knock_push: f32,
+    /// The contact shapes count as touching this much before they meet (m; negative: they must
+    /// overlap this much).
+    pub contact_margin: f32,
+    /// A thing to drive through comes back this long after it burst (s; an item box: 2 s).
+    pub respawn_seconds: f32,
+    /// What bursting one costs: the share of its speed the kart loses (GD: a little, or none).
+    pub hay_slowdown: f32,
+    pub crate_slowdown: f32,
+    pub balloon_slowdown: f32,
+}
+
+impl Default for HazardTuning {
+    fn default() -> Self {
+        Self {
+            knock_seconds: 1.4,
+            knock_speed_kept: 0.3,
+            knock_push: 4.0,
+            contact_margin: 0.0,
+            respawn_seconds: 5.0,
+            hay_slowdown: 0.08,
+            crate_slowdown: 0.04,
+            balloon_slowdown: 0.0,
+        }
+    }
 }
 
 impl Default for RaceTuning {
@@ -120,6 +164,8 @@ impl Default for RaceTuning {
             stuck_radius: 2.0,
 
             time_trial_chilis: 3,
+
+            hazards: HazardTuning::default(),
         }
     }
 }
@@ -147,6 +193,13 @@ mod tests {
         assert_eq!(seconds_to_ticks(t.tow_seconds), 150);
         assert_eq!(t.time_trial_chilis, 3, "GD § 1: three piments");
         assert!(t.tow_lift_share + t.tow_carry_share < 1.0);
+        // Issue #144: things to drive through slow a kart down a little, or not at all.
+        let h = &t.hazards;
+        for slowdown in [h.hay_slowdown, h.crate_slowdown, h.balloon_slowdown] {
+            assert!((0.0..=0.1).contains(&slowdown), "{slowdown}");
+        }
+        assert_eq!(h.balloon_slowdown, 0.0);
+        assert!(h.knock_seconds > 0.5 && h.knock_seconds <= 1.6);
     }
 
     #[test]

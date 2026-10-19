@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use super::anti_gravity::AntiGravityZone;
 use super::data::{AntiGravityData, ControlPoint, OffroadZone, TrackData};
+use super::hazard::Hazard;
 use super::shortcut::{OpenEdge, Shortcut};
 use super::water::{Gap, Lake};
 
@@ -353,10 +354,17 @@ pub struct TrackLayout {
     /// Issue #107: the stretches without wall, and the shortcuts.
     pub open_edges: Vec<OpenEdge>,
     pub shortcuts: Vec<Shortcut>,
+    /// Issue #144: the obstacles, the passers-by and the things to drive through
+    /// (`super::hazard`), in the order of the file.
+    pub hazards: Vec<Hazard>,
 }
 
 /// Racers on the grid (GD § 1).
 pub const GRID_SLOTS: usize = 12;
+
+/// Issue #144: the pelican drops no kart within this much of an obstacle or a passer-by (m along
+/// the track, each way).
+const HAZARD_RESPAWN_CLEARANCE: f32 = 9.0;
 
 impl TrackLayout {
     pub fn new(data: &TrackData) -> Self {
@@ -390,6 +398,20 @@ impl TrackLayout {
                     (z.from, center.wrap(to - from) + 3.0)
                 }))
                 .map(|(param, length)| (center.param_to_distance(param) - 3.0, length + 3.0))
+                // Issue #144: nor on an obstacle or a passer-by's way (some meters around it).
+                .chain(
+                    data.obstacles
+                        .iter()
+                        .map(|o| o.at)
+                        .chain(data.npcs.iter().map(|n| n.at))
+                        .map(|at| {
+                            let distance = center.param_to_distance(at);
+                            (
+                                distance - HAZARD_RESPAWN_CLEARANCE,
+                                2.0 * HAZARD_RESPAWN_CLEARANCE,
+                            )
+                        }),
+                )
                 .collect();
             checkpoints
                 .iter()
@@ -431,6 +453,7 @@ impl TrackLayout {
                 .iter()
                 .map(|s| Shortcut::new(&center, s))
                 .collect(),
+            hazards: Hazard::all(&center, data),
             center,
         }
     }

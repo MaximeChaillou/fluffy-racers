@@ -156,6 +156,8 @@ impl Plugin for GamePlugin {
             // Issue #106: the items' models from their files (and their icons), an item used
             // popping up over its kart, the admin panel's showcase. Only on screen too.
             app.add_plugins(items::ItemModelPlugin);
+            // Issue #144: the look of the circuits' obstacles and passers-by.
+            app.add_plugins(track::HazardVisualPlugin);
         }
     }
 }

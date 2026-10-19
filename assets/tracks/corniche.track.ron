@@ -263,6 +263,33 @@
         (from: 150.921, to: 164.801, kind: Grass, width: 9.0,
          points: [(59.96, 16.00, 89.13), (54.13, 16.00, 88.44), (48.61, 16.00, 86.40), (43.73, 16.00, 83.14), (39.48, 16.00, 79.00), (35.27, 16.00, 74.79), (31.05, 16.00, 70.57), (26.84, 16.00, 66.36), (22.63, 16.00, 62.15), (18.49, 16.00, 57.90), (15.22, 16.00, 53.02), (13.19, 16.00, 47.50), (12.50, 16.00, 41.67)]),
     ],
+    // Issue #144 (GD « Conception des circuits », step 2): the obstacles. On one side of the
+    // road each, the other side free (the bots keep to it), never on a shortcut's mouth, a jump's
+    // landing nor a tight corner's apex. A stone swinging over the right side of the start
+    // straight, from a gallows beyond its wall (the bots keep left for the hairpin anyway); a log
+    // rolling across the left side of the rim, before the long left turn (the bots are on its
+    // outside, on the right); a trunk fallen on the start straight's shoulder; boulders and a
+    // pillar of rock along the edges of the wide landing on the canyon's floor.
+    obstacles: [
+        (kind: SwingingStone, at: 9.8, offset: 0.5, sweep: 0.35, period: 3.6),
+        (kind: RollingLog, at: 29.5, offset: -0.5, sweep: 0.32, period: 5.0),
+        (kind: Trunk, at: 2.6, offset: 1.12, yaw: 4.0),
+        (kind: Rock, at: 71.6, offset: -0.92, size: 1.2, yaw: 25.0),
+        (kind: Pillar, at: 75.6, offset: 0.9),
+    ],
+    // Issue #144: the bison that guards the ford, pacing across the left side of the road before
+    // the water (the bots keep right, where the first switchback, to the left, wants them).
+    npcs: [
+        (kind: Bison, at: 88.5, offset: -0.55, sweep: 0.3, period: 6.5),
+    ],
+    // Issue #144: things to drive through: balloons just after the start line (the pack bursts
+    // them at GO), a hay bale out of the hairpin on the floor, crates on the climb back to the
+    // rim.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 86.6, offsets: [-0.6]),
+        (kind: Crate, at: 127.4, offsets: [-0.6, -0.25]),
+    ],
     // Trick ramp (issue #13), between the switchbacks, walled on both sides (before the ford,
     // the karts landed in the water in a bunch, and went over its walls).
     trick_ramps: [

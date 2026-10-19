@@ -243,6 +243,10 @@ pub fn build_circuit_when_loaded(
         item_boxes,
     );
 
+    // Issue #144: the obstacles, the passers-by and the things to drive through, and their
+    // systems, only on a circuit that has some (nothing new elsewhere).
+    super::hazards::spawn_hazards(&mut commands, &layout);
+
     commands.insert_resource(PlayerStart(layout.grid[0]));
     commands.insert_resource(layout);
 }

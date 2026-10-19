@@ -76,7 +76,7 @@ use crate::net::LobbyWindow;
 use crate::options::{OptionsAction, OptionsMenu, PlayerOptions};
 use crate::race::{Course, Race, RaceMode, RaceProgress, Tow};
 use crate::salon::{PlayerWalker, SalonAction, SalonMenu, Walker, WalkerLook};
-use crate::track::TrackChoice;
+use crate::track::{Breakable, TrackChoice};
 
 /// A sound asked for by the game, with its [`SoundEffect`]: whose it is (`kart`), where (`at`),
 /// the player's own or a screen's (`foreground`: in front, not spatialized), its playback speed
@@ -777,6 +777,8 @@ fn watch_items(
     ),
     mut objects: Query<(Entity, &ItemObject, Option<&mut ObjectSounds>)>,
     mut last_seen: Local<Vec<(Entity, Vec3)>>,
+    // Issue #144: the things to drive through of the circuit (none on most circuits).
+    breakables: Query<(&Transform, &Breakable)>,
 ) {
     // Issue #135: out of a race, the items make no sound either.
     let home = !stage.karts;
@@ -799,6 +801,16 @@ fn watch_items(
     for broken in boxes.read() {
         let cue = cue_of(broken.kart, kart_at(broken.kart));
         play(&mut commands, SoundEffect::BoxBreak, cue);
+    }
+    // Issue #144: a hay bale, a balloon or a crate burst under a kart: a « pof ».
+    for (transform, breakable) in &breakables {
+        if let Some(kart) = breakable.burst_by.filter(|_| !home) {
+            play(
+                &mut commands,
+                SoundEffect::PawPof,
+                cue_of(kart, transform.translation),
+            );
+        }
     }
     for blast in blasts.read() {
         let sound = if blast.item == ItemKind::OreillerGeant {

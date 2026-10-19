@@ -48,7 +48,7 @@ pub use driver::{
 };
 pub use interactions::{BotPawBrain, PawButtons, PawSenses, ReachKart, paw_buttons};
 pub use items::{BotItemBrain, ItemButtons, ItemSenses, boomerang_aim, item_buttons};
-pub use line::{Located, RacingLine, Turn};
+pub use line::{HazardClearance, Located, RacingLine, Turn};
 pub use rng::BotRng;
 pub use tuning::{BotDifficulty, BotSkill, BotTuning};
 
@@ -172,6 +172,7 @@ fn build_racing_line(mut commands: Commands, layout: Res<TrackLayout>, tuning: R
         tuning.sand_margin,
         tuning.void_margin,
         tuning.line_margin,
+        tuning.hazard_clearance(),
     ));
 }
 
