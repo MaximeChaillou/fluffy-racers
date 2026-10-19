@@ -110,7 +110,9 @@
     ),
     (
         // A snowy mountain pass (issue #19): snowy firs, snowmen and reindeer (Holiday Kit), tall
-        // dark pines and grey stones (Nature Kit). Snow patches for the off-road.
+        // dark pines and grey stones (Nature Kit). Snow patches for the off-road. Issue #109: a
+        // circuit almost twice as long, up a mountain: more pieces, giant firs and needles of rock
+        // (the scale).
         name: "Neige",
         music: "blossom-mountain",
         palette: (
@@ -132,27 +134,35 @@
              height: 2.2, radius: 0.7, gap: 0.5, side: Outside),
         ],
         scatter: [
+            // Issue #109: giant snowy firs, far apart: they give the scale and mark the mountain
+            // from afar.
+            (models: ["holiday-kit/tree-snow-a", "holiday-kit/tree-snow-b", "holiday-kit/tree-snow-c"],
+             count: 12, height: (14.0, 20.0), radius: 4.5, distance: (6.0, 40.0)),
+            // Issue #109: needles of grey rock, the mountain's (its tall stones, scaled up), further
+            // away.
+            (models: ["nature-kit/stone_tallA", "nature-kit/stone_tallB"],
+             count: 14, height: (12.0, 22.0), radius: 4.0, distance: (8.0, 44.0)),
             // Snowy firs, both sides.
             (models: ["holiday-kit/tree-snow-a", "holiday-kit/tree-snow-b", "holiday-kit/tree-snow-c"],
-             count: 54, height: (6.0, 10.0), radius: 2.4, distance: (2.0, 30.0)),
+             count: 84, height: (6.0, 11.0), radius: 2.4, distance: (2.0, 32.0)),
             // A few decorated ones.
             (models: ["holiday-kit/tree-decorated-snow"],
-             count: 6, height: (6.0, 8.0), radius: 2.6, distance: (3.0, 24.0)),
+             count: 8, height: (6.0, 9.0), radius: 2.6, distance: (3.0, 24.0)),
             // Tall dark pines further away, outside.
             (models: ["nature-kit/tree_pineTallA", "nature-kit/tree_pineTallB"],
-             count: 18, height: (9.0, 13.0), radius: 1.8, distance: (12.0, 36.0), side: Outside),
+             count: 28, height: (9.0, 14.0), radius: 1.8, distance: (12.0, 38.0), side: Outside),
             // Grey stones.
             (models: ["nature-kit/stone_tallA", "nature-kit/stone_tallB"],
-             count: 14, height: (1.2, 2.8), radius: 2.0, distance: (1.0, 22.0)),
+             count: 22, height: (1.2, 2.8), radius: 2.0, distance: (1.0, 22.0)),
             // Snowmen and reindeer.
             (models: ["holiday-kit/snowman", "holiday-kit/snowman-hat"],
-             count: 10, height: (2.2, 3.2), radius: 1.6, distance: (1.0, 18.0)),
+             count: 14, height: (2.2, 3.2), radius: 1.6, distance: (1.0, 18.0)),
             (models: ["holiday-kit/reindeer"],
-             count: 6, height: (2.0, 2.6), radius: 1.4, distance: (2.0, 20.0)),
+             count: 8, height: (2.0, 2.6), radius: 1.4, distance: (2.0, 20.0)),
             // Snow piles, sleds, benches and presents: small, no shadows.
             (models: ["holiday-kit/snow-pile", "holiday-kit/sled", "holiday-kit/bench",
                       "holiday-kit/present-b-cube"],
-             count: 50, height: (0.4, 0.9), radius: 0.9, distance: (0.3, 14.0), shadows: false),
+             count: 70, height: (0.4, 0.9), radius: 0.9, distance: (0.3, 14.0), shadows: false),
         ],
     ),
     (

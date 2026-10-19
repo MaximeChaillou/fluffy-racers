@@ -773,10 +773,37 @@ Les bords sans muret : l'intérieur du virage du saut et le début de la récept
 
 ![Le virage serré du bas : le chemin d'herbe à droite, le tremplin à figures au loin](img/prairie-herbe.jpg)
 
+### Le Col des Moufles refait (#109)
+
+Le col de montagne enneigé, refait selon le guide : le même biome « Neige », plus grand (des sapins géants de 14 à 20 m, des aiguilles de roche de 12 à 22 m), et une montagne à gravir. Environ **1 325 m le tour**, à gauche comme avant, technique et en hauteur :
+
+- **la ligne droite du départ**, dans la vallée, la seule longue (l'aspiration, les boîtes, un plot ; **une pierre qui balance** au-dessus de sa gauche, pendue à sa potence au-delà du muret) ;
+- **trois lacets** pour monter la face de la montagne jusqu'au col, 12 m plus haut : une épingle à gauche (de la neige profonde à son intérieur), une à droite, une à gauche, de 22 m de rayon, chacune après 70 m de montée ; **le bison** fait les cent pas sur la droite de la première montée, **un rondin roule** sur la gauche de la deuxième ;
+- **sur le col, le virage du saut risqué** (à droite, 90°) : son intérieur est un vide de 12 m, qu'un tremplin traverse en diagonale ; la réception, élargie à 16 m, **un rocher** à son bord gauche ; le sommet et **un bonhomme de neige géant** ;
+- un virage serré à gauche, puis **la descente** : **un renflement** (droite 70°, gauche 140°, droite 70°), 8 m au-dessus de la vallée, que **la route cachée** coupe tout droit derrière un talus de neige ; des caisses ;
+- **deux lacets au pied de la montagne** (une épingle à gauche, une à droite ; entre elles, **le tremplin à figures** et une botte de foin) ;
+- **le virage serré du bas** (à gauche, 90°), que coupe **le chemin de neige** (un hors-piste, comme l'herbe) : plus lent sans boost, plus rapide avec le mini-turbo du lacet d'avant ; puis **le dernier virage**.
+
+Cinq épingles, quatre virages serrés, les S des lacets et du sommet : aucune longue courbe molle. **Les pièces des raccourcis** (le virage du saut et sa réception, le renflement et sa route cachée, le virage du chemin de neige) sont celles de Prairie Pompon (#108), tournées, et retournées en miroir là où le Col tourne de l'autre côté : leurs réglages ont fait leurs preuves ; le tracé autour d'elles est neuf. Les bords sans muret : l'intérieur du virage du saut et le début de la réception, les deux bouches de la route cachée (là où sa route couvre le vide), l'intérieur du virage du bas (au sol). Ailleurs, des murets : les lacets, le col et la descente sont au-dessus du vide.
+
+**Les mesures** (bot Normal, graines 0 à 3, et le miroir) : le tour le plus rapide en 41,3 à 43,1 s, le plus lent en 50,4 à 54,0 s ; 4,7 à 5,2 drifts et 2,4 à 3,5 mini-turbos orange par tour ; aucun pélican en conduite libre ; le tour le plus rapide à 32,1 m/s de moyenne au plus (la vérification « pas plus vite que boosté tout le long » s'arrête à 33). **Les raccourcis**, pour un bot Difficile (`bots::shortcut_tests`) : le saut risqué réussi fait gagner 0,52 s (0,39 en miroir), raté (13 m/s au pied du tremplin) le kart tombe et le pélican le dépose avant ; le chemin de neige fait gagner 0,62 s (0,74) avec un boost, et en fait perdre 0,93 s (0,80) sans ; la route cachée fait gagner 0,70 s (0,80). Des bots Difficile (graines 0 à 3, et le miroir) : tous finissent, aucun pélican en conduite libre, 29 à 38 routes cachées et 18 à 27 sauts tentés par course, aucun raté.
+
+- **Le contre-la-montre** : les records et les fantômes du Col d'avant #109 sont laissés de côté (format 4 du texte des records, `modes::trial::REDRAWN_CIRCUITS`).
+- **Ce qu'il a appris**, pour les suivants :
+  - reprendre une pièce de raccourci déjà réglée (un virage et son raccourci, avec ses bords ouverts et ses obstacles) donne les mêmes gains et passe les mêmes tests : on dessine le reste autour ;
+  - un circuit qui descend et où chaque épingle relance au mini-turbo va vite : avec un plot de boost de plus sur le col, le tour le plus rapide d'un bot frôlait la vérification « pas plus vite que boosté tout le long » (32,8 m/s pour 33) ; sans lui, 32,1 au plus ;
+  - **le Ruban Réglisse ne tient pas dans le guide tel quel** : ses trois zones d'anti-gravité (le mur, le plafond, le virage relevé, que leurs tests de #78, #94 et #96 gardent) font 820 m à elles seules ; avec cinq épingles, il faut au moins 1,58 km (1,44 km en raccourcissant les zones jusqu'aux limites de leurs tests, la route qui s'y tord 25 % plus vite, et les épingles l'une contre l'autre), soit un tour lent d'environ une minute ou plus pour un bot Normal. Une décision de Max : voir #151 et `STATUS.md`, « Questions pour Max ».
+
+![La première montée : le bison qui fait les cent pas à droite, la ligne de départ en contrebas à gauche](img/col-bison.jpg)
+
+![Le saut risqué sur le col : le tremplin à droite, le vide dessous, la boîte double à gauche](img/col-saut.jpg)
+
+![Le renflement de la descente : la route cachée tout droit, la route qui part à droite](img/col-route-cachee.jpg)
+
 ### La suite
 
 - ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
-- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148 ; Col des Moufles, Lagon Duvet et Ruban Réglisse : #109), et les nouveaux, jusqu'à 24.
+- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148 ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150 ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
 
 ## 17. Priorités
 

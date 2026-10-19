@@ -21,7 +21,9 @@
 //! - **The text of before issue #108** ([`FORMAT_BEFORE_REDRAWN`], and the one of before #118):
 //!   the records of the circuits redrawn by #108 ([`REDRAWN_CIRCUITS`]) are left out, without an
 //!   error: their times and their ghosts were set on another layout (a ghost would drive through
-//!   the walls of the new one). The others are read as they were.
+//!   the walls of the new one). The others are read as they were. **Issue #109**: the same for the
+//!   Col des Moufles, redrawn since the text of [`FORMAT_BEFORE_COL_REDRAWN`]: each redrawn circuit
+//!   says from which format on its records are those of its new layout.
 
 use std::sync::Arc;
 
@@ -37,15 +39,24 @@ use crate::kart::KartColor;
 pub const TIME_TRIAL_STORAGE_KEY: &str = "fluffy-racers/time-trial";
 
 /// The format of the records' text: a text of another format is not read (but for
-/// [`FORMAT_BEFORE_REDRAWN`] and [`FORMAT_WITH_CLASSES`]).
-pub const RECORDS_FORMAT: u32 = 3;
+/// [`FORMAT_BEFORE_COL_REDRAWN`], [`FORMAT_BEFORE_REDRAWN`] and [`FORMAT_WITH_CLASSES`]).
+pub const RECORDS_FORMAT: u32 = 4;
+
+/// The format of the records' text before issue #109 (the Col des Moufles redrawn; see the
+/// module's documentation).
+pub const FORMAT_BEFORE_COL_REDRAWN: u32 = 3;
 
 /// The format of the records' text before issue #108 (see the module's documentation).
 pub const FORMAT_BEFORE_REDRAWN: u32 = 2;
 
-/// The circuits redrawn by issue #108 (GD « Conception des circuits »): their records of before
-/// it ([`FORMAT_BEFORE_REDRAWN`] and [`FORMAT_WITH_CLASSES`]) are left out.
-pub const REDRAWN_CIRCUITS: [&str; 1] = ["tracks/prairie.track.ron"];
+/// The circuits redrawn after the guide « Conception des circuits » (GD § 16), each with the first
+/// format of the records' text written for its new layout (issue #108: Prairie Pompon, format 3;
+/// issue #109: the Col des Moufles, format 4): its records of a text of an earlier format are left
+/// out.
+pub const REDRAWN_CIRCUITS: [(&str, u32); 2] = [
+    ("tracks/prairie.track.ron", 3),
+    ("tracks/col.track.ron", RECORDS_FORMAT),
+];
 
 /// The format of the records' text before issue #118: each record had a speed class too (see the
 /// module's documentation).
@@ -211,14 +222,14 @@ impl TrialRecords {
     /// Reads a kept text; an unreadable one gives its reason (see the module's documentation).
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let stored: StoredRecords = ron::from_str(text).map_err(|error| error.to_string())?;
-        let (with_classes, before_redrawn) = match stored.format {
-            RECORDS_FORMAT => (false, false),
-            FORMAT_BEFORE_REDRAWN => (false, true),
-            FORMAT_WITH_CLASSES => (true, true),
+        let with_classes = match stored.format {
+            RECORDS_FORMAT | FORMAT_BEFORE_COL_REDRAWN | FORMAT_BEFORE_REDRAWN => false,
+            FORMAT_WITH_CLASSES => true,
             format => {
                 return Err(format!(
                     "records of format {format} (this game reads {RECORDS_FORMAT}, \
-                     {FORMAT_BEFORE_REDRAWN} and {FORMAT_WITH_CLASSES})"
+                     {FORMAT_BEFORE_COL_REDRAWN}, {FORMAT_BEFORE_REDRAWN} and \
+                     {FORMAT_WITH_CLASSES})"
                 ));
             }
         };
@@ -242,8 +253,11 @@ impl TrialRecords {
                     return Err(format!("{name}: a speed class (format {RECORDS_FORMAT})"));
                 }
             }
-            // Issue #108: a circuit redrawn since (another layout): left out.
-            if before_redrawn && REDRAWN_CIRCUITS.contains(&key.circuit.as_str()) {
+            // Issues #108 and #109: a circuit redrawn since (another layout): left out.
+            if REDRAWN_CIRCUITS
+                .iter()
+                .any(|(circuit, since)| *circuit == key.circuit && stored.format < *since)
+            {
                 continue;
             }
             if records.get(&key).is_some() {
@@ -407,6 +421,9 @@ mod tests {
     /// frame for frame; those of the other classes are left out, without an error (even when
     /// they are the only ones, or share a race with a `Cc150` one). Kept again, they are written
     /// in the text of today.
+    ///
+    /// Issue #109: on circuits never redrawn (the Col des Moufles was: its records of before are
+    /// left out, `the_records_of_the_col_des_moufles_before_it_was_redrawn_are_left_out`).
     #[test]
     fn the_records_of_before_issue_118_are_read_in_the_default_class_only() {
         let mut kept = TrialRecords::default();
@@ -415,13 +432,17 @@ mod tests {
             3720,
             Some(3720),
         ));
-        kept.insert(record(key("tracks/col.track.ron", true), 5100, Some(900)));
+        kept.insert(record(
+            key("tracks/crique.track.ron", true),
+            5100,
+            Some(900),
+        ));
         let mut before = kept.clone();
         before.records.extend([
             // The same race as a kept one, in another class (and faster).
             record(key("tracks/ruban.track.ron", false), 3000, Some(3000)),
             record(key("tracks/lagon.track.ron", false), 8000, None),
-            record(key("tracks/col.track.ron", false), 6000, Some(500)),
+            record(key("tracks/crique.track.ron", false), 6000, Some(500)),
         ]);
         let old = format_1_text(&before, &["Cc150", "Cc150", "Cc200", "Cc50", "Cc100"]);
         assert!(old.contains("format: 1") && old.contains("class: Cc200"));
@@ -487,7 +508,8 @@ mod tests {
     /// Issue #108: the records kept before Prairie Pompon was redrawn (format 2, and format 1 of
     /// before #118) are read without those of Prairie Pompon, mirrored or not: its times and
     /// ghosts were set on its old layout. The other circuits' come back as they were; kept again,
-    /// the text of today (format 3) keeps Prairie Pompon's new records.
+    /// the text of today keeps Prairie Pompon's new records. (Issue #109: the other circuit is
+    /// one never redrawn, the Crique Câline.)
     #[test]
     fn the_records_of_prairie_pompon_before_it_was_redrawn_are_left_out() {
         let mut all = TrialRecords::default();
@@ -497,9 +519,17 @@ mod tests {
             Some(3720),
         ));
         all.insert(record(key("tracks/prairie.track.ron", true), 3900, None));
-        all.insert(record(key("tracks/col.track.ron", true), 5100, Some(900)));
+        all.insert(record(
+            key("tracks/crique.track.ron", true),
+            5100,
+            Some(900),
+        ));
         let mut others = TrialRecords::default();
-        others.insert(record(key("tracks/col.track.ron", true), 5100, Some(900)));
+        others.insert(record(
+            key("tracks/crique.track.ron", true),
+            5100,
+            Some(900),
+        ));
         let today = all.to_ron();
         assert!(today.contains(&format!("format: {RECORDS_FORMAT},")));
         assert_eq!(TrialRecords::from_ron(&today), Ok(all.clone()));
@@ -530,12 +560,82 @@ mod tests {
         let mut prairie = all.clone();
         prairie
             .records
-            .retain(|r| r.key.circuit == REDRAWN_CIRCUITS[0]);
+            .retain(|r| r.key.circuit == REDRAWN_CIRCUITS[0].0);
         let only = prairie.to_ron().replace(
             &format!("format: {RECORDS_FORMAT},"),
             &format!("format: {FORMAT_BEFORE_REDRAWN},"),
         );
         assert_eq!(TrialRecords::from_ron(&only), Ok(TrialRecords::default()));
+    }
+
+    /// Issue #109: the records kept before the Col des Moufles was redrawn (format 3, and the
+    /// formats before it) are read without those of the Col, mirrored or not: its times and
+    /// ghosts were set on its old layout. Prairie Pompon's of format 3 (its new layout, #108) and
+    /// the other circuits' come back as they were; in the formats before 3, Prairie Pompon's are
+    /// left out too. Kept again, the text of today (format 4) keeps the Col's new records.
+    #[test]
+    fn the_records_of_the_col_des_moufles_before_it_was_redrawn_are_left_out() {
+        let mut all = TrialRecords::default();
+        all.insert(record(key("tracks/col.track.ron", false), 4800, Some(4800)));
+        all.insert(record(key("tracks/col.track.ron", true), 5100, None));
+        all.insert(record(
+            key("tracks/prairie.track.ron", true),
+            3900,
+            Some(600),
+        ));
+        all.insert(record(
+            key("tracks/lagon.track.ron", false),
+            5400,
+            Some(900),
+        ));
+        let today = all.to_ron();
+        assert!(today.contains("format: 4,"), "{}", &today[..40]);
+        assert_eq!(TrialRecords::from_ron(&today), Ok(all.clone()));
+        let only = |circuits: &[&str]| {
+            let mut kept = all.clone();
+            kept.records
+                .retain(|r| circuits.contains(&r.key.circuit.as_str()));
+            kept
+        };
+        let in_format = |format: u32| {
+            today.replace(
+                &format!("format: {RECORDS_FORMAT},"),
+                &format!("format: {format},"),
+            )
+        };
+        let before_col = TrialRecords::from_ron(&in_format(FORMAT_BEFORE_COL_REDRAWN)).unwrap();
+        assert_eq!(
+            before_col,
+            only(&["tracks/prairie.track.ron", "tracks/lagon.track.ron"])
+        );
+        for (a, b) in only(&["tracks/prairie.track.ron", "tracks/lagon.track.ron"])
+            .iter()
+            .zip(before_col.iter())
+        {
+            assert_eq!(
+                a.ghost.as_ref().map(|g| &g.frames),
+                b.ghost.as_ref().map(|g| &g.frames)
+            );
+        }
+        assert_eq!(
+            TrialRecords::from_ron(&in_format(FORMAT_BEFORE_REDRAWN)),
+            Ok(only(&["tracks/lagon.track.ron"]))
+        );
+        assert_eq!(
+            TrialRecords::from_ron(&format_1_text(&all, &["Cc150"; 4])),
+            Ok(only(&["tracks/lagon.track.ron"]))
+        );
+        // Only the Col's, before: no record, no error; kept again, today's text.
+        let col = only(&["tracks/col.track.ron"]);
+        let before = col.to_ron().replace(
+            &format!("format: {RECORDS_FORMAT},"),
+            &format!("format: {FORMAT_BEFORE_COL_REDRAWN},"),
+        );
+        assert_eq!(TrialRecords::from_ron(&before), Ok(TrialRecords::default()));
+        assert_eq!(
+            REDRAWN_CIRCUITS[1],
+            ("tracks/col.track.ron", RECORDS_FORMAT)
+        );
     }
 
     /// An unreadable text is refused with its reason (the game keeps no record then): not RON,
@@ -545,8 +645,13 @@ mod tests {
     fn unreadable_records_are_refused_with_a_reason() {
         let mut records = TrialRecords::default();
         // Issue #108: on a circuit of before it (the records of before #108 of a circuit redrawn
-        // since are left out, not refused).
-        records.insert(record(key("tracks/col.track.ron", false), 700, Some(700)));
+        // since are left out, not refused). Issue #109: one never redrawn (the Col des Moufles
+        // was).
+        records.insert(record(
+            key("tracks/crique.track.ron", false),
+            700,
+            Some(700),
+        ));
         let good = records.to_ron();
         assert!(TrialRecords::from_ron(&good).is_ok());
         let data_start = good.find("data: \"").unwrap() + 7;
@@ -594,6 +699,7 @@ mod tests {
             ("twice", twice),
             ("a class today", old.replace("format: 1", &today)),
             ("a class before #108", old.replace("format: 1", "format: 2")),
+            ("a class before #109", old.replace("format: 1", "format: 3")),
             ("bad class before", old.replace("Cc150", "Cc999")),
             ("no class before", good.replace(&today, "format: 1")),
             ("twice before", twice_before),
@@ -603,7 +709,7 @@ mod tests {
             assert!(result.is_err(), "{what}: {result:?}");
             assert!(!result.unwrap_err().is_empty());
         }
-        for format in [1, 2, 3] {
+        for format in [1, 2, 3, 4] {
             assert_eq!(
                 TrialRecords::from_ron(&format!("(format: {format}, records: [])")),
                 Ok(TrialRecords::default())

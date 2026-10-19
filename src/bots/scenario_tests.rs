@@ -2257,9 +2257,11 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 }
 
 /// Issue #107 (GD « Conception des circuits »): the circuits that follow the guide (the reference
-/// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon).
-/// Their races check the guide's figures too ([`guide_checks`]).
-pub(crate) const GUIDE_CIRCUITS: [&str; 2] = ["Prairie Pompon", "Corniche Cannelle"];
+/// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon;
+/// issue #109, the Col des Moufles). Their races check the guide's figures too
+/// ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 3] =
+    ["Prairie Pompon", "Col des Moufles", "Corniche Cannelle"];
 
 /// Issue #144: knocks by a hazard in a race of 12 Normal bots (the karts' total), at worst and
 /// on average over the seeds.

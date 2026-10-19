@@ -914,12 +914,13 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
 /// the squeals'; the player's engine plays, the others' from the closest karts; sounds were
 /// refused or cut for it (the cap, lowered here, is reached).
 ///
-/// Issue #108: on the Col des Moufles (770 m a lap), where the pack comes back past the player
-/// within the 40 s, as it did on Prairie Pompon before it was redrawn (1.3 km a lap now: the
-/// pack does not come back in time, out of hearing).
+/// Issue #108: on a short circuit, where the pack comes back past the player within the 40 s, as
+/// it did on Prairie Pompon before it was redrawn (1.3 km a lap now: the pack does not come back
+/// in time, out of hearing). Issue #109: the Crique Câline (690 m a lap), the Col des Moufles
+/// being redrawn too (1.3 km).
 #[test]
 fn the_cap_holds_with_twelve_karts() {
-    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/col.track.ron".into()), 11);
+    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/crique.track.ron".into()), 11);
     {
         let mut tuning = app.world_mut().resource_mut::<SoundTuning>();
         tuning.max_sounds = 6;
