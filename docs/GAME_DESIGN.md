@@ -741,10 +741,42 @@ Un canyon couleur cannelle (le biome « Corniche », § 14 : des aiguilles de ro
 
 ![Le rondin qui roule sur la gauche du bord du canyon, avant la longue courbe](img/corniche-rondin.jpg)
 
+### Prairie Pompon refait (#108)
+
+Le circuit d'ouverture, refait selon le guide : la même prairie (le biome « Prairie », plus grand : des chênes géants, de grands arbres), avec une butte. Environ **1 370 m le tour**, à droite, facile et roulant, mais à drifter :
+
+- **la ligne droite du départ**, la seule longue (l'aspiration, les boîtes, un plot) ;
+- **cinq épingles** de 22 m de rayon : à droite au bout de la ligne droite (du sable à l'intérieur), à gauche au pied de la butte, à droite au sommet, puis à droite et à gauche dans la prairie ; quatre d'entre elles finissent par un petit contre-virage, que le drift traverse. Chacune vient après assez de ligne droite pour que le mini-turbo de la précédente soit fini (sinon le drift d'un bot finit bleu) ;
+- **la butte**, 6,5 m de haut : la montée (des ballons, **le bison** qui fait les cent pas sur la droite), l'épingle du sommet, un virage serré à gauche, puis **le virage du saut risqué** (à droite, 90°) : son intérieur est un vide de 6,5 m, qu'un tremplin traverse en diagonale ;
+- **la réception**, élargie à 16 m, **un rocher** à son bord gauche ;
+- **un renflement** (gauche 70°, droite 140°, gauche 70°), que **la route cachée** coupe tout droit, derrière une haie ;
+- **la descente**, une botte de foin ;
+- deux épingles dans la prairie, puis **le virage serré du bas** (à droite, 90°), que coupe **le chemin d'herbe** : plus lent sans boost, plus rapide avec le mini-turbo de l'épingle d'avant ;
+- **la ligne droite du bas** : **le tremplin à figures** (sur sa moitié droite), une botte de foin ; **le dernier virage**.
+
+Les bords sans muret : l'intérieur du virage du saut et le début de la réception (jusqu'où le vol passe au-dessus de la route) ; là où la route cachée quitte la route et la rejoint (seulement là où sa propre route couvre le vide) ; l'intérieur du virage serré du bas (le chemin d'herbe, au niveau du sol). Ailleurs, des murets.
+
+**Les mesures** (bot Normal, 150cc, graines 0 à 3, et le miroir) : le tour le plus rapide en 43 à 45 s, le plus lent en 51 à 56 s ; 4,3 à 4,8 drifts et 3,3 à 3,8 mini-turbos orange par tour ; aucun pélican en conduite libre. **Les raccourcis**, pour un bot Difficile (`bots::shortcut_tests`) : le saut réussi fait gagner 0,3 à 0,55 s, raté (13 m/s au pied du tremplin) le kart tombe et le pélican le dépose avant ; l'herbe fait gagner 0,6 à 0,75 s avec un boost, et en fait perdre 0,75 à 0,9 sans ; la route cachée fait gagner 0,65 à 0,7 s.
+
+- **L'ancien tracé** (#3) est devenu le circuit d'essai des tests unitaires (`src/track/test_circuit.track.ron`, hors du jeu) : les tests de la géométrie, des règles de course et de la ligne des bots gardent un circuit connu.
+- **Le contre-la-montre** : les records et les fantômes de Prairie Pompon d'avant #108 sont laissés de côté (un fantôme traverserait les murs du nouveau tracé) : format 3 du texte des records, `modes::trial::REDRAWN_CIRCUITS`.
+- **Le fond du menu** roule sur ce circuit : ses karts ne prennent aucun raccourci (le peloton reste groupé pour la caméra).
+- **Ce qu'il a appris**, pour les suivants :
+  - un bord sans muret au-dessus d'un vide **seulement là où un chemin passe** : une route cachée qui quitte la route dans un virage n'ouvre le bord que là où sa propre route couvre le vide (sinon les karts tombent dans le « V » entre les deux routes) ;
+  - un raccourci d'herbe ne paie que s'il coupe un virage lent ou un grand détour, par des courbes larges (30 à 40 m de rayon) : un virage de 90° pris à fond ne se coupe pas ;
+  - sur une ligne droite entre deux virages du même côté, les karts la traversent en diagonale : un tremplin à figures au milieu les envoyait par-dessus le muret ;
+  - un renflement peu profond ne fait pas une route cachée : la ligne des bots le coupe presque autant qu'elle.
+
+![La montée de la butte : les ballons, le bison qui fait les cent pas à droite](img/prairie-montee.jpg)
+
+![Le saut risqué : le tremplin à droite avant le virage, le vide à l'intérieur](img/prairie-saut.jpg)
+
+![Le virage serré du bas : le chemin d'herbe à droite, le tremplin à figures au loin](img/prairie-herbe.jpg)
+
 ### La suite
 
 - ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
-- Puis les six premiers circuits refaits selon ce guide, et les nouveaux, jusqu'à 24.
+- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148 ; Col des Moufles, Lagon Duvet et Ruban Réglisse : #109), et les nouveaux, jusqu'à 24.
 
 ## 17. Priorités
 

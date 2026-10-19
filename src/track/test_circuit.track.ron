@@ -1,0 +1,105 @@
+// The test circuit of the unit tests (issue #108): the layout Prairie Pompon had from issue #3 to
+// issue #108, kept exactly as it was (its points, its sand, its ramp, its pads, its boxes, its
+// croquettes; only its name changes), for the tests that check the track's geometry, the race's
+// rules and the bots' line on a known circuit: a hairpin to the right with sand inside (point 6
+// its apex), a back straight with the trick ramp, a chicane, a raised banked turn, the start
+// straight. Not a circuit of the game (it is not in `assets/`): Prairie Pompon was redrawn after
+// the guide « Conception des circuits » (issue #108, `assets/tracks/prairie.track.ron`), and the
+// game's circuits are checked by the tests that go over every circuit of the manifest.
+//
+// Format: see src/track/data.rs. Positions along the track ("at", "from", "to") are spline
+// parameters: 9.5 = halfway between points 9 and 10. Lateral "offset" goes from -1 (left
+// edge of the road) to 1 (right edge). Point 0 is the start line; karts drive toward point 1.
+(
+    name: "Circuit d'essai",
+    // Dressing (issue #11): a meadow with a racing circuit's furniture (`assets/data/biomes.ron`),
+    // the same every time (seed), and a few pieces placed by hand (`props`: a model, where along
+    // the track, which side, its height and footprint in meters, its gap beyond the walls).
+    biome: "Prairie",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "pure-raceway",
+    decor_seed: 11,
+    props: [
+        // Two grandstands along the grid, outside, and the checkered flags at the start line,
+        // beyond the posts of its arch (issue #79).
+        (model: "racing-kit/grandStandCovered", at: 23.3, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/grandStandCovered", at: 23.75, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.5, radius: 0.8, gap: 1.8),
+        // Banner towers before the hairpin and at the trick ramp, outside.
+        (model: "racing-kit/bannerTowerRed", at: 3.6, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
+        (model: "racing-kit/bannerTowerGreen", at: 9.8, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
+        // A tent in the infield, a stand outside the raised turn (nothing high inside a tight turn:
+        // the road out of it stays in sight).
+        (model: "racing-kit/tentClosed", at: 1.4, side: Right, height: 3.2, radius: 3.4, gap: 1.5),
+        (model: "racing-kit/grandStandAwning", at: 19.5, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-3: long start straight, heading north (-Z).
+        (pos: (0.0, 0.0, 40.0)),
+        (pos: (0.0, 0.0, 10.0)),
+        (pos: (0.0, 0.0, -20.0)),
+        (pos: (0.0, 0.0, -50.0)),
+        // 4-8: hairpin to the right (radius 12 m at the apex): brake, or drift (issue #4).
+        (pos: (0.0, 0.0, -80.0), shoulder: 2.0),
+        (pos: (5.3, 0.0, -92.7), shoulder: 2.0),
+        (pos: (18.0, 0.0, -98.0), shoulder: 2.0),
+        (pos: (30.7, 0.0, -92.7), shoulder: 2.0),
+        (pos: (36.0, 0.0, -80.0), shoulder: 2.0),
+        // 9-11: back straight with the jump.
+        (pos: (36.0, 0.0, -50.0)),
+        (pos: (36.0, 0.0, -20.0)),
+        (pos: (36.0, 0.0, 8.0)),
+        // 12-15: chicane, a bit narrower.
+        (pos: (42.0, 0.0, 28.0), width: 13.0, shoulder: 3.0),
+        (pos: (55.0, 0.0, 42.0), width: 13.0, shoulder: 3.0),
+        (pos: (59.0, 0.0, 60.0), width: 13.0, shoulder: 3.0),
+        (pos: (55.0, 0.0, 78.0)),
+        (pos: (56.0, 0.0, 96.0)),
+        // 17-22: raised, banked right-hand turn.
+        (pos: (56.0, 1.5, 112.0), bank: 6.0, shoulder: 1.5),
+        (pos: (50.7, 3.0, 128.5), bank: 12.0, shoulder: 1.5),
+        (pos: (36.7, 3.5, 138.6), bank: 15.0, shoulder: 1.5),
+        (pos: (19.3, 3.5, 138.6), bank: 15.0, shoulder: 1.5),
+        (pos: (5.3, 3.0, 128.5), bank: 12.0, shoulder: 1.5),
+        (pos: (0.0, 1.5, 112.0), bank: 6.0, shoulder: 1.5),
+        // 23: back on the start straight (the grid sits between 23 and 0).
+        (pos: (0.0, 0.0, 80.0)),
+    ],
+    offroad: [
+        // Sand at the inside of the hairpin: cutting the apex costs speed.
+        (from: 5.3, to: 6.8, left: 0.55, right: 1.0),
+    ],
+    // Trick ramp (issue #13): press jump/drift as the kart leaves it for a trick and a boost on
+    // landing.
+    trick_ramps: [
+        (at: 9.4, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): about 1 s of boost. Two on the start straight, one on each side,
+    // and one before the raised turn.
+    boost_pads: [
+        (at: 1.6, offset: -0.45),
+        (at: 2.2, offset: 0.45),
+        (at: 16.2, offset: 0.35),
+    ],
+    item_boxes: [
+        (at: 2.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 11.2, offsets: [-0.5, 0.0, 0.5]),
+        (at: 19.5, offsets: [-0.75], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road (go and get
+    // them), never on the grid. Each one is +1 % of top speed (10 at most) and a mini-boost; they
+    // come back 10 s after being picked up.
+    croquettes: [
+        // Start straight: on the right after the start line, then on the left after the left
+        // boost pad.
+        (from: 0.55, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 1.8, count: 4, spacing: 3.0, offset: -0.45),
+        // Back straight, after the landing of the trick ramp: two lines side by side.
+        (from: 10.2, count: 5, spacing: 3.0, offset: 0.4),
+        (from: 10.3, count: 4, spacing: 3.0, offset: -0.4),
+        // Out of the chicane, before the raised turn, on the left.
+        (from: 15.2, count: 4, spacing: 3.0, offset: -0.35),
+    ],
+    respawns: [],
+)

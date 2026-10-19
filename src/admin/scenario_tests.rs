@@ -196,8 +196,9 @@ fn switching_the_circuit_builds_the_chosen_one() {
     update_until(&mut app, "the race", |w| level_ready(w, 2));
     run(&mut app, 0.5);
     let first = census(&mut app);
+    // Issue #108: the croquettes of Prairie Pompon redrawn (22 before).
     let prairie_croquettes = count::<With<CroquetteSpot>>(app.world_mut());
-    assert_eq!(prairie_croquettes, 22);
+    assert_eq!(prairie_croquettes, 28);
 
     load(&mut app, LoadLevel::on(ring.choice(), RaceMode::Race));
     update_until(&mut app, "the ring", |w| {

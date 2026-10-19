@@ -650,7 +650,9 @@ mod tests {
     }
 
     /// Issue #3 acceptance: the kart of #1 can drive a full lap, through every checkpoint in
-    /// order (hairpin, jump, chicane, banked turn), without leaving the track.
+    /// order (hairpin, jump, chicane, banked turn), without leaving the track. Issue #108: the
+    /// circuit redrawn (its five hairpins, the Butte, its two trick ramps): in the air only after
+    /// one of its trick ramps.
     #[test]
     fn kart_drives_a_full_lap_of_the_circuit() {
         let mut app = app_on(TrackChoice::default());
@@ -669,8 +671,12 @@ mod tests {
             .get(&handle)
             .unwrap()
             .clone();
-        let ramp = data.trick_ramps[0];
-        let ramp_start = center.param_to_distance(ramp.at);
+        let ramps: Vec<(f32, f32)> = data
+            .trick_ramps
+            .iter()
+            .map(|ramp| (center.param_to_distance(ramp.at), ramp.length))
+            .collect();
+        assert!(!ramps.is_empty());
 
         // Distance to drive from the grid to reach checkpoint `k` (the last one closes the lap:
         // back on the start line).
@@ -709,13 +715,14 @@ mod tests {
                 lateral < track::mesh::wall_offset(&sample),
                 "left the track at {position}"
             );
-            // ...and only in the air after the trick ramp.
+            // ...and only in the air after a trick ramp.
             if world.get::<KartState>(kart) == Some(&KartState::Airborne) {
                 airborne_ticks += 1;
-                let after_ramp = center.wrap(sample.distance - ramp_start);
                 assert!(
-                    after_ramp < ramp.length + 40.0,
-                    "airborne away from the ramp at {position}"
+                    ramps.iter().any(|(start, length)| {
+                        center.wrap(sample.distance - start) < length + 40.0
+                    }),
+                    "airborne away from the ramps at {position}"
                 );
             }
             // Progress along the centerline (wrapping around the start line), never backwards.

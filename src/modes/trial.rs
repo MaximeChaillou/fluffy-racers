@@ -18,6 +18,10 @@
 //!   and a record per circuit, class and mirror, is still read: the records of the class the game
 //!   is raced in (it was the default one, `Cc150`) are those of their circuit and mirror, the
 //!   others are left out (no error). The next record kept writes the text of today.
+//! - **The text of before issue #108** ([`FORMAT_BEFORE_REDRAWN`], and the one of before #118):
+//!   the records of the circuits redrawn by #108 ([`REDRAWN_CIRCUITS`]) are left out, without an
+//!   error: their times and their ghosts were set on another layout (a ghost would drive through
+//!   the walls of the new one). The others are read as they were.
 
 use std::sync::Arc;
 
@@ -33,8 +37,15 @@ use crate::kart::KartColor;
 pub const TIME_TRIAL_STORAGE_KEY: &str = "fluffy-racers/time-trial";
 
 /// The format of the records' text: a text of another format is not read (but for
-/// [`FORMAT_WITH_CLASSES`]).
-pub const RECORDS_FORMAT: u32 = 2;
+/// [`FORMAT_BEFORE_REDRAWN`] and [`FORMAT_WITH_CLASSES`]).
+pub const RECORDS_FORMAT: u32 = 3;
+
+/// The format of the records' text before issue #108 (see the module's documentation).
+pub const FORMAT_BEFORE_REDRAWN: u32 = 2;
+
+/// The circuits redrawn by issue #108 (GD « Conception des circuits »): their records of before
+/// it ([`FORMAT_BEFORE_REDRAWN`] and [`FORMAT_WITH_CLASSES`]) are left out.
+pub const REDRAWN_CIRCUITS: [&str; 1] = ["tracks/prairie.track.ron"];
 
 /// The format of the records' text before issue #118: each record had a speed class too (see the
 /// module's documentation).
@@ -200,13 +211,14 @@ impl TrialRecords {
     /// Reads a kept text; an unreadable one gives its reason (see the module's documentation).
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let stored: StoredRecords = ron::from_str(text).map_err(|error| error.to_string())?;
-        let with_classes = match stored.format {
-            RECORDS_FORMAT => false,
-            FORMAT_WITH_CLASSES => true,
+        let (with_classes, before_redrawn) = match stored.format {
+            RECORDS_FORMAT => (false, false),
+            FORMAT_BEFORE_REDRAWN => (false, true),
+            FORMAT_WITH_CLASSES => (true, true),
             format => {
                 return Err(format!(
-                    "records of format {format} (this game reads {RECORDS_FORMAT}, and \
-                     {FORMAT_WITH_CLASSES})"
+                    "records of format {format} (this game reads {RECORDS_FORMAT}, \
+                     {FORMAT_BEFORE_REDRAWN} and {FORMAT_WITH_CLASSES})"
                 ));
             }
         };
@@ -229,6 +241,10 @@ impl TrialRecords {
                 (false, Some(_)) => {
                     return Err(format!("{name}: a speed class (format {RECORDS_FORMAT})"));
                 }
+            }
+            // Issue #108: a circuit redrawn since (another layout): left out.
+            if before_redrawn && REDRAWN_CIRCUITS.contains(&key.circuit.as_str()) {
+                continue;
             }
             if records.get(&key).is_some() {
                 return Err(format!("two records for {name}"));
@@ -369,7 +385,11 @@ mod tests {
                 b.ghost.as_ref().map(|g| &g.frames)
             );
         }
-        assert!(text.contains("format: 2"), "{}", &text[..200]);
+        assert!(
+            text.contains(&format!("format: {RECORDS_FORMAT}")),
+            "{}",
+            &text[..200]
+        );
         assert!(text.contains(&format!("game: \"{GAME_VERSION}\"")));
         assert!(!text.contains("class"));
         // A 62 s ghost (3 laps of Prairie Pompon) in about 100 kB of text.
@@ -391,7 +411,7 @@ mod tests {
     fn the_records_of_before_issue_118_are_read_in_the_default_class_only() {
         let mut kept = TrialRecords::default();
         kept.insert(record(
-            key("tracks/prairie.track.ron", false),
+            key("tracks/ruban.track.ron", false),
             3720,
             Some(3720),
         ));
@@ -399,7 +419,7 @@ mod tests {
         let mut before = kept.clone();
         before.records.extend([
             // The same race as a kept one, in another class (and faster).
-            record(key("tracks/prairie.track.ron", false), 3000, Some(3000)),
+            record(key("tracks/ruban.track.ron", false), 3000, Some(3000)),
             record(key("tracks/lagon.track.ron", false), 8000, None),
             record(key("tracks/col.track.ron", false), 6000, Some(500)),
         ]);
@@ -414,7 +434,7 @@ mod tests {
             );
         }
         assert_eq!(TrialRecords::from_ron(&read.to_ron()), Ok(kept.clone()));
-        assert!(read.to_ron().contains("format: 2"));
+        assert!(read.to_ron().contains(&format!("format: {RECORDS_FORMAT}")));
         // Only other classes: no record, no error.
         let others = format_1_text(&before, &["Cc50", "Cc100", "Cc200", "Cc200", "Cc50"]);
         assert_eq!(TrialRecords::from_ron(&others), Ok(TrialRecords::default()));
@@ -464,17 +484,69 @@ mod tests {
         );
     }
 
+    /// Issue #108: the records kept before Prairie Pompon was redrawn (format 2, and format 1 of
+    /// before #118) are read without those of Prairie Pompon, mirrored or not: its times and
+    /// ghosts were set on its old layout. The other circuits' come back as they were; kept again,
+    /// the text of today (format 3) keeps Prairie Pompon's new records.
+    #[test]
+    fn the_records_of_prairie_pompon_before_it_was_redrawn_are_left_out() {
+        let mut all = TrialRecords::default();
+        all.insert(record(
+            key("tracks/prairie.track.ron", false),
+            3720,
+            Some(3720),
+        ));
+        all.insert(record(key("tracks/prairie.track.ron", true), 3900, None));
+        all.insert(record(key("tracks/col.track.ron", true), 5100, Some(900)));
+        let mut others = TrialRecords::default();
+        others.insert(record(key("tracks/col.track.ron", true), 5100, Some(900)));
+        let today = all.to_ron();
+        assert!(today.contains(&format!("format: {RECORDS_FORMAT},")));
+        assert_eq!(TrialRecords::from_ron(&today), Ok(all.clone()));
+        let before = today.replace(
+            &format!("format: {RECORDS_FORMAT},"),
+            &format!("format: {FORMAT_BEFORE_REDRAWN},"),
+        );
+        let read = TrialRecords::from_ron(&before).unwrap();
+        assert_eq!(read, others);
+        assert_eq!(
+            read.iter()
+                .next()
+                .unwrap()
+                .ghost
+                .as_ref()
+                .map(|g| &g.frames),
+            others
+                .iter()
+                .next()
+                .unwrap()
+                .ghost
+                .as_ref()
+                .map(|g| &g.frames)
+        );
+        let before_118 = format_1_text(&all, &["Cc150", "Cc150", "Cc150"]);
+        assert_eq!(TrialRecords::from_ron(&before_118), Ok(others.clone()));
+        // Only Prairie Pompon's: no record, no error.
+        let mut prairie = all.clone();
+        prairie
+            .records
+            .retain(|r| r.key.circuit == REDRAWN_CIRCUITS[0]);
+        let only = prairie.to_ron().replace(
+            &format!("format: {RECORDS_FORMAT},"),
+            &format!("format: {FORMAT_BEFORE_REDRAWN},"),
+        );
+        assert_eq!(TrialRecords::from_ron(&only), Ok(TrialRecords::default()));
+    }
+
     /// An unreadable text is refused with its reason (the game keeps no record then): not RON,
     /// another format, a broken ghost, two records for the same race, a time of 0; issue #118: a
     /// class in the text of today, none or an unknown one in the text of before.
     #[test]
     fn unreadable_records_are_refused_with_a_reason() {
         let mut records = TrialRecords::default();
-        records.insert(record(
-            key("tracks/prairie.track.ron", false),
-            700,
-            Some(700),
-        ));
+        // Issue #108: on a circuit of before it (the records of before #108 of a circuit redrawn
+        // since are left out, not refused).
+        records.insert(record(key("tracks/col.track.ron", false), 700, Some(700)));
         let good = records.to_ron();
         assert!(TrialRecords::from_ron(&good).is_ok());
         let data_start = good.find("data: \"").unwrap() + 7;
@@ -485,7 +557,8 @@ mod tests {
         let more_frames = good.replace("frames: 701", "frames: 702");
         let fewer_frames = good.replace("frames: 701", "frames: 700");
         let no_frames = good.replace("frames: 701", "frames: 0");
-        let other_format = good.replace("format: 2", "format: 3");
+        let today = format!("format: {RECORDS_FORMAT}");
+        let other_format = good.replace(&today, &format!("format: {}", RECORDS_FORMAT + 1));
         let check_start = good.find("check: ").unwrap() + 7;
         let mut bad_check = good.clone();
         let digit = &good[check_start..check_start + 1];
@@ -509,7 +582,7 @@ mod tests {
         for (what, bad) in [
             ("empty", String::new()),
             ("not RON", "n'importe quoi".to_string()),
-            ("no records", "(format: 2)".to_string()),
+            ("no records", format!("({today})")),
             ("broken data", broken_data),
             ("cut data", cut_data),
             ("more frames", more_frames),
@@ -519,9 +592,10 @@ mod tests {
             ("bad check", bad_check),
             ("zero time", zero_time),
             ("twice", twice),
-            ("a class today", old.replace("format: 1", "format: 2")),
+            ("a class today", old.replace("format: 1", &today)),
+            ("a class before #108", old.replace("format: 1", "format: 2")),
             ("bad class before", old.replace("Cc150", "Cc999")),
-            ("no class before", good.replace("format: 2", "format: 1")),
+            ("no class before", good.replace(&today, "format: 1")),
             ("twice before", twice_before),
             ("zero time before", old.replace("time: 700", "time: 0")),
         ] {
@@ -529,7 +603,7 @@ mod tests {
             assert!(result.is_err(), "{what}: {result:?}");
             assert!(!result.unwrap_err().is_empty());
         }
-        for format in [1, 2] {
+        for format in [1, 2, 3] {
             assert_eq!(
                 TrialRecords::from_ron(&format!("(format: {format}, records: [])")),
                 Ok(TrialRecords::default())

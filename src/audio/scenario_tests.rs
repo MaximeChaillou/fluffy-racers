@@ -51,7 +51,12 @@ fn sound_app(track: TrackChoice, bots: usize) -> App {
 
 /// Prairie Pompon with `bots` bots and the sound design, the race created (its countdown on).
 fn race_app(bots: usize) -> (App, Entity) {
-    let mut app = sound_app(TrackChoice::default(), bots);
+    race_app_on(TrackChoice::default(), bots)
+}
+
+/// The same on `track`.
+fn race_app_on(track: TrackChoice, bots: usize) -> (App, Entity) {
+    let mut app = sound_app(track, bots);
     for _ in 0..600 {
         let world = app.world_mut();
         let ready = world.get_resource::<Race>().is_some()
@@ -68,7 +73,12 @@ fn race_app(bots: usize) -> (App, Entity) {
 
 /// The race at GO (the countdown skipped).
 fn started(bots: usize) -> (App, Entity) {
-    let (mut app, kart) = race_app(bots);
+    started_on(TrackChoice::default(), bots)
+}
+
+/// The same on `track`.
+fn started_on(track: TrackChoice, bots: usize) -> (App, Entity) {
+    let (mut app, kart) = race_app_on(track, bots);
     assert!(skip_countdown_now(app.world_mut()));
     app.update();
     assert!(app.world().resource::<Race>().started());
@@ -493,8 +503,9 @@ fn a_box_bursts_and_each_item_sounds() {
                 assert_eq!(asked(&app, SoundEffect::Explosion), 1, "{:?}", sounds(&app));
             }
             Prize::OreillerGeant => {
-                // It flies to the leader, far ahead by now.
-                for _ in 0..1800 {
+                // It flies to the leader, far ahead by now (issue #108: up to a whole lap of
+                // Prairie Pompon redrawn, twice as long).
+                for _ in 0..3600 {
                     app.update();
                     if asked(&app, SoundEffect::PillowFall) > 0 {
                         break;
@@ -902,9 +913,13 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
 /// the walls, the items on), the cap of sounds at once is never exceeded, nor the engines' and
 /// the squeals'; the player's engine plays, the others' from the closest karts; sounds were
 /// refused or cut for it (the cap, lowered here, is reached).
+///
+/// Issue #108: on the Col des Moufles (770 m a lap), where the pack comes back past the player
+/// within the 40 s, as it did on Prairie Pompon before it was redrawn (1.3 km a lap now: the
+/// pack does not come back in time, out of hearing).
 #[test]
 fn the_cap_holds_with_twelve_karts() {
-    let (mut app, kart) = started(11);
+    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/col.track.ron".into()), 11);
     {
         let mut tuning = app.world_mut().resource_mut::<SoundTuning>();
         tuning.max_sounds = 6;

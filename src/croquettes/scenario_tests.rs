@@ -585,10 +585,11 @@ mod game {
             app.update();
         }
         let start = app.world().get::<Transform>(kart).unwrap().translation;
+        // Issue #108: on the start straight only (other legs of the circuit run beside it).
         let mut line: Vec<(Entity, Vec3)> = croquettes
             .iter()
             .copied()
-            .filter(|(_, at)| at.z < start.z && at.z > start.z - 40.0 && at.x > 1.0)
+            .filter(|(_, at)| at.z < start.z && at.z > start.z - 40.0 && at.x > 1.0 && at.x < 8.0)
             .collect();
         line.sort_by(|a, b| b.1.z.total_cmp(&a.1.z));
         assert_eq!(line.len(), 5, "the first line");
@@ -667,9 +668,11 @@ mod game {
 
         // Take the second line too, then restart (as if the race were over): pockets emptied,
         // every croquette back.
+        // Issue #108: the line on the left of the start straight (the start line is at z = 0
+        // since Prairie Pompon was redrawn; 40 before).
         let second = croquettes
             .iter()
-            .find(|(_, at)| at.x < -1.0 && at.z < 0.0 && at.z > -30.0)
+            .find(|(_, at)| at.x < -1.0 && at.x > -8.0 && at.z < 0.0 && at.z > -70.0)
             .map(|(e, _)| *e)
             .unwrap();
         app.world_mut()

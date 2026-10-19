@@ -464,8 +464,9 @@ mod tests {
     use super::*;
     use crate::track::mesh::{CURB_WIDTH, GROUND_HEIGHT, WALL_THICKNESS, wall_offset};
 
+    /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     fn prairie() -> TrackData {
-        TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
+        crate::track::test_circuit()
     }
 
     /// Issue #78 (GD § 10): the Ruban Réglisse has its wall in its first anti-gravity zone, its
@@ -747,7 +748,7 @@ mod tests {
     #[test]
     fn the_test_circuit_file_parses_with_all_its_features() {
         let data = prairie();
-        assert_eq!(data.name, "Prairie Pompon");
+        assert_eq!(data.name, "Circuit d'essai");
         assert!(data.points.len() >= 20);
         assert!(!data.offroad.is_empty());
         assert!(!data.trick_ramps.is_empty());

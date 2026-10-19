@@ -697,8 +697,9 @@ mod tests {
         Some(loops)
     }
 
+    /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     pub(crate) fn test_track() -> TrackData {
-        TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
+        crate::track::test_circuit()
     }
 
     #[test]

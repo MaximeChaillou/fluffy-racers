@@ -22,7 +22,8 @@
 //   inside a tight turn (below 40 m of radius): the road out of the turn stays in sight.
 [
     (
-        // A meadow with a racing circuit's dressing (Nature Kit and Racing Kit).
+        // A meadow with a racing circuit's dressing (Nature Kit and Racing Kit). Issue #108: a
+        // circuit twice as long, hills and giant oaks: more pieces, taller ones (the scale).
         name: "Prairie",
         music: "pure-raceway",
         palette: (
@@ -44,23 +45,26 @@
              height: 4.5, radius: 1.0, gap: 0.6, side: Outside),
         ],
         scatter: [
+            // Giant oaks, far apart: they give the scale and mark the meadow from afar.
+            (models: ["nature-kit/tree_oak", "nature-kit/tree_fat"],
+             count: 10, height: (14.0, 20.0), radius: 4.5, distance: (6.0, 40.0)),
             // Big round trees, both sides.
             (models: ["nature-kit/tree_oak", "nature-kit/tree_default", "nature-kit/tree_detailed",
                       "nature-kit/tree_fat", "nature-kit/tree_cone"],
-             count: 46, height: (6.0, 9.0), radius: 2.4, distance: (2.0, 28.0)),
+             count: 72, height: (7.0, 11.0), radius: 2.4, distance: (2.0, 30.0)),
             // Pines further away, outside.
             (models: ["nature-kit/tree_pineRoundA", "nature-kit/tree_pineDefaultA"],
-             count: 18, height: (8.0, 11.0), radius: 2.4, distance: (14.0, 34.0), side: Outside),
+             count: 28, height: (9.0, 13.0), radius: 2.4, distance: (14.0, 36.0), side: Outside),
             // Rocks.
             (models: ["nature-kit/rock_largeA", "nature-kit/rock_largeB", "nature-kit/rock_tallA"],
-             count: 14, height: (1.0, 2.6), radius: 1.8, distance: (1.0, 22.0)),
+             count: 22, height: (1.0, 2.6), radius: 1.8, distance: (1.0, 22.0)),
             // Bushes, stumps, mushrooms and flowers: small, no shadows.
             (models: ["nature-kit/plant_bushLarge", "nature-kit/plant_bush", "nature-kit/plant_bushDetailed"],
-             count: 40, height: (0.8, 1.4), radius: 1.0, distance: (0.3, 16.0), shadows: false),
+             count: 64, height: (0.8, 1.4), radius: 1.0, distance: (0.3, 16.0), shadows: false),
             (models: ["nature-kit/stump_round", "nature-kit/mushroom_redGroup", "nature-kit/mushroom_tanGroup"],
-             count: 24, height: (0.5, 0.9), radius: 0.6, distance: (0.3, 14.0), shadows: false),
+             count: 36, height: (0.5, 0.9), radius: 0.6, distance: (0.3, 14.0), shadows: false),
             (models: ["nature-kit/flower_redA", "nature-kit/flower_yellowA", "nature-kit/flower_purpleA"],
-             count: 130, height: (0.5, 0.8), radius: 0.35, distance: (0.2, 12.0), shadows: false),
+             count: 200, height: (0.5, 0.8), radius: 0.35, distance: (0.2, 12.0), shadows: false),
         ],
     ),
     (
