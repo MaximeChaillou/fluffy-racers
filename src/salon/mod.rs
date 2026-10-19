@@ -51,7 +51,7 @@ mod tests;
 pub use online::{RemoteWalkerBody, SALON_SESSION};
 pub use scene::{SALON_MODELS, SalonDecor, SalonRoot, seat_spot};
 pub use screen::{
-    SalonAction, SalonBanner, SalonBannerPill, SalonButtonNode, SalonLineNode, SalonMenu,
+    Behind, SalonAction, SalonBanner, SalonBannerPill, SalonButtonNode, SalonLineNode, SalonMenu,
     SalonPlayerNode, SalonScreenRoot,
 };
 pub use view::{

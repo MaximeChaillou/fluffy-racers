@@ -301,6 +301,107 @@ fn menu_open(app: &App) -> bool {
     app.world().resource::<MainMenu>().open
 }
 
+fn paused(app: &App) -> bool {
+    app.world().resource::<Time<Virtual>>().is_paused()
+}
+
+/// The lobby's panel shown: its view (`salon::view`), once its tree is there.
+fn lobby_panel(app: &mut App) -> Option<crate::salon::SalonView> {
+    if count::<With<crate::salon::SalonScreenRoot>>(app) == 0 {
+        return None;
+    }
+    app.world()
+        .get_resource::<crate::salon::SalonMenu>()
+        .and_then(|menu| menu.view.clone())
+}
+
+/// Issue #141: out of a room, L shows the lobby's panel (« Multijoueur ») over a race, as the
+/// charter has it (« leurs raccourcis (N, L, G) les ouvrent toujours par-dessus »; it showed
+/// nothing: no race let it show), and the game waits under it, as under the other screens (its
+/// keys are the panel's); Échap closes it, and the race goes on, without the pause. Over the
+/// pause, L takes its place, and Échap brings the pause back. Over the race's results too (out
+/// of a room, nothing comes after them): the panel over them, their buttons holding back; Échap,
+/// and they are back.
+#[test]
+fn l_shows_the_lobby_s_panel_over_a_solo_race_and_its_results() {
+    let mut app = quick_game(false);
+    run(&mut app, 30);
+    let tick = |app: &App| app.world().resource::<Race>().flow.tick;
+    assert_eq!(app.world().resource::<Race>().phase(), RacePhase::Racing);
+    assert!(!paused(&app));
+
+    // L in the race: the panel, out of a room; the race waits.
+    tap(&mut app, crate::net::LOBBY_KEY);
+    run(&mut app, 3);
+    let view = lobby_panel(&mut app).expect("the lobby's panel over the race");
+    assert_eq!(view.title, "Multijoueur");
+    let kinds: Vec<_> = view.buttons.iter().map(|b| b.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            crate::salon::ButtonKind::CreateRoom,
+            crate::salon::ButtonKind::Back
+        ]
+    );
+    assert!(paused(&app), "the game waits under it, as under « Pilote »");
+    let at = tick(&app);
+    run(&mut app, 30);
+    assert_eq!(tick(&app), at, "the race waits");
+    assert!(!menu_open(&app));
+    assert_eq!(count::<With<crate::salon::SalonBanner>>(&mut app), 0);
+
+    // Échap: back to the race, which goes on; no pause.
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_none());
+    assert!(!app.world().resource::<LobbyWindow>().open);
+    assert!(!menu_open(&app), "Échap closed the panel, and that is all");
+    assert!(!paused(&app));
+    let at = tick(&app);
+    run(&mut app, 10);
+    assert!(tick(&app) > at, "the race goes on");
+
+    // Over the pause: L takes its place (the game still waits); Échap, the pause again.
+    tap(&mut app, KeyCode::Escape);
+    assert!(menu_open(&app) && paused(&app));
+    tap(&mut app, crate::net::LOBBY_KEY);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_some());
+    assert!(!menu_open(&app), "one screen at a time");
+    assert!(paused(&app));
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_none());
+    assert!(menu_open(&app), "back to the pause");
+    assert!(paused(&app));
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 3);
+    assert!(!menu_open(&app) && !paused(&app));
+
+    // The results: L shows the panel over them; their buttons hold back (Droite moves the
+    // panel's focus, not theirs); Échap, the results and their buttons again.
+    player_becomes_a_bot(&mut app);
+    to_the_end(&mut app, EndScreen::Race);
+    assert_eq!(focus(&app), Some(0));
+    tap(&mut app, crate::net::LOBBY_KEY);
+    run(&mut app, 3);
+    assert!(
+        lobby_panel(&mut app).is_some(),
+        "over the results, out of a room"
+    );
+    assert!(paused(&app));
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(focus(&app), Some(0), "the panel has the keys");
+    assert_eq!(end(&app).screen, Some(EndScreen::Race));
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_none());
+    assert!(!menu_open(&app) && !paused(&app));
+    assert_eq!(end(&app).screen, Some(EndScreen::Race), "the results again");
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(focus(&app), Some(1), "their buttons have the keys again");
+}
+
 /// Issue #136 acceptance, the time trial: « Réessayer » (Entrée) races the circuit again (still
 /// a time trial), « Changer de circuit » is there, « Accueil » (the gamepad: Gauche, A) goes home:
 /// the time trial is over.
@@ -438,7 +539,8 @@ fn no_screen_writes_a_line_of_keys() {
     // Bevy's focus, which the pseudo's field takes while one types (the game's input plugins).
     app.init_resource::<bevy::input_focus::InputFocus>();
     wait_for_the_player(&mut app);
-    // The lobby out of a room first, off a race (it never shows over one: `salon::screen`).
+    // The lobby out of a room first, off a race (it showed over none before #141; the test
+    // ground keeps the race's screens out of the count).
     app.world_mut().write_message(crate::level::LoadLevel::on(
         TrackChoice::TestGround,
         RaceMode::FreeRoam,

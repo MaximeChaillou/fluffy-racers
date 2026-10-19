@@ -207,6 +207,110 @@ fn online_retour_au_salon_after_a_race() {
     }
 }
 
+/// Issue #141: in a room, the lobby's panel shows over its scene (L), and over a race we run (L:
+/// our kart coasts, its keys are the panel's, and the race goes on: online, nothing waits); never
+/// over the race's end: there the window opens by itself (the host ended it) and the panel waits,
+/// hidden and without its banner, the results' buttons having the keys; back in the lobby
+/// (« Retour au salon »), it shows.
+#[test]
+fn online_the_lobby_s_panel_shows_over_the_race_not_over_its_results() {
+    use super::salon_tests::banner_shown;
+    use crate::kart::PlayerInputMuted;
+    use crate::race::Race;
+    let mut room = room_with_screens();
+    for (_, app) in &mut room.games {
+        let mut race = app.world_mut().resource_mut::<RaceTuning>();
+        race.laps = 1;
+        race.results_close_seconds = 1.0;
+        app.world_mut().resource_mut::<NetTuning>().finish_grace_s = 3.0;
+    }
+    let muted = |app: &App| app.world().resource::<PlayerInputMuted>().0;
+    let window = |app: &App| app.world().resource::<LobbyWindow>().open;
+
+    // The lobby's scene: L shows the room's panel, Échap closes it (the banner comes).
+    tap(&mut room, ANA, LOBBY_KEY);
+    room.frame();
+    let view = panel(room.view(ANA)).expect("the panel in the lobby's scene");
+    assert!(view.title.starts_with("Salon "), "{view:?}");
+    tap(&mut room, ANA, KeyCode::Escape);
+    room.frame();
+    assert!(panel(room.view(ANA)).is_none());
+    assert!(banner_shown(room.view(ANA)));
+
+    // Our race: closed at its start, no banner; L shows the panel over it, our kart coasts and
+    // the race goes on; Échap closes it, the keys drive again.
+    start_race(&mut room, ANA, 0, 1);
+    for _ in 0..30 {
+        room.frame();
+    }
+    for key in [ANA, BOB] {
+        let app = room.view(key);
+        assert!(!window(app), "{key:?}: closed at the start");
+        assert!(panel(app).is_none() && !banner_shown(app), "{key:?}");
+        assert!(!muted(app), "{key:?}");
+    }
+    tap(&mut room, ANA, LOBBY_KEY);
+    room.frame();
+    let view = panel(room.view(ANA)).expect("the panel over our race");
+    assert!(
+        view.lines
+            .iter()
+            .any(|line| line.contains(" en cours sur ")),
+        "{view:?}"
+    );
+    assert!(muted(room.view(ANA)), "our kart coasts");
+    assert!(!muted(room.view(BOB)));
+    assert!(
+        !room
+            .view(ANA)
+            .world()
+            .resource::<Time<Virtual>>()
+            .is_paused()
+    );
+    // Its simulation runs on (the room's clock, from our fixed ticks).
+    let at = super::race_tests::common_tick(room.view(ANA));
+    for _ in 0..10 {
+        room.frame();
+    }
+    assert!(
+        super::race_tests::common_tick(room.view(ANA)) >= at + 8,
+        "the race goes on"
+    );
+    tap(&mut room, ANA, KeyCode::Escape);
+    room.frame();
+    assert!(panel(room.view(ANA)).is_none() && !window(room.view(ANA)));
+    assert!(!muted(room.view(ANA)), "the keys drive again");
+    assert!(!banner_shown(room.view(ANA)), "not during our race");
+
+    // Its end: the window opens by itself, the panel waits behind the results.
+    bots_drive_the_players(&mut room);
+    until_end(&mut room, BOB, EndScreen::OnlineRace { host: false });
+    until_end(&mut room, ANA, EndScreen::OnlineRace { host: true });
+    room.until(30.0, "the table closed", |app| {
+        app.world()
+            .get_resource::<Race>()
+            .is_some_and(Race::results_closed)
+    });
+    room.frame();
+    for key in [ANA, BOB] {
+        let app = room.view(key);
+        assert!(window(app), "{key:?}: opened by itself at the end");
+        assert!(panel(app).is_none(), "{key:?}: not over the results");
+        assert!(!banner_shown(app), "{key:?}: nor its banner");
+        assert!(!muted(app), "{key:?}");
+        assert_eq!(focus(&room, key), Some(0), "{key:?}: the results' buttons");
+    }
+
+    // Bob back in the lobby (« Retour au salon », Entrée): his panel there; Ana still on her
+    // results, without it.
+    tap(&mut room, BOB, KeyCode::Enter);
+    room.until(10.0, "Bob's panel in the lobby", |app| {
+        lobby(app).me() != BOB || (in_the_lobby(app) && panel(app).is_some())
+    });
+    assert!(!in_the_lobby(room.view(ANA)));
+    assert!(panel(room.view(ANA)).is_none(), "Ana still on her results");
+}
+
 /// Issue #136 acceptance online, a championship of two races: between them, the host has
 /// « Course suivante » (its gamepad's A starts it for everyone) and « Retour au salon »; a guest
 /// has « Course suivante » greyed, with when and who (its Entrée does nothing); after the last,

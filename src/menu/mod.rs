@@ -155,7 +155,8 @@ impl Screen {
         }
     }
 
-    /// The game waits while it is open in solo: every one but the lobby (issue #7).
+    /// The game waits while it is open in solo: every one but the lobby (issue #7), which holds
+    /// the game by itself, over a race only (issue #141: `characters::pause_in_menus`).
     pub fn pauses(self) -> bool {
         self != Screen::Lobby
     }
@@ -791,6 +792,12 @@ fn follow_the_screens(
                 menu.show(in_game, Some(child.entry()), online.is_some(), now(&time));
             }
         }
+    }
+    // Issue #141: a room joined from the home's « Multijoueur » (« Créer une partie »): its lobby
+    // is the room's now, no longer a screen of the home (`MainMenu::on_home`: the home's music,
+    // its background); closed, it does not bring the home back; leaving the room does.
+    if online.is_some() && !menu.in_game && menu.child == Some(Screen::Lobby) {
+        menu.child = None;
     }
     // Issue #89: out of a room, the home screen.
     let left = *was_online && online.is_none();

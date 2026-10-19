@@ -323,6 +323,94 @@ fn the_gamepad_opens_each_screen_of_the_home() {
     assert_eq!(count::<With<PlayerKart>>(&mut app), 1);
 }
 
+/// The lobby's panel shown: its view (`salon::view`), once its tree is there.
+fn lobby_panel(app: &mut App) -> Option<crate::salon::SalonView> {
+    if count::<With<crate::salon::SalonScreenRoot>>(app) == 0 {
+        return None;
+    }
+    app.world()
+        .get_resource::<crate::salon::SalonMenu>()
+        .and_then(|menu| menu.view.clone())
+}
+
+/// Issue #141 acceptance: « Multijoueur » on the home shows the lobby's panel over the
+/// background (it showed nothing: the background is a race, and no race let it show): out of a
+/// room, its title « Multijoueur », « Créer une partie » and « Retour », no banner; the
+/// background races on behind it, never paused. Échap brings the home back, the focus on
+/// « Multijoueur »; so does « Retour »; L on the home opens it too. A room joined from it (seated:
+/// `Online`): its lobby is the room's, no longer a screen of the home; leaving the room brings
+/// the home back.
+#[test]
+fn multijoueur_shows_the_lobby_s_panel_over_the_background() {
+    use crate::salon::{ButtonKind, SalonAction, SalonBanner};
+    let mut app = home_app(0, true);
+    wait_for_the_background(&mut app);
+    let karts = HomeTuning::default().kart_count();
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(focused(&app), Entry::Online);
+    choose(&mut app);
+    run(&mut app, 3);
+    assert!(lobby_open(&app) && !menu(&app).open && menu(&app).on_home());
+    let view = lobby_panel(&mut app).expect("the lobby's panel over the home");
+    assert_eq!(view.title, "Multijoueur");
+    let kinds: Vec<ButtonKind> = view.buttons.iter().map(|b| b.kind).collect();
+    assert_eq!(kinds, [ButtonKind::CreateRoom, ButtonKind::Back]);
+    assert!(view.buttons.iter().all(|b| b.enabled), "{view:?}");
+    assert_eq!(count::<With<crate::salon::SalonScreenRoot>>(&mut app), 1);
+    assert_eq!(
+        count::<With<MainMenuRoot>>(&mut app),
+        0,
+        "one screen at a time"
+    );
+    assert_eq!(
+        count::<With<SalonBanner>>(&mut app),
+        0,
+        "no room, no banner"
+    );
+    assert_the_background_runs(&mut app, karts, "under the lobby's panel");
+    assert!(lobby_panel(&mut app).is_some(), "still there");
+
+    // Échap: the home again, the focus on « Multijoueur », nothing of the panel left.
+    tap(&mut app, KeyCode::Escape);
+    run(&mut app, 3);
+    assert!(!lobby_open(&app));
+    assert!(lobby_panel(&mut app).is_none());
+    assert_eq!(count::<With<crate::salon::SalonScreenRoot>>(&mut app), 0);
+    assert!(menu(&app).open && !menu(&app).in_game, "back home");
+    assert_eq!(focused(&app), Entry::Online);
+    assert_eq!(count::<With<MainMenuRoot>>(&mut app), 1);
+    assert_the_background_runs(&mut app, karts, "back home");
+
+    // L on the home: the panel too; « Retour » (its click, or Entrée on it): the home again.
+    tap(&mut app, crate::net::LOBBY_KEY);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_some_and(|view| view.title == "Multijoueur"));
+    assert!(!menu(&app).open && menu(&app).on_home());
+    app.world_mut()
+        .write_message(SalonAction::Press(ButtonKind::Back));
+    run(&mut app, 3);
+    assert!(!lobby_open(&app) && lobby_panel(&mut app).is_none());
+    assert!(menu(&app).open && !menu(&app).in_game, "back home");
+    assert_eq!(focused(&app), Entry::Online);
+
+    // A room joined from it: seated, its lobby is no longer a screen of the home (its music,
+    // `audio::jukebox`, is the lobby's); left (« Quitter »: out of the room, the panel closed), the
+    // home comes back with its background.
+    choose(&mut app);
+    run(&mut app, 3);
+    assert!(lobby_panel(&mut app).is_some() && menu(&app).on_home());
+    app.insert_resource(crate::level::Online);
+    run(&mut app, 2);
+    assert!(lobby_open(&app));
+    assert!(!menu(&app).on_home(), "the room's lobby, not the home's");
+    app.world_mut().resource_mut::<LobbyWindow>().open = false;
+    app.world_mut().remove_resource::<crate::level::Online>();
+    run(&mut app, 3);
+    assert!(menu(&app).open && !menu(&app).in_game, "home");
+    wait_for_the_background(&mut app);
+    assert_the_background_runs(&mut app, karts, "out of the room");
+}
+
 /// Issue #89: a race started from the home (Jouer solo, then Entrée in the race menu) leaves
 /// nothing of it: no tree, no background (karts, resource, skills), the player's grid and its
 /// laps, the HUD, the chase camera. « Quitter » in the menu opened from the race brings the home
