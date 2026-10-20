@@ -7,7 +7,6 @@ use super::race_tests::{
     ANA, BOB, CYD, Room, bots_drive_the_players, game, lobby, on_grid, seated,
 };
 use super::*;
-use crate::bots::BotDifficulty;
 use crate::race::{Race, RacePhase};
 
 const DAN: PeerKey = PeerKey(4 << 100);
@@ -46,15 +45,8 @@ fn launch(room: &mut Room, bots: u8) -> RaceStart {
     let now = now_ms(app.world().resource::<Time<Real>>());
     let mut session = app.world_mut().resource_mut::<NetSession>();
     let lobby = session.lobby.as_mut().unwrap();
-    let mut start = race_to_start(
-        lobby,
-        now,
-        0xbeef,
-        1,
-        BotDifficulty::Normal,
-        &NetTuning::default(),
-    )
-    .expect("the host knows the room's clock");
+    let mut start = race_to_start(lobby, now, 0xbeef, 1, &NetTuning::default())
+        .expect("the host knows the room's clock");
     start.bots = bots;
     assert!(lobby.announce_race(start.clone()));
     start

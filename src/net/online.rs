@@ -118,8 +118,8 @@ pub fn session_of(race: u16) -> u8 {
 }
 
 /// The host starts a race now, at our `now_ms`: the room's circuit, a fresh seed, the seated
-/// players behind the bots that fill the grid (issue #99: if the room has bots), the room's mirror
-/// and items. Issue #122: in a championship, its next race (`Lobby::championship_run`): its
+/// players behind the bots that fill the grid (issue #99: if the room has bots; issue #153, at
+/// the room's level), the room's mirror and items. Issue #122: in a championship, its next race (`Lobby::championship_run`): its
 /// circuit, its seed, its bots, its players still seated and its grid (the reverse of the
 /// standings). `None` when we do not host, or do not know the room's clock yet.
 pub fn race_to_start(
@@ -127,7 +127,6 @@ pub fn race_to_start(
     now_ms: u64,
     seed: u64,
     laps: u32,
-    difficulty: BotDifficulty,
     tuning: &NetTuning,
 ) -> Option<RaceStart> {
     if !lobby.is_host() {
@@ -142,7 +141,8 @@ pub fn race_to_start(
         track: setup.track,
         laps: laps.clamp(1, 255) as u8,
         bots: 0,
-        difficulty: difficulty.index() as u8,
+        // Issue #153: the level the host chose for the room's bots.
+        difficulty: setup.difficulty,
         mirror: setup.mirror,
         items: setup.items,
         start_tick: ((room_ms as f64 + lead_ms) / TICK_MS).ceil() as u32,
@@ -441,6 +441,7 @@ fn online_mode(
                 // issue #122, nor the mode (free driving is on the room's circuit).
                 None => Showing::Free(RoomSetup {
                     bots: true,
+                    difficulty: RoomSetup::default().difficulty,
                     championship: false,
                     plan: Default::default(),
                     ..lobby.setup()
@@ -509,6 +510,9 @@ fn online_mode(
                             },
                             seed: start.seed,
                             lineup,
+                            // Issue #153: the level of the room's bots (the host's spawn).
+                            difficulty: BotDifficulty::from_index(start.difficulty)
+                                .unwrap_or_default(),
                         };
                         sync.set_session(session_of(start.race));
                         match slot {

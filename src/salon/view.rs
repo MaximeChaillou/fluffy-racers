@@ -115,8 +115,8 @@ impl SalonRow {
             SalonRow::Mode => "Une course, sur le circuit de ton choix.".to_string(),
             SalonRow::Circuit => "La prochaine course, pour tout le monde.".to_string(),
             SalonRow::Mirror => "Le circuit à l'envers, gauche et droite.".to_string(),
-            SalonRow::Bots if setup.bots => "Des bots complètent la grille de 12.".to_string(),
-            SalonRow::Bots => "Seuls les joueurs courent.".to_string(),
+            // Issue #153: with bots, their level's help (« Jouer solo »'s).
+            SalonRow::Bots if !setup.bots => "Seuls les joueurs courent.".to_string(),
             SalonRow::Items if setup.items => "Les boîtes à objets sur la piste.".to_string(),
             SalonRow::Items => "Aucune boîte ; les croquettes restent.".to_string(),
             SalonRow::Pick if !setup.plan.chosen => {
@@ -925,7 +925,7 @@ mod tests {
         let setup = RoomSetup::default();
         assert_eq!(SalonRow::Circuit.value(setup, &catalog), circuits[0].name);
         assert_eq!(SalonRow::Mirror.value(setup, &catalog), "Non");
-        assert_eq!(SalonRow::Bots.value(setup, &catalog), "Oui");
+        assert_eq!(SalonRow::Bots.value(setup, &catalog), "Normal");
         let back = SalonRow::Circuit.changed(setup, -1, 7, &catalog);
         assert_eq!(usize::from(back.track), circuits.len() - 1);
         assert_eq!(
@@ -933,7 +933,21 @@ mod tests {
             setup.track
         );
         assert!(SalonRow::Mirror.changed(setup, 1, 7, &catalog).mirror);
-        assert!(!SalonRow::Bots.changed(setup, -1, 7, &catalog).bots);
+        // Issue #153: « Facile, Normal, Difficile, Non », around.
+        let easy = SalonRow::Bots.changed(setup, -1, 7, &catalog);
+        assert!(easy.bots && easy.difficulty == 0);
+        assert_eq!(SalonRow::Bots.value(easy, &catalog), "Facile");
+        let hard = SalonRow::Bots.changed(setup, 1, 7, &catalog);
+        assert!(hard.bots && hard.difficulty == 2);
+        assert_eq!(SalonRow::Bots.value(hard, &catalog), "Difficile");
+        let none = SalonRow::Bots.changed(hard, 1, 7, &catalog);
+        assert!(!none.bots);
+        assert_eq!(SalonRow::Bots.value(none, &catalog), "Non");
+        assert_eq!(SalonRow::Bots.changed(none, -1, 7, &catalog), hard);
+        assert_ne!(
+            SalonRow::Bots.help(easy, &catalog),
+            SalonRow::Bots.help(hard, &catalog)
+        );
         assert!(!SalonRow::Items.changed(setup, 1, 7, &catalog).items);
         assert_ne!(
             SalonRow::Bots.help(setup, &catalog),

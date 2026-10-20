@@ -41,7 +41,16 @@ fn enter(app: &mut App) {
 /// The game with `bots` bots on Prairie Pompon, quick races (1 lap, no countdown, no items nor
 /// interactions: the bots finish sooner), once the player's kart exists.
 fn quick_game(bots: usize) -> App {
+    quick_game_kept(bots, None)
+}
+
+/// The same, issue #153: the game given back what « Jouer solo » kept (`kept`: its text), before
+/// anything is built, as `GamePlugin` does with a renderer (`restore_kept_solo`).
+fn quick_game_kept(bots: usize, kept: Option<&str>) -> App {
     let mut app = game_app_unloaded(TrackChoice::default(), bots);
+    if let Some(text) = kept {
+        restore_kept_solo(app.world_mut(), text);
+    }
     app.world_mut().resource_mut::<RaceTuning>().laps = 1;
     app.world_mut().resource_mut::<ItemTuning>().enabled = false;
     app.world_mut().resource_mut::<InteractionTuning>().enabled = false;
@@ -147,7 +156,7 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
         (menu.setup.mode, menu.setup.formula, menu.setup.cup),
         (GameMode::GrandPrix, Formula::Cup, 0)
     );
-    assert!(menu.setup.mirror && menu.setup.bots && menu.setup.items);
+    assert!(menu.setup.mirror && menu.setup.bots == BotsChoice::Normal && menu.setup.items);
     enter(&mut app);
     assert!(!app.world().resource::<RaceMenu>().open);
     let cup = cup_of(&circuits, 4);
@@ -601,11 +610,12 @@ fn a_random_championship_draws_its_circuits_from_the_seed() {
     arrow(&mut app, KeyCode::ArrowRight, 1);
     arrow(&mut app, KeyCode::ArrowDown, 3);
     assert_eq!(menu(&app).row(), MenuRow::Bots);
-    arrow(&mut app, KeyCode::ArrowRight, 1);
+    // Issue #153: Normal, Difficile, Non.
+    arrow(&mut app, KeyCode::ArrowRight, 2);
     let setup = menu(&app).setup;
     assert_eq!(
         (setup.races, setup.pick, setup.bots),
-        (5, Pick::Random, false)
+        (5, Pick::Random, BotsChoice::Off)
     );
     let shown = setup.program(77, &catalog);
     assert_eq!(shown, draw_circuits(77, setup.draw, 5, n));
@@ -661,11 +671,12 @@ fn a_race_alone_without_bots_nor_items() {
         ]
     );
     arrow(&mut app, KeyCode::ArrowDown, 3);
-    arrow(&mut app, KeyCode::ArrowRight, 1);
+    // Issue #153: Normal, Difficile, Non.
+    arrow(&mut app, KeyCode::ArrowRight, 2);
     arrow(&mut app, KeyCode::ArrowDown, 1);
     arrow(&mut app, KeyCode::ArrowRight, 1);
     let setup = menu(&app).setup;
-    assert!(!setup.bots && !setup.items);
+    assert!(setup.bots == BotsChoice::Off && !setup.items);
     enter(&mut app);
     wait_for_the_level(&mut app, "Prairie Pompon");
     for _ in 0..3 {
@@ -686,8 +697,9 @@ fn a_race_alone_without_bots_nor_items() {
     // It opens on that; both back on.
     tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
     let setup = menu(&app).setup;
-    assert!(!setup.bots && !setup.items);
+    assert!(setup.bots == BotsChoice::Off && !setup.items);
     arrow(&mut app, KeyCode::ArrowDown, 3);
+    // Issue #153: back from Non, Difficile.
     arrow(&mut app, KeyCode::ArrowLeft, 1);
     arrow(&mut app, KeyCode::ArrowDown, 1);
     arrow(&mut app, KeyCode::ArrowLeft, 1);
@@ -698,7 +710,144 @@ fn a_race_alone_without_bots_nor_items() {
     }
     assert_eq!(count::<Racer>(&mut app), bots + 1);
     assert_eq!(app.world().resource::<RaceGrid>().bots, bots);
+    assert_eq!(
+        app.world().resource::<RaceGrid>().difficulty,
+        BotDifficulty::Hard
+    );
     assert_eq!(menu(&app).kept_bots, None);
     assert_eq!(count::<ItemBoxSpot>(&mut app), boxes);
     assert!(!app.world().contains_resource::<NoItemBoxes>());
+}
+
+/// Issue #153: the level of each bot of the level.
+fn bot_levels(app: &mut App) -> Vec<BotDifficulty> {
+    let world = app.world_mut();
+    world
+        .query::<&crate::bots::Bot>()
+        .iter(world)
+        .map(|bot| bot.difficulty)
+        .collect()
+}
+
+/// Runs updates until the level has `bots` bots, each of `level` (none: no bot), the player's
+/// kart and its race (a new level loads in the background).
+fn wait_for_the_bots(app: &mut App, bots: usize, level: BotDifficulty) {
+    for _ in 0..3000 {
+        app.update();
+        let levels = bot_levels(app);
+        if levels.len() == bots
+            && levels.iter().all(|l| *l == level)
+            && count::<PlayerKart>(app) == 1
+            && app.world().contains_resource::<Race>()
+        {
+            assert_eq!(count::<Racer>(app), bots + 1);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    panic!(
+        "never {bots} bots {level:?}: {:?}, {} racers",
+        bot_levels(app),
+        count::<Racer>(app)
+    );
+}
+
+/// Issue #153 acceptance: the « Bots » line of « Jouer solo », « Facile, Normal, Difficile,
+/// Non » (Normal by default): each level races a grid of bots of that level, in a race alone and
+/// in a championship; « Non » races a grid without bots (the player's bots kept for a level); the
+/// screen opens on what is raced; and what the browser keeps of it (`RaceMenu::kept`, the text
+/// `GamePlugin` writes) is read back after a reload: a new game starts with that level (or
+/// without bots), and its screen opens on it.
+#[test]
+fn each_bots_level_races_its_grid_and_comes_back_after_a_reload() {
+    use BotDifficulty::{Easy, Hard, Normal};
+    let bots = 3;
+    let mut app = quick_game(bots);
+    let prairie = Catalog::game(4).name(0).to_string();
+    wait_for_the_bots(&mut app, bots, Normal);
+    assert_eq!(menu(&app).kept.bots, BotsChoice::Normal, "the default");
+    // A race alone, each value in turn from what the screen opens on (Normal, then the last).
+    for (steps, choice, raced) in [
+        (-1i32, BotsChoice::Easy, Some(Easy)),
+        (2, BotsChoice::Hard, Some(Hard)),
+        (1, BotsChoice::Off, None),
+        (2, BotsChoice::Normal, Some(Normal)),
+    ] {
+        tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+        arrow(&mut app, KeyCode::ArrowDown, 3);
+        assert_eq!(menu(&app).row(), MenuRow::Bots);
+        let key = if steps < 0 {
+            KeyCode::ArrowLeft
+        } else {
+            KeyCode::ArrowRight
+        };
+        arrow(&mut app, key, steps.unsigned_abs() as usize);
+        assert_eq!(menu(&app).setup.bots, choice);
+        enter(&mut app);
+        wait_for_the_level(&mut app, &prairie);
+        match raced {
+            Some(level) => {
+                wait_for_the_bots(&mut app, bots, level);
+                assert_eq!(app.world().resource::<RaceGrid>().difficulty, level);
+                assert_eq!(menu(&app).kept_bots, None);
+            }
+            None => {
+                wait_for_the_bots(&mut app, 0, Normal);
+                assert_eq!(app.world().resource::<RaceGrid>().bots, 0);
+                assert_eq!(menu(&app).kept_bots, Some(bots));
+            }
+        }
+        assert_eq!(menu(&app).kept.bots, choice, "kept when started");
+        // It opens on what is raced.
+        tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+        assert_eq!(menu(&app).setup.bots, choice);
+        tap(&mut app, KeyCode::Escape, Key::Escape);
+    }
+
+    // A championship (a cup), Facile: its first race's bots are.
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    assert_eq!(menu(&app).setup.mode, GameMode::GrandPrix);
+    arrow(&mut app, KeyCode::ArrowDown, 4);
+    assert_eq!(menu(&app).row(), MenuRow::Bots);
+    arrow(&mut app, KeyCode::ArrowLeft, 1);
+    assert_eq!(menu(&app).setup.bots, BotsChoice::Easy);
+    enter(&mut app);
+    let cup = &Catalog::game(4).cups[0];
+    wait_for_the_level(&mut app, Catalog::game(4).name(cup.circuits[0]));
+    wait_for_the_bots(&mut app, bots, Easy);
+    assert_eq!(grand_prix(&app).entrants, bots + 1);
+
+    // A reload: what was kept, read by a new game.
+    let kept = menu(&app).kept;
+    assert_eq!(kept.bots, BotsChoice::Easy);
+    let text = kept.to_ron();
+    drop(app);
+    let mut app = quick_game_kept(bots, Some(&text));
+    wait_for_the_bots(&mut app, bots, Easy);
+    assert_eq!(menu(&app).kept, kept);
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    assert_eq!(menu(&app).setup.bots, BotsChoice::Easy, "it opens on it");
+    tap(&mut app, KeyCode::Escape, Key::Escape);
+    drop(app);
+    // « Non » kept: a new game without bots, its bots given back by a level.
+    let off = KeptSolo {
+        bots: BotsChoice::Off,
+        ..KeptSolo::default()
+    };
+    let mut app = quick_game_kept(bots, Some(&off.to_ron()));
+    wait_for_the_bots(&mut app, 0, Normal);
+    assert_eq!(menu(&app).kept_bots, Some(bots));
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    assert_eq!(menu(&app).setup.bots, BotsChoice::Off, "it opens on it");
+    arrow(&mut app, KeyCode::ArrowDown, 3);
+    arrow(&mut app, KeyCode::ArrowLeft, 1);
+    enter(&mut app);
+    wait_for_the_level(&mut app, &prairie);
+    wait_for_the_bots(&mut app, bots, Hard);
+    drop(app);
+    // An unreadable text: Normal stays.
+    let mut app = quick_game_kept(bots, Some("(bots: \"Nightmare\")"));
+    wait_for_the_bots(&mut app, bots, Normal);
+    assert_eq!(menu(&app).kept, KeptSolo::default());
 }

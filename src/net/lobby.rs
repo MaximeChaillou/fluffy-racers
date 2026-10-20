@@ -485,12 +485,18 @@ impl Lobby {
             Message::StartRace(start) => {
                 if !self.hosting {
                     // Issue #99: the race's settings are the room's (its bots: as many as it has,
-                    // or as the room had). Issue #122: the mode and the championship stay.
+                    // or as the room had; issue #153, at their level). Issue #122: the mode and
+                    // the championship stay.
                     self.setup = RoomSetup {
                         track: start.track,
                         mirror: start.mirror,
                         items: start.items,
                         bots: start.bots > 0 || self.setup.bots,
+                        difficulty: if start.bots > 0 {
+                            start.difficulty
+                        } else {
+                            self.setup.difficulty
+                        },
                         ..self.setup
                     };
                     self.last_race = start.race;

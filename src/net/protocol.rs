@@ -60,6 +60,8 @@
 //! grid ([`RaceStart::round`], [`RaceStart::lineup`]: the reverse of the overall standings); the
 //! host tells the championship in progress ([`Message::Championship`], [`ChampionshipState`]:
 //! its entrants, the points of each one, the last race's, the overall standings, the podium).
+//! Version 17 (issue #153): the room's settings carry the level of its bots
+//! ([`RoomSetup::difficulty`], one byte after the switches, as [`RaceStart::difficulty`]).
 
 use std::fmt;
 
@@ -69,7 +71,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 16;
+pub const PROTOCOL_VERSION: u8 = 17;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -157,6 +159,9 @@ pub struct RoomSetup {
     pub mirror: bool,
     /// Bots fill the grid to 12 (off: the players only).
     pub bots: bool,
+    /// Issue #153: their level (`bots::BotDifficulty`: 0 easy, 1 normal, 2 hard), as
+    /// [`RaceStart::difficulty`]; Normal while the room has no bots.
+    pub difficulty: u8,
     /// Item boxes on the track (off: none, the croquettes stay).
     pub items: bool,
     /// Issue #122: the mode is the championship (else « Circuit seul »: one race on `track`).
@@ -171,6 +176,7 @@ impl Default for RoomSetup {
             track: 0,
             mirror: false,
             bots: true,
+            difficulty: NORMAL_DIFFICULTY,
             items: true,
             championship: false,
             plan: ChampionshipSetup::default(),
@@ -1186,7 +1192,8 @@ impl Message {
                         bits |= bit;
                     }
                 }
-                out.extend_from_slice(&[setup.track, bits]);
+                // Issue #153: the bots' level after the switches.
+                out.extend_from_slice(&[setup.track, bits, setup.difficulty]);
                 put_plan(out, &setup.plan);
             }
             Message::Championship(state) => {
@@ -1531,10 +1538,15 @@ impl Message {
                 if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS | SETUP_CHAMPIONSHIP) != 0 {
                     return Err(DecodeError::Invalid("room settings"));
                 }
+                let difficulty = reader.u8()?;
+                if difficulty > MAX_DIFFICULTY {
+                    return Err(DecodeError::Invalid("bot difficulty"));
+                }
                 let setup = RoomSetup {
                     track,
                     mirror: bits & SETUP_MIRROR != 0,
                     bots: bits & SETUP_BOTS != 0,
+                    difficulty,
                     items: bits & SETUP_ITEMS != 0,
                     championship: bits & SETUP_CHAMPIONSHIP != 0,
                     plan: reader.plan()?,
@@ -2120,6 +2132,8 @@ fn put_keys(out: &mut Vec<u8>, keys: &[PeerKey]) {
 
 /// The highest bot difficulty on the wire (`bots::BotDifficulty::Hard`).
 const MAX_DIFFICULTY: u8 = 2;
+/// The bots' level of a new room (`bots::BotDifficulty::Normal`, issue #153: the default).
+const NORMAL_DIFFICULTY: u8 = 1;
 
 /// Issue #122: a championship chosen: its byte of bits, its cup, its draw, then its program (a
 /// count byte and a byte per circuit, [`MAX_PROGRAM`] at most).
@@ -2600,6 +2614,7 @@ mod tests {
                 track: 255,
                 mirror: true,
                 bots: false,
+                difficulty: 0,
                 items: false,
                 championship: false,
                 plan: ChampionshipSetup::default(),
@@ -2608,6 +2623,7 @@ mod tests {
                 track: 3,
                 mirror: false,
                 bots: true,
+                difficulty: 2,
                 items: false,
                 championship: false,
                 plan: ChampionshipSetup {
@@ -2631,6 +2647,7 @@ mod tests {
                 track: 2,
                 mirror: true,
                 bots: false,
+                difficulty: 1,
                 items: true,
                 championship: true,
                 plan: ChampionshipSetup {
@@ -3416,12 +3433,13 @@ mod tests {
                         24 + start.lineup.len() + 16 * start.players.len()
                     );
                 }
-                // Issue #122: the room's settings in 11 bytes, and a byte per race of its
-                // championship; the championship in progress in 21 bytes and a byte per race,
-                // then 16 per player and 5 per entrant (its points, those of the last race, its
-                // place): 297 bytes for 12 players and 24 races.
+                // Issue #122: the room's settings in 11 bytes (issue #153: 12, with the bots'
+                // level), and a byte per race of its championship; the championship in progress
+                // in 21 bytes and a byte per race, then 16 per player and 5 per entrant (its
+                // points, those of the last race, its place): 297 bytes for 12 players and 24
+                // races.
                 Message::Setup(setup) => {
-                    assert_eq!(message.to_bytes().len(), 11 + setup.plan.program.len());
+                    assert_eq!(message.to_bytes().len(), 12 + setup.plan.program.len());
                 }
                 Message::Championship(state) => {
                     assert_eq!(
@@ -3602,11 +3620,25 @@ mod tests {
         assert!(invalid(&too_many));
         // Issue #99: a setting the protocol does not have, in the room's and in a race's (the
         // byte after the bots' level). Issue #122: the room's settings end with the championship
-        // chosen (its bits, its cup, its draw, its program).
+        // chosen (its bits, its cup, its draw, its program). Issue #153: the bots' level between
+        // the two, none beyond Hard.
         let no_plan = [0, 0, 0, 0, 0, 0, 0];
-        let setup = |bits: u8, plan: &[u8]| [&[v, SETUP, 2, bits][..], plan].concat();
+        let with_level =
+            |bits: u8, level: u8, plan: &[u8]| [&[v, SETUP, 2, bits, level][..], plan].concat();
+        let setup = |bits: u8, plan: &[u8]| with_level(bits, 1, plan);
         assert!(Message::decode(&setup(0b111, &no_plan)).is_ok());
         assert!(invalid(&setup(0b1_0000, &no_plan)));
+        for level in 0..=2 {
+            assert!(
+                matches!(
+                    Message::decode(&with_level(0b10, level, &no_plan)),
+                    Ok(Message::Setup(setup)) if setup.bots && setup.difficulty == level
+                ),
+                "{level}"
+            );
+        }
+        assert!(invalid(&with_level(0b10, 3, &no_plan)));
+        assert!(invalid(&with_level(0, 255, &no_plan)));
         let mut odd = Message::StartRace(start.clone()).to_bytes();
         let settings_at = 2 + 2 + 8 + 4;
         assert_eq!(odd[settings_at], START_MIRROR | START_ITEMS);

@@ -21,6 +21,12 @@ impl BotDifficulty {
     pub fn index(self) -> usize {
         self as usize
     }
+
+    /// The difficulty of index `index` (0 easy, 1 normal, 2 hard: the network's byte,
+    /// `net::RaceStart::difficulty`), if there is one.
+    pub fn from_index(index: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(index)).copied()
+    }
 }
 
 /// How well a bot drives at one difficulty.
@@ -109,9 +115,9 @@ pub struct BotSkill {
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
 pub struct BotTuning {
-    /// Difficulty of the bots of the game's grid. Normal: the default level of a kart game.
-    pub grid_difficulty: BotDifficulty,
-    /// Easy, Normal, Hard.
+    /// Easy, Normal, Hard. Issue #153: the level of the bots of a race is the grid's
+    /// (`race::RaceGrid::difficulty`, chosen in « Jouer solo », by the host online, or in the
+    /// admin panel), no longer a tuning.
     pub skills: [BotSkill; 3],
 
     // --- Variety (no single file) ---------------------------------------------------------------
@@ -247,7 +253,6 @@ impl BotTuning {
 impl Default for BotTuning {
     fn default() -> Self {
         Self {
-            grid_difficulty: BotDifficulty::Normal,
             skills: [
                 // Easy: sloppy line, brakes early and slow, short drifts for a blue mini-turbo.
                 BotSkill {
@@ -458,6 +463,14 @@ mod tests {
         assert_eq!(t.skill(BotDifficulty::Hard).target_tier, MiniTurbo::Orange);
         assert!(t.skill(BotDifficulty::Hard).purple_when_possible);
         assert_eq!(BotDifficulty::default(), BotDifficulty::Normal);
+        // Issue #153: the network's byte, both ways; none past Hard.
+        for difficulty in BotDifficulty::ALL {
+            assert_eq!(
+                BotDifficulty::from_index(difficulty.index() as u8),
+                Some(difficulty)
+            );
+        }
+        assert_eq!(BotDifficulty::from_index(3), None);
         // Issue #107 (GD « Conception des circuits »): only the Hard bots try the risky jumps.
         let jumps: Vec<f32> = t.skills.iter().map(|s| s.jump_chance).collect();
         assert_eq!(jumps[..2], [0.0, 0.0]);

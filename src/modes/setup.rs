@@ -10,18 +10,23 @@
 //!   circuits **chosen one by one** ([`Pick::Chosen`], raced in that order) or **drawn at random**
 //!   ([`Pick::Random`], [`draw_circuits`]: always the same draw for the same seed, no circuit twice
 //!   while there are circuits left).
-//! - **The settings**: the mirror; **bots** on or off (on: they fill the grid to 12, as before;
-//!   off: the player alone); **items** on or off (off: no item box on the track, the croquettes
-//!   stay). The time trial has only its circuit and the mirror: it is alone, with its three
+//! - **The settings**: the mirror; **the bots** (issue #153, [`BotsChoice`]: « Facile »,
+//!   « Normal » (the default), « Difficile »: they fill the grid to 12 at that level (GD § 12);
+//!   « Non »: the player alone); **items** on or off (off: no item box on the track, the
+//!   croquettes stay). The time trial has only its circuit and the mirror: it is alone, with its three
 //!   piments. No class (issue #118: a single speed).
 //! - **The lines** ([`RaceSetup::rows`]): the mode first, then what the mode needs, the mirror, the
 //!   bots and the items; a custom championship with its circuits chosen has one more line per race
 //!   (« Course 1 »...), last. Each one goes around ([`RaceSetup::changed`]).
 
 use std::borrow::Cow;
+use std::fmt;
+
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::admin::tracks::{CupIcon, Manifest, TrackEntry};
-use crate::bots::BotRng;
+use crate::bots::{BotDifficulty, BotRng};
 use crate::race::CupRace;
 
 /// What to race (GD § 1: « Modes »).
@@ -90,6 +95,159 @@ impl Pick {
             Pick::Random => "Au hasard",
             Pick::Chosen => "Au choix",
         }
+    }
+}
+
+/// Issue #153: the « Bots » line: they fill the grid at a level (GD § 12), or there are none.
+/// It replaces « Bots : Oui / Non » (#99): « Oui » was Normal, the level of the game's grid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BotsChoice {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+    Off,
+}
+
+impl BotsChoice {
+    /// In the order of the line (Max, on issue #153: « facile, normal, difficile, non »).
+    pub const ALL: [Self; 4] = [Self::Easy, Self::Normal, Self::Hard, Self::Off];
+
+    /// The choice of a grid with bots or not (`on`), at `difficulty`.
+    pub fn of(on: bool, difficulty: BotDifficulty) -> Self {
+        match (on, difficulty) {
+            (false, _) => Self::Off,
+            (true, BotDifficulty::Easy) => Self::Easy,
+            (true, BotDifficulty::Normal) => Self::Normal,
+            (true, BotDifficulty::Hard) => Self::Hard,
+        }
+    }
+
+    /// The level of the bots, if there are any.
+    pub fn difficulty(self) -> Option<BotDifficulty> {
+        match self {
+            Self::Easy => Some(BotDifficulty::Easy),
+            Self::Normal => Some(BotDifficulty::Normal),
+            Self::Hard => Some(BotDifficulty::Hard),
+            Self::Off => None,
+        }
+    }
+
+    /// Whether bots fill the grid.
+    pub fn on(self) -> bool {
+        self != Self::Off
+    }
+
+    /// As the line writes it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Easy => "Facile",
+            Self::Normal => "Normal",
+            Self::Hard => "Difficile",
+            Self::Off => "Non",
+        }
+    }
+
+    /// Its name in a kept text ([`KeptSolo`]).
+    fn name(self) -> &'static str {
+        match self {
+            Self::Easy => "Easy",
+            Self::Normal => "Normal",
+            Self::Hard => "Hard",
+            Self::Off => "Off",
+        }
+    }
+}
+
+/// Written by its name (« "Hard" »), as a string: RON gives no name to a bare variant read without
+/// its type, and the reading below also takes `true` and `false`.
+impl Serialize for BotsChoice {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+/// Read from its name, or from a switch of the « Bots : Oui / Non » of #99 (`true`: Normal, the
+/// level « Oui » had; `false`: none).
+impl<'de> Deserialize<'de> for BotsChoice {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Choice;
+
+        impl Visitor<'_> for Choice {
+            type Value = BotsChoice;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("\"Easy\", \"Normal\", \"Hard\", \"Off\", true or false")
+            }
+
+            fn visit_bool<E: de::Error>(self, on: bool) -> Result<BotsChoice, E> {
+                Ok(BotsChoice::of(on, BotDifficulty::Normal))
+            }
+
+            fn visit_str<E: de::Error>(self, name: &str) -> Result<BotsChoice, E> {
+                BotsChoice::ALL
+                    .into_iter()
+                    .find(|choice| choice.name() == name)
+                    .ok_or_else(|| E::unknown_variant(name, &["Easy", "Normal", "Hard", "Off"]))
+            }
+        }
+
+        deserializer.deserialize_any(Choice)
+    }
+}
+
+/// Local storage key (web) / file name (native) of what « Jouer solo » keeps between sessions
+/// (issue #153: its « Bots » line).
+pub const SOLO_STORAGE_KEY: &str = "fluffy-racers/solo";
+
+/// The format of the kept text ([`KeptSolo`]): a text of another format is not read.
+pub const SOLO_FORMAT: u32 = 1;
+
+/// What « Jouer solo » keeps in the browser (issue #153), as a RON text like the options: its
+/// format, then the « Bots » line. A missing field takes its default (Normal): a line kept later
+/// will not lose this one. The other lines are not kept: the screen opens on what is raced.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct KeptSolo {
+    pub format: u32,
+    pub bots: BotsChoice,
+}
+
+impl Default for KeptSolo {
+    fn default() -> Self {
+        Self {
+            format: SOLO_FORMAT,
+            bots: BotsChoice::default(),
+        }
+    }
+}
+
+impl KeptSolo {
+    /// What a choice keeps.
+    pub fn of(setup: &RaceSetup) -> Self {
+        Self {
+            bots: setup.bots,
+            ..Self::default()
+        }
+    }
+
+    /// The text kept in the browser: RON, every field named.
+    pub fn to_ron(&self) -> String {
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .unwrap_or_else(|_| String::new())
+    }
+
+    /// Reads a kept text; an unreadable one (not RON, another format, an unknown level) gives
+    /// the reason.
+    pub fn from_ron(text: &str) -> Result<Self, String> {
+        let kept: Self = ron::from_str(text).map_err(|error| error.to_string())?;
+        if kept.format != SOLO_FORMAT {
+            return Err(format!(
+                "« Jouer solo » of format {} (this game reads {SOLO_FORMAT})",
+                kept.format
+            ));
+        }
+        Ok(kept)
     }
 }
 
@@ -248,8 +406,9 @@ pub struct RaceSetup {
     /// (`assets/tracks/index.ron`).
     pub circuit: usize,
     pub mirror: bool,
-    /// Bots fill the grid (not in a time trial: it is alone).
-    pub bots: bool,
+    /// Bots fill the grid, at their level, or not (issue #153; not in a time trial: it is
+    /// alone).
+    pub bots: BotsChoice,
     /// Item boxes on the track (not in a time trial: three piments only).
     pub items: bool,
     pub formula: Formula,
@@ -270,7 +429,7 @@ impl Default for RaceSetup {
             mode: GameMode::default(),
             circuit: 0,
             mirror: false,
-            bots: true,
+            bots: BotsChoice::default(),
             items: true,
             formula: Formula::default(),
             cup: 0,
@@ -387,9 +546,13 @@ impl RaceSetup {
             }
             MenuRow::Circuit => self.circuit = around(self.circuit, circuits),
             MenuRow::Mirror if flip => self.mirror = !self.mirror,
-            MenuRow::Bots if flip => self.bots = !self.bots,
+            MenuRow::Bots => {
+                let all = BotsChoice::ALL;
+                let at = all.iter().position(|b| *b == self.bots).unwrap_or(0);
+                self.bots = all[around(at, all.len())];
+            }
             MenuRow::Items if flip => self.items = !self.items,
-            MenuRow::Mirror | MenuRow::Bots | MenuRow::Items => {}
+            MenuRow::Mirror | MenuRow::Items => {}
         }
         self.fit(catalog);
         self
@@ -413,7 +576,7 @@ impl RaceSetup {
                 .map_or_else(String::new, |c| catalog.name(*c).to_string()),
             MenuRow::Circuit => catalog.name(self.circuit).to_string(),
             MenuRow::Mirror => yes_no(self.mirror),
-            MenuRow::Bots => yes_no(self.bots),
+            MenuRow::Bots => self.bots.label().to_string(),
             MenuRow::Items => yes_no(self.items),
         }
     }
@@ -447,10 +610,11 @@ impl RaceSetup {
             MenuRow::Race(race) => format!("Le circuit de la course {}.", race + 1),
             MenuRow::Circuit => "Le circuit de la course.".to_string(),
             MenuRow::Mirror => "Le circuit inversé gauche-droite.".to_string(),
-            MenuRow::Bots => if self.bots {
-                "Des bots complètent la grille à 12."
-            } else {
-                "Toi seul sur la piste."
+            MenuRow::Bots => match self.bots {
+                BotsChoice::Easy => "Des bots faciles complètent la grille à 12.",
+                BotsChoice::Normal => "Des bots complètent la grille à 12.",
+                BotsChoice::Hard => "Des bots coriaces complètent la grille à 12.",
+                BotsChoice::Off => "Toi seul sur la piste.",
             }
             .to_string(),
             MenuRow::Items => if self.items {
@@ -694,7 +858,14 @@ mod tests {
             assert_ne!(once, setup, "{row:?}");
             assert_eq!(once.changed(row, -1, &catalog), setup, "{row:?}");
         }
-        assert!(!setup.clone().changed(Bots, 1, &catalog).bots);
+        // Issue #153: « Facile, Normal, Difficile, Non », from Normal, around both ways.
+        let bots = |step| setup.clone().changed(Bots, step, &catalog).bots;
+        assert_eq!(setup.bots, BotsChoice::Normal);
+        assert_eq!(bots(1), BotsChoice::Hard);
+        assert_eq!(bots(2), BotsChoice::Off);
+        assert_eq!(bots(3), BotsChoice::Easy, "around");
+        assert_eq!(bots(-1), BotsChoice::Easy);
+        assert_eq!(bots(-2), BotsChoice::Off, "around");
         assert!(!setup.clone().changed(Items, 1, &catalog).items);
         assert!(setup.clone().changed(Mirror, 1, &catalog).mirror);
 
@@ -751,5 +922,86 @@ mod tests {
         assert_eq!(alone.formula, super::Formula::Custom);
         assert_eq!(alone.races, 3, "no more races than circuits");
         assert_eq!(alone.clone().changed(Formula, 1, &none), alone);
+    }
+
+    /// Issue #153: the « Bots » line: its four values in Max's order, written and explained
+    /// (48 characters at most), each level its bots', « Non » none; the same as a grid's bots
+    /// and level, both ways.
+    #[test]
+    fn the_bots_line_has_a_level_or_none() {
+        assert_eq!(
+            BotsChoice::ALL.map(BotsChoice::label),
+            ["Facile", "Normal", "Difficile", "Non"]
+        );
+        assert_eq!(BotsChoice::default(), BotsChoice::Normal);
+        let catalog = Catalog::of(&manifest_of(6, 2), 4);
+        let mut helps = Vec::new();
+        for bots in BotsChoice::ALL {
+            let setup = RaceSetup {
+                bots,
+                ..RaceSetup::default()
+            };
+            assert_eq!(setup.value(MenuRow::Bots, &catalog), bots.label());
+            let help = setup.help(MenuRow::Bots, &catalog);
+            assert!(help.chars().count() <= 48, "{help}");
+            assert!(!helps.contains(&help), "{help}");
+            helps.push(help);
+            assert_eq!(bots.on(), bots.difficulty().is_some());
+            let back = BotsChoice::of(bots.on(), bots.difficulty().unwrap_or_default());
+            assert_eq!(back, bots);
+        }
+        assert_eq!(BotsChoice::Easy.difficulty(), Some(BotDifficulty::Easy));
+        assert_eq!(BotsChoice::Hard.difficulty(), Some(BotDifficulty::Hard));
+        assert_eq!(BotsChoice::Off.difficulty(), None);
+        for difficulty in BotDifficulty::ALL {
+            assert_eq!(BotsChoice::of(false, difficulty), BotsChoice::Off);
+        }
+        // Around, one step at a time: each value once.
+        let mut setup = RaceSetup::default();
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            setup = setup.changed(MenuRow::Bots, 1, &catalog);
+            seen.push(setup.bots);
+        }
+        assert_eq!(
+            seen,
+            [
+                BotsChoice::Hard,
+                BotsChoice::Off,
+                BotsChoice::Easy,
+                BotsChoice::Normal
+            ]
+        );
+    }
+
+    /// Issue #153: what « Jouer solo » keeps reads back the same; a text without the line, or of
+    /// before (« Bots : Oui / Non » as `true` / `false`), reads as Normal or none; an unknown
+    /// level, another format or garbage is refused with its reason.
+    #[test]
+    fn the_kept_choice_reads_back() {
+        for bots in BotsChoice::ALL {
+            let kept = KeptSolo::of(&RaceSetup {
+                bots,
+                ..RaceSetup::default()
+            });
+            assert_eq!(kept.bots, bots);
+            let text = kept.to_ron();
+            assert!(text.contains("format: 1"), "{text}");
+            assert_eq!(KeptSolo::from_ron(&text), Ok(kept), "{text}");
+        }
+        assert!(
+            KeptSolo::of(&RaceSetup::default())
+                .to_ron()
+                .contains("\"Normal\"")
+        );
+        let read = |text: &str| KeptSolo::from_ron(text).map(|kept| kept.bots);
+        assert_eq!(read("(bots: \"Hard\")"), Ok(BotsChoice::Hard));
+        assert_eq!(read("()"), Ok(BotsChoice::Normal));
+        assert_eq!(read("(format: 1, bots: true)"), Ok(BotsChoice::Normal));
+        assert_eq!(read("(format: 1, bots: false)"), Ok(BotsChoice::Off));
+        assert!(read("(bots: \"Nightmare\")").is_err());
+        assert!(read("(bots: 3)").is_err());
+        assert!(read("(format: 2, bots: \"Easy\")").is_err());
+        assert!(read("bots = Easy").is_err());
     }
 }

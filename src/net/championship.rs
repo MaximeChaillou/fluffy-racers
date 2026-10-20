@@ -30,7 +30,8 @@ use super::protocol::{
     RaceStart, RoomSetup,
 };
 use super::room::RoomCode;
-use crate::modes::{Catalog, Formula, GameMode, MenuRow, Pick, RaceSetup};
+use crate::bots::BotDifficulty;
+use crate::modes::{BotsChoice, Catalog, Formula, GameMode, MenuRow, Pick, RaceSetup};
 use crate::race::{CupRace, GrandPrix, GrandPrixStage, OnlineStandings, ResultTime};
 use crate::track::GRID_SLOTS;
 
@@ -63,7 +64,11 @@ pub fn race_setup_of(setup: &RoomSetup) -> RaceSetup {
         },
         circuit: usize::from(setup.track),
         mirror: setup.mirror,
-        bots: setup.bots,
+        // Issue #153: the room's bots at their level, or none.
+        bots: BotsChoice::of(
+            setup.bots,
+            BotDifficulty::from_index(setup.difficulty).unwrap_or_default(),
+        ),
         items: setup.items,
         formula: if plan.custom {
             Formula::Custom
@@ -99,7 +104,9 @@ pub fn room_setup_of(race: &RaceSetup, seed: u64, catalog: &Catalog) -> RoomSetu
     RoomSetup {
         track: race.circuit.min(255) as u8,
         mirror: race.mirror,
-        bots: race.bots,
+        bots: race.bots.on(),
+        // Issue #153: without bots, Normal (a level only matters with them).
+        difficulty: race.bots.difficulty().unwrap_or_default().index() as u8,
         items: race.items,
         championship: race.mode == GameMode::GrandPrix,
         plan: ChampionshipSetup {
