@@ -23,6 +23,7 @@ use bevy_egui::{
 };
 use bevy_rapier3d::prelude::Velocity;
 
+use super::feel::{KNOB_MAX, Knob, LINKS, MIDDLE};
 use super::tracks::{self, TEST_GROUND_LABEL, TrackEntry};
 use super::tuning::{Field, Value, fields};
 use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_now, storage};
@@ -31,7 +32,7 @@ use crate::bots::BotDifficulty;
 use crate::camera::ChaseCamera;
 use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
-use crate::items::{DEBUG_ITEM_KEY, GiveItem, ItemSlots, ItemStats, Prize, Slot};
+use crate::items::{GiveItem, ItemSlots, ItemStats, Prize, Slot};
 use crate::kart::{
     Boost, DriftSide, HitReaction, Invincibility, ItemEffects, KartState, KartStats, KartTuning,
     KartWheels, MaxSpeedScale, PlayerKart, Slipstream, Stall, Stat, StatEffects, max_speed,
@@ -41,8 +42,10 @@ use crate::options::OptionsMenu;
 use crate::race::{Race, RaceGrid, RaceMode};
 use crate::track::{GRID_SLOTS, TrackChoice};
 
-/// Color of a modified value.
+/// Color of a value modified by hand, and of a knob off the middle.
 const MODIFIED: Color32 = Color32::from_rgb(255, 175, 60);
+/// Issue #155: color of a value set by a « Ressenti » knob (off the middle).
+const DRIVEN: Color32 = Color32::from_rgb(120, 190, 255);
 
 /// Values only read when the level is built: they apply at the next « Relancer » (prefixes of
 /// `Resource.path`).
@@ -175,7 +178,8 @@ impl Default for PanelState {
     fn default() -> Self {
         Self {
             circuits: tracks::circuits(),
-            open: HashSet::from(["Test", "Objets", "Réglages", "KartTuning"]),
+            // Issue #155: the test tools and the « Ressenti » knobs; « Avancé » folded.
+            open: HashSet::from(["Test", "Ressenti", "KartTuning"]),
             filter: String::new(),
             export: String::new(),
             unsaved: false,
@@ -194,7 +198,7 @@ fn load_stored_tunings(world: &mut World) {
         return;
     };
     world.resource_scope(
-        |world, tunings: Mut<Tunings>| match tunings.import(world, &text) {
+        |world, mut tunings: Mut<Tunings>| match tunings.import(world, &text) {
             Ok(report) => {
                 info!(
                     "admin panel: {} stored tuning values loaded",
@@ -411,8 +415,8 @@ fn panel(world: &mut World) {
     // move them with the arrow keys the player drives with: only text fields keep it.
     keep_focus_for_text_only(&ctx);
     world.resource_scope(|world, mut state: Mut<PanelState>| {
-        world.resource_scope(|world, tunings: Mut<Tunings>| {
-            draw(&ctx, world, &mut state, &tunings);
+        world.resource_scope(|world, mut tunings: Mut<Tunings>| {
+            draw(&ctx, world, &mut state, &mut tunings);
         });
     });
     let capture = ctx.text_edit_focused()
@@ -423,7 +427,7 @@ fn panel(world: &mut World) {
         .set_if_neq(KeyboardCapture(capture));
 }
 
-fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings: &Tunings) {
+fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings: &mut Tunings) {
     if state.export.is_empty() {
         state.export = tunings.export(world);
     }
@@ -439,12 +443,10 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
         .resizable(true)
         .vscroll(true)
         .show(ctx, |ui| {
-            ui.small("P : ouvrir / fermer · ?admin dans l'adresse : ouvert au démarrage");
+            // Issue #155: the test tools first, compact; then the « Ressenti » knobs; every
+            // detailed value folded in « Avancé ».
             section(ui, state, "Test", "Test", |ui, state| {
                 test_section(ui, world, state);
-            });
-            section(ui, state, "Objets", "Donner un objet", |ui, state| {
-                items_section(ui, world, state);
             });
             section(
                 ui,
@@ -455,6 +457,9 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
                     sounds_section(ui, world, state);
                 },
             );
+            section(ui, state, "Ressenti", "Ressenti", |ui, state| {
+                feel_section(ui, world, state, tunings, &mut changed);
+            });
             section(
                 ui,
                 state,
@@ -464,9 +469,15 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
                     telemetry_section(ui, world);
                 },
             );
-            section(ui, state, "Réglages", "Réglages", |ui, state| {
-                tunings_section(ui, world, state, tunings, &mut changed);
-            });
+            section(
+                ui,
+                state,
+                "Avancé",
+                "Avancé (tous les réglages)",
+                |ui, state| {
+                    tunings_section(ui, world, state, tunings, &mut changed);
+                },
+            );
             section(
                 ui,
                 state,
@@ -487,8 +498,11 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
     // Stored once the slider is released, not at every step of a drag.
     if state.unsaved && !ctx.egui_is_using_pointer() {
         state.unsaved = false;
-        let nothing_modified = tunings.changes(world).is_empty();
-        storage::save(if nothing_modified { "" } else { &state.export });
+        storage::save(if tunings.untouched(world) {
+            ""
+        } else {
+            &state.export
+        });
     }
 }
 
@@ -520,8 +534,9 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
     if world.contains_resource::<crate::level::Online>() {
         // Issue #9: online, the host chooses the circuit and starts the races (lobby, L), and the
         // game never pauses nor slows down: every peer's race follows the room's clock.
-        ui.label("En ligne : l'hôte choisit le circuit et lance les courses depuis le salon (L).");
+        ui.label("En ligne : l'hôte choisit le circuit et lance les courses depuis le salon.");
         ui.small("Ni « Relancer », ni pause, ni ralenti en ligne.");
+        items_row(ui, world, state);
         return;
     }
     let choice = world.resource::<TrackChoice>().clone();
@@ -559,7 +574,8 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
             });
             ui.end_row();
 
-            ui.label("Bots");
+            ui.label("Bots")
+                .on_hover_text("Le nombre et le niveau : au prochain « Relancer ».");
             ui.horizontal(|ui| {
                 let mut bots = world.resource::<RaceGrid>().bot_count();
                 if ui
@@ -585,7 +601,6 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
             });
             ui.end_row();
         });
-    ui.small("Bots et niveau : appliqués au prochain « Relancer ».");
 
     ui.horizontal(|ui| {
         if ui.button("Relancer").clicked() {
@@ -610,7 +625,8 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
     });
 
     ui.horizontal(|ui| {
-        ui.label("Vitesse du jeu");
+        ui.label("Vitesse du jeu")
+            .on_hover_text("Fermer le panneau remet la vitesse normale.");
         let (speed, paused) = {
             let time = world.resource::<Time<Virtual>>();
             (time.relative_speed(), time.is_paused())
@@ -635,60 +651,60 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
             }
         }
     });
-    ui.small("Fermer le panneau remet la vitesse normale.");
+
+    // Issue #155: giving an item is a test tool too, on one line.
+    items_row(ui, world, state);
 
     if let Some(request) = request {
         world.write_message(request);
     }
 }
 
-/// Issue #18: any item, ready in the player's hand (`items::GiveItem`), to try it at once; the
-/// I key goes through them all. Online, only in a debug build, and only what plays online.
-fn items_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
-    // Issue #106: every model side by side, in front of the camera (with a renderer).
-    if let Some(mut showcase) = world.get_resource_mut::<crate::items::ItemShowcase>() {
-        let mut open = showcase.open;
-        if ui
-            .checkbox(&mut open, "Vitrine : tous les objets devant la caméra")
-            .changed()
-        {
-            showcase.open = open;
-        }
-    }
+/// Issue #18: any item, ready in the player's hand (`items::GiveItem`), to try it at once (the
+/// debug key goes through them all, GD § 8). Online, only in a debug build, and only what plays
+/// online. Issue #106: the showcase, every model side by side in front of the camera. Issue
+/// #155: one line of the « Test » section.
+fn items_row(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
     let online = world.contains_resource::<crate::level::Online>();
-    if online && !cfg!(debug_assertions) {
-        ui.label("En ligne : pas d'objet donné (seulement dans une version de développement).");
-        return;
-    }
+    let can_give = !online || cfg!(debug_assertions);
     let playable = |prize: &Prize| !online || prize.online();
     if !playable(&state.gift) {
         state.gift = Prize::Pelure;
     }
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("admin-gift")
-            .width(220.0)
-            .selected_text(state.gift.name())
-            .show_ui(ui, |ui| {
-                for prize in Prize::ALL.iter().filter(|p| playable(p)) {
-                    ui.selectable_value(&mut state.gift, *prize, prize.name());
-                }
-            });
-        if ui.button("Donner").clicked() {
-            world.write_message(GiveItem(state.gift));
+        ui.label("Objet");
+        if can_give {
+            egui::ComboBox::from_id_salt("admin-gift")
+                .width(150.0)
+                .selected_text(state.gift.name())
+                .show_ui(ui, |ui| {
+                    for prize in Prize::ALL.iter().filter(|p| playable(p)) {
+                        ui.selectable_value(&mut state.gift, *prize, prize.name());
+                    }
+                });
+            if ui
+                .button("Donner")
+                .on_hover_text("Dans ta main, prêt à servir.")
+                .clicked()
+            {
+                world.write_message(GiveItem(state.gift));
+            }
+        } else {
+            ui.label("aucun en ligne")
+                .on_hover_text("En ligne, seulement dans une version de développement.");
+        }
+        // Issue #106 (with a renderer).
+        if let Some(mut showcase) = world.get_resource_mut::<crate::items::ItemShowcase>() {
+            let mut open = showcase.open;
+            if ui
+                .checkbox(&mut open, "Vitrine")
+                .on_hover_text("Tous les objets côte à côte devant la caméra.")
+                .changed()
+            {
+                showcase.open = open;
+            }
         }
     });
-    ui.small(format!(
-        "Dans ta main, prêt à servir (Objet : Shift ou E). La touche {} donne le suivant de la liste.{}",
-        match DEBUG_ITEM_KEY {
-            KeyCode::KeyI => "I",
-            _ => "de debug",
-        },
-        if online {
-            " En ligne : seulement les objets qui marchent en ligne."
-        } else {
-            ""
-        }
-    ));
 }
 
 /// Issue #135: each sound of the sound design (`audio::Slot`) with its candidates; the choice
@@ -1014,6 +1030,189 @@ fn telemetry_section(ui: &mut egui::Ui, world: &mut World) {
         });
 }
 
+/// Issue #155: the « Ressenti » knobs, one per feeling. Each one drives several values (listed in
+/// its tooltip, with what it gives them at 0, in the middle and at 100); the middle is the
+/// game's defaults. « Copier mes réglages » gives the knobs off the middle and the values
+/// modified by hand.
+fn feel_section(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    state: &mut PanelState,
+    tunings: &mut Tunings,
+    changed: &mut bool,
+) {
+    let hand = tunings.changes(world);
+    let moved = tunings.feel.moved().count();
+    ui.horizontal(|ui| {
+        let now = ui.input(|i| i.time);
+        if ui.button("Copier mes réglages").clicked() {
+            ui.ctx().copy_text(state.export.clone());
+            state.copied_at = Some(now);
+        }
+        if state.copied_at.is_some_and(|at| now - at < 4.0) {
+            ui.label(RichText::new("copié !").color(MODIFIED));
+        }
+        if ui
+            .add_enabled(
+                moved > 0 || !hand.is_empty(),
+                egui::Button::new("Tout par défaut"),
+            )
+            .clicked()
+        {
+            tunings.reset_all(world);
+            *changed = true;
+        }
+    });
+    let status = match (moved, hand.len()) {
+        (0, 0) => "Le milieu, c'est le jeu tel quel.".to_string(),
+        (m, h) => format!(
+            "{m} curseur{} bougé{}, {h} réglage{} à la main",
+            plural(m),
+            plural(m),
+            plural(h)
+        ),
+    };
+    ui.small(
+        RichText::new(status).color(if moved > 0 || !hand.is_empty() {
+            MODIFIED
+        } else {
+            ui.visuals().weak_text_color()
+        }),
+    );
+
+    let mut moves: Vec<(Knob, u8)> = Vec::new();
+    egui::Grid::new("admin-feel")
+        .num_columns(3)
+        .spacing([10.0, 2.0])
+        .show(ui, |ui| {
+            ui.spacing_mut().slider_width = 180.0;
+            for knob in Knob::ALL {
+                let position = tunings.feel.position(knob);
+                let by_hand = hand
+                    .iter()
+                    .filter(|c| {
+                        tunings
+                            .get(c.tuning)
+                            .and_then(|t| t.knob_of(&c.path))
+                            .is_some_and(|k| k == knob)
+                    })
+                    .count();
+                let name = if position != MIDDLE {
+                    RichText::new(knob.label()).color(MODIFIED).strong()
+                } else {
+                    RichText::new(knob.label()).strong()
+                };
+                ui.label(name)
+                    .on_hover_ui(|ui| knob_tooltip(ui, world, tunings, knob));
+                let mut value = position;
+                if ui
+                    .add(egui::Slider::new(&mut value, 0..=KNOB_MAX).integer())
+                    .changed()
+                {
+                    moves.push((knob, value));
+                }
+                if ui
+                    .add_enabled(position != MIDDLE, egui::Button::new("milieu").small())
+                    .clicked()
+                {
+                    moves.push((knob, MIDDLE));
+                }
+                ui.end_row();
+
+                ui.label("");
+                ui.horizontal(|ui| {
+                    // Under each end of the slider. egui's font has no arrows: the side says it.
+                    let width = ui.spacing().slider_width;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, 0.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_width(width);
+                            ui.small(RichText::new(end_text(knob.low())).weak());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.small(RichText::new(end_text(knob.high())).weak());
+                                },
+                            );
+                        },
+                    );
+                    if by_hand > 0 {
+                        ui.small(RichText::new(format!("{by_hand} à la main")).color(MODIFIED))
+                            .on_hover_text(
+                                "Modifiés à la main dans « Avancé » : ce curseur ne les change \
+                                 plus (« défaut » les lui rend).",
+                            );
+                    }
+                });
+                ui.end_row();
+            }
+        });
+    for (knob, position) in moves {
+        tunings.set_knob(world, knob, position);
+        *changed = true;
+    }
+}
+
+/// A knob's end without its arrow (egui's font has none).
+fn end_text(text: &str) -> &str {
+    text.trim_matches(|c: char| c == '←' || c == '→' || c.is_whitespace())
+}
+
+fn plural(n: usize) -> &'static str {
+    if n > 1 { "s" } else { "" }
+}
+
+/// What a knob does, and every value it drives with what it gives it at 0, in the middle and at
+/// 100 (the values of the game's tunings only: those that exist here).
+fn knob_tooltip(ui: &mut egui::Ui, world: &World, tunings: &Tunings, knob: Knob) {
+    ui.label(knob.summary());
+    ui.add_space(4.0);
+    egui::Grid::new(("admin-feel-tip", knob.key()))
+        .num_columns(2)
+        .spacing([10.0, 0.0])
+        .show(ui, |ui| {
+            ui.small(RichText::new("réglage").weak());
+            ui.small(RichText::new("à 0 · milieu · à 100").weak());
+            ui.end_row();
+            for tuning in &tunings.list {
+                if tuning.read(world).is_none() {
+                    continue;
+                }
+                for field in &tuning.defaults {
+                    let full = format!("{}.{}", tuning.name, field.path);
+                    let Some(link) = LINKS.iter().find(|l| l.knob == knob && l.matches(&full))
+                    else {
+                        continue;
+                    };
+                    ui.small(full);
+                    ui.small(format!(
+                        "{} · {} · {}",
+                        short(link.value(field.value, 0)),
+                        short(field.value),
+                        short(link.value(field.value, KNOB_MAX))
+                    ));
+                    ui.end_row();
+                }
+            }
+        });
+}
+
+/// A value in a few characters (3 decimals at most).
+fn short(value: Value) -> String {
+    match value {
+        Value::F32(_) | Value::F64(_) => {
+            let x = value.as_f64().unwrap_or_default();
+            let text = format!("{x:.3}");
+            text.trim_end_matches('0').trim_end_matches('.').to_string()
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Issue #155: every detailed value, as before #155 (folded by default). A value modified by hand
+/// (off its baseline) stands out, « à la main », and its knob no longer changes it until
+/// « défaut » gives it back; a value its knob has moved shows in blue.
 fn tunings_section(
     ui: &mut egui::Ui,
     world: &mut World,
@@ -1023,41 +1222,28 @@ fn tunings_section(
 ) {
     let modified = tunings.changes(world).len();
     ui.horizontal(|ui| {
-        let now = ui.input(|i| i.time);
-        if ui.button("Copier mes réglages").clicked() {
-            ui.ctx().copy_text(state.export.clone());
-            state.copied_at = Some(now);
-            state.open.insert("Partager");
-        }
-        if state.copied_at.is_some_and(|at| now - at < 4.0) {
-            ui.label(RichText::new("copié !").color(MODIFIED));
-        }
-        if ui
-            .add_enabled(modified > 0, egui::Button::new("Tout par défaut"))
-            .clicked()
-        {
-            tunings.reset_all(world);
-            *changed = true;
-        }
         let text = match modified {
-            0 => "aucune valeur modifiée".to_string(),
-            1 => "1 valeur modifiée".to_string(),
-            n => format!("{n} valeurs modifiées"),
+            0 => "aucune valeur à la main".to_string(),
+            1 => "1 valeur à la main".to_string(),
+            n => format!("{n} valeurs à la main"),
         };
         ui.label(RichText::new(text).color(if modified > 0 {
             MODIFIED
         } else {
             ui.visuals().weak_text_color()
         }));
-    });
-    ui.horizontal(|ui| {
         ui.label("Filtrer");
-        ui.add(egui::TextEdit::singleline(&mut state.filter).desired_width(160.0));
+        ui.add(egui::TextEdit::singleline(&mut state.filter).desired_width(120.0));
         if !state.filter.is_empty() && ui.small_button("effacer").clicked() {
             state.filter.clear();
         }
     });
-    ui.small("* : s'applique au prochain « Relancer ». Survole un nom pour sa valeur par défaut.");
+    ui.small(RichText::new("En orange : à la main. En bleu : réglé par un curseur.").weak())
+        .on_hover_text(
+            "Une valeur à la main ne suit plus son curseur de « Ressenti » ; « défaut » la lui \
+             rend.\n* : s'applique au prochain « Relancer ».\nSurvole un nom pour sa valeur par \
+             défaut.",
+        );
 
     let filter = state.filter.trim().to_lowercase();
     for tuning in &tunings.list {
@@ -1074,16 +1260,17 @@ fn tunings_section(
         }
         let modified_here = current
             .iter()
-            .filter(|f| tuning.default_of(&f.path).map(|d| d.value) != Some(f.value))
+            .filter(|f| tuning.baseline(&tunings.feel, &f.path) != Some(f.value))
             .count();
         let title = if modified_here > 0 {
-            RichText::new(format!("{} ({modified_here} modifiée(s))", tuning.name)).color(MODIFIED)
+            RichText::new(format!("{} ({modified_here} à la main)", tuning.name)).color(MODIFIED)
         } else {
             RichText::new(tuning.name)
         };
         // A filter shows every tuning with a match.
         let open = !filter.is_empty() || state.open.contains(tuning.name);
         let mut edits: Vec<(String, Value)> = Vec::new();
+        let mut resets: Vec<String> = Vec::new();
         let mut reset = false;
         let response = egui::CollapsingHeader::new(title)
             .id_salt(tuning.name)
@@ -1106,15 +1293,22 @@ fn tunings_section(
                         ui.spacing_mut().slider_width = 130.0;
                         for field in shown {
                             let default = tuning.default_of(&field.path);
-                            let is_modified = default.map(|d| d.value) != Some(field.value);
+                            let baseline = tuning.baseline(&tunings.feel, &field.path);
+                            let by_hand = baseline != Some(field.value);
+                            let knob = tuning.knob_of(&field.path);
+                            let knob_moved =
+                                knob.is_some_and(|k| tunings.feel.position(k) != MIDDLE);
                             let full = format!("{}.{}", tuning.name, field.path);
                             let on_restart = ON_RESTART.iter().any(|p| full.starts_with(p));
                             let mut name = field.path.clone();
                             if on_restart {
                                 name.push_str(" *");
                             }
-                            let label = if is_modified {
+                            let label = if by_hand {
+                                name.push_str(" · à la main");
                                 RichText::new(name).color(MODIFIED).strong()
+                            } else if knob_moved {
+                                RichText::new(name).color(DRIVEN)
                             } else {
                                 RichText::new(name)
                             };
@@ -1122,6 +1316,19 @@ fn tunings_section(
                                 Some(d) => format!("défaut : {}", d.value),
                                 None => "pas de valeur par défaut".to_string(),
                             };
+                            if let Some(knob) = knob {
+                                tip.push_str(&format!("\npiloté par « {} »", knob.label()));
+                                if let (true, Some(b)) = (knob_moved, baseline) {
+                                    tip.push_str(&format!(" : {b} maintenant"));
+                                }
+                                if by_hand {
+                                    tip.push_str(
+                                        "\nmodifié à la main : le curseur ne le change plus",
+                                    );
+                                }
+                            } else if by_hand {
+                                tip.push_str("\nmodifié à la main");
+                            }
                             if on_restart {
                                 tip.push_str("\ns'applique au prochain « Relancer »");
                             }
@@ -1136,11 +1343,10 @@ fn tunings_section(
                                 edits.push((field.path.clone(), value));
                             }
                             if ui
-                                .add_enabled(is_modified, egui::Button::new("défaut").small())
+                                .add_enabled(by_hand, egui::Button::new("défaut").small())
                                 .clicked()
-                                && let Some(d) = default
                             {
-                                edits.push((field.path.clone(), d.value));
+                                resets.push(field.path.clone());
                             }
                             ui.end_row();
                         }
@@ -1150,11 +1356,16 @@ fn tunings_section(
             toggle(&mut state.open, tuning.name);
         }
         if reset {
-            tuning.reset(world);
+            tunings.reset_tuning(world, tuning.name);
             *changed = true;
         }
         for (path, value) in edits {
             if tuning.set(world, &path, value).is_ok() {
+                *changed = true;
+            }
+        }
+        for path in resets {
+            if tunings.reset_field(world, tuning.name, &path).is_ok() {
                 *changed = true;
             }
         }
@@ -1233,10 +1444,10 @@ fn share_section(
     ui: &mut egui::Ui,
     world: &mut World,
     state: &mut PanelState,
-    tunings: &Tunings,
+    tunings: &mut Tunings,
     changed: &mut bool,
 ) {
-    ui.label("Mes réglages, à coller dans une issue (seulement les valeurs modifiées) :");
+    ui.label("Mes réglages, à coller dans une issue (curseurs bougés, valeurs à la main) :");
     let mut export = state.export.as_str();
     ui.add(
         egui::TextEdit::multiline(&mut export)

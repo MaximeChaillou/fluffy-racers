@@ -113,7 +113,7 @@ Par Internet, chaque navigateur demande son adresse publique aux serveurs STUN p
 Pour voir comment les karts des autres se comportent sur une mauvaise connexion, le jeu peut ajouter de la latence, de la gigue et des pertes aux états des karts qu'il **reçoit** (pas au salon ni aux pings : le ping affiché reste le vrai) :
 
 - dans l'adresse : `http://localhost:8080/?room=TEST&netsim=120,20,5` : 120 ms de latence, ± 20 ms de gigue, 5 % de pertes (`&netsim=80` : la latence seule) ;
-- ou pendant le jeu, dans le panneau d'admin (**P**) : `NetTuning` > `simulator` (`latency_ms`, `jitter_ms`, `loss_percent`), effet immédiat. Remets-les à 0 (ou le bouton de remise à zéro de `NetTuning`) pour l'arrêter : le panneau garde les réglages modifiés d'une session à l'autre. Attention : avec `?netsim=` dans l'adresse, si tu modifies un autre réglage dans le panneau, le simulateur est mémorisé avec ;
+- ou pendant le jeu, dans le panneau d'admin (**P**), section « Avancé » : `NetTuning` > `simulator` (`latency_ms`, `jitter_ms`, `loss_percent`), effet immédiat. Remets-les à 0 (ou le bouton « défaut (tout) » de `NetTuning`) pour l'arrêter : le panneau garde les réglages modifiés d'une session à l'autre. Attention : avec `?netsim=` dans l'adresse, si tu modifies un autre réglage dans le panneau, le simulateur est mémorisé avec ;
 - chaque fenêtre simule son côté : pour ralentir les deux sens, mets `netsim` dans les deux adresses.
 
 Ce que tu dois voir avec `netsim=120,20,5` : le kart de l'autre roule toujours **sans à-coups**, simplement un peu plus en retard (environ 0,2 s au lieu de 0,1 s). Les réglages de l'affichage (délai de 100 ms, extrapolation de 250 ms au plus…) sont aussi dans `NetTuning`.

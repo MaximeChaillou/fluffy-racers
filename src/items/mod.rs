@@ -746,11 +746,16 @@ fn tick_items(time: Res<Time>, mut boxes: Query<&mut ItemBox>, mut karts: Query<
 }
 
 /// A kart's grid slot for its draws (0 off the race), and its distance to the leader (0 off the
-/// race: the leader's row).
-fn draw_context(racer: Option<&Racer>, progress: Option<&RaceProgress>) -> (u64, f32) {
+/// race: the leader's row) times `ItemTuning::gap_scale` (issue #155).
+fn draw_context(
+    racer: Option<&Racer>,
+    progress: Option<&RaceProgress>,
+    gap_scale: f32,
+) -> (u64, f32) {
     (
         racer.map_or(0, |r| r.grid_slot as u64),
-        progress.map_or(0.0, |p| p.gap_to_leader),
+        // Issue #155: 1 by default, the distance as it is.
+        progress.map_or(0.0, |p| p.gap_to_leader * gap_scale),
     )
 }
 
@@ -855,7 +860,7 @@ fn take_boxes(
             }
             item_box.respawn_in = tuning.box_respawn_time.max(f32::MIN_POSITIVE);
             stats.boxes += 1;
-            let (slot, gap) = draw_context(racer, progress);
+            let (slot, gap) = draw_context(racer, progress, tuning.gap_scale);
             let (draw, mut draws, mut filled) = (slots.draws, 0, [false; 2]);
             let mut claimed = None;
             for _ in 0..if spot.double { 2 } else { 1 } {
