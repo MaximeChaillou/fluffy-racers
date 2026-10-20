@@ -566,7 +566,7 @@ fn snapshot(
     let impact = match (velocity, step) {
         (Some(velocity), Some(step)) => {
             let up = environment.up;
-            let lost = step.0 - velocity.linear;
+            let lost = step.linear - velocity.linear;
             (lost - up * lost.dot(up)).length()
         }
         _ => 0.0,

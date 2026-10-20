@@ -3,8 +3,9 @@
 //! Rapier handles collisions and gravity; the feel comes from our own curves. Every fixed tick:
 //! boost timers → top speed factors → boost pads and slipstream → 4 suspension raycasts →
 //! driving state (hop, drift, trick) → engine, grip and steering written to the velocity; after
-//! the physics step, the bumps between karts. The kart only reads its `KartInput`, never the
-//! keyboard.
+//! the physics step, the turn a contact between karts gave is mostly taken back (issue #154,
+//! `soften_kart_contacts`), then the bumps between karts. The kart only reads its `KartInput`,
+//! never the keyboard.
 //!
 //! The interactions between karts (GD § 15, issue #34, `crate::interactions`) reach the driving
 //! through two components (`push.rs`): the sideways push of a paw strike ([`Shove`]), kept apart
@@ -43,7 +44,7 @@ mod trick;
 mod tuning;
 mod visual;
 
-pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed};
+pub use bump::{KartBump, StepVelocity, bump_victims, closing_speed, soften_kart_contact};
 pub use drift::{DriftMotion, DriftSide, MiniTurbo, drift_yaw_rate, slip_pose};
 pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use environment::{
@@ -293,7 +294,8 @@ pub enum KartSystems {
     /// Top speed factors, boost pads, slipstream, suspension, state machine, engine, grip,
     /// steering.
     Drive,
-    /// After the physics step: the bumps between karts of that step ([`KartBump`]).
+    /// After the physics step: the contacts between karts softened (issue #154), then the bumps
+    /// between karts of that step ([`KartBump`]).
     Bumps,
 }
 
@@ -328,7 +330,12 @@ impl Plugin for KartPlugin {
                     .chain()
                     .in_set(KartSystems::Drive),
             )
-            .add_systems(FixedUpdate, detect_bumps.in_set(KartSystems::Bumps));
+            .add_systems(
+                FixedUpdate,
+                (soften_kart_contacts, detect_bumps)
+                    .chain()
+                    .in_set(KartSystems::Bumps),
+            );
     }
 }
 
@@ -437,9 +444,69 @@ fn combine_max_speed_factors(
 }
 
 /// The velocity each kart hands to the physics step, before its collisions (`bump.rs`).
-fn record_step_velocities(mut karts: Query<(&Velocity, &mut StepVelocity), With<Kart>>) {
-    for (velocity, mut step) in &mut karts {
-        step.0 = velocity.linear;
+fn record_step_velocities(
+    mut karts: Query<(&Velocity, &Transform, &mut StepVelocity), With<Kart>>,
+) {
+    for (velocity, transform, mut step) in &mut karts {
+        *step = StepVelocity {
+            linear: velocity.linear,
+            angular: velocity.angular,
+            rotation: transform.rotation,
+        };
+    }
+}
+
+/// Issue #154 (GD § 15): after the physics step, a kart touching another kart (ours, or another
+/// peer's kinematic body online) keeps only a share of the turn that contact gave it (`bump.rs`,
+/// [`soften_kart_contact`]): its rotation and its yaw rate are set back. Its push is left as it
+/// is. Online, each peer softens its own kart: nothing changes in the protocol. Walls and
+/// obstacles are left as they are.
+fn soften_kart_contacts(
+    tuning: Res<KartTuning>,
+    time: Res<Time>,
+    rapier: ReadRapierContext,
+    mut karts: Query<
+        (
+            Entity,
+            &mut Transform,
+            &StepVelocity,
+            &KartState,
+            &mut Velocity,
+        ),
+        With<Kart>,
+    >,
+    others: Query<(), Or<(With<Kart>, With<Remote>)>>,
+) {
+    let Ok(context) = rapier.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    for (kart, mut transform, before, state, mut velocity) in &mut karts {
+        if *state == KartState::Respawning {
+            continue;
+        }
+        let touched = context.contact_pairs_with(kart).any(|pair| {
+            let (Some(c1), Some(c2)) = (pair.collider1(), pair.collider2()) else {
+                return false;
+            };
+            let other = if c1 == kart { c2 } else { c1 };
+            others.contains(other)
+                && pair.has_any_active_contact()
+                && pair.total_impulse_magnitude() > 0.0
+        });
+        if !touched {
+            continue;
+        }
+        let after = StepVelocity {
+            linear: velocity.linear,
+            angular: velocity.angular,
+            rotation: transform.rotation,
+        };
+        let softened = soften_kart_contact(&tuning, *before, after, dt);
+        if softened != after {
+            velocity.angular = softened.angular;
+            transform.rotation = softened.rotation;
+        }
     }
 }
 
@@ -493,7 +560,11 @@ fn detect_bumps(
                     (
                         b,
                         transform,
-                        StepVelocity(velocity.linear),
+                        StepVelocity {
+                            linear: velocity.linear,
+                            angular: velocity.angular,
+                            rotation: transform.rotation,
+                        },
                         state,
                         anti_gravity,
                     )
@@ -532,7 +603,7 @@ fn detect_bumps(
             } else {
                 normal
             };
-            let closing_speed = closing_speed(a_velocity.0, b_velocity.0, normal);
+            let closing_speed = closing_speed(a_velocity.linear, b_velocity.linear, normal);
             // Issue #78: the spin boost, for both karts in anti-gravity (ours only, online).
             if a_environment.anti_gravity
                 && b_anti_gravity
@@ -544,7 +615,7 @@ fn detect_bumps(
                 }
             }
             let Some((a_bumped, b_bumped)) =
-                bump_victims(&tuning, a_velocity.0, b_velocity.0, normal)
+                bump_victims(&tuning, a_velocity.linear, b_velocity.linear, normal)
             else {
                 continue;
             };
@@ -1201,6 +1272,8 @@ fn drive_karts(
 
 #[cfg(test)]
 mod anti_gravity_tests;
+#[cfg(test)]
+mod clash_tests;
 #[cfg(test)]
 mod environment_tests;
 #[cfg(test)]

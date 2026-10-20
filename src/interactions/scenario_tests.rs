@@ -727,6 +727,45 @@ fn letting_go_while_steering_throws_the_kart_held() {
     );
 }
 
+/// Issue #154: a paw strike or a throw, the heaviest on the lightest, at full speed in the middle
+/// of a straight (the two karts on either side of its middle line), never throws the kart off the
+/// road (12 m wide, the narrowest main road), even with the wheel held straight; and it still
+/// pushes it aside. Measured (#154 does not change it): 1.74 m for the strike, 2.56 m for the
+/// throw; from its lane, 1.1 m off the middle, the kart has 4.2 m before the edge.
+#[test]
+fn a_strike_or_a_throw_in_the_middle_of_a_straight_keeps_the_kart_on_the_road() {
+    let middle = 1.1;
+    let on_the_road = 6.0 - crate::kart::KART_HALF_EXTENTS.x;
+    for throw in [false, true] {
+        let (mut arena, a, b) = side_by_side(20, 0, 2.2);
+        let start = arena.position(b).x;
+        if throw {
+            arena.run(0.8, &[(a, PAW), (b, FULL_THROTTLE)]);
+            let right = KartInput {
+                steer: 1.0,
+                ..FULL_THROTTLE
+            };
+            arena.tick(&[(a, right), (b, FULL_THROTTLE)]);
+            assert_eq!(arena.stats(a).throws, 1);
+        } else {
+            tap(&mut arena, a, &[b]);
+        }
+        assert_eq!(arena.stats(b).struck, 1, "throw: {throw}");
+        let mut farthest = 0.0f32;
+        for _ in 0..120 {
+            arena.tick(&[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
+            farthest = farthest.max(arena.position(b).x - middle);
+        }
+        let pushed = farthest - (start - middle);
+        println!("throw {throw}: pushed {pushed:.2} m, {farthest:.2} m from the middle");
+        assert!(pushed > 1.0, "throw {throw}: pushed {pushed} m");
+        assert!(
+            farthest < on_the_road,
+            "throw {throw}: {farthest} m from the middle"
+        );
+    }
+}
+
 /// docs/ARCHITECTURE.md: the kart struck applies the strike itself, from the message (what the
 /// network will carry); a message too old, or from out of reach, is ignored, and the answer
 /// says so.

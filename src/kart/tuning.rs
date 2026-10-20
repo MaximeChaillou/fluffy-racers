@@ -239,6 +239,14 @@ pub struct KartTuning {
     /// The kart that brought at least this share of the closing speed is the bumper, the other
     /// one is bumped. When neither did (head on), both are bumped.
     pub bump_bumper_share: f32,
+    /// Issue #154 (GD § 15, à régler): share of the turn a contact with another kart gives a kart
+    /// that it keeps, of its rotation in the physics step and of the yaw rate it leaves
+    /// (`bump::soften_kart_contact`). 1 = the solver's whole turn, the physics before #154 (a kart
+    /// hit off center spun round by 20 to 90° and drove off the road); 0 = never turned by a kart.
+    pub bump_spin_keep: f32,
+    /// Issue #154 (à régler): the most yaw rate a contact with another kart gives a kart in one
+    /// physics step, its share kept (rad/s); the turn of that step too (this × the step).
+    pub bump_spin_max: f32,
 
     // --- Hit by an item (GD § 8, issue #16) -----------------------------------------------------
     /// Deceleration of a kart spinning out (`KartState::Hit`, light items: pelure, abeille), the
@@ -342,6 +350,8 @@ impl Default for KartTuning {
 
             bump_min_speed: 5.0,
             bump_bumper_share: 0.6,
+            bump_spin_keep: 0.1,
+            bump_spin_max: 0.5,
 
             hit_spin_decel: 21.0,
             hit_tumble_decel: 26.0,

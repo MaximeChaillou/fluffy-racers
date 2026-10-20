@@ -404,7 +404,7 @@ fn snapshot(
     let (impact, impact_dir) = match (velocity, step) {
         (Some(velocity), Some(step)) => {
             let up = environment.up;
-            let lost = step.0 - velocity.linear;
+            let lost = step.linear - velocity.linear;
             let across = lost - up * lost.dot(up);
             (across.length(), across.normalize_or_zero())
         }
