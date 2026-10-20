@@ -311,6 +311,7 @@ Pour se connecter, chaque navigateur liste ses **candidats ICE**, les adresses o
 - **Mon kart** : simulé localement. Son état est diffusé à **30 Hz** : tick, position, rotation, vitesses, état de drift/boost/touché. Le tout est quantifié et compact (< 64 octets).
 - **Karts distants** : affichés environ 100 ms dans le passé, par interpolation entre les snapshots reçus. On extrapole brièvement en cas de perte de paquets. Localement, ce sont des corps **kinématiques**.
 - **Collisions kart contre kart** : chaque pair calcule le choc sur *son* kart contre le proxy kinématique de l'autre. Le rendu est approximativement symétrique ; le fun passe avant l'exactitude.
+- **Chocs adoucis** (#154, `kart::soften_kart_contacts`, juste après le pas de physique) : un kart qui a touché un autre kart (le nôtre ou le proxy d'un kart distant) ne garde qu'une part du pivotement que ce contact lui a donné, celui déjà fait pendant le pas comme la vitesse de rotation qu'il laisse (`KartTuning::bump_spin_keep`, `bump_spin_max`, logique pure `kart::soften_kart_contact`). La conduite enregistre pour cela la rotation du corps avec ses vitesses avant le pas (`StepVelocity`). En ligne, chaque pair adoucit son propre kart : **rien ne change dans le protocole**. La poussée elle-même, les murets et les obstacles ne sont pas touchés.
 
 Dans le code (#8, `src/net/`) :
 

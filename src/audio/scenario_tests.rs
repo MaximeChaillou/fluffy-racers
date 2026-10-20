@@ -504,12 +504,39 @@ fn a_box_bursts_and_each_item_sounds() {
             }
             Prize::OreillerGeant => {
                 // It flies to the leader, far ahead by now (issue #108: up to a whole lap of
-                // Prairie Pompon redrawn, twice as long).
-                for _ in 0..3600 {
-                    app.update();
+                // Prairie Pompon redrawn, twice as long). Issue #154: a bot's klaxon-canard may
+                // blow it away on the way (the race of bots met one once their bumps changed): a
+                // real event of the game, heard (the honk), not the pillow's sound; the kart then
+                // throws another one, three times at most.
+                let pillow_out = |app: &mut App| {
+                    let world = app.world_mut();
+                    world
+                        .query::<&ItemObject>()
+                        .iter(world)
+                        .any(|o| o.item == ItemKind::OreillerGeant)
+                };
+                for _ in 0..3 {
+                    for _ in 0..3600 {
+                        app.update();
+                        if asked(&app, SoundEffect::PillowFall) > 0 || !pillow_out(&mut app) {
+                            break;
+                        }
+                    }
                     if asked(&app, SoundEffect::PillowFall) > 0 {
                         break;
                     }
+                    assert!(
+                        asked(&app, SoundEffect::Honk) > 0,
+                        "the pillow vanished, neither fallen nor honked away: {:?}",
+                        sounds(&app)
+                    );
+                    forget(&mut app);
+                    app.world_mut()
+                        .write_message(GiveItem(Prize::OreillerGeant));
+                    run(&mut app, 3);
+                    use_item(&mut app);
+                    run(&mut app, 4);
+                    assert_eq!(asked(&app, SoundEffect::PillowLaunch), 1);
                 }
                 assert_eq!(
                     asked(&app, SoundEffect::PillowFall),

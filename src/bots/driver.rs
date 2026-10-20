@@ -562,6 +562,10 @@ pub fn drive(
     brain.lateral = here.lateral;
     if !senses.racing {
         brain.settle();
+        // Issue #154: on the grid, its lane is its column; after the GO it moves to its own lane
+        // at its lane change rate, and the pack leaves the grid spread across the road instead of
+        // closing in on the racing line at once (the start's bumps used to scatter it).
+        brain.lane = here.lateral - line.offset_at(here.distance) * skill.line_fidelity;
         // Rocket start (GD § 4): accelerate a little after the "2", never before it.
         let Some(since_two) = senses.since_two else {
             brain.start_delay = None;
@@ -1651,6 +1655,40 @@ mod tests {
         let far = before_apex(50);
         assert!(plan(&hard, far, None) < f32::MAX);
         assert_eq!(plan(&easy, far, None), k.max_speed * easy.cruise_speed);
+    }
+
+    /// Issue #154: on the grid, a bot's lane is its column; after the GO it moves to its own lane
+    /// at `lane_change_rate`, not at once: the pack leaves the grid spread across the road.
+    #[test]
+    fn a_bot_leaves_the_grid_in_its_column_then_moves_to_its_lane() {
+        let (_, line) = prairie_line();
+        let k = kart();
+        let t = BotTuning::default();
+        let skill = *t.skill(BotDifficulty::Normal);
+        let mut brain = BotBrain::new(3, &t);
+        let target = brain.lane_target;
+        let column = 2.8;
+        let mut senses = senses_at(&line, 20.0, column, 0.0, KartState::Grounded, &[]);
+        senses.racing = false;
+        drive(&mut brain, &skill, &t, &k, &line, &senses);
+        let on_the_grid = column - line.offset_at(20.0) * skill.line_fidelity;
+        assert!(
+            (brain.lane - on_the_grid).abs() < 0.05,
+            "{} vs {on_the_grid}",
+            brain.lane
+        );
+        // Racing: 0.5 s later, it has moved toward its lane by the lane change rate, no more.
+        let mut senses = senses_at(&line, 22.0, column, 10.0, KartState::Grounded, &[]);
+        senses.racing = true;
+        for _ in 0..30 {
+            drive(&mut brain, &skill, &t, &k, &line, &senses);
+        }
+        let moved = (brain.lane - on_the_grid).abs();
+        let expected = (t.lane_change_rate * 0.5).min((target - on_the_grid).abs());
+        assert!(
+            (moved - expected).abs() < 0.05,
+            "moved {moved} m, {expected} m expected"
+        );
     }
 
     #[test]

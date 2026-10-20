@@ -189,7 +189,8 @@ pub struct BotTuning {
     /// A piment is eaten with at least this much straight track ahead (m).
     pub item_piment_straight: f32,
     /// A bot with a free slot steers toward an item box ahead (up to `item_box_range` m away)
-    /// by at most this much sideways (m), on the straights only...
+    /// by at most this much sideways (m), on the straights only (issue #154: 3.5, 2.5 before; the
+    /// pack, no longer scattered by its bumps, stays closer and found fewer boxes)...
     pub item_box_pull: f32,
     pub item_box_range: f32,
     // Issue #18.
@@ -380,7 +381,7 @@ impl Default for BotTuning {
             item_drop_period: 4.0,
             item_patience: 5.0,
             item_piment_straight: 45.0,
-            item_box_pull: 2.5,
+            item_box_pull: 3.5,
             item_box_range: 35.0,
             item_bomb_range: [7.0, 24.0],
             item_bomb_cone: 3.0,
