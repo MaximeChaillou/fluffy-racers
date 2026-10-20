@@ -278,9 +278,12 @@ pub(super) fn sync_solo_tree(
     }
     let record = trial.as_deref().and_then(|state| {
         let entry = ui.catalog.circuits.get(menu.setup.circuit)?;
+        // Issue #157: the record of the circuit as its file is now (none until it is read).
+        let data = tracks.get(ui.tracks.get(menu.setup.circuit)?)?;
         let key = TrialKey {
             circuit: entry.asset_path(),
             mirror: menu.setup.mirror,
+            fingerprint: data.fingerprint,
         };
         state.records.get(&key).map(|record| {
             let mut time = String::new();

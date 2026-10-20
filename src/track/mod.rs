@@ -1,7 +1,8 @@
 //! Tracks and terrain: circuits generated from data files (`assets/tracks/*.track.ron`,
 //! issue #3), dressed after their biome (issue #11: colors, decor of 3D models), with their start
 //! line and its arch (issue #79), its anti-gravity zones (issue #78), and the flat test ground of
-//! issue #1.
+//! issue #1. Issue #157: each circuit's fingerprint (`fingerprint.rs`), for the time trial's
+//! records.
 
 pub mod anti_gravity;
 pub mod biome;
@@ -9,6 +10,7 @@ pub mod circuit;
 pub mod data;
 pub mod decor;
 pub mod dressing;
+pub mod fingerprint;
 pub mod hazard;
 mod hazard_visual;
 pub mod hazards;
