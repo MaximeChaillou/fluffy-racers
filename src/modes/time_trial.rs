@@ -11,8 +11,9 @@
 //! - **Three piments** (`RaceTuning::time_trial_chilis`): in the hand at each (re)start of the
 //!   race, an « x3 » used one press at a time, and nothing else.
 //! - **The clock**: the total time and the time of each lap (on the right, under the chrono); the
-//!   record of the circuit and mirror (`trial.rs`) at the start and at the finish, with
-//!   « RECORD ! » when it is beaten. The records and their ghosts are kept between sessions
+//!   record of the circuit and mirror (`trial.rs`; issue #157: of the circuit as built, by its
+//!   fingerprint, `TrackLayout::fingerprint`) at the start and at the finish, with « RECORD ! »
+//!   when it is beaten. The records and their ghosts are kept between sessions
 //!   (`admin::storage`, [`super::TIME_TRIAL_STORAGE_KEY`]), when the plugin has the storage.
 //! - **The ghost** (`ghost.rs`): each run is recorded tick by tick (the transforms, quantized like
 //!   the network's states), in a buffer allocated once; a faster run becomes the record with its
@@ -55,7 +56,7 @@ use crate::menu::kit;
 use crate::menu::style::palette;
 use crate::net::{KartLook, KartPose, KartSnapshot, LookParts, NetTuning};
 use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceSystems, RaceTuning, Racer};
-use crate::track::{ItemBoxSpot, MirrorMode, TrackChoice};
+use crate::track::{ItemBoxSpot, MirrorMode, TrackChoice, TrackLayout};
 use crate::ui::HudText;
 use crate::ui::format::{hundredths, write_time};
 
@@ -279,7 +280,7 @@ fn run_time_trial(
     mut state: ResMut<TimeTrialState>,
     race: Res<Race>,
     (tuning, kart_tuning): (Res<RaceTuning>, Res<KartTuning>),
-    (choice, mirror): (Res<TrackChoice>, Res<MirrorMode>),
+    (choice, mirror, layout): (Res<TrackChoice>, Res<MirrorMode>, Option<Res<TrackLayout>>),
     loadout: Option<Res<PlayerLoadout>>,
     mut racers: Query<
         (
@@ -318,12 +319,15 @@ fn run_time_trial(
     let state = &mut *state;
     let flow_tick = race.flow.tick;
     if state.run.racer != Some(entity) || flow_tick < state.run.seen_tick {
-        let key = match &*choice {
-            TrackChoice::Circuit(path) => Some(TrialKey {
+        // Issue #157: the circuit as built, by its fingerprint (a record of another one is not
+        // raced).
+        let key = match (&*choice, layout.as_deref()) {
+            (TrackChoice::Circuit(path), Some(layout)) => Some(TrialKey {
                 circuit: path.clone(),
                 mirror: mirror.0,
+                fingerprint: layout.fingerprint,
             }),
-            TrackChoice::TestGround | TrackChoice::Salon => None,
+            _ => None,
         };
         let record = key.as_ref().and_then(|key| state.records.get(key));
         state.run = TrialRun {

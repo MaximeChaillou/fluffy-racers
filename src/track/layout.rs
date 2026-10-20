@@ -357,6 +357,9 @@ pub struct TrackLayout {
     /// Issue #144: the obstacles, the passers-by and the things to drive through
     /// (`super::hazard`), in the order of the file.
     pub hazards: Vec<Hazard>,
+    /// Issue #157: the fingerprint of its file and its biome (`TrackData::fingerprint`): the
+    /// time trial keeps its records with it.
+    pub fingerprint: u64,
 }
 
 /// Racers on the grid (GD § 1).
@@ -431,6 +434,7 @@ impl TrackLayout {
         let pole_side = if data.mirrored { 1.0 } else { -1.0 };
         Self {
             name: data.name.clone(),
+            fingerprint: data.fingerprint,
             grid: center.grid_from(GRID_SLOTS, pole_side),
             checkpoints,
             respawns,

@@ -39,6 +39,13 @@ fn tap(app: &mut App, key_code: KeyCode, logical_key: Key) {
     }
 }
 
+/// Issue #157: the fingerprint of Prairie Pompon, as its file is today.
+fn prairie_fingerprint() -> u64 {
+    crate::track::TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron"))
+        .unwrap()
+        .fingerprint
+}
+
 /// The game on Prairie Pompon with `bots` bots, items on, races of one lap without countdown,
 /// and the time trial's plugin (no storage), once the player's kart exists.
 fn trial_game(bots: usize) -> App {
@@ -290,6 +297,12 @@ fn the_ghost_replays_the_run_and_touches_nothing() {
     let state = recording.world().resource::<TimeTrialState>();
     let key = state.run.key.clone().unwrap();
     assert_eq!(key.circuit, "tracks/prairie.track.ron");
+    // Issue #157: the fingerprint of the circuit as loaded is the one of its file.
+    assert_eq!(key.fingerprint, prairie_fingerprint());
+    assert_eq!(
+        key.fingerprint,
+        recording.world().resource::<TrackLayout>().fingerprint
+    );
     assert_eq!(
         state.run.finish,
         Some((
@@ -502,6 +515,7 @@ fn the_ghost_wears_the_parts_of_its_run_in_translucent_materials() {
     let key = TrialKey {
         circuit: "tracks/prairie.track.ron".into(),
         mirror: false,
+        fingerprint: prairie_fingerprint(),
     };
     let frames = super::ghost::tests::run(600);
     let mut records = TrialRecords::default();
@@ -633,6 +647,60 @@ fn the_ghost_wears_the_parts_of_its_run_in_translucent_materials() {
     assert_eq!(count::<GhostVisual>(&mut app), 0);
 }
 
+/// Issue #157 acceptance, in the game: a record kept on another version of Prairie Pompon (its
+/// fingerprint differs: one piece of its decor moved since) is not raced: « PAS ENCORE DE
+/// RECORD », no ghost, no record time for the run. It stays kept until the first record of the
+/// new version replaces it (`trial::tests::a_changed_circuit_has_no_record`).
+#[test]
+fn a_record_of_a_changed_circuit_is_not_raced() {
+    let mut app = trial_game(0);
+    let today = prairie_fingerprint();
+    let moved = include_str!("../../assets/tracks/prairie.track.ron").replace(
+        "(model: \"racing-kit/flagCheckers\", at: 0.0,",
+        "(model: \"racing-kit/flagCheckers\", at: 0.5,",
+    );
+    let before = crate::track::TrackData::from_ron(&moved)
+        .unwrap()
+        .fingerprint;
+    assert_ne!(before, today);
+    let mut records = TrialRecords::default();
+    records.insert(TrialRecord {
+        key: TrialKey {
+            circuit: "tracks/prairie.track.ron".into(),
+            mirror: false,
+            fingerprint: before,
+        },
+        time: 600,
+        laps: vec![600],
+        game: "0.0.1".into(),
+        ghost: Some(Arc::new(GhostTrack {
+            frames: super::ghost::tests::run(600),
+            loadout: [0; 4],
+            color: KartColor::ALL[5],
+        })),
+    });
+    app.world_mut().resource_mut::<TimeTrialState>().records = records.clone();
+    app.world_mut()
+        .resource_mut::<AdminOptions>()
+        .skip_countdown = false;
+    start_time_trial(&mut app);
+    for _ in 0..3 {
+        app.update();
+    }
+    let state = app.world().resource::<TimeTrialState>();
+    assert_eq!(state.run.key.as_ref().unwrap().fingerprint, today);
+    assert_eq!(state.run.record, None);
+    assert!(state.run.ghost.is_none());
+    assert_eq!(state.records, records, "kept until the next record");
+    assert_eq!(
+        trial_text(&mut app, TrialText::Record),
+        "PAS ENCORE DE RECORD"
+    );
+    assert_eq!(trial_text(&mut app, TrialText::Verdict), "");
+    assert_eq!(count::<GhostKart>(&mut app), 0);
+    assert_eq!(count::<GhostVisual>(&mut app), 0);
+}
+
 /// Issue #76: an unreadable stored text gives no record (the game warns in the console).
 #[test]
 fn an_unreadable_stored_text_gives_no_record() {
@@ -643,6 +711,7 @@ fn an_unreadable_stored_text_gives_no_record() {
         key: TrialKey {
             circuit: "tracks/col.track.ron".into(),
             mirror: true,
+            fingerprint: 0x0123_4567_89ab_cdef,
         },
         time: 9000,
         laps: vec![3000; 3],

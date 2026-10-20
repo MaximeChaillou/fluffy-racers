@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::biome::{self, BiomeData, Side};
+use super::fingerprint;
 
 /// A whole circuit, as written in its RON file. The walls are the same on every circuit
 /// (`mesh::WALL_HEIGHT`, `mesh::WALL_THICKNESS`): a file has no say in their height (issue #47).
@@ -109,6 +110,11 @@ pub struct TrackData {
     /// a file. The starting grid follows (the pole on the other side).
     #[serde(skip)]
     pub mirrored: bool,
+    /// Issue #157: the circuit's fingerprint (`super::fingerprint`): its file's text and its
+    /// biome's data, computed as the file is read ([`TrackData::from_ron`]), never written in a
+    /// file. The time trial keeps each record with it. The same mirrored.
+    #[serde(skip)]
+    pub fingerprint: u64,
 }
 
 /// A piece placed by hand beyond the walls (issue #11), facing the track.
@@ -535,10 +541,14 @@ impl TrackData {
 
     /// Parses a track file. Misspelled fields are errors, not silently ignored. An optional
     /// field is written as its value (`biome: "Prairie"`, not `Some("Prairie")`).
+    /// Issue #157: its fingerprint is computed here, from `text` and its biome.
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::Options::default()
+        let mut data: Self = ron::Options::default()
             .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
-            .from_str(text)
+            .from_str(text)?;
+        data.fingerprint =
+            fingerprint::circuit_fingerprint(text, data.biome.as_deref().and_then(biome::biome));
+        Ok(data)
     }
 
     /// Checks the values that would make the generation fail or explode.
