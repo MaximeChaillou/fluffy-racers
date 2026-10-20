@@ -429,6 +429,7 @@ pub fn dress_the_salon(
     server: Res<AssetServer>,
     shared: Option<Res<ModelMaterials>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    cameras: Query<Entity, With<crate::camera::ChaseCamera>>,
     mut asked: Local<bool>,
 ) {
     let Some(shared) = shared else {
@@ -445,6 +446,10 @@ pub fn dress_the_salon(
         return;
     }
     *asked = false;
+    // Issue #146: no far decor here, nor the fog of the circuit before (`track::dressing`).
+    for camera in &cameras {
+        commands.entity(camera).remove::<DistanceFog>();
+    }
     let stand_in = stand_in_tree();
     let (mut casting, mut small) = (MeshData::default(), MeshData::default());
     let mut stand_ins = 0;

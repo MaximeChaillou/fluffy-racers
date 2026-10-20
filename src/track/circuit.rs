@@ -318,16 +318,8 @@ fn spawn_ground(
     layout: &TrackLayout,
     palette: &Palette,
 ) {
-    let (min, max) = layout.center.samples().iter().fold(
-        (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
-        |(lo, hi), s| {
-            let p = Vec2::new(s.position.x, s.position.z);
-            (lo.min(p), hi.max(p))
-        },
-    );
-    let margin = 80.0;
-    let half = (max - min) / 2.0 + Vec2::splat(margin);
-    let center = (min + max) / 2.0;
+    // Issue #146: computed in one place, for the ground beyond to meet it edge to edge.
+    let (center, half) = super::far::slab(&layout.center);
     let srgb = |(r, g, b): Rgb| Color::srgb(r, g, b);
     let ground_material = materials.add(StandardMaterial {
         base_color: srgb(palette.ground),

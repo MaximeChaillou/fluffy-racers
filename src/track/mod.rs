@@ -10,6 +10,7 @@ pub mod circuit;
 pub mod data;
 pub mod decor;
 pub mod dressing;
+pub mod far;
 pub mod fingerprint;
 pub mod hazard;
 mod hazard_visual;

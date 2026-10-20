@@ -311,7 +311,8 @@ fn panel(mesh: &mut MeshData) {
             solid(color),
         );
     }
-    // A cross brace behind the planks.
+    // A cross brace behind the planks: a beam, its ends open (issue #146: with `Ends::Poles`, two
+    // rings made `surface` ask for a third one: the game panicked at startup, with a renderer).
     tube(
         mesh,
         lean,
@@ -319,7 +320,7 @@ fn panel(mesh: &mut MeshData) {
             (Vec3::new(-POSTS, -half.y + 0.6, 0.12), 0.09),
             (Vec3::new(POSTS, half.y - 0.4, 0.12), 0.09),
         ],
-        Ends::Poles,
+        Ends::Open,
         6,
         1.0,
         Vec3::Z,
@@ -715,6 +716,30 @@ fn show_breakables(
             } else if transform.scale != Vec3::ONE {
                 transform.scale = Vec3::ONE;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every kind of hazard has its model, built as the game builds them at startup with a
+    /// renderer (`create_hazard_assets`), and so do the bison's leg, the rope and the gallows.
+    /// Issue #146: the panel's (#156) made the game panic at startup, and no test built it.
+    #[test]
+    fn every_hazard_has_its_model() {
+        for kind in ALL_KINDS {
+            let mesh = model(kind);
+            assert!(mesh.triangle_count() > 10, "{kind:?}");
+            assert!(
+                mesh.positions.iter().flatten().all(|v| v.is_finite()),
+                "{kind:?}"
+            );
+            assert_eq!(mesh.positions.len(), mesh.colors.len(), "{kind:?}");
+        }
+        for mesh in [bison_leg(), rope(), gallows()] {
+            assert!(mesh.triangle_count() > 4);
         }
     }
 }

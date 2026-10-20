@@ -72,6 +72,30 @@ impl MeshData {
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    /// Adds the triangle a → b → c (counter-clockwise seen from its front), `color` sRGB like
+    /// [`MeshData::quad`] (issue #146: the far decor).
+    pub fn triangle(&mut self, corners: [Vec3; 3], color: [f32; 4]) {
+        let normal = (corners[1] - corners[0])
+            .cross(corners[2] - corners[0])
+            .normalize_or(Vec3::Y);
+        self.triangle_lit(corners, color, normal);
+    }
+
+    /// The same, lit as if facing `normal` (unit) rather than its own way (the far decor's
+    /// clouds: lit from above, bright).
+    pub fn triangle_lit(&mut self, corners: [Vec3; 3], color: [f32; 4], normal: Vec3) {
+        let color = Color::srgba(color[0], color[1], color[2], color[3])
+            .to_linear()
+            .to_f32_array();
+        let base = self.positions.len() as u32;
+        for corner in corners {
+            self.positions.push(corner.to_array());
+            self.normals.push(normal.to_array());
+            self.colors.push(color);
+        }
+        self.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
     /// Adds a strip along consecutive samples (wrapping around when `closed`): for each
     /// sample, `a` and `b` give the two edges of the strip. The front face is
     /// `(b - a) × forward`: put `a` on the left for a floor, below for a wall facing left.

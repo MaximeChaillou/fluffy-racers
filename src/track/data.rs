@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use super::biome::{self, BiomeData, Side};
+use super::far::FarLayer;
 use super::fingerprint;
 
 /// A whole circuit, as written in its RON file. The walls are the same on every circuit
@@ -106,6 +107,10 @@ pub struct TrackData {
     /// biome's (see [`TrackData::music_id`]).
     #[serde(default)]
     pub music: Option<String>,
+    /// Issue #146: more far decor than its biome's (`super::far`: a range, peaks, pieces...),
+    /// placed after it. Only on a circuit with a biome.
+    #[serde(default)]
+    pub far_decor: Vec<FarLayer>,
     /// Issue #19: this is the mirror image of the file ([`TrackData::mirrored`]), never written in
     /// a file. The starting grid follows (the pole on the other side).
     #[serde(skip)]
@@ -723,6 +728,13 @@ impl TrackData {
         }
         self.validate_edges_and_shortcuts()?;
         self.validate_hazards()?;
+        // Issue #146: its own far decor, on top of its biome's.
+        if !self.far_decor.is_empty() && self.biome.is_none() {
+            return fail("far_decor without a biome".to_string());
+        }
+        for layer in &self.far_decor {
+            layer.validate().or_else(fail)?;
+        }
         for prop in &self.props {
             if !biome::is_model_id(&prop.model)
                 || !(0.1..=30.0).contains(&prop.height)
@@ -960,6 +972,11 @@ impl TrackData {
             });
             (bank.abs() > MAX_BANK + 1e-3 && !zoned).then_some(param)
         })
+    }
+
+    /// Issue #146: its far decor, its biome's and its own layers (None without a biome).
+    pub fn far_decor(&self) -> Option<super::far::FarDecor> {
+        super::far::far_decor_of(self.biome(), &self.far_decor)
     }
 
     /// The circuit's biome (None: no biome, or one the game does not have, which `validate`

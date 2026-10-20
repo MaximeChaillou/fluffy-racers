@@ -79,7 +79,7 @@ impl DecorPlan {
     }
 
     /// Whether a footprint at `p` (ground plane) overlaps a piece already placed.
-    fn overlaps(&self, p: Vec2, radius: f32) -> bool {
+    pub(super) fn overlaps(&self, p: Vec2, radius: f32) -> bool {
         self.pieces
             .iter()
             .any(|piece| piece.position.xz().distance(p) < piece.radius + radius)
@@ -116,7 +116,7 @@ pub fn inside_sign(center: &CenterLine) -> f32 {
 }
 
 /// The sides (signs: -1 left of the driver, +1 right) that `side` covers.
-fn sides(side: Side, inside: f32) -> &'static [f32] {
+pub(super) fn sides(side: Side, inside: f32) -> &'static [f32] {
     const LEFT: &[f32] = &[-1.0];
     const RIGHT: &[f32] = &[1.0];
     const BOTH: &[f32] = &[-1.0, 1.0];
@@ -188,7 +188,7 @@ pub fn hides_a_turn(turns: &[TightTurn], p: Vec2, height: f32) -> bool {
 
 /// Where a piece `gap` meters beyond the walls of `sample` stands, on side `side` (its center:
 /// its footprint's edge at the gap).
-fn beside(sample: &TrackSample, side: f32, gap: f32, radius: f32) -> Vec2 {
+pub(super) fn beside(sample: &TrackSample, side: f32, gap: f32, radius: f32) -> Vec2 {
     let flat_right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X).xz();
     // A centimeter more: at no gap, the footprint just clears the walls of its own sample.
     let reach = wall_offset(sample) + WALL_THICKNESS + CLEARANCE + gap + radius + 0.01;

@@ -11,6 +11,8 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
+use super::far::FarDecor;
+
 /// The biomes' file, compiled into the game.
 pub const BIOMES_RON: &str = include_str!("../../assets/data/biomes.ron");
 
@@ -156,6 +158,9 @@ pub struct BiomeData {
     /// `assets/data/music.ron`).
     #[serde(default)]
     pub music: Option<String>,
+    /// Issue #146: its far decor (`super::far`): the ground beyond, what closes the horizon,
+    /// the pieces at mid-distance, the fog. Every biome has one.
+    pub far: FarDecor,
 }
 
 impl BiomeData {
@@ -208,6 +213,7 @@ impl BiomeData {
             }
             check_footprint(row.radius, row.gap, row.gap).or_else(fail)?;
         }
+        self.far.validate().or_else(fail)?;
         for group in &self.scatter {
             check_models(&group.models).or_else(fail)?;
             let (low, high) = group.height;
@@ -369,12 +375,14 @@ mod tests {
     fn broken_biomes_are_refused_with_a_reason() {
         let good = parse_biomes(BIOMES_RON).unwrap();
         let text = |biomes: &[BiomeData]| {
-            // Back to RON through the same fields: a minimal writer for the tests.
+            // Back to RON through the same fields: a minimal writer for the tests (issue #146:
+            // the far decor is required, its fog written, no layer).
             let one = |b: &BiomeData| {
                 format!(
-                    "(name: {:?}, palette: {}, scatter: [{}])",
+                    "(name: {:?}, palette: {}, far: (fog: {:?}, layers: []), scatter: [{}])",
                     b.name,
                     palette_ron(&b.palette),
+                    b.far.fog,
                     b.scatter
                         .iter()
                         .map(|g| format!(
@@ -411,6 +419,16 @@ mod tests {
         assert!(parse_biomes(&text(&[color])).unwrap_err().contains("color"));
         let misspelled = text(&good[..1]).replace("count:", "cout:");
         assert!(parse_biomes(&misspelled).is_err());
+        // Issue #146: a biome without a far decor, or with a broken one.
+        let no_far = text(&good[..1]).replace(
+            &format!("far: (fog: {:?}, layers: []), ", good[0].far.fog),
+            "",
+        );
+        assert_ne!(no_far, text(&good[..1]));
+        assert!(parse_biomes(&no_far).unwrap_err().contains("far"));
+        let mut fog = good[0].clone();
+        fog.far.fog = (500.0, 100.0);
+        assert!(parse_biomes(&text(&[fog])).unwrap_err().contains("fog"));
     }
 
     fn palette_ron(p: &Palette) -> String {
