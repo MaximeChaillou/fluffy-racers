@@ -50,6 +50,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::{PhysicsSet, Velocity};
 
 use crate::TICK_HZ;
+use crate::bots::BotDifficulty;
 use crate::interpolation::PhysicsPose;
 use crate::kart::{
     Boost, Invincibility, Kart, KartEnvironment, KartInput, KartState, KartSystems, KartTuning,
@@ -111,6 +112,10 @@ pub struct RaceGrid {
     /// (a race of a Grand Prix after the first: the reverse of the standings, GD § 1). `None`:
     /// entrant `e` on slot `e`. Read when the racers spawn.
     pub lineup: Option<[u8; crate::track::GRID_SLOTS]>,
+    /// Issue #153: the level of its bots (GD § 12), Normal by default: « Jouer solo »'s
+    /// « Bots » line (`modes::BotsChoice`), the host's online (`net::RaceStart::difficulty`), or
+    /// the admin panel's. Read when the bots spawn, like their number.
+    pub difficulty: BotDifficulty,
 }
 
 impl Default for RaceGrid {
@@ -119,6 +124,7 @@ impl Default for RaceGrid {
             bots: crate::track::GRID_SLOTS - 1,
             seed: Self::GAME_SEED,
             lineup: None,
+            difficulty: BotDifficulty::Normal,
         }
     }
 }

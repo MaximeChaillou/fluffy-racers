@@ -14,7 +14,7 @@ use bevy::picking::events::{Pointer, PointerClick, PointerOver};
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 
 use super::*;
-use crate::modes::{Catalog, GameMode, MenuRow, RaceMenu, RaceMenuAction};
+use crate::modes::{BotsChoice, Catalog, GameMode, MenuRow, RaceMenu, RaceMenuAction};
 use crate::race::{GrandPrix, RaceGrid};
 use crate::tests::{game_app_unloaded, wait_for_the_player};
 use crate::track::{TrackChoice, TrackLayout};
@@ -339,8 +339,18 @@ fn the_mouse_focuses_changes_and_starts() {
     let arrow = find::<SoloArrow>(&mut app, |arrow| {
         arrow.row == MenuRow::Bots && arrow.step > 0
     });
+    // Issue #153: Normal, Difficile, then Non.
     click(&mut app, arrow);
-    assert!(!race_menu(&app).setup.bots);
+    assert_eq!(race_menu(&app).setup.bots, BotsChoice::Hard);
+    assert_eq!(
+        text_of::<SoloHelp>(&mut app),
+        "Des bots coriaces complètent la grille à 12."
+    );
+    let arrow = find::<SoloArrow>(&mut app, |arrow| {
+        arrow.row == MenuRow::Bots && arrow.step > 0
+    });
+    click(&mut app, arrow);
+    assert_eq!(race_menu(&app).setup.bots, BotsChoice::Off);
     assert_eq!(text_of::<SoloHelp>(&mut app), "Toi seul sur la piste.");
     let next = find::<SoloArrow>(&mut app, |arrow| {
         arrow.row == MenuRow::Circuit && arrow.step > 0

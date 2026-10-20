@@ -7,12 +7,15 @@
 //!   closes it, from the race or from the « Pilote » screen (which it replaces). Its three modes:
 //!   the **championship** (a cup of the manifest, or a custom one: its number of races, its
 //!   circuits chosen one by one or drawn at random), the **time trial** and **a circuit alone**;
-//!   then the **mirror**, the **bots** (on: they fill the grid; off: the player alone) and the
-//!   **items** (off: no item box on the track, `track::NoItemBoxes`). Up and down (arrows, or the
+//!   then the **mirror**, the **bots** (issue #153: Facile, Normal, Difficile, the level of the
+//!   bots that fill the grid, `RaceGrid::difficulty`; Non: the player alone) and the **items**
+//!   (off: no item box on the track, `track::NoItemBoxes`). Up and down (arrows, or the
 //!   player's layout's letters): the line; left and right: change it; **Entrée** starts the race
 //!   (or the championship, or the time trial) with that choice; **Échap** or N closes it
 //!   unchanged. The game is paused while it is open, like the other menus (not over the home
-//!   screen: its background runs). Not online: there, the host chooses in the lobby.
+//!   screen: its background runs). Not online: there, the host chooses in the lobby. Issue
+//!   #153: the « Bots » line started is kept in the browser ([`KeptSolo`], with a renderer only:
+//!   [`SoloStorage`]) and given back at the next launch ([`restore_kept_solo`]).
 //! - **The championship** (`race::GrandPrix`, pure): the races one after the other, in the
 //!   mirror mode chosen. When a race's results close (issue #70; « Classement général » closes
 //!   them at once in a championship), the race is scored; it shows the overall standings
@@ -49,7 +52,8 @@ pub use ghost::{GHOST_MAX_TICKS, GhostRecorder, GhostTrack, decode_frames, encod
 pub use podium::{PODIUM_AHEAD, PodiumScene, podium_place};
 pub use screens::{GrandPrixScreen, StandingsLine, standings_lines};
 pub use setup::{
-    Catalog, Cup, Formula, GameMode, MIN_RACES, MenuRow, Pick, RaceSetup, cups, draw_circuits,
+    BotsChoice, Catalog, Cup, Formula, GameMode, KeptSolo, MIN_RACES, MenuRow, Pick, RaceSetup,
+    SOLO_FORMAT, SOLO_STORAGE_KEY, cups, draw_circuits,
 };
 pub use time_trial::{
     GHOST_ALPHA, GhostKart, GhostMaterials, GhostVisual, TimeTrial, TimeTrialPlugin,
@@ -62,6 +66,7 @@ pub use trial::{
 
 use bevy::prelude::*;
 
+use crate::admin::storage;
 #[cfg(test)]
 use crate::admin::tracks;
 use crate::admin::tracks::TrackEntry;
@@ -107,8 +112,42 @@ pub struct RaceMenu {
     pub row: usize,
     pub setup: RaceSetup,
     /// Issue #99: the player's bots (`RaceGrid::bots`) while the races go without them (« Bots :
-    /// non »), given back by « Bots : oui ».
+    /// Non »), given back by a level.
     pub kept_bots: Option<usize>,
+    /// Issue #153: what the browser keeps of the last choice started (its « Bots » line), or of
+    /// the previous session ([`restore_kept_solo`]).
+    pub kept: KeptSolo,
+}
+
+/// Issue #153: « Jouer solo » writes what it keeps ([`RaceMenu::kept`]) in the browser
+/// (`admin::storage`, [`SOLO_STORAGE_KEY`]) when a choice starts. Only with a renderer
+/// (`GamePlugin`): the headless world (the tests, the bot races) has none and never touches the
+/// storage.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct SoloStorage;
+
+/// Issue #153: the kept text of « Jouer solo » (`text`, [`KeptSolo`]) given back, before the
+/// game starts: the level of the grid's bots, or none (the player's bots kept for a level, as
+/// « Bots : Non » does). An unreadable text is left aside (Normal stays), with a warning.
+pub fn restore_kept_solo(world: &mut World, text: &str) {
+    let kept = match KeptSolo::from_ron(text) {
+        Ok(kept) => kept,
+        Err(error) => {
+            warn!("Jouer solo: kept choice ignored: {error}");
+            return;
+        }
+    };
+    let mut grid = world.resource_mut::<RaceGrid>();
+    let bots = grid.bots;
+    match kept.bots.difficulty() {
+        Some(difficulty) => grid.difficulty = difficulty,
+        None => grid.bots = 0,
+    }
+    let mut menu = world.resource_mut::<RaceMenu>();
+    menu.kept = kept;
+    if !kept.bots.on() && bots > 0 {
+        menu.kept_bots = Some(bots);
+    }
 }
 
 impl RaceMenu {
@@ -262,6 +301,7 @@ fn apply_menu_actions(
     selection: Option<Res<SelectionScreen>>,
     mut selection_actions: MessageWriter<SelectionAction>,
     mut levels: MessageWriter<LoadLevel>,
+    storage: Option<Res<SoloStorage>>,
 ) {
     for action in actions.read() {
         let catalog = Catalog::game(gp_tuning.races as usize);
@@ -281,7 +321,8 @@ fn apply_menu_actions(
                 let player_bots = time_trial
                     .as_ref()
                     .map_or(grid.bots, |trial| trial.solo_bots);
-                setup.bots = player_bots > 0;
+                // Issue #153: the level of the grid's bots, or none.
+                setup.bots = BotsChoice::of(player_bots > 0, grid.difficulty);
                 setup.items = no_boxes.is_none();
                 setup.fit(&catalog);
                 menu.open = true;
@@ -331,12 +372,22 @@ fn apply_menu_actions(
                     commands.remove_resource::<TimeTrial>();
                 }
                 if setup.mode != GameMode::TimeTrial {
-                    if !setup.bots && bots > 0 {
+                    if !setup.bots.on() && bots > 0 {
                         menu.kept_bots = Some(bots);
                         bots = 0;
-                    } else if setup.bots && bots == 0 {
+                    } else if setup.bots.on() && bots == 0 {
                         bots = menu.kept_bots.take().unwrap_or(GRID_SLOTS - 1);
                     }
+                    // Issue #153: their level (none: the last one stays, for the admin panel),
+                    // kept in the browser.
+                    if let Some(difficulty) = setup.bots.difficulty() {
+                        grid.difficulty = difficulty;
+                    }
+                    let kept = KeptSolo::of(&setup);
+                    if storage.is_some() && kept != menu.kept {
+                        storage::save_key(SOLO_STORAGE_KEY, &kept.to_ron());
+                    }
+                    menu.kept = kept;
                 }
                 if setup.mode == GameMode::TimeTrial {
                     commands.insert_resource(TimeTrial { solo_bots: bots });

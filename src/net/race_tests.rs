@@ -177,15 +177,8 @@ pub(super) fn start_race(room: &mut Room, host: PeerKey, bots: u8, laps: u8) -> 
     let now = now_ms(app.world().resource::<Time<Real>>());
     let session = app.world().resource::<NetSession>();
     let lobby = session.lobby.as_ref().unwrap();
-    let mut start = race_to_start(
-        lobby,
-        now,
-        0xbeef,
-        u32::from(laps),
-        BotDifficulty::Normal,
-        &NetTuning::default(),
-    )
-    .expect("the host knows the room's clock");
+    let mut start = race_to_start(lobby, now, 0xbeef, u32::from(laps), &NetTuning::default())
+        .expect("the host knows the room's clock");
     start.bots = bots;
     let mut session = app.world_mut().resource_mut::<NetSession>();
     assert!(session.lobby.as_mut().unwrap().announce_race(start.clone()));

@@ -210,11 +210,7 @@ fn spawn_bots(
             Name::new(format!("Bot {}", entrant + 1)),
             kart_body_with_stats(&kart_tuning, &stats_tuning, roster.stats(&loadout), spawn),
             Racer::new(slot),
-            bot(
-                tuning.grid_difficulty,
-                bot_seed(grid.seed, entrant),
-                &tuning,
-            ),
+            bot(grid.difficulty, bot_seed(grid.seed, entrant), &tuning),
             KartPaint(colors[entrant]),
         ));
         if slot != entrant {

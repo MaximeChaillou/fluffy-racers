@@ -1,13 +1,13 @@
 //! Issue #99: the host's settings of the room online (the circuit, the mirror, the bots, the
 //! items), headless: two whole games in a room linked in memory (`race_tests`). Both peers have
 //! the same settings, drive with them (free driving and the race), and get their solo ones back
-//! out of the room.
+//! out of the room. Issue #153: the level of the room's bots.
 
 use super::race_tests::{ANA, BOB, lobby, on_grid, seated, showing};
 use super::*;
-use crate::bots::BotDifficulty;
+use crate::bots::{Bot, BotDifficulty};
 use crate::items::ItemBox;
-use crate::race::Racer;
+use crate::race::{RaceGrid, Racer};
 use crate::track::{CroquetteSpot, ItemBoxSpot, MirrorMode, NoItemBoxes, TrackLayout};
 
 fn count<C: Component>(app: &App) -> usize {
@@ -78,7 +78,6 @@ fn the_hosts_settings_are_everyones() {
         now,
         0xbeef,
         1,
-        BotDifficulty::Normal,
         &NetTuning::default(),
     )
     .expect("the host knows the room's clock");
@@ -117,4 +116,74 @@ fn the_hosts_settings_are_everyones() {
         !bob.world().contains_resource::<NoItemBoxes>(),
         "the solo items back"
     );
+}
+
+/// Issue #153 acceptance, online: the host chooses the level of the room's bots (Difficile, then
+/// Facile): the guest has the same settings (« Bots : difficile » in its line); the race started
+/// carries it: both peers have the same start (its bots, their level, their seed) and the same
+/// grid (its level), the host drives its 10 bots, all of that level, and the guest shows these
+/// same bots (as many racers, on the same slots).
+#[test]
+fn the_hosts_bots_level_is_everyones() {
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    for key in [ANA, BOB] {
+        room.act(key, NetAction::Ready(true));
+    }
+    room.until(2.0, "everyone ready", |app| lobby(app).all_ready());
+    for (difficulty, level, name) in [
+        (2, BotDifficulty::Hard, "difficile"),
+        (0, BotDifficulty::Easy, "facile"),
+    ] {
+        let setup = RoomSetup {
+            difficulty,
+            ..RoomSetup::default()
+        };
+        room.act(ANA, NetAction::ChooseSetup(setup));
+        room.until(10.0, "the host's level everywhere", |app| {
+            lobby(app).setup() == setup && matches!(showing(app), Some(Showing::Free(_)))
+        });
+        assert!(
+            settings_line(lobby(room.view(BOB)).setup()).contains(&format!("Bots : {name} ·")),
+            "{}",
+            settings_line(lobby(room.view(BOB)).setup())
+        );
+        for key in [ANA, BOB] {
+            room.act(key, NetAction::Ready(true));
+        }
+        room.until(2.0, "everyone ready", |app| lobby(app).all_ready());
+        room.act(ANA, NetAction::StartRace);
+        room.until(10.0, "everyone on the grid", on_grid);
+        room.until(10.0, "the 12 karts on both grids", |app| {
+            count::<Racer>(app) == 12
+        });
+        let starts: Vec<RaceStart> = room
+            .games
+            .iter()
+            .map(|(_, app)| lobby(app).announced().cloned().unwrap())
+            .collect();
+        assert_eq!(starts[0], starts[1]);
+        assert_eq!((starts[0].bots, starts[0].difficulty), (10, difficulty));
+        for (key, app) in &room.games {
+            let grid = app.world().resource::<RaceGrid>();
+            assert_eq!(grid.difficulty, level, "{key:?}");
+            assert_eq!(grid.seed, starts[0].seed, "{key:?}");
+            let mut bots = app.world().try_query::<&Bot>().unwrap();
+            let levels: Vec<BotDifficulty> =
+                bots.iter(app.world()).map(|bot| bot.difficulty).collect();
+            if *key == ANA {
+                assert_eq!(levels, vec![level; 10], "the host drives them");
+            } else {
+                assert!(levels.is_empty(), "the guest shows the host's");
+            }
+        }
+        let slots = |app: &App| {
+            let mut racers = app.world().try_query::<&Racer>().unwrap();
+            let mut slots: Vec<usize> = racers.iter(app.world()).map(|r| r.grid_slot).collect();
+            slots.sort_unstable();
+            slots
+        };
+        assert_eq!(slots(room.view(ANA)), slots(room.view(BOB)));
+        assert_eq!(slots(room.view(ANA)), (0..12).collect::<Vec<_>>());
+        // Back to the lobby for the next level: new settings end the race.
+    }
 }

@@ -17,15 +17,21 @@ use super::lobby::Lobby;
 use super::online::OnlineRace;
 use super::protocol::{RaceStart, RoomSetup};
 use super::{NetSession, NetStatus};
+use crate::bots::BotDifficulty;
+use crate::modes::BotsChoice;
 
 /// Issue #99: the host's settings of the room, as every player's lobby writes them: « Miroir :
-/// non · Bots : oui · Objets : oui ».
+/// non · Bots : normal · Objets : oui » (issue #153: the bots' level, or « non »).
 pub fn settings_line(setup: RoomSetup) -> String {
     let yes_no = |on: bool| if on { "oui" } else { "non" };
+    let bots = BotsChoice::of(
+        setup.bots,
+        BotDifficulty::from_index(setup.difficulty).unwrap_or_default(),
+    );
     format!(
         "Miroir : {} · Bots : {} · Objets : {}",
         yes_no(setup.mirror),
-        yes_no(setup.bots),
+        bots.label().to_lowercase(),
         yes_no(setup.items)
     )
 }
@@ -631,8 +637,20 @@ mod tests {
     fn the_lobby_writes_the_hosts_settings() {
         assert_eq!(
             settings_line(RoomSetup::default()),
-            "Miroir : non · Bots : oui · Objets : oui"
+            "Miroir : non · Bots : normal · Objets : oui"
         );
+        // Issue #153: the bots' level.
+        for (difficulty, level) in [(0, "facile"), (2, "difficile")] {
+            let setup = RoomSetup {
+                difficulty,
+                ..RoomSetup::default()
+            };
+            assert!(
+                settings_line(setup).contains(&format!("Bots : {level} ·")),
+                "{}",
+                settings_line(setup)
+            );
+        }
         let all_off = RoomSetup {
             track: 2,
             mirror: true,

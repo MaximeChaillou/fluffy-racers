@@ -164,7 +164,6 @@ pub use ui::{NetUiPlugin, invitation, loopback_page};
 
 use bevy::prelude::*;
 
-use crate::bots::BotTuning;
 use crate::characters::{Loadout, PartKind, PlayerColor, PlayerLoadout, Roster, SelectionScreen};
 use crate::kart::KartColor;
 use crate::options::OptionsMenu;
@@ -509,11 +508,7 @@ fn apply_net_actions(
     mut session: Option<ResMut<NetSession>>,
     mut departures: ResMut<Departures>,
     time: Res<Time<Real>>,
-    (race_tuning, bot_tuning, net_tuning): (
-        Option<Res<RaceTuning>>,
-        Option<Res<BotTuning>>,
-        Option<Res<NetTuning>>,
-    ),
+    (race_tuning, net_tuning): (Option<Res<RaceTuning>>, Option<Res<NetTuning>>),
 ) {
     for action in actions.read() {
         match action {
@@ -598,12 +593,9 @@ fn apply_net_actions(
                     );
                     lobby.start_championship(championship);
                 }
-                let difficulty = bot_tuning
-                    .as_ref()
-                    .map_or_else(Default::default, |t| t.grid_difficulty);
                 let tuning = net_tuning.as_deref().cloned().unwrap_or_default();
                 let laps = online::race_laps(race_tuning.as_deref());
-                match race_to_start(lobby, now_ms(&time), seed, laps, difficulty, &tuning) {
+                match race_to_start(lobby, now_ms(&time), seed, laps, &tuning) {
                     Some(start) => {
                         info!(
                             "network: we start race {} on circuit {} at tick {}, {} players and {} bots (round {}, grid {:?})",

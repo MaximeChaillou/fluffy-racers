@@ -412,6 +412,8 @@ fn the_lobby_screen_runs_the_room_and_launches_the_race() {
     }
     assert_eq!(lobby(room.view(ANA)).setup(), before);
     act_on_panel(&mut room, ANA, SalonAction::Step(SalonRow::Mirror, 1));
+    // Issue #153: Normal, Difficile, then Non.
+    act_on_panel(&mut room, ANA, SalonAction::Step(SalonRow::Bots, 1));
     act_on_panel(&mut room, ANA, SalonAction::Step(SalonRow::Bots, 1));
     room.until(2.0, "the guest sees the host's settings", |app| {
         let setup = lobby(app).setup();

@@ -13,7 +13,7 @@
 //! {
 //!     "KartTuning.max_speed": 30.0, // défaut : 28.5
 //!     "BotTuning.skills[2].wobble": 0.1, // défaut : 0.15
-//!     "BotTuning.grid_difficulty": "Hard", // défaut : "Normal"
+//!     "BotTuning.skills[1].target_tier": "Purple", // défaut : "Orange"
 //! }
 //! ```
 
@@ -614,9 +614,8 @@ mod tests {
         assert!(kart.len() > 70, "{}", kart.len());
 
         let bots = fields(&BotTuning::default());
-        let difficulty = bots.iter().find(|f| f.path == "grid_difficulty").unwrap();
-        assert_eq!(difficulty.value, Value::Variant("Normal"));
-        assert_eq!(difficulty.variants, &["Easy", "Normal", "Hard"]);
+        // Issue #153: the level of the grid's bots is the grid's (`RaceGrid`), not a tuning.
+        assert!(!bots.iter().any(|f| f.path == "grid_difficulty"));
         let tier = bots
             .iter()
             .find(|f| f.path == "skills[2].target_tier")
@@ -634,7 +633,7 @@ mod tests {
     fn values_are_written_by_path_and_checked() {
         let mut tuning = BotTuning::default();
         set(&mut tuning, "skills[1].wobble", Value::F32(0.3)).unwrap();
-        set(&mut tuning, "grid_difficulty", Value::Variant("Hard")).unwrap();
+        set(&mut tuning, "skills[1].target_tier", Value::Variant("Blue")).unwrap();
         set(
             &mut tuning,
             "skills[0].target_tier",
@@ -648,7 +647,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tuning.skills[1].wobble, 0.3);
-        assert_eq!(tuning.grid_difficulty, BotDifficulty::Hard);
+        assert_eq!(
+            tuning.skill(BotDifficulty::Normal).target_tier,
+            MiniTurbo::Blue
+        );
         assert_eq!(tuning.skills[0].target_tier, MiniTurbo::Purple);
         assert!(!tuning.skills[2].purple_when_possible);
         assert_eq!(
@@ -660,13 +662,17 @@ mod tests {
             Err(SetError::WrongKind("skills[1].wobble".into()))
         );
         assert_eq!(
-            set(&mut tuning, "grid_difficulty", Value::Variant("Nightmare")),
-            Err(SetError::UnknownVariant("grid_difficulty".into()))
+            set(
+                &mut tuning,
+                "skills[1].target_tier",
+                Value::Variant("Nightmare")
+            ),
+            Err(SetError::UnknownVariant("skills[1].target_tier".into()))
         );
         // Nothing else moved.
         let mut expected = BotTuning::default();
         expected.skills[1].wobble = 0.3;
-        expected.grid_difficulty = BotDifficulty::Hard;
+        expected.skills[1].target_tier = MiniTurbo::Blue;
         expected.skills[0].target_tier = MiniTurbo::Purple;
         expected.skills[2].purple_when_possible = false;
         assert_eq!(tuning, expected);
@@ -687,7 +693,7 @@ mod tests {
             ("KartTuning.inertia.y", Value::F32(99.5)),
             ("KartTuning.mini_turbo_thresholds[2]", Value::F32(900.0)),
             ("KartTuning.airborne_grace_ticks", Value::U32(7)),
-            ("BotTuning.grid_difficulty", Value::Variant("Hard")),
+            ("BotTuning.skills[1].target_tier", Value::Variant("Purple")),
             (
                 "BotTuning.skills[0].purple_when_possible",
                 Value::Bool(true),
@@ -708,7 +714,11 @@ mod tests {
         }
         assert!(!text.contains("steer_rate"), "unmodified values: {text}");
         assert!(text.contains("\"KartTuning.max_speed\": 31.25, // défaut : 28.5"));
-        assert!(text.contains("\"BotTuning.grid_difficulty\": \"Hard\", // défaut : \"Normal\""));
+        assert!(
+            text.contains(
+                "\"BotTuning.skills[1].target_tier\": \"Purple\", // défaut : \"Orange\""
+            )
+        );
         assert!(text.contains("\"KartTuning.airborne_grace_ticks\": 7, // défaut : 4"));
 
         tunings.reset_all(&mut world);
@@ -736,7 +746,7 @@ mod tests {
             "KartTuning.airborne_grace_ticks": -2,
             "KartTuning.hop_min_ticks": 2.5,
             "KartTuning.inertia": 3.0,
-            "BotTuning.grid_difficulty": "Nightmare",
+            "BotTuning.grid_difficulty": "Nightmare", // a field gone since #153
             "BotTuning.skills[1].drift_chance": true,
             "BotTuning.skills[1].wobble": 0.25,
         }"#;

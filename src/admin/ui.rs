@@ -27,6 +27,7 @@ use super::tracks::{self, TEST_GROUND_LABEL, TrackEntry};
 use super::tuning::{Field, Value, fields};
 use super::{AdminOptions, AdminPanel, KeyboardCapture, Tunings, skip_countdown_now, storage};
 use crate::audio::{Group, PreviewSound, Slot as SoundSlot, SoundChoices};
+use crate::bots::BotDifficulty;
 use crate::camera::ChaseCamera;
 use crate::characters::{PartKind, PlayerLoadout, Roster, SelectionScreen};
 use crate::croquettes::Croquettes;
@@ -59,7 +60,6 @@ const ON_RESTART: &[&str] = &[
     "RaceTuning.restart_delay_seconds",
     "RaceTuning.backward_window",
     "RaceTuning.gate_",
-    "BotTuning.grid_difficulty",
     "BotTuning.pace_spread",
     "BotTuning.road_margin",
     "BotTuning.sand_margin",
@@ -441,7 +441,7 @@ fn draw(ctx: &egui::Context, world: &mut World, state: &mut PanelState, tunings:
         .show(ctx, |ui| {
             ui.small("P : ouvrir / fermer · ?admin dans l'adresse : ouvert au démarrage");
             section(ui, state, "Test", "Test", |ui, state| {
-                test_section(ui, world, state, tunings, &mut changed);
+                test_section(ui, world, state);
             });
             section(ui, state, "Objets", "Donner un objet", |ui, state| {
                 items_section(ui, world, state);
@@ -516,13 +516,7 @@ fn toggle(open: &mut HashSet<&'static str>, key: &'static str) {
     }
 }
 
-fn test_section(
-    ui: &mut egui::Ui,
-    world: &mut World,
-    state: &mut PanelState,
-    tunings: &Tunings,
-    changed: &mut bool,
-) {
+fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
     if world.contains_resource::<crate::level::Online>() {
         // Issue #9: online, the host chooses the circuit and starts the races (lobby, L), and the
         // game never pauses nor slows down: every peer's race follows the room's clock.
@@ -574,19 +568,19 @@ fn test_section(
                 {
                     world.resource_mut::<RaceGrid>().bots = bots;
                 }
-                let difficulty = tunings
-                    .get("BotTuning")
-                    .and_then(|t| t.read(world))
-                    .map(|r| fields(r.as_partial_reflect()))
-                    .and_then(|f| f.into_iter().find(|f| f.path == "grid_difficulty"));
-                if let Some(field) = difficulty
-                    && let Some(value) =
-                        variant_combo(ui, ("admin-difficulty", ""), &field, difficulty_label)
-                    && tunings
-                        .set(world, "BotTuning.grid_difficulty", value)
-                        .is_ok()
-                {
-                    *changed = true;
+                // Issue #153: their level is the grid's, like their number: the same as « Jouer
+                // solo »'s « Bots » line (the last one changed wins; the screen opens on it).
+                let difficulty = world.resource::<RaceGrid>().difficulty;
+                let mut selected = difficulty;
+                egui::ComboBox::from_id_salt("admin-difficulty")
+                    .selected_text(difficulty_label(difficulty))
+                    .show_ui(ui, |ui| {
+                        for level in BotDifficulty::ALL {
+                            ui.selectable_value(&mut selected, level, difficulty_label(level));
+                        }
+                    });
+                if selected != difficulty {
+                    world.resource_mut::<RaceGrid>().difficulty = selected;
                 }
             });
             ui.end_row();
@@ -805,12 +799,11 @@ fn sounds_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) 
     }
 }
 
-fn difficulty_label(name: &str) -> &str {
-    match name {
-        "Easy" => "Facile",
-        "Normal" => "Normal",
-        "Hard" => "Difficile",
-        other => other,
+fn difficulty_label(difficulty: BotDifficulty) -> &'static str {
+    match difficulty {
+        BotDifficulty::Easy => "Facile",
+        BotDifficulty::Normal => "Normal",
+        BotDifficulty::Hard => "Difficile",
     }
 }
 

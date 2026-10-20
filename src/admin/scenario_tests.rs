@@ -518,10 +518,19 @@ fn every_tuning_resource_is_in_the_panel() {
             assert!(tuning.defaults.len() >= 10, "{}", tuning.name);
         }
         assert!(tunings.changes(world).is_empty());
-        // The difficulty of the grid is one of them.
+        // The bots' skills are among them (issue #153: their level is the grid's, not a tuning).
         tunings
-            .set(world, "BotTuning.grid_difficulty", Value::Variant("Hard"))
+            .set(
+                world,
+                "BotTuning.skills[2].target_tier",
+                Value::Variant("Purple"),
+            )
             .unwrap();
+        assert!(
+            tunings
+                .set(world, "BotTuning.grid_difficulty", Value::Variant("Hard"))
+                .is_err()
+        );
         // Issue #16: the items are on by default, and the panel switches them off.
         assert!(world.resource::<crate::items::ItemTuning>().enabled);
         tunings
@@ -538,10 +547,8 @@ fn every_tuning_resource_is_in_the_panel() {
             .unwrap();
     });
     assert_eq!(
-        app.world()
-            .resource::<crate::bots::BotTuning>()
-            .grid_difficulty,
-        crate::bots::BotDifficulty::Hard
+        app.world().resource::<crate::bots::BotTuning>().skills[2].target_tier,
+        crate::kart::MiniTurbo::Purple
     );
     assert!(!app.world().resource::<crate::items::ItemTuning>().enabled);
     assert!(

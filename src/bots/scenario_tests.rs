@@ -1113,7 +1113,7 @@ fn twelve_karts_race_three_laps_without_getting_stuck() {
     // The game's default: 11 bots, all Normal, the game's seed.
     let grid = RaceGrid::default();
     assert_eq!((grid.bots, grid.seed), (11, RaceGrid::GAME_SEED));
-    assert_eq!(BotTuning::default().grid_difficulty, BotDifficulty::Normal);
+    assert_eq!(grid.difficulty, BotDifficulty::Normal);
     struct Run {
         race: RaceResult,
         over: bool,

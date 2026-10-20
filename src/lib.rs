@@ -139,6 +139,12 @@ impl Plugin for GamePlugin {
             // Issue #76: the time trial, its records kept in the browser. Only on screen, like
             // the main menu: the bot races' world has none of it (`modes::time_trial`).
             app.add_plugins(TimeTrialPlugin { storage: true });
+            // Issue #153: « Jouer solo »'s « Bots » line kept in the browser: given back now,
+            // before anything is built (no system of its own), written when a choice starts.
+            app.insert_resource(modes::SoloStorage);
+            if let Some(text) = admin::storage::load_key(modes::SOLO_STORAGE_KEY) {
+                modes::restore_kept_solo(app.world_mut(), &text);
+            }
             // Issue #102: the roulette of the item slots as a slot machine's reel. Only on screen:
             // the headless HUD keeps its single icon, the bot races their world.
             app.add_plugins(ui::RoulettePlugin);
