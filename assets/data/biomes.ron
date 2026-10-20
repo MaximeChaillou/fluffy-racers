@@ -20,6 +20,24 @@
 // - Pieces never stand on the road, the curbs, the shoulders or the walls: where there is no
 //   room (a tight hairpin), a piece is moved or left out. No piece higher than 1.6 m stands
 //   inside a tight turn (below 40 m of radius): the road out of the turn stays in sight.
+// - `far` (issue #146, required): the far decor, so that one never sees the edge of the world
+//   nor an empty horizon (src/track/far.rs). Drawn in one mesh, without shadows nor collider. The
+//   ground beyond the circuit's goes on (the palette's `ground`) far past the fog. `fog: (start,
+//   end)`: meters from the camera where things start to fade into the sky's color, and where they
+//   are gone. `layers`, distances in meters beyond the circuit's ground (it reaches 80 m beyond
+//   the centerline's bounds):
+//   - `Sea(color, from, beach)`: the ground beyond turns into the sea `from` meters out, after a
+//     beach of `beach` meters (the palette's `sand`);
+//   - `Range(distance, depth, height, spacing, color, top)`: a closed ring of mountains (hills,
+//     cliffs) all around, its ridge `distance` out, its foot `depth` wide, a peak every `spacing`
+//     meters, `height` high (never below the first: what closes the horizon); `top: (color, at)`
+//     colors what is above `at` meters (snow, a lighter band);
+//   - `Peaks(count, distance, height, radius, flat, sides, color, top)`: lone peaks (`flat`: their
+//     top as wide as that much of their foot, a mesa; 0, a point; `sides`, 6 by default);
+//   - `Clouds(count, distance, altitude, size, color)`;
+//   - `Pieces(models, count, height, radius, distance, side)`: the biome's models at mid-distance,
+//     big, `distance` meters beyond the walls (like `scatter`), never on the sea, no shadows.
+//   A circuit may add layers of its own (`far_decor` in its file).
 [
     (
         // A meadow with a racing circuit's dressing (Nature Kit and Racing Kit). Issue #108: a
@@ -38,6 +56,27 @@
             walls: ((0.95, 0.95, 0.96), (0.91, 0.36, 0.34)),
             wall_top: (0.98, 0.98, 0.98),
             skirt: (0.62, 0.50, 0.40),
+        ),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // Green hills all around, and blue mountains behind them, their tops snowy.
+                Range(distance: 170.0, depth: 150.0, height: (34.0, 72.0), spacing: 46.0,
+                      color: (0.43, 0.66, 0.37)),
+                Range(distance: 430.0, depth: 260.0, height: (110.0, 230.0), spacing: 62.0,
+                      color: (0.50, 0.56, 0.66), top: ((0.95, 0.96, 0.99), 185.0)),
+                // Round wooded buttes in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (22.0, 46.0),
+                      radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.33, 0.56, 0.31)),
+                Clouds(count: 22, distance: (0.0, 520.0), altitude: (110.0, 190.0),
+                       size: (50.0, 110.0), color: (1.0, 1.0, 1.0)),
+                // A forest of giant oaks and pines at mid-distance, and big rocks.
+                Pieces(models: ["nature-kit/tree_oak", "nature-kit/tree_fat",
+                                "nature-kit/tree_default", "nature-kit/tree_pineRoundA"],
+                       count: 150, height: (16.0, 28.0), radius: 6.0, distance: (55.0, 210.0)),
+                Pieces(models: ["nature-kit/rock_largeA", "nature-kit/rock_largeB"],
+                       count: 18, height: (6.0, 12.0), radius: 7.0, distance: (60.0, 200.0)),
+            ],
         ),
         rows: [
             // Flags along the outside of the loop, red and green in turn.
@@ -84,6 +123,31 @@
             wall_top: (0.99, 0.97, 0.98),
             skirt: (0.52, 0.33, 0.27),
         ),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // Pink hills of marshmallow, their tops of cream, and lavender mountains iced
+                // white behind them.
+                Range(distance: 180.0, depth: 150.0, height: (36.0, 76.0), spacing: 42.0,
+                      color: (0.97, 0.74, 0.85), top: ((1.0, 0.97, 0.94), 60.0)),
+                Range(distance: 440.0, depth: 250.0, height: (100.0, 200.0), spacing: 58.0,
+                      color: (0.70, 0.58, 0.88), top: ((0.99, 0.96, 0.99), 165.0)),
+                // Mint gumdrops, their tops pink.
+                Peaks(count: 16, distance: (40.0, 160.0), height: (26.0, 56.0),
+                      radius: (24.0, 42.0), flat: 0.45, sides: 8, color: (0.60, 0.86, 0.78),
+                      top: ((0.98, 0.58, 0.74), 40.0)),
+                // Clouds of candy floss.
+                Clouds(count: 22, distance: (0.0, 520.0), altitude: (110.0, 190.0),
+                       size: (50.0, 110.0), color: (1.0, 0.90, 0.95)),
+                // Giant sweets at mid-distance.
+                Pieces(models: ["food-kit/lollypop", "food-kit/popsicle"],
+                       count: 40, height: (22.0, 38.0), radius: 7.0, distance: (55.0, 200.0)),
+                Pieces(models: ["food-kit/cupcake", "food-kit/cake-birthday", "food-kit/sundae"],
+                       count: 40, height: (14.0, 26.0), radius: 12.0, distance: (60.0, 210.0)),
+                Pieces(models: ["holiday-kit/candy-cane-red", "holiday-kit/candy-cane-green"],
+                       count: 30, height: (18.0, 30.0), radius: 6.0, distance: (50.0, 190.0)),
+            ],
+        ),
         rows: [
             // Candy canes along both sides, red and green in turn.
             (models: ["holiday-kit/candy-cane-red", "holiday-kit/candy-cane-green"], spacing: 14.0,
@@ -127,6 +191,27 @@
             walls: ((0.97, 0.98, 1.0), (0.32, 0.52, 0.84)),
             wall_top: (0.98, 0.99, 1.0),
             skirt: (0.52, 0.50, 0.54),
+        ),
+        far: (
+            fog: (200.0, 1200.0),
+            layers: [
+                // Snowy mountains all around, higher ones behind, and needles of rock.
+                Range(distance: 160.0, depth: 170.0, height: (55.0, 105.0), spacing: 42.0,
+                      color: (0.50, 0.55, 0.64), top: ((0.97, 0.98, 1.0), 72.0)),
+                Range(distance: 420.0, depth: 290.0, height: (150.0, 290.0), spacing: 62.0,
+                      color: (0.46, 0.50, 0.61), top: ((0.98, 0.99, 1.0), 150.0)),
+                Peaks(count: 14, distance: (30.0, 200.0), height: (60.0, 140.0),
+                      radius: (24.0, 44.0), sides: 5, color: (0.42, 0.46, 0.55),
+                      top: ((0.97, 0.98, 1.0), 72.0)),
+                Clouds(count: 16, distance: (0.0, 480.0), altitude: (150.0, 230.0),
+                       size: (60.0, 120.0), color: (0.96, 0.97, 1.0)),
+                // A forest of giant snowy firs at mid-distance, giant reindeer among them.
+                Pieces(models: ["holiday-kit/tree-snow-a", "holiday-kit/tree-snow-b",
+                                "holiday-kit/tree-snow-c"],
+                       count: 110, height: (16.0, 30.0), radius: 5.5, distance: (50.0, 210.0)),
+                Pieces(models: ["holiday-kit/reindeer"],
+                       count: 8, height: (8.0, 12.0), radius: 5.0, distance: (60.0, 160.0)),
+            ],
         ),
         rows: [
             // Lanterns along the outside of the loop.
@@ -183,6 +268,28 @@
             wall_top: (0.98, 0.98, 0.97),
             skirt: (0.66, 0.52, 0.36),
         ),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // The sea all around the cove, a beach first.
+                Sea(color: (0.16, 0.56, 0.80), from: 70.0, beach: 30.0),
+                // Rocky headlands and islands, green on top, closing the horizon.
+                Range(distance: 480.0, depth: 220.0, height: (28.0, 100.0), spacing: 64.0,
+                      color: (0.66, 0.54, 0.40), top: ((0.36, 0.62, 0.32), 55.0)),
+                // Sea stacks in the bay.
+                Peaks(count: 14, distance: (100.0, 300.0), height: (20.0, 55.0),
+                      radius: (12.0, 26.0), flat: 0.3, color: (0.70, 0.58, 0.44),
+                      top: ((0.38, 0.64, 0.34), 32.0)),
+                Clouds(count: 20, distance: (0.0, 520.0), altitude: (110.0, 180.0),
+                       size: (50.0, 100.0), color: (1.0, 1.0, 1.0)),
+                // Giant palm trees on the beach, a wreck and a watchtower.
+                Pieces(models: ["pirate-kit/palm-straight", "pirate-kit/palm-bend",
+                                "pirate-kit/palm-detailed-straight"],
+                       count: 60, height: (13.0, 20.0), radius: 5.0, distance: (35.0, 120.0)),
+                Pieces(models: ["pirate-kit/ship-wreck", "pirate-kit/tower-complete-small"],
+                       count: 4, height: (10.0, 16.0), radius: 10.0, distance: (40.0, 110.0)),
+            ],
+        ),
         rows: [
             // Flags along the outside of the loop, the pirates' and plain ones in turn.
             (models: ["pirate-kit/flag-pirate", "pirate-kit/flag"], spacing: 34.0, offset: 17.0,
@@ -226,6 +333,30 @@
             walls: ((0.97, 0.96, 0.92), (0.96, 0.46, 0.40)),
             wall_top: (0.99, 0.98, 0.95),
             skirt: (0.58, 0.50, 0.44),
+        ),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // Turquoise water beyond the shore.
+                Sea(color: (0.10, 0.64, 0.74), from: 110.0, beach: 20.0),
+                // Jungle cliffs all around, grey rock behind, green on top.
+                Range(distance: 300.0, depth: 200.0, height: (40.0, 130.0), spacing: 56.0,
+                      color: (0.34, 0.57, 0.33)),
+                Range(distance: 540.0, depth: 260.0, height: (120.0, 210.0), spacing: 60.0,
+                      color: (0.56, 0.56, 0.52), top: ((0.32, 0.56, 0.30), 150.0)),
+                // Rocky islands in the lagoon.
+                Peaks(count: 12, distance: (130.0, 260.0), height: (25.0, 70.0),
+                      radius: (15.0, 30.0), flat: 0.2, color: (0.54, 0.52, 0.48),
+                      top: ((0.30, 0.56, 0.30), 26.0)),
+                Clouds(count: 20, distance: (0.0, 520.0), altitude: (110.0, 180.0),
+                       size: (50.0, 100.0), color: (1.0, 1.0, 1.0)),
+                // Giant palm trees, and old giant heads and obelisks: the monuments.
+                Pieces(models: ["nature-kit/tree_palmTall", "nature-kit/tree_palmDetailedTall",
+                                "nature-kit/tree_palm"],
+                       count: 70, height: (14.0, 22.0), radius: 5.0, distance: (40.0, 150.0)),
+                Pieces(models: ["nature-kit/statue_head", "nature-kit/statue_obelisk"],
+                       count: 6, height: (14.0, 24.0), radius: 8.0, distance: (50.0, 140.0)),
+            ],
         ),
         rows: [
             // Short palm trees along the outside of the loop, two kinds in turn.
@@ -275,6 +406,30 @@
             walls: ((0.97, 0.93, 0.85), (0.88, 0.44, 0.26)),
             wall_top: (0.99, 0.97, 0.93),
             skirt: (0.72, 0.38, 0.26),
+        ),
+        far: (
+            fog: (240.0, 1400.0),
+            layers: [
+                // The canyon's walls all around, a lighter band on top, and red mesas behind.
+                Range(distance: 150.0, depth: 150.0, height: (45.0, 92.0), spacing: 38.0,
+                      color: (0.80, 0.45, 0.30), top: ((0.93, 0.68, 0.48), 70.0)),
+                Range(distance: 420.0, depth: 250.0, height: (90.0, 170.0), spacing: 56.0,
+                      color: (0.74, 0.42, 0.33), top: ((0.90, 0.63, 0.46), 150.0)),
+                // Mesas and buttes, and thin needles.
+                Peaks(count: 20, distance: (20.0, 260.0), height: (40.0, 100.0),
+                      radius: (25.0, 55.0), flat: 0.65, sides: 7, color: (0.84, 0.48, 0.32),
+                      top: ((0.94, 0.70, 0.50), 82.0)),
+                Peaks(count: 12, distance: (10.0, 220.0), height: (50.0, 110.0),
+                      radius: (8.0, 16.0), flat: 0.25, sides: 5, color: (0.78, 0.40, 0.28)),
+                Clouds(count: 10, distance: (0.0, 520.0), altitude: (130.0, 200.0),
+                       size: (50.0, 100.0), color: (1.0, 0.98, 0.95)),
+                // Giant needles of red rock and autumn trees at mid-distance.
+                Pieces(models: ["nature-kit/rock_tallD", "nature-kit/rock_tallF",
+                                "nature-kit/rock_tallH", "nature-kit/rock_tallJ"],
+                       count: 40, height: (30.0, 60.0), radius: 12.0, distance: (50.0, 210.0)),
+                Pieces(models: ["nature-kit/tree_plateau_fall", "nature-kit/tree_tall_fall"],
+                       count: 50, height: (14.0, 24.0), radius: 6.0, distance: (50.0, 180.0)),
+            ],
         ),
         rows: [
             // Checkered flags along the outside of the loop.

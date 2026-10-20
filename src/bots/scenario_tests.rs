@@ -2276,23 +2276,16 @@ const GUIDE_DRIFTS_WORST: f32 = 3.5;
 const GUIDE_ORANGES: f32 = 2.0;
 const GUIDE_ORANGES_WORST: f32 = 1.7;
 
-/// Issue #107: the guide's figures (GD « Conception des circuits »), for a race of Normal bots:
-/// a lap from 30 s to a minute (its fastest and its slowest laps, the pelican's time after a pack
-/// incident left out), at least [`GUIDE_DRIFTS`] drifts and [`GUIDE_ORANGES`] orange (or better)
-/// mini-turbos a lap, on average over the karts of a race.
+/// Issue #146 (Max, 2026-10-19 and 2026-10-20, GD § 16): the guide's lap, « de 30 s à 1 min »,
+/// an order of magnitude measured with **Hard** bots: their fastest lap from 30 s to about 70 s
+/// (a wide window: a circuit is never shortened, nor a turn taken out, to keep within a minute).
+const GUIDE_FASTEST_LAP: (f32, f32) = (30.0, 70.0);
+
+/// Issue #107: the guide's figures (GD « Conception des circuits ») that a race of **Normal** bots
+/// measures (Max, #146: the drifts and the mini-turbos keep their measure, on Normal bots): at
+/// least [`GUIDE_DRIFTS`] drifts and [`GUIDE_ORANGES`] orange (or better) mini-turbos a lap, on
+/// average over the karts of a race. The lap's time: [`guide_lap_checks`], on Hard bots.
 fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
-    checks.at_least(
-        "guide: fastest lap (s)",
-        &per_race(races, |r| lowest(&r.laps(0..3))),
-        Some(30.0),
-        None,
-    );
-    checks.at_most(
-        "guide: slowest lap, the pelican's time after an incident left out (s)",
-        &per_race(races, |r| highest(&r.laps_without_pelican(0..3))),
-        Some(60.0),
-        None,
-    );
     checks.at_least(
         "guide: drifts per lap (karts' mean)",
         &per_race(races, |r| r.drifts_per_lap()),
@@ -2307,6 +2300,25 @@ fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
     );
 }
 
+/// Issue #146 (GD § 16, rule 1, Max's decision): the guide's lap, for a race of **Hard** bots
+/// (until #146, of Normal bots, from 30 s to a minute, its slowest lap too): their fastest lap
+/// within [`GUIDE_FASTEST_LAP`].
+fn guide_lap_checks(checks: &mut Checks, races: &[&RaceResult]) {
+    let fastest = per_race(races, |r| lowest(&r.laps(0..3)));
+    checks.at_least(
+        "guide (Hard): fastest lap (s)",
+        &fastest,
+        Some(GUIDE_FASTEST_LAP.0),
+        None,
+    );
+    checks.at_most(
+        "guide (Hard): fastest lap (s), about a minute at most",
+        &fastest,
+        Some(GUIDE_FASTEST_LAP.1),
+        None,
+    );
+}
+
 /// Issue #19 acceptance: the bots drive every circuit of the game (the two of issue #19 and the
 /// two before them) and the mirror image of each (GD § 1), 12 karts, Normal, 3 laps: every kart
 /// finishes, never towed in free driving (a bot leaving the track or stuck by itself), seldom
@@ -2315,7 +2327,9 @@ fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
 /// length and is driven about as fast.
 ///
 /// Issue #107: on the circuits that follow the guide ([`GUIDE_CIRCUITS`]), the guide's figures
-/// too ([`guide_checks`]).
+/// too ([`guide_checks`]; issue #146: its lap's time on Hard bots, in
+/// [`hard_bots_take_the_shortcuts_and_try_the_risky_jump`] and
+/// [`hard_bots_lap_the_guide_circuits_in_the_guide_s_time`]).
 #[test]
 fn bots_race_every_circuit_and_its_mirror() {
     let seeds = circuit_seeds();
@@ -2417,7 +2431,8 @@ fn bots_race_every_circuit_and_its_mirror() {
 /// Issue #107 (GD « Conception des circuits », § 12): Hard bots on the reference circuit and its
 /// mirror, 12 karts, 3 laps: every kart finishes; they take the hidden road, and try the risky
 /// jump (the Hard ones only: GD); most of their jumps land, a jump that fell short is counted
-/// apart ([`TowCause::RiskyJump`]); never towed in free driving.
+/// apart ([`TowCause::RiskyJump`]); never towed in free driving. Issue #146: the guide's lap,
+/// measured on Hard bots ([`guide_lap_checks`]).
 #[test]
 fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
     let seeds = circuit_seeds();
@@ -2470,8 +2485,57 @@ fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
             Some(HAZARD_KNOCKS_WORST),
             Some(HAZARD_KNOCKS),
         );
+        // Issue #146: the guide's lap, on Hard bots.
+        let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
+        guide_lap_checks(&mut checks, &races);
         println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
         failures.append(&mut checks.failures);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #146 (Max: the circuits' times are measured with Hard bots; GD § 16, rule 1): Hard bots
+/// on the other circuits of the guide ([`GUIDE_CIRCUITS`]; the Corniche Cannelle's Hard races are
+/// those of [`hard_bots_take_the_shortcuts_and_try_the_risky_jump`]) and their mirrors, 12 karts,
+/// 3 laps: every kart finishes, never towed in free driving, and their fastest lap is the guide's
+/// ([`guide_lap_checks`]).
+#[test]
+fn hard_bots_lap_the_guide_circuits_in_the_guide_s_time() {
+    let seeds = circuit_seeds();
+    let mut failures = Vec::new();
+    let entries: Vec<_> = crate::admin::tracks::circuits()
+        .into_iter()
+        .filter(|e| GUIDE_CIRCUITS.contains(&e.name.as_str()) && e.name != "Corniche Cannelle")
+        .collect();
+    assert_eq!(entries.len(), GUIDE_CIRCUITS.len() - 1);
+    for entry in entries {
+        let path = entry.asset_path();
+        for mirror in [false, true] {
+            let runs = for_each_seed(&seeds, |seed| {
+                run_on_circuit_as(&path, mirror, seed, BotDifficulty::Hard)
+            });
+            print_reports(&seeds, runs.iter().map(|r| &r.race));
+            let title = format!(
+                "{}{}, 12 karts, Hard",
+                entry.name,
+                if mirror { " (miroir)" } else { "" }
+            );
+            let mut checks = Checks::new(&title, &seeds);
+            checks.every_race(
+                "every kart finishes",
+                runs.iter().map(|r| r.race.all_finished()),
+            );
+            checks.at_most(
+                "tows in free driving (none)",
+                &per_race(&runs, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+                Some(0.0),
+                None,
+            );
+            let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
+            guide_lap_checks(&mut checks, &races);
+            println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
+            failures.append(&mut checks.failures);
+        }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

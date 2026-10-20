@@ -26,10 +26,13 @@
 //!   loader too): nothing during the race.
 
 use super::biome::{BiomeData, Palette, PropRow, Rgb, ScatterGroup, Side};
+use super::far::{FarDecor, FarLayer};
 
 /// The version of what is hashed: the first bytes of every fingerprint. To change only if the
 /// encoding below changes (every record then starts from zero, which is fine: Max, #157).
-const ENCODING: &[u8] = b"fluffy-racers circuit fingerprint 1\n";
+/// Issue #146: version 2, the biome's far decor hashed too (every biome got one: every record
+/// started from zero anyway).
+const ENCODING: &[u8] = b"fluffy-racers circuit fingerprint 2\n";
 
 /// FNV-1a, 64 bits (the parameters of its authors: offset basis and prime).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +164,7 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
         scatter,
         // The music: not part of the circuit (Max, #157).
         music: _,
+        far,
     } = biome;
     hasher.str(name);
     let Palette {
@@ -222,6 +226,103 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
         hasher.side(*side);
         hasher.bool(*shadows);
     }
+    // Issue #146: its far decor, after the rest.
+    let FarDecor { fog, layers } = far;
+    hasher.f32(fog.0);
+    hasher.f32(fog.1);
+    hasher.u64(layers.len() as u64);
+    for layer in layers {
+        write_far_layer(hasher, layer);
+    }
+}
+
+/// A layer of a far decor (issue #146): its kind, then every field in the order of its
+/// declaration.
+fn write_far_layer(hasher: &mut Fnv1a, layer: &FarLayer) {
+    let top = |hasher: &mut Fnv1a, top: &Option<(Rgb, f32)>| match top {
+        None => hasher.u8(0),
+        Some((color, at)) => {
+            hasher.u8(1);
+            hasher.rgb(*color);
+            hasher.f32(*at);
+        }
+    };
+    match layer {
+        FarLayer::Sea { color, from, beach } => {
+            hasher.u8(0);
+            hasher.rgb(*color);
+            hasher.f32(*from);
+            hasher.f32(*beach);
+        }
+        FarLayer::Range {
+            distance,
+            depth,
+            height,
+            spacing,
+            color,
+            top: t,
+        } => {
+            hasher.u8(1);
+            for value in [*distance, *depth, height.0, height.1, *spacing] {
+                hasher.f32(value);
+            }
+            hasher.rgb(*color);
+            top(hasher, t);
+        }
+        FarLayer::Peaks {
+            count,
+            distance,
+            height,
+            radius,
+            flat,
+            sides,
+            color,
+            top: t,
+        } => {
+            hasher.u8(2);
+            hasher.u32(*count);
+            for value in [
+                distance.0, distance.1, height.0, height.1, radius.0, radius.1, *flat,
+            ] {
+                hasher.f32(value);
+            }
+            hasher.u32(*sides);
+            hasher.rgb(*color);
+            top(hasher, t);
+        }
+        FarLayer::Clouds {
+            count,
+            distance,
+            altitude,
+            size,
+            color,
+        } => {
+            hasher.u8(3);
+            hasher.u32(*count);
+            for value in [
+                distance.0, distance.1, altitude.0, altitude.1, size.0, size.1,
+            ] {
+                hasher.f32(value);
+            }
+            hasher.rgb(*color);
+        }
+        FarLayer::Pieces {
+            models,
+            count,
+            height,
+            radius,
+            distance,
+            side,
+        } => {
+            hasher.u8(4);
+            hasher.models(models);
+            hasher.u32(*count);
+            for value in [height.0, height.1, *radius, distance.0, distance.1] {
+                hasher.f32(value);
+            }
+            hasher.side(*side);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -241,7 +342,8 @@ mod tests {
     /// vectors), and a fingerprint written down once, of a known text and a known biome. Only
     /// integer arithmetic on bytes of a fixed order and size: what native and wasm compute alike.
     /// Should this value change, every record of the players starts from zero: change the
-    /// encoding only on purpose (`ENCODING`).
+    /// encoding only on purpose (`ENCODING`). Issue #146: encoding 2 (the far decor), the values
+    /// written anew, and checked again by the second implementation.
     #[test]
     fn the_fingerprint_of_a_known_circuit_is_written_down() {
         assert_eq!(fnv1a_64(b""), 0xcbf2_9ce4_8422_2325);
@@ -291,18 +393,62 @@ mod tests {
                 shadows: false,
             }],
             music: Some("pure-raceway".into()),
+            // Issue #146: one layer of each kind.
+            far: FarDecor {
+                fog: (220.0, 1100.0),
+                layers: vec![
+                    FarLayer::Sea {
+                        color: (0.2, 0.5, 0.75),
+                        from: 90.0,
+                        beach: 20.0,
+                    },
+                    FarLayer::Range {
+                        distance: 260.0,
+                        depth: 140.0,
+                        height: (60.0, 130.0),
+                        spacing: 34.0,
+                        color: (0.45, 0.5, 0.55),
+                        top: Some(((0.97, 0.98, 1.0), 95.0)),
+                    },
+                    FarLayer::Peaks {
+                        count: 9,
+                        distance: (60.0, 200.0),
+                        height: (40.0, 90.0),
+                        radius: (25.0, 50.0),
+                        flat: 0.5,
+                        sides: 7,
+                        color: (0.8, 0.45, 0.3),
+                        top: None,
+                    },
+                    FarLayer::Clouds {
+                        count: 14,
+                        distance: (100.0, 600.0),
+                        altitude: (90.0, 160.0),
+                        size: (40.0, 90.0),
+                        color: (1.0, 1.0, 1.0),
+                    },
+                    FarLayer::Pieces {
+                        models: vec!["nature-kit/tree_oak".into()],
+                        count: 40,
+                        height: (18.0, 30.0),
+                        radius: 6.0,
+                        distance: (70.0, 180.0),
+                        side: Side::Outside,
+                    },
+                ],
+            },
         };
         // Checked by a second implementation of the encoding, outside the game (Python: the
         // same bytes, `struct.pack('<f')` for the floats): the same values.
         assert_eq!(
             circuit_fingerprint(text, Some(&biome)),
-            0xbace_d295_b908_940f,
+            0xe934_1559_e008_891c,
             "{:#018x}",
             circuit_fingerprint(text, Some(&biome))
         );
         assert_eq!(
             circuit_fingerprint(text, None),
-            0xe5d1_7262_6864_19d3,
+            0x03d2_8d6b_f0e6_5e70,
             "{:#018x}",
             circuit_fingerprint(text, None)
         );
@@ -311,7 +457,7 @@ mod tests {
         music.music = None;
         assert_eq!(
             circuit_fingerprint(&text.replace('\n', "\r\n"), Some(&music)),
-            0xbace_d295_b908_940f
+            0xe934_1559_e008_891c
         );
     }
 
@@ -358,7 +504,8 @@ mod tests {
     /// Issue #157 acceptance: changing a single piece of decor of a circuit changes its
     /// fingerprint: a piece placed by hand in its file (its model, or only where it stands), the
     /// decor's seed, a piece of its biome (its model, one piece more, its size), a color of its
-    /// biome. Not the biome's music (Max: « la musique non »), nor another biome.
+    /// biome; issue #146: its far decor (the fog, a range, a piece, a sea). Not the biome's music
+    /// (Max: « la musique non »), nor another biome.
     #[test]
     fn changing_one_piece_of_decor_changes_the_fingerprint() {
         let text = circuit_text("tracks/prairie.track.ron");
@@ -428,6 +575,29 @@ mod tests {
             }),
             ("the sky's color", &|b| b.palette.sky.2 -= 0.01),
             ("the light", &|b| b.palette.ambient_brightness += 1.0),
+            // Issue #146: its far decor.
+            ("the fog", &|b| b.far.fog.1 += 10.0),
+            ("a far range higher", &|b| {
+                for layer in &mut b.far.layers {
+                    if let FarLayer::Range { height, .. } = layer {
+                        height.1 += 1.0;
+                    }
+                }
+            }),
+            ("a far piece more", &|b| {
+                for layer in &mut b.far.layers {
+                    if let FarLayer::Pieces { count, .. } = layer {
+                        *count += 1;
+                    }
+                }
+            }),
+            ("a sea", &|b| {
+                b.far.layers.push(FarLayer::Sea {
+                    color: (0.1, 0.5, 0.7),
+                    from: 60.0,
+                    beach: 10.0,
+                })
+            }),
         ] {
             assert_ne!(with(change), fingerprint, "{what}");
         }

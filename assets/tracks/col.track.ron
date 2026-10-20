@@ -30,6 +30,14 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "blossom-mountain",
     decor_seed: 19,
+    // Issue #146: its own far decor, on top of the snow's: three giant summits that tower over the
+    // pass, and a herd of giant reindeer in the far fields.
+    far_decor: [
+        Peaks(count: 3, distance: (120.0, 260.0), height: (170.0, 230.0), radius: (55.0, 80.0),
+              sides: 6, color: (0.40, 0.44, 0.53), top: ((0.98, 0.99, 1.0), 120.0)),
+        Pieces(models: ["holiday-kit/reindeer"], count: 6, height: (9.0, 12.0), radius: 5.0,
+               distance: (60.0, 140.0), side: Inside),
+    ],
     props: [
         (model: "holiday-kit/nutcracker", at: 0.0, side: Both, height: 3.5, radius: 0.9, gap: 1.8),
         (model: "holiday-kit/tree-decorated-snow", at: 162.5, side: Right, height: 16.0, radius: 5.0, gap: 1.0),

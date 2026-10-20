@@ -3,6 +3,8 @@
 //! all baked or missing, the pieces (`decor.rs`) are merged into two meshes, those that cast
 //! shadows and the small ones that do not: two draw calls (and the first one's shadows) for the
 //! whole decor, with the models' shared material. A missing model stands in a primitive tree.
+//! Issue #146: its far decor (`far.rs`: the ground beyond, the silhouettes, the clouds, the big
+//! pieces at mid-distance) in a third mesh, without shadows, and its fog on the chase camera.
 //!
 //! Only with a renderer (Bevy's glTF plugin): headless, a circuit has no decor, as nothing would
 //! see it. The pieces never touch the circuit's colliders: the decor is purely visual.
@@ -11,13 +13,16 @@ use bevy::gltf::Gltf;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
+use super::biome::Palette;
 use super::circuit::{TrackHandle, to_mesh};
 use super::data::TrackData;
 use super::decor::{decor_models, place_decor_around};
+use super::far::place_far_decor;
 use super::layout::{CenterLine, TrackLayout};
 use super::mesh::MeshData;
 use super::shortcut::Shortcut;
 use super::water::Lake;
+use crate::camera::ChaseCamera;
 use crate::level::LevelScoped;
 use crate::models::bake::{BakedModel, BakedPart, Primitive, bake_primitive};
 use crate::models::{Keep, ModelMaterials, Models};
@@ -32,7 +37,8 @@ pub struct CircuitDecor {
 }
 
 /// Asks for the models of the circuit being driven (once per circuit) and, once they are all
-/// there or missing, dresses it.
+/// there or missing, dresses it: its decor, and (issue #146) its far decor and its fog on the
+/// chase camera.
 #[allow(clippy::too_many_arguments)]
 pub fn dress_circuit(
     mut commands: Commands,
@@ -44,18 +50,30 @@ pub fn dress_circuit(
     server: Res<AssetServer>,
     shared: Option<Res<ModelMaterials>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    cameras: Query<Entity, With<ChaseCamera>>,
     mut wanted: Local<Vec<String>>,
+    mut pending_fog: Local<Option<DistanceFog>>,
 ) {
     if !dressed.is_empty() {
+        // The fog of a circuit dressed before its chase camera was there (its models were
+        // already loaded): on the camera once it is.
+        if pending_fog.is_some() && !cameras.is_empty() {
+            let fog = pending_fog.take().unwrap_or_default();
+            for camera in &cameras {
+                commands.entity(camera).insert(fog.clone());
+            }
+        }
         return;
     }
+    *pending_fog = None;
     let (Some(handle), Some(shared)) = (handle, shared) else {
         return;
     };
     let Some(data) = tracks.get(&handle.0) else {
         return;
     };
-    let ids = decor_models(data.biome(), &data.props);
+    let ids = circuit_models(data);
     if *wanted != ids {
         models.keep_for_the_level(&ids);
         for id in &ids {
@@ -85,6 +103,24 @@ pub fn dress_circuit(
         &lakes,
         &shortcuts,
     );
+    // Issue #146: the far decor, around the near one (the file's too, mirrored after).
+    let far = data.far_decor().map(|far| {
+        let palette = data.biome().map(|b| b.palette).unwrap_or_default();
+        let plan = place_far_decor(
+            &center,
+            &palette,
+            &far,
+            data.decor_seed,
+            &plan,
+            &lakes,
+            &shortcuts,
+        );
+        if layout.mirrored {
+            plan.mirrored()
+        } else {
+            plan
+        }
+    });
     let plan = if layout.mirrored {
         plan.mirrored()
     } else {
@@ -93,17 +129,18 @@ pub fn dress_circuit(
     for piece in &plan.left_out {
         warn!("decor of {}: no room for {piece}", layout.name);
     }
-    let stand_in = stand_in_tree();
-    let (mut casting, mut small) = (MeshData::default(), MeshData::default());
+    let stand_in = std::sync::Arc::new(stand_in_tree());
     let mut stand_ins = 0;
+    let mut model_of = |id: &str| match models.get(id) {
+        Some(model) => model.clone(),
+        None => {
+            stand_ins += 1;
+            stand_in.clone()
+        }
+    };
+    let (mut casting, mut small) = (MeshData::default(), MeshData::default());
     for piece in &plan.pieces {
-        let model = match models.get(&plan.models[piece.model as usize]) {
-            Some(model) => model.as_ref(),
-            None => {
-                stand_ins += 1;
-                &stand_in
-            }
-        };
+        let model = model_of(&plan.models[piece.model as usize]);
         let out = if piece.shadows {
             &mut casting
         } else {
@@ -111,6 +148,20 @@ pub fn dress_circuit(
         };
         model.place(out, piece.position, piece.yaw, piece.height, piece.radius);
     }
+    let far_mesh = far.as_ref().map(|far| {
+        let mut mesh = far.mesh();
+        for piece in &far.pieces {
+            let model = model_of(&far.models[piece.model as usize]);
+            model.place(
+                &mut mesh,
+                piece.position,
+                piece.yaw,
+                piece.height,
+                piece.radius,
+            );
+        }
+        mesh
+    });
     let triangles = casting.triangle_count() + small.triangle_count();
     info!(
         "decor of {}: {} pieces ({} models, {stand_ins} in primitives), {triangles} triangles \
@@ -148,6 +199,81 @@ pub fn dress_circuit(
                 ));
             }
         });
+
+    // Issue #146: the far decor in one mesh, one material (fully rough, as the ground's: the
+    // ground beyond meets the slab without a seam), no shadows, no collider; the fog on the
+    // chase camera, in the sky's color.
+    let Some((far, mesh)) = far.zip(far_mesh) else {
+        for camera in &cameras {
+            commands.entity(camera).remove::<DistanceFog>();
+        }
+        return;
+    };
+    info!(
+        "far decor of {}: {} pieces ({} left out), {} triangles in 1 mesh",
+        layout.name,
+        far.pieces.len(),
+        far.left_out,
+        mesh.triangle_count()
+    );
+    commands.spawn((
+        Name::new(format!("Far decor: {}", layout.name)),
+        CircuitFarDecor {
+            pieces: far.pieces.len(),
+            triangles: mesh.triangle_count(),
+        },
+        LevelScoped,
+        Mesh3d(meshes.add(to_mesh(&mesh))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            ..default()
+        })),
+        Transform::default(),
+        NotShadowCaster,
+    ));
+    let (r, g, b) = data
+        .biome()
+        .map_or(Palette::default().sky, |biome| biome.palette.sky);
+    let fog = far_fog(Color::srgb(r, g, b), far.fog);
+    if cameras.is_empty() {
+        *pending_fog = Some(fog.clone());
+    }
+    for camera in &cameras {
+        commands.entity(camera).insert(fog.clone());
+    }
+}
+
+/// The fog of a far decor (issue #146): linear, from `start` to `end` meters, into the sky's
+/// color (no glow toward the sun).
+pub fn far_fog(sky: Color, (start, end): (f32, f32)) -> DistanceFog {
+    DistanceFog {
+        color: sky,
+        directional_light_color: Color::NONE,
+        falloff: FogFalloff::Linear { start, end },
+        ..default()
+    }
+}
+
+/// Every model a circuit's decor may place, each once: its decor's (`decor_models`) and its far
+/// decor's (issue #146). What to load for it.
+pub fn circuit_models(data: &TrackData) -> Vec<String> {
+    let mut ids = decor_models(data.biome(), &data.props);
+    if let Some(far) = data.far_decor() {
+        for id in far.models() {
+            if !ids.iter().any(|m| m == id) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+/// On the far decor of the circuit (issue #146): it is dressed.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct CircuitFarDecor {
+    pub pieces: usize,
+    pub triangles: usize,
 }
 
 /// Whether the game can load models (Bevy's glTF plugin, with a renderer).

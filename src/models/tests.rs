@@ -53,9 +53,12 @@ fn named_models() -> BTreeSet<String> {
     all.extend(animal_models());
     for biome in biomes() {
         all.extend(biome.models().iter().map(|m| m.to_string()));
+        // Issue #146: its far decor's.
+        all.extend(biome.far.models().iter().map(|m| m.to_string()));
     }
     for data in circuit_files() {
         all.extend(decor_models(data.biome(), &data.props));
+        all.extend(crate::track::dressing::circuit_models(&data));
     }
     // Issue #101: the lobby's clearing.
     all.extend(crate::salon::SALON_MODELS.map(str::to_string));
@@ -408,7 +411,9 @@ fn a_missing_model_is_missing() {
 /// The whole game with the models (the glTF plugin, still headless): on both circuits, the decor
 /// is dressed from every model (none in primitives) into its two meshes, and not one of its
 /// vertices is over the road, the curbs, the shoulders or the walls of any part of the circuit;
-/// the 12 karts wear the kart model, each body still with its color's shared material.
+/// the 12 karts wear the kart model, each body still with its color's shared material. Issue
+/// #146: the far decor too, in its own mesh (no shadows, no collider), and the fog of the biome
+/// on the chase camera.
 #[test]
 fn the_game_dresses_both_circuits_and_the_karts() {
     for (track, name) in [
@@ -444,6 +449,9 @@ fn the_game_dresses_both_circuits_and_the_karts() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         let decor = dressed.unwrap_or_else(|| panic!("{name}: never dressed"));
+        // Issue #146: a circuit dressed before its chase camera was there gets its fog a frame
+        // after the camera.
+        app.update();
         assert_eq!(decor.stand_ins, 0, "{name}");
         assert!(
             decor.pieces > 50 && decor.triangles > 5_000,
@@ -494,6 +502,66 @@ fn the_game_dresses_both_circuits_and_the_karts() {
                 }
             }
         }
+
+        // Issue #146: the far decor, in one mesh without shadows nor collider, never near the
+        // circuit either; the fog of its biome on the chase camera, in the sky's color.
+        let far: Vec<(
+            Entity,
+            crate::track::dressing::CircuitFarDecor,
+            Handle<Mesh>,
+        )> = world
+            .query::<(Entity, &crate::track::dressing::CircuitFarDecor, &Mesh3d)>()
+            .iter(world)
+            .map(|(entity, far, mesh)| (entity, *far, mesh.0.clone()))
+            .collect();
+        assert_eq!(far.len(), 1, "{name}: one far decor");
+        let (entity, far, handle) = far[0].clone();
+        assert!(far.pieces > 50 && far.triangles > 2_000, "{name}: {far:?}");
+        assert!(world.get::<bevy::light::NotShadowCaster>(entity).is_some());
+        assert!(
+            world
+                .get::<bevy_rapier3d::prelude::Collider>(entity)
+                .is_none()
+        );
+        assert!(world.get::<crate::level::LevelScoped>(entity).is_some());
+        let mesh = world.resource::<Assets<Mesh>>().get(&handle).unwrap();
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions");
+        };
+        assert!(!positions.is_empty(), "{name}");
+        for p in positions {
+            let p = Vec3::from(*p);
+            for s in samples {
+                let edge = wall_offset(s) + WALL_THICKNESS;
+                assert!(
+                    s.position.xz().distance(p.xz()) > edge,
+                    "{name}: a vertex of the far decor at {p} is within the walls at {:.0} m",
+                    s.distance
+                );
+            }
+        }
+        let sky = crate::track::TrackData::from_ron(
+            &std::fs::read_to_string(format!("{ASSETS}/{track}")).unwrap(),
+        )
+        .unwrap()
+        .biome()
+        .unwrap()
+        .palette
+        .sky;
+        let fogs: Vec<bevy::pbr::DistanceFog> = world
+            .query_filtered::<&bevy::pbr::DistanceFog, With<crate::camera::ChaseCamera>>()
+            .iter(world)
+            .cloned()
+            .collect();
+        assert_eq!(fogs.len(), 1, "{name}: the chase camera's fog");
+        assert_eq!(fogs[0].color, Color::srgb(sky.0, sky.1, sky.2), "{name}");
+        assert!(
+            matches!(fogs[0].falloff, bevy::pbr::FogFalloff::Linear { start, end }
+                if start >= 150.0 && end > start),
+            "{name}"
+        );
 
         // The karts: each body's shell wears its kart's color, the shared material.
         let visuals = world.resource::<crate::kart::KartVisualAssets>().clone();
@@ -1254,6 +1322,18 @@ fn measure_entities_with_the_models() {
             meshes.len(),
             pairs.len()
         );
+        // Issue #146: the decor's triangles, near and far.
+        let near: Vec<crate::track::CircuitDecor> = world
+            .query::<&crate::track::CircuitDecor>()
+            .iter(world)
+            .copied()
+            .collect();
+        let far: Vec<crate::track::dressing::CircuitFarDecor> = world
+            .query::<&crate::track::dressing::CircuitFarDecor>()
+            .iter(world)
+            .copied()
+            .collect();
+        println!("  decor: {near:?}; far decor: {far:?}");
     }
 }
 
