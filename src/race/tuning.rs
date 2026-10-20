@@ -114,6 +114,15 @@ pub struct HazardTuning {
     pub hay_slowdown: f32,
     pub crate_slowdown: f32,
     pub balloon_slowdown: f32,
+    /// Issue #156 (GD « Conception des circuits »): a shortcut's panel, broken by a kart with a
+    /// boost, comes back this long after (s; the same tick on every peer).
+    pub panel_respawn_seconds: f32,
+    /// Issue #156: how much a kart without a boost bounces off a panel (its restitution; a wall's
+    /// is 0.3: a gentle bounce, the kart is not thrown back).
+    pub panel_bounce: f32,
+    /// Issue #156: a kart with a boost breaks a panel this far before its contact shape touches
+    /// it (m; on top of the way it goes in two ticks): it never bumps into it.
+    pub panel_reach: f32,
 }
 
 impl Default for HazardTuning {
@@ -127,6 +136,9 @@ impl Default for HazardTuning {
             hay_slowdown: 0.08,
             crate_slowdown: 0.04,
             balloon_slowdown: 0.0,
+            panel_respawn_seconds: 6.0,
+            panel_bounce: 0.15,
+            panel_reach: 0.3,
         }
     }
 }

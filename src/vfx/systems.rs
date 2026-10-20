@@ -41,7 +41,8 @@ use crate::menu::MainMenu;
 use crate::race::{Race, RaceProgress};
 use crate::track::circuit::TrackHandle;
 use crate::track::{
-    Breakable, BreakableKind, HazardBody, HazardKind, TrackData, TrackLayout, water_depth,
+    Breakable, BreakableKind, CoverKind, HazardBody, HazardKind, TrackData, TrackLayout,
+    water_depth,
 };
 
 /// What a kart throws all along: one carry each (`emit::take`).
@@ -544,6 +545,8 @@ pub(super) fn watch_world(
             .and_then(|layout| layout.hazards.get(usize::from(body.0)))
             .and_then(|hazard| match hazard.kind {
                 HazardKind::Breakable(kind) => Some(kind),
+                // Issue #156: a shortcut's panel breaks into splinters, like a crate.
+                HazardKind::Cover(CoverKind::Panel) => Some(BreakableKind::Crate),
                 _ => None,
             });
         let (Some(kind), true) = (kind, room(&queue)) else {

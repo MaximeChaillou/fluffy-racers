@@ -288,7 +288,40 @@ pub struct ShortcutData {
     pub ramp_length: f32,
     #[serde(default = "default_jump_ramp_angle")]
     pub ramp_angle: f32,
+    /// Issue #156 (GD « Conception des circuits »): what closes or hides its entrance, if
+    /// anything (a road or a grass path; never a jump): `cover: Some((kind: Panel, at: 18.0))`.
+    #[serde(default)]
+    pub cover: Option<CoverData>,
 }
+
+/// Issue #156: what closes or hides a shortcut's entrance (GD « Conception des circuits »: a
+/// shortcut is hidden, and opens only to who looks for it or has what it takes).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CoverKind {
+    /// A big wooden sign board across the path, a little askew: solid without a boost (the kart
+    /// bounces gently off it), it bursts into splinters under a kart with a boost going (a
+    /// mini-turbo, a pad, a piment), and comes back after a while
+    /// (`HazardTuning::panel_respawn_seconds`).
+    Panel,
+    /// A curtain of tall grass and leaves across the path: one drives through it without slowing
+    /// down, it hides what is behind it.
+    Foliage,
+}
+
+/// Issue #156: a cover of a shortcut, `at` meters along its path from its start, across it.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CoverData {
+    pub kind: CoverKind,
+    pub at: f32,
+}
+
+/// Issue #156: a cover is this wide (m): the path it closes is narrower, by a margin on each
+/// side ([`COVER_OVERLAP`]). Wider than a path of the guide (4 to 5 m): seen at an angle, it
+/// still hides the way behind it.
+pub const COVER_WIDTH: f32 = 8.0;
+/// Issue #156: a cover overlaps each side of its path by this much at least (m).
+pub const COVER_OVERLAP: f32 = 0.25;
 
 impl ShortcutData {
     pub fn point(&self, i: usize) -> Vec3 {
@@ -787,6 +820,26 @@ impl TrackData {
                     shortcut.ramp_length, shortcut.ramp_angle, shortcut.ramp_width
                 ));
             }
+            // Issue #156: its cover, on its path (a road or a grass path), across all of it.
+            if let Some(cover) = shortcut.cover {
+                let length = super::shortcut::Shortcut::new(&center, shortcut).length();
+                if shortcut.kind == ShortcutKind::Jump
+                    || !cover.at.is_finite()
+                    || cover.at < 2.0
+                    || cover.at > length - 2.0
+                    || shortcut.width > COVER_WIDTH - 2.0 * COVER_OVERLAP
+                {
+                    return fail(format!(
+                        "shortcut {k}: its cover {:?} at {} m (2 m from its ends at least, on a \
+                         path of {length:.0} m), on a {:?} of {} m ({} m at most; never on a jump)",
+                        cover.kind,
+                        cover.at,
+                        shortcut.kind,
+                        shortcut.width,
+                        COVER_WIDTH - 2.0 * COVER_OVERLAP
+                    ));
+                }
+            }
             // Its mouths: near the road at `from` and `to`, on a side without wall there.
             let ends = [
                 (shortcut.from, shortcut.point(0)),
@@ -989,6 +1042,50 @@ mod tests {
     use super::*;
 
     const MINIMAL: &str = "(name: \"Square\", points: [(pos: (0.0, 0.0, 0.0)), (pos: (0.0, 0.0, -50.0)), (pos: (50.0, 0.0, -50.0)), (pos: (50.0, 0.0, 0.0))])";
+
+    /// Issue #156: a shortcut's cover: on a road or a grass path (never a jump), 2 m from its ends
+    /// at least, the path narrow enough for it to stand across it; the mirror keeps it.
+    #[test]
+    fn a_shortcut_s_cover_that_makes_no_sense_is_rejected() {
+        let base = TrackData::from_ron(&MINIMAL.replace(
+            "(name:",
+            "(open_edges: [(from: 0.3, to: 1.7, side: Right)], \
+             shortcuts: [(from: 0.5, to: 1.5, kind: Road, width: 5.0, \
+             cover: Some((kind: Panel, at: 8.0)), \
+             points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])], name:",
+        ))
+        .unwrap();
+        assert_eq!(base.validate(), Ok(()));
+        let cover = base.shortcuts[0].cover.unwrap();
+        assert_eq!((cover.kind, cover.at), (CoverKind::Panel, 8.0));
+        let broken = |change: &dyn Fn(&mut ShortcutData)| {
+            let mut data = base.clone();
+            change(&mut data.shortcuts[0]);
+            data.validate().is_err()
+        };
+        assert!(!broken(&|s| s.kind = ShortcutKind::Grass));
+        assert!(!broken(
+            &|s| s.cover.as_mut().unwrap().kind = CoverKind::Foliage
+        ));
+        assert!(!broken(&|s| s.width = COVER_WIDTH - 2.0 * COVER_OVERLAP));
+        assert!(broken(&|s| s.width = COVER_WIDTH));
+        assert!(broken(&|s| s.cover.as_mut().unwrap().at = 1.0));
+        assert!(broken(&|s| s.cover.as_mut().unwrap().at = 30.0));
+        assert!(broken(&|s| s.cover.as_mut().unwrap().at = f32::NAN));
+        assert!(broken(&|s| {
+            s.kind = ShortcutKind::Jump;
+            s.points = vec![
+                (3.0, 0.0, -18.0),
+                (5.0, 0.0, -25.0),
+                (12.0, 0.0, -30.0),
+                (25.0, 0.0, -45.0),
+            ];
+            s.ramp_width = 4.0;
+        }));
+        let mirrored = base.mirrored();
+        assert_eq!(mirrored.shortcuts[0].cover, base.shortcuts[0].cover);
+        assert_eq!(mirrored.validate(), Ok(()));
+    }
 
     #[test]
     fn a_minimal_file_is_valid() {

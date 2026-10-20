@@ -136,9 +136,9 @@ pub use protocol::{
     EffectOut, FOOT_POSE_BITS, FootState, FootStrike, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId,
     ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES,
     MAX_NAME_CHARS, MAX_PLAYERS, MAX_PROGRAM, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
-    OutPillow, PROTOCOL_VERSION, PeerKey, Pickup, PillowGone, Profile, Program, Progress,
-    RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter, Spot,
-    Strike, StrikeReply, TetherBreak, Verdict,
+    OutPillow, PROTOCOL_VERSION, PanelDown, PeerKey, Pickup, PillowGone, Profile, Program,
+    Progress, RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter,
+    Spot, Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
@@ -762,6 +762,7 @@ fn to_the_game(
         | Message::Effect(_)
         | Message::Rammed(_)
         | Message::PillowGone(_)
+        | Message::PanelDown(_)
         | Message::Retarget(_)
         | Message::Steal(_)
         | Message::Stolen(_) => {

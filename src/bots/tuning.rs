@@ -224,6 +224,15 @@ pub struct BotTuning {
     /// mini-turbo fired 20 m before the grass bridge (about 1 s gained), not a boost pad's 1 s
     /// fired 9 m before it (about nothing gained).
     pub grass_boost_share: f32,
+    /// Issue #156: a shortcut closed by a panel (it breaks only under a kart with a boost), only
+    /// with a boost that lasts, at its speed of the moment, up to the panel and this much further
+    /// (m); it waits for one up to the shortcut, and keeps to the road if its boost would end
+    /// before the panel.
+    pub panel_boost_margin: f32,
+    /// Issue #156: on a narrow shortcut (the guide's, 4 to 5 m wide), the bot aims at most this
+    /// far ahead along its path (m): it keeps to its curves instead of cutting them (off the
+    /// path: the void).
+    pub narrow_path_aim: f32,
     /// It tries a risky jump only at this share of its top speed or faster, from the decision
     /// to the ramp.
     pub jump_speed_share: f32,
@@ -395,6 +404,8 @@ impl Default for BotTuning {
 
             shortcut_lookahead: 45.0,
             grass_boost_share: 0.35,
+            panel_boost_margin: 6.0,
+            narrow_path_aim: 8.0,
             jump_speed_share: 0.9,
 
             stuck_speed: 1.5,
@@ -477,5 +488,6 @@ mod tests {
         assert_eq!(jumps[..2], [0.0, 0.0]);
         assert!(jumps[2] > 0.0);
         assert!(t.grass_boost_share > 0.0 && t.jump_speed_share > 0.5);
+        assert!(t.panel_boost_margin > 0.0);
     }
 }

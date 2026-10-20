@@ -63,8 +63,8 @@ use super::online::OnlineRace;
 use super::pickups::{Arbiter, ClaimKey, PillowRules};
 use super::protocol::{
     BlastOut, Claim, EFFECT_ITEMS, EffectOut, Honk, ItemBreak, ItemId, ItemOut, KartId, LooseId,
-    MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow, PeerKey, Pickup, PillowGone, RAM_ITEMS,
-    Rammed, Retarget, Scatter, Spot, Steal, Stolen, Verdict,
+    MAX_SCATTER, Message, OUT_ITEMS, OutMotion, OutPillow, PanelDown, PeerKey, Pickup, PillowGone,
+    RAM_ITEMS, Rammed, Retarget, Scatter, Spot, Steal, Stolen, Verdict,
 };
 use super::sync::{KartSync, NetKart, RemoteKartProxy};
 use super::{NetSession, online::local_tick};
@@ -86,6 +86,8 @@ use crate::track::{GRID_SLOTS, SpotIndex};
 const MAX_CATCH_UP: u32 = 120;
 /// Items broken lately, kept to drop an [`ItemOut`] that comes after its break, at most.
 const BROKEN_KEPT: usize = 256;
+/// Issue #156: the panels broken by the other peers kept until the hazards read them.
+const PANELS_KEPT: usize = 32;
 /// Items exploded lately (issue #18), kept for the victims' decisions of their blast, at most.
 const EXPLODED_KEPT: usize = 32;
 /// The other karts' oreillers géants waiting for the host's word, kept at most (issue #61).
@@ -175,6 +177,9 @@ pub struct OnlineItems {
     /// The other karts' oreillers géants drawn, until the host's word: their kart, the tick of
     /// their claim, what they get instead if refused (issue #61, for `ItemLog::draws`).
     pillow_draws: Vec<(KartId, u32, (ItemKind, u8))>,
+    /// Issue #156: the shortcuts' panels the other peers' karts broke, for the hazards
+    /// (`track::hazards`): the panel's number, the tick, the kart here (if it is).
+    panels: Vec<(u16, u32, Option<Entity>)>,
     pub log: ItemLog,
 }
 
@@ -197,6 +202,25 @@ impl OnlineItems {
     /// The session (`KartSync::session`) we are in.
     pub fn session(&self) -> Option<u8> {
         self.session
+    }
+
+    /// Issue #156: our kart `kart` broke the shortcut's panel `panel` on tick `tick` of the
+    /// hazards' clock: we tell every peer.
+    pub fn panel_down(&mut self, kart: KartId, panel: u16, tick: u32) {
+        if let Some(session) = self.session {
+            self.outbox.push(Message::PanelDown(PanelDown {
+                session,
+                kart,
+                panel,
+                tick,
+            }));
+        }
+    }
+
+    /// Issue #156: the panels the other peers' karts broke since the last call (the panel's
+    /// number, the tick, the kart here if it is).
+    pub fn take_panels(&mut self) -> Vec<(u16, u32, Option<Entity>)> {
+        std::mem::take(&mut self.panels)
     }
 
     /// The items out here that the network knows (ours and the others'), by id.
@@ -657,6 +681,19 @@ fn receive_items(
                 {
                     stats.hits_landed += 1;
                 }
+            }
+            Message::PanelDown(down) if down.session == current => {
+                // Issue #156: its kart's peer decided (the panels' systems may not be there: a
+                // circuit without any keeps a few at most).
+                if karts.authority(down.kart) != Some(from) {
+                    continue;
+                }
+                if items.panels.len() >= PANELS_KEPT {
+                    items.panels.remove(0);
+                }
+                items
+                    .panels
+                    .push((down.panel, down.tick, karts.entity(down.kart)));
             }
             Message::PillowGone(gone) if gone.session == current => {
                 // Issue #61: its kart's peer says so: another oreiller may come.

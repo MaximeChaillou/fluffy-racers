@@ -23,13 +23,25 @@
 //! - **Their look** (with a renderer only, [`HazardVisualPlugin`], `super::hazard_visual`): the
 //!   models in primitives, the passers-by walking, the bursts' effects (`crate::vfx`) and sounds
 //!   (`crate::audio`).
+//! - **Issue #156: the covers of the shortcuts.** A **panel** ([`Panel`]) is a static collider
+//!   across its shortcut's path (`Surface::Wall`, a softer bounce than a wall's:
+//!   `HazardTuning::panel_bounce`) and its state: one of our karts with a boost going that comes
+//!   to it breaks it ([`break_panels`]: its collider off, splinters and a sound through its
+//!   [`Breakable`], like a crate's), and it stands again `HazardTuning::panel_respawn_seconds`
+//!   later, on a tick of the hazards' clock. Online, the kart's peer decides and tells
+//!   (`net::PanelDown`); each peer has it down until the latest tick it was told: the same on
+//!   every peer. Its system is added only with the first circuit that has a panel
+//!   ([`install_panel_systems`]): the circuits with hazards but no panel keep their schedule. A
+//!   **curtain of foliage** is only seen (no collider, no system): one drives through it.
 
 use bevy::prelude::*;
-use bevy_rapier3d::prelude::{Collider, Friction, Restitution, RigidBody, Velocity};
+use bevy_rapier3d::prelude::{
+    Collider, ColliderDisabled, Friction, Restitution, RigidBody, Velocity,
+};
 
-use super::data::{BreakableKind, ObstacleKind};
+use super::data::{BreakableKind, CoverKind, ObstacleKind};
 use super::hazard::{
-    Hazard, HazardKind, clock_seconds, hazard_phase, kart_capsule, push_direction,
+    Capsule, Hazard, HazardKind, Shape, clock_seconds, hazard_phase, kart_capsule, push_direction,
 };
 use super::{Surface, TrackLayout, WALL_RESTITUTION};
 use crate::TICK_HZ;
@@ -39,7 +51,7 @@ use crate::interpolation::PhysicsPose;
 use crate::items::{ItemSystems, immune_to_items};
 use crate::kart::{Boost, HitReaction, Invincibility, Kart, KartState, KartSystems, Remote};
 use crate::level::LevelScoped;
-use crate::net::KartSync;
+use crate::net::{KartSync, NetKart, OnlineItems};
 use crate::race::{HazardTuning, Race, RaceGrid, RaceProgress, RaceSystems, RaceTuning};
 
 pub use super::hazard_visual::HazardVisualPlugin;
@@ -73,12 +85,28 @@ pub struct HazardSystems;
 #[derive(Resource, Debug)]
 pub struct HazardSystemsInstalled;
 
+/// Issue #156: the panels' system is in the schedule (from the first circuit with a panel on).
+#[derive(Resource, Debug)]
+pub struct PanelSystemsInstalled;
+
+/// Issue #156: a shortcut's panel: down (broken) until tick `down_until` of the hazards' clock
+/// ([`hazard_tick`]); its collider is off while it is down (`ColliderDisabled`: out of the
+/// contacts and of the rays, the camera's and the items' too), and until none of our karts is in
+/// it once it stands again (it never throws a kart out of it).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Panel {
+    pub down_until: u32,
+    /// Its collider is on (it blocks the karts).
+    pub solid: bool,
+}
+
 /// Spawns the hazards of `layout` (nothing at all without any), and has their systems added to
 /// the schedule.
 pub fn spawn_hazards(commands: &mut Commands, layout: &TrackLayout) {
     if layout.hazards.is_empty() {
         return;
     }
+    let mut panels = false;
     for hazard in &layout.hazards {
         let name = Name::new(format!("Hazard {}: {:?}", hazard.index, hazard.kind));
         let mut entity = commands.spawn((LevelScoped, HazardBody(hazard.index), name));
@@ -110,13 +138,38 @@ pub fn spawn_hazards(commands: &mut Commands, layout: &TrackLayout) {
                 Friction::coefficient(0.0),
                 Surface::Wall,
             ));
+        } else if hazard.kind.closes() {
+            // Issue #156: a board across the path, standing; its bounce follows its tuning.
+            let shape = hazard.shape();
+            let center = pose.with_translation(pose.translation + hazard.road.up * shape.height);
+            let half = Shape::cover_box(CoverKind::Panel);
+            entity.insert((
+                center,
+                RigidBody::Fixed,
+                Collider::cuboid(half.x, half.y, half.z),
+                Restitution::coefficient(WALL_RESTITUTION),
+                Friction::coefficient(0.0),
+                Surface::Wall,
+                Breakable::default(),
+                Panel {
+                    down_until: 0,
+                    solid: true,
+                },
+            ));
+            panels = true;
         } else if hazard.kind.moves() {
             entity.insert((pose, PhysicsPose::new(pose)));
-        } else {
+        } else if hazard.kind.bursts() {
             entity.insert((pose, Breakable::default()));
+        } else {
+            // Issue #156: a curtain of foliage, only seen.
+            entity.insert(pose);
         }
     }
     commands.queue(install_hazard_systems);
+    if panels {
+        commands.queue(install_panel_systems);
+    }
 }
 
 /// Adds the hazards' systems to `FixedUpdate`, once (see the module's documentation).
@@ -145,17 +198,32 @@ pub fn install_hazard_systems(world: &mut World) {
     });
 }
 
+/// Issue #156: adds the panels' system to `FixedUpdate`, once (after the things to drive
+/// through, in [`HazardSystems`]; see the module's documentation).
+pub fn install_panel_systems(world: &mut World) {
+    if world.contains_resource::<PanelSystemsInstalled>() {
+        return;
+    }
+    world.insert_resource(PanelSystemsInstalled);
+    world.schedule_scope(FixedUpdate, |_, schedule| {
+        schedule.add_systems(break_panels.in_set(HazardSystems).after(burst_breakables));
+    });
+}
+
 /// The race clock (s): the race's flow tick (online, the room's: the same on every peer); out
 /// of a race (free driving), the room's common tick online, the simulation's own solo.
 pub fn hazard_clock(race: Option<&Race>, sync: Option<&KartSync>, fixed: &Time<Fixed>) -> f32 {
+    clock_seconds(hazard_tick(race, sync, fixed))
+}
+
+/// The race clock's tick (see [`hazard_clock`]).
+pub fn hazard_tick(race: Option<&Race>, sync: Option<&KartSync>, fixed: &Time<Fixed>) -> u32 {
     if let Some(race) = race {
-        return clock_seconds(race.flow.tick);
+        return race.flow.tick;
     }
     let local = (fixed.elapsed_secs_f64() * TICK_HZ).round() as u32;
-    clock_seconds(
-        sync.and_then(|sync| sync.clock.common(local))
-            .unwrap_or(local),
-    )
+    sync.and_then(|sync| sync.clock.common(local))
+        .unwrap_or(local)
 }
 
 /// The moving hazards where the race clock puts them.
@@ -315,6 +383,137 @@ fn burst_breakables(
                 velocity.linear *= 1.0 - slowdown(tuning, kind);
             }
             break;
+        }
+    }
+}
+
+/// Issue #156: how many ticks a panel stays down.
+pub fn panel_down_ticks(tuning: &HazardTuning) -> u32 {
+    (tuning.panel_respawn_seconds.max(0.0) * TICK_HZ as f32)
+        .round()
+        .max(1.0) as u32
+}
+
+/// Issue #156: whether a kart's contact shape `kart` reaches the box of a panel (half extents
+/// `half` around `center`, turned by `rotation`), with `margin` more: a few points along the
+/// kart's segment against the box.
+pub fn reaches_box(kart: &Capsule, center: Vec3, rotation: Quat, half: Vec3, margin: f32) -> bool {
+    let inverse = rotation.inverse();
+    (0..=4).any(|k| {
+        let point = kart.a.lerp(kart.b, k as f32 / 4.0);
+        let local = inverse * (point - center);
+        let outside = (local.abs() - half).max(Vec3::ZERO);
+        outside.length() <= kart.radius + margin
+    })
+}
+
+/// Issue #156: the shortcuts' panels. Online, the breaks the other peers told (the latest one
+/// counts: down until its tick plus the respawn time); then one of our karts with a boost going
+/// that comes to a panel standing breaks it (its contact shape stretched by two ticks of its
+/// way: it never bumps into it), and we tell. A panel down has its collider off; standing again,
+/// it is solid once none of our karts is in it. All stand when a race (re)starts.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn break_panels(
+    mut commands: Commands,
+    tuning: Res<RaceTuning>,
+    layout: Res<TrackLayout>,
+    (race, sync, fixed): (Option<Res<Race>>, Option<Res<KartSync>>, Res<Time<Fixed>>),
+    mut online: Option<ResMut<OnlineItems>>,
+    mut panels: Query<(
+        Entity,
+        &HazardBody,
+        &Transform,
+        &mut Panel,
+        &mut Breakable,
+        &mut Restitution,
+    )>,
+    karts: Query<
+        (
+            Entity,
+            &Transform,
+            &Velocity,
+            &Boost,
+            &KartState,
+            Option<&NetKart>,
+        ),
+        (With<Kart>, Without<HazardBody>),
+    >,
+) {
+    let tuning = &tuning.hazards;
+    let now = hazard_tick(race.as_deref(), sync.as_deref(), &fixed);
+    let restart = race.as_ref().is_some_and(|race| race.flow.tick == 1);
+    let down_for = panel_down_ticks(tuning);
+    let told = online
+        .as_mut()
+        .map(|online| online.take_panels())
+        .unwrap_or_default();
+    let dt = 1.0 / TICK_HZ as f32;
+    let half = Shape::cover_box(CoverKind::Panel);
+    for (entity, body, transform, mut panel, mut breakable, mut restitution) in &mut panels {
+        let Some(hazard) = layout.hazards.get(usize::from(body.0)) else {
+            continue;
+        };
+        if restitution.coefficient != tuning.panel_bounce {
+            restitution.coefficient = tuning.panel_bounce;
+        }
+        if restart {
+            panel.down_until = 0;
+        }
+        breakable.burst_by = None;
+        let was_down = now < panel.down_until;
+        for (index, tick, kart) in &told {
+            if *index == body.0 {
+                panel.down_until = panel.down_until.max(tick.saturating_add(down_for));
+                if !was_down && now < panel.down_until && breakable.burst_by.is_none() {
+                    breakable.burst_by = Some(kart.unwrap_or(entity));
+                    breakable.bursts += 1;
+                }
+            }
+        }
+        if now >= panel.down_until {
+            let contact = hazard.body(&hazard.pose(0.0, 0.0));
+            let breaker = karts.iter().find(|(_, kart, velocity, boost, state, _)| {
+                if !boost.is_active() || **state == KartState::Respawning {
+                    return false;
+                }
+                let mut shape = kart_capsule(kart);
+                shape.b += velocity.linear * dt * 2.0;
+                contact.gap(&shape).0 <= tuning.panel_reach
+            });
+            if let Some((kart, _, _, _, _, net)) = breaker {
+                panel.down_until = now.saturating_add(down_for);
+                breakable.burst_by = Some(kart);
+                breakable.bursts += 1;
+                if let (Some(online), Some(net)) = (online.as_mut(), net) {
+                    online.panel_down(net.0, body.0, now);
+                }
+            }
+        }
+        let down = now < panel.down_until;
+        breakable.respawn_in = if down {
+            (panel.down_until - now) as f32 * dt
+        } else {
+            0.0
+        };
+        // Solid when it stands and none of our karts is in it.
+        let solid = !down
+            && (panel.solid
+                || !karts.iter().any(|(_, kart, ..)| {
+                    reaches_box(
+                        &kart_capsule(kart),
+                        transform.translation,
+                        transform.rotation,
+                        half,
+                        0.05,
+                    )
+                }));
+        if solid != panel.solid {
+            panel.solid = solid;
+            if solid {
+                commands.entity(entity).remove::<ColliderDisabled>();
+            } else {
+                commands.entity(entity).insert(ColliderDisabled);
+            }
         }
     }
 }

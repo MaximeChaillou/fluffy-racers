@@ -354,7 +354,10 @@ fn a_risky_jump_made_saves_time_and_one_too_slow_falls_to_the_pelican() {
 /// it: about a mini-turbo), a Hard bot takes it (it only does with one) and reaches 20 m past its
 /// end at least 0.5 s before the same bot with the same boost by the road; without a boost, the
 /// bot keeps to the road, and is there at least 0.3 s before a kart that drives the grass from
-/// the same place, flat out.
+/// the same place, flat out. Issue #156: on the Corniche Cannelle, a panel closes the grass
+/// bridge: the kart that drives it without a boost does it with the panel down (broken a moment
+/// before by another kart), and a kart that drives it from its start without a boost, the panel
+/// standing, never gets past the panel (it bounces off it) while the bot by the road is there.
 #[test]
 fn the_grass_bridge_never_calls_the_pelican_slows_without_a_boost_and_pays_with_one() {
     for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
@@ -369,6 +372,14 @@ fn the_grass_bridge_never_calls_the_pelican_slows_without_a_boost_and_pays_with_
             12.0,
             grass.from,
         );
+        if grass.closed() {
+            // Issue #156: its panel down (a kart with a boost broke it a moment ago).
+            let world = canyon.app.world_mut();
+            let tick = world.resource::<Race>().flow.tick;
+            for mut panel in world.query::<&mut crate::track::Panel>().iter_mut(world) {
+                panel.down_until = tick + 20 * 60;
+            }
+        }
         let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
         let driver = move |app: &App| follow(&path, &layout, app, kart);
         let run = canyon.run(grass.from + grass.span + 20.0, 15.0, Some(&driver));
@@ -422,6 +433,60 @@ fn the_grass_bridge_never_calls_the_pelican_slows_without_a_boost_and_pays_with_
         let run = canyon.run(grass.from + grass.span + 20.0, 15.0, None);
         assert!(run.tows.is_empty() && run.on.is_empty(), "{run:?}");
         let road = run.ticks.expect("the goal is reached") as f32 / 60.0;
+        if let Some(cover) = grass.cover.filter(|c| c.closes()) {
+            // Issue #156: closed by a panel: without a boost, a kart never gets past it.
+            let mut canyon = Canyon::new(circuit, mirrored);
+            let start = grass.samples()[0];
+            canyon.place_at(
+                start.position + Vec3::Y * GRID_HEIGHT,
+                start.forward,
+                20.0,
+                grass.from,
+            );
+            let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
+            let driver = move |app: &App| follow(&path, &layout, app, kart);
+            let mut furthest = f32::MIN;
+            for _ in 0..(road * 60.0) as u32 + 60 {
+                let input = driver(&canyon.app);
+                *canyon
+                    .app
+                    .world_mut()
+                    .get_mut::<KartInput>(canyon.kart)
+                    .unwrap() = input;
+                canyon.app.update();
+                let world = canyon.app.world();
+                let at = world.get::<Transform>(canyon.kart).unwrap().translation;
+                let here = grass.locate(at);
+                // Pushing against it for long, it is stuck: the pelican comes; or it slid off the
+                // narrow path along the panel and fell, by the panel: the pelican too.
+                if let Some(carry) = world.get::<Tow>(canyon.kart).unwrap().carry {
+                    println!("{name} (mirror {mirrored}): {:?} at {here:?}", carry.reason);
+                    assert!(
+                        carry.reason == TowReason::Stuck
+                            || (carry.reason == TowReason::Fell
+                                && here.along > cover.at - 4.0
+                                && here.along < cover.at + 1.0),
+                        "{name} (mirror {mirrored}): {:?} at {here:?}",
+                        carry.reason
+                    );
+                    break;
+                }
+                if here.lateral.abs() <= grass.half_width + 1.0 {
+                    furthest = furthest.max(here.along);
+                }
+            }
+            println!(
+                "{name} (mirror {mirrored}): no boost, the road in {road:.2} s, the grass stopped \
+                 {:.2} m before its panel",
+                cover.at - furthest
+            );
+            assert!(
+                furthest > cover.at - 3.0 && furthest < cover.at - 0.9,
+                "{name} (mirror {mirrored}): {furthest:.1} m along the grass, its panel at {}",
+                cover.at
+            );
+            continue;
+        }
         let mut canyon = Canyon::new(circuit, mirrored);
         canyon.place(grass.from - circuit.grass_approach, 26.0);
         let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
@@ -486,5 +551,144 @@ fn the_hidden_road_saves_time_and_counts_right() {
             circuit.name
         );
         assert_eq!(runs[0].1, runs[1].1, "the same checkpoints crossed");
+    }
+}
+
+/// Whether the segment from `from` to `to` crosses the box of half extents `half` around
+/// `center`, turned by `rotation` (the slabs' test, in the box's frame).
+fn crosses_box(from: Vec3, to: Vec3, center: Vec3, rotation: Quat, half: Vec3) -> bool {
+    let inverse = rotation.inverse();
+    let (a, b) = (inverse * (from - center), inverse * (to - center));
+    let d = b - a;
+    let (mut low, mut high) = (0.0f32, 1.0f32);
+    for axis in 0..3 {
+        let (start, way, extent) = (a[axis], d[axis], half[axis]);
+        if way.abs() < 1e-6 {
+            if start.abs() > extent {
+                return false;
+            }
+            continue;
+        }
+        let (t1, t2) = ((-extent - start) / way, (extent - start) / way);
+        low = low.max(t1.min(t2));
+        high = high.min(t1.max(t2));
+        if low > high {
+            return false;
+        }
+    }
+    true
+}
+
+/// Issue #156 acceptance (« un test caché » ; GD « Conception des circuits » : un raccourci est
+/// étroit et caché) : on every circuit of the game and its mirror, every shortcut with a cover
+/// (a panel, a curtain of foliage) is 4 to 5 m wide, and **its entrance cannot be seen from the
+/// bots' racing line**: from the chase camera of a kart on the racing line (its default distance
+/// behind and height above it), at every meter of the 80 m up to the shortcut's start along the
+/// road, no point of its entrance (the shortcut's path from its cover to 10 m past it: its middle
+/// and both edges, 0.3 m above it) is in direct view: the line of sight crosses the cover's box
+/// (with the path under it, 2 m deep: one does not see through the road), or the point is out of
+/// the widest field of view of the camera (its field at top speed with a boost, on a 16:9
+/// screen). Honest and simple: nothing else hides it (no decor counted), and the cover must stand
+/// across the path. The Corniche Cannelle has one of each.
+#[test]
+fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
+    use crate::camera::CameraTuning;
+    use crate::track::hazard::Shape;
+    use crate::track::{CoverKind, HazardKind, TrackData};
+    let assets = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
+    let index = std::fs::read_to_string(format!("{assets}/tracks/index.ron")).unwrap();
+    let manifest = crate::admin::tracks::parse_manifest(&index).unwrap();
+    let camera = CameraTuning::default();
+    let t = BotTuning::default();
+    let vertical = (camera.max_speed_fov + camera.boost_fov).to_radians();
+    let half_fov = ((vertical / 2.0).tan() * 16.0 / 9.0).atan();
+    // The entrance: the path from its cover to this far past it (m); the path under the cover
+    // hides this deep (m).
+    const DEPTH: f32 = 10.0;
+    const UNDER: f32 = 2.0;
+    let mut kinds = Vec::new();
+    for entry in &manifest.circuits {
+        let text = std::fs::read_to_string(format!("{assets}/tracks/{}", entry.file)).unwrap();
+        let file = TrackData::from_ron(&text).unwrap();
+        for data in [file.clone(), file.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let line = RacingLine::new(
+                &layout,
+                t.road_margin,
+                t.sand_margin,
+                t.void_margin,
+                t.line_margin,
+                t.hazard_clearance(),
+            );
+            let center = &layout.center;
+            for (k, shortcut) in layout.shortcuts.iter().enumerate() {
+                let Some(cover) = shortcut.cover else {
+                    continue;
+                };
+                let name = format!("{} (mirror {}), shortcut {k}", layout.name, data.mirrored);
+                kinds.push((layout.name.clone(), cover.kind));
+                let width = 2.0 * shortcut.half_width;
+                assert!((4.0..=5.0).contains(&width), "{name}: {width} m wide");
+                let hazard = layout
+                    .hazards
+                    .iter()
+                    .find(|h| {
+                        h.kind == HazardKind::Cover(cover.kind)
+                            && h.road.position.distance(shortcut.at(cover.at).position) < 1e-3
+                    })
+                    .expect("its cover is a hazard of the circuit");
+                // The cover, and its path under it (one does not see through the road).
+                let cover_box = Shape::cover_box(cover.kind);
+                let half = cover_box + Vec3::Y * UNDER / 2.0;
+                let base = hazard.road.transform(0.0, 0.0).rotation;
+                let middle = hazard.road.point(0.0, cover_box.y - UNDER / 2.0);
+                assert!(
+                    half.x >= shortcut.half_width + 0.25,
+                    "{name}: the cover stands across the path"
+                );
+                let mut targets = Vec::new();
+                let mut along = cover.at + half.z + 0.5;
+                while along <= cover.at + DEPTH {
+                    let s = shortcut.at(along);
+                    for side in [-1.0, 0.0, 1.0] {
+                        targets.push(s.point(side * (shortcut.half_width - 0.1), 0.3));
+                    }
+                    along += 1.0;
+                }
+                let mut seen = Vec::new();
+                for back in 0..=80 {
+                    let distance = center.wrap(shortcut.from - back as f32);
+                    let road = center.at(distance);
+                    let kart = road.point(line.offset_at(distance), 0.5);
+                    let heading = road.forward;
+                    let eye = kart - heading * camera.distance + road.up * camera.height;
+                    let flat = Vec2::new(heading.x, heading.z).normalize();
+                    for target in &targets {
+                        let to = *target - eye;
+                        let off = flat.angle_to(Vec2::new(to.x, to.z).normalize()).abs();
+                        if off > half_fov {
+                            continue;
+                        }
+                        if !crosses_box(eye, *target, middle, base, half) {
+                            seen.push((back, *target));
+                        }
+                    }
+                }
+                assert!(
+                    seen.is_empty(),
+                    "{name}: {} sights of its path past its {:?} from the racing line (m before \
+                     its start, point): {:?}",
+                    seen.len(),
+                    cover.kind,
+                    &seen[..seen.len().min(8)]
+                );
+            }
+        }
+    }
+    for kind in [CoverKind::Panel, CoverKind::Foliage] {
+        assert!(
+            kinds.contains(&("Corniche Cannelle".to_string(), kind)),
+            "the Corniche Cannelle has a {kind:?}: {kinds:?}"
+        );
     }
 }

@@ -8,7 +8,10 @@
 use bevy_rapier3d::prelude::{Collider, Velocity};
 
 use super::hazard::{Hazard, HazardKind, clock_seconds, hazard_phase, kart_capsule};
-use super::hazards::{Breakable, HazardBody, HazardSystemsInstalled, install_hazard_systems};
+use super::hazards::{
+    Breakable, HazardBody, HazardSystemsInstalled, Panel, PanelSystemsInstalled,
+    install_hazard_systems, install_panel_systems,
+};
 use super::*;
 use crate::admin::skip_countdown_now;
 use crate::bots::{BotDifficulty, BotTuning, RacingLine, bot};
@@ -110,7 +113,9 @@ fn under_it_next_tick(app: &App, hazard: &Hazard, lift: f32) -> Transform {
 /// component, no resource, no system (the bot races of its world are those of before #144). The
 /// Corniche Cannelle has one entity per hazard (a collider for a fixed one, a pose to interpolate
 /// for a moving one, its state for a thing to drive through), and exactly three systems more,
-/// added once.
+/// added once. Issue #156: and one more for its panel (a collider, its state, the look of a thing
+/// that breaks), added once too; a circuit with hazards but no panel (Prairie Pompon) has only
+/// the three of #144.
 #[test]
 fn only_a_circuit_with_hazards_has_them_in_its_world() {
     let (mut plain, _) = game_on(PLAIN_CIRCUIT, false, 0);
@@ -127,6 +132,19 @@ fn only_a_circuit_with_hazards_has_them_in_its_world() {
             .systems_len()
     };
     let plain_systems = systems(&plain);
+    let (prairie, _) = game_on("tracks/prairie.track.ron", false, 0);
+    assert!(
+        prairie
+            .world()
+            .get_resource::<HazardSystemsInstalled>()
+            .is_some()
+    );
+    assert!(
+        prairie
+            .world()
+            .get_resource::<PanelSystemsInstalled>()
+            .is_none()
+    );
 
     let (mut canyon, _) = game_on(CORNICHE, false, 0);
     let layout = canyon.world().resource::<TrackLayout>().clone();
@@ -136,11 +154,20 @@ fn only_a_circuit_with_hazards_has_them_in_its_world() {
             .get_resource::<HazardSystemsInstalled>()
             .is_some()
     );
-    assert_eq!(systems(&canyon), plain_systems + 3);
+    assert!(
+        canyon
+            .world()
+            .get_resource::<PanelSystemsInstalled>()
+            .is_some()
+    );
+    // Issue #156: the panels' system, and the sync point after it (it turns its collider off and
+    // on with commands).
+    assert_eq!(systems(&canyon), plain_systems + 5);
     // Asked again (another circuit with hazards): still once.
     install_hazard_systems(canyon.world_mut());
+    install_panel_systems(canyon.world_mut());
     canyon.update();
-    assert_eq!(systems(&canyon), plain_systems + 3);
+    assert_eq!(systems(&canyon), plain_systems + 5);
     let world = canyon.world_mut();
     let mut kinds = Vec::new();
     for (body, collider, pose, breakable, surface) in world
@@ -155,20 +182,13 @@ fn only_a_circuit_with_hazards_has_them_in_its_world() {
     {
         let hazard = &layout.hazards[usize::from(body.0)];
         kinds.push(hazard.kind);
-        assert_eq!(
-            collider.is_some(),
-            hazard.kind.stands(),
-            "{:?}",
-            hazard.kind
-        );
-        assert_eq!(
-            surface.copied(),
-            hazard.kind.stands().then_some(Surface::Wall)
-        );
+        let solid = hazard.kind.stands() || hazard.kind.closes();
+        assert_eq!(collider.is_some(), solid, "{:?}", hazard.kind);
+        assert_eq!(surface.copied(), solid.then_some(Surface::Wall));
         assert_eq!(pose.is_some(), hazard.kind.moves(), "{:?}", hazard.kind);
         assert_eq!(
             breakable.is_some(),
-            hazard.kind.bursts(),
+            hazard.kind.breaks(),
             "{:?}",
             hazard.kind
         );
@@ -176,7 +196,7 @@ fn only_a_circuit_with_hazards_has_them_in_its_world() {
     assert_eq!(kinds.len(), layout.hazards.len());
     // The reference circuit has one of each: obstacles fixed and moving, a passer-by, things
     // to drive through.
-    use super::data::{BreakableKind, NpcKind, ObstacleKind};
+    use super::data::{BreakableKind, CoverKind, NpcKind, ObstacleKind};
     for kind in [
         HazardKind::Obstacle(ObstacleKind::Rock),
         HazardKind::Obstacle(ObstacleKind::Trunk),
@@ -187,6 +207,8 @@ fn only_a_circuit_with_hazards_has_them_in_its_world() {
         HazardKind::Breakable(BreakableKind::HayBale),
         HazardKind::Breakable(BreakableKind::Balloon),
         HazardKind::Breakable(BreakableKind::Crate),
+        HazardKind::Cover(CoverKind::Panel),
+        HazardKind::Cover(CoverKind::Foliage),
     ] {
         assert!(
             kinds.contains(&kind),
@@ -501,4 +523,217 @@ fn the_kart_s_contact_shape_is_its_size() {
     let shape = kart_capsule(&Transform::IDENTITY);
     assert!((shape.a.distance(shape.b) + 2.0 * shape.radius - 2.0).abs() < 1e-5);
     assert!((shape.radius - 0.7).abs() < 1e-5);
+}
+
+/// Issue #156: the circuit's panel (the grass bridge's on the Corniche Cannelle): its entity, its
+/// hazard, and the shortcut it closes.
+fn panel_of(app: &mut App) -> (Entity, Hazard, Shortcut) {
+    use super::data::CoverKind;
+    let (entity, hazard) = hazard_of(app, HazardKind::Cover(CoverKind::Panel));
+    let layout = app.world().resource::<TrackLayout>();
+    let path = layout
+        .shortcuts
+        .iter()
+        .find(|s| s.closed())
+        .expect("a shortcut closed by a panel")
+        .clone();
+    (entity, hazard, path)
+}
+
+/// Issue #156: puts the kart on `path`, `before` meters before its panel, heading along it at
+/// `speed` (its race progress at the shortcut's start).
+fn on_the_path(app: &mut App, kart: Entity, path: &Shortcut, before: f32, speed: f32) {
+    let cover = path.cover.unwrap();
+    let s = path.at(cover.at - before);
+    let transform =
+        Transform::from_translation(s.point(0.0, GRID_HEIGHT)).looking_to(s.forward, s.up);
+    place(app, kart, transform, speed, path.from);
+}
+
+/// Issue #156: full throttle, steering along `path` (to its point 8 m ahead of the kart).
+fn along_the_path(app: &mut App, kart: Entity, path: &Shortcut) {
+    let transform = *app.world().get::<Transform>(kart).unwrap();
+    let here = path.locate(transform.translation);
+    let to = path.at(here.along.max(0.0) + 8.0).position - transform.translation;
+    let angle = to
+        .dot(*transform.right())
+        .atan2(to.dot(*transform.forward()));
+    let mut input = app.world_mut().get_mut::<KartInput>(kart).unwrap();
+    input.throttle = 1.0;
+    input.steer = (angle * 3.0).clamp(-1.0, 1.0);
+}
+
+fn panel_state(app: &App, entity: Entity) -> (Panel, Breakable, bool) {
+    let world = app.world();
+    (
+        *world.get::<Panel>(entity).unwrap(),
+        *world.get::<Breakable>(entity).unwrap(),
+        world
+            .get::<bevy_rapier3d::prelude::ColliderDisabled>(entity)
+            .is_none(),
+    )
+}
+
+/// Issue #156 acceptance (« le panneau : solide sans boost, cassé avec un boost, sa
+/// réapparition »), on the Corniche Cannelle and its mirror: a kart without a boost that drives
+/// into the grass bridge's panel flat out (from 14 m before it at 24 m/s, steering along the
+/// path) never gets past it: it
+/// bounces gently (back at 5 m/s at most, a wall sends it back at about 7), stays on its wheels,
+/// is not knocked over nor towed; the panel stands, solid. The same kart with a boost (a
+/// mini-turbo) breaks it before touching it: it drives through at the same speed (95 % at least),
+/// the panel down (no collider, burst once by it, splinters), and the panel stands again
+/// `panel_respawn_seconds` later, on the tick its break says, solid.
+#[test]
+fn a_panel_is_solid_without_a_boost_and_breaks_with_one() {
+    for mirrored in [false, true] {
+        let (mut app, kart) = game_on(CORNICHE, mirrored, 0);
+        let (entity, _, path) = panel_of(&mut app);
+        let cover = path.cover.unwrap();
+        let tuning = app.world().resource::<RaceTuning>().hazards.clone();
+        assert!(tuning.panel_bounce < crate::track::WALL_RESTITUTION);
+        on_the_path(&mut app, kart, &path, 14.0, 24.0);
+        let (mut furthest, mut back, mut aside, mut lowest_up) = (f32::MIN, 0.0f32, 0.0f32, 1.0f32);
+        for _ in 0..150 {
+            along_the_path(&mut app, kart, &path);
+            app.update();
+            let world = app.world();
+            let transform = world.get::<Transform>(kart).unwrap();
+            let velocity = world.get::<Velocity>(kart).unwrap().linear;
+            let here = path.locate(transform.translation);
+            let s = path.at(here.along);
+            furthest = furthest.max(here.along);
+            back = back.max(-velocity.dot(s.forward));
+            aside = aside.max(velocity.dot(s.right).abs());
+            lowest_up = lowest_up.min(transform.up().dot(s.up));
+            assert!(!world.get::<KartState>(kart).unwrap().is_hit());
+            assert!(
+                world.get::<Tow>(kart).unwrap().carry.is_none(),
+                "towed: {:?} at {here:?}, {velocity}",
+                world.get::<Tow>(kart).unwrap().carry
+            );
+        }
+        let (panel, breakable, solid) = panel_state(&app, entity);
+        println!(
+            "mirror {mirrored}: without a boost, {:.2} m before the panel at most, back at {back:.1} \
+             m/s, aside {aside:.1} m/s, up {lowest_up:.3}",
+            cover.at - furthest
+        );
+        assert!(
+            furthest < cover.at - 0.9,
+            "mirror {mirrored}: past the panel ({furthest:.2} m along, the panel at {})",
+            cover.at
+        );
+        assert!(furthest > cover.at - 2.0, "it reached the panel");
+        assert!(
+            back <= 5.0,
+            "mirror {mirrored}: thrown back at {back:.1} m/s"
+        );
+        assert!(
+            aside <= 3.0,
+            "mirror {mirrored}: thrown aside at {aside:.1} m/s"
+        );
+        assert!(
+            lowest_up > 0.9,
+            "mirror {mirrored}: tipped ({lowest_up:.3})"
+        );
+        assert_eq!((panel.down_until, breakable.bursts, solid), (0, 0, true));
+
+        // With a boost: it breaks before the kart touches it.
+        on_the_path(&mut app, kart, &path, 14.0, 24.0);
+        let strength = app
+            .world()
+            .resource::<crate::kart::KartTuning>()
+            .mini_turbo_strengths[1];
+        app.world_mut()
+            .get_mut::<Boost>(kart)
+            .unwrap()
+            .add(strength, 1.5);
+        let speed = |app: &App| {
+            let world = app.world();
+            let transform = world.get::<Transform>(kart).unwrap();
+            world
+                .get::<Velocity>(kart)
+                .unwrap()
+                .linear
+                .dot(*transform.forward())
+        };
+        let mut broke = None;
+        for _ in 0..90 {
+            let before = speed(&app);
+            along_the_path(&mut app, kart, &path);
+            app.update();
+            let (panel, breakable, solid) = panel_state(&app, entity);
+            if breakable.burst_by == Some(kart) {
+                assert!(broke.is_none(), "broken twice");
+                broke = Some((flow_tick(&app), before));
+                assert!(panel.down_until > flow_tick(&app));
+                assert_eq!(breakable.bursts, 1);
+            }
+            if broke.is_some() {
+                app.update();
+                assert!(!panel_state(&app, entity).2, "no collider while it is down");
+            }
+            let here = path.locate(app.world().get::<Transform>(kart).unwrap().translation);
+            if here.along > cover.at + 6.0 {
+                break;
+            }
+            let _ = solid;
+        }
+        let (tick, before) = broke.expect("the boosted kart never broke the panel");
+        let here = path.locate(app.world().get::<Transform>(kart).unwrap().translation);
+        assert!(
+            here.along > cover.at + 6.0,
+            "mirror {mirrored}: it never got through"
+        );
+        assert!(
+            speed(&app) >= 0.95 * before,
+            "mirror {mirrored}: {:.1} m/s after, {before:.1} before",
+            speed(&app)
+        );
+        // It stands again on the tick its break says, solid (the kart is far).
+        let down_for = super::hazards::panel_down_ticks(&tuning);
+        let (panel, ..) = panel_state(&app, entity);
+        assert_eq!(panel.down_until, tick + down_for);
+        *app.world_mut().get_mut::<KartInput>(kart).unwrap() = KartInput::default();
+        while flow_tick(&app) < tick + down_for {
+            assert!(!panel_state(&app, entity).0.solid);
+            app.update();
+        }
+        app.update();
+        let (panel, breakable, solid) = panel_state(&app, entity);
+        assert!(panel.solid && solid && breakable.available());
+        assert_eq!(breakable.bursts, 1);
+    }
+}
+
+/// Issue #156: a panel that stands again with a kart in it never throws it out: its collider
+/// stays off until the kart is out of it, then it is solid.
+#[test]
+fn a_panel_back_with_a_kart_in_it_lets_it_out_first() {
+    let (mut app, kart) = game_on(CORNICHE, false, 0);
+    let (entity, _, path) = panel_of(&mut app);
+    // Down: a boosted kart broke it a moment ago; ours stands right in it.
+    let now = flow_tick(&app);
+    app.world_mut().get_mut::<Panel>(entity).unwrap().down_until = now + 10;
+    on_the_path(&mut app, kart, &path, 0.0, 0.0);
+    for _ in 0..40 {
+        app.update();
+        let velocity = app.world().get::<Velocity>(kart).unwrap().linear;
+        assert!(velocity.length() < 1.5, "thrown at {velocity}");
+        assert!(!panel_state(&app, entity).2, "solid with the kart in it");
+    }
+    // It drives out: then the panel is solid.
+    let mut solid = false;
+    for _ in 0..120 {
+        along_the_path(&mut app, kart, &path);
+        app.update();
+        if panel_state(&app, entity).2 {
+            solid = true;
+            break;
+        }
+    }
+    assert!(solid, "never solid again");
+    let cover = path.cover.unwrap();
+    let here = path.locate(app.world().get::<Transform>(kart).unwrap().translation);
+    assert!(here.along > cover.at + 1.0, "out of it, past it: {here:?}");
 }

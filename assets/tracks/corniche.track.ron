@@ -246,8 +246,8 @@
     open_edges: [
         (from: 27.347, to: 47.954, side: Left),
         (from: 48.826, to: 59.457, side: Right),
-        (from: 130.080, to: 150.351, side: Right),
-        (from: 150.173, to: 164.863, side: Right),
+        (from: 132.0, to: 150.351, side: Right),
+        (from: 150.173, to: 163.9, side: Right),
     ],
     shortcuts: [
         // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
@@ -256,12 +256,24 @@
         (from: 49.450, to: 59.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
          points: [(119.61, 14.00, -48.82), (125.42, 14.00, -62.80), (133.97, 14.00, -65.62), (163.49, 13.58, -75.36), (172.18, 13.58, -73.03)]),
-        // The hidden road: straight behind the needle of rock while the road goes round it.
-        (from: 130.828, to: 149.603, kind: Road, width: 8.0,
-         points: [(182.72, 15.80, 97.63), (126.62, 15.90, 97.63), (70.53, 16.00, 97.63)]),
-        // The grass bridge, across the last corner: slow without a boost, quicker with one.
-        (from: 150.921, to: 164.801, kind: Grass, width: 9.0,
-         points: [(59.96, 16.00, 89.13), (54.13, 16.00, 88.44), (48.61, 16.00, 86.40), (43.73, 16.00, 83.14), (39.48, 16.00, 79.00), (35.27, 16.00, 74.79), (31.05, 16.00, 70.57), (26.84, 16.00, 66.36), (22.63, 16.00, 62.15), (18.49, 16.00, 57.90), (15.22, 16.00, 53.02), (13.19, 16.00, 47.50), (12.50, 16.00, 41.67)]),
+        // The hidden road: straight behind the needle of rock while the road goes round it. Issue
+        // #156: narrow (5 m), its mouth on the outside of the bulge's first turn, behind a curtain
+        // of tall grass 18 m in, where it leaves the road's edge (one drives through it, it hides
+        // the way behind).
+        (from: 132.0, to: 149.603, kind: Road, width: 5.0,
+         points: [(172.00, 16.00, 97.63), (121.27, 16.00, 97.63), (70.53, 16.00, 97.63)],
+         cover: Some((kind: Foliage, at: 18.0))),
+        // The grass bridge, across the last corner: slow without a boost, quicker with one. Issue
+        // #156: narrow (5 m), from the right of the road: a gentle bend off the rim, 30° to the
+        // right, straight, then a long bend onto the start straight's shoulder (a narrow path's
+        // curves must be taken at speed); closed by a panel 26 m in, where it is clear of the
+        // road's edge (a big sign board, a little askew, facing the karts that come along the rim:
+        // the way behind it goes straight away from them). It breaks only under a kart with a
+        // boost (the mini-turbo of the bulge's last turn, a piment); without one, the kart bounces
+        // off it.
+        (from: 150.921, to: 163.828, kind: Grass, width: 5.0,
+         cover: Some((kind: Panel, at: 26.0)),
+         points: [(59.96, 16.00, 94.63), (53.49, 16.00, 93.78), (47.46, 16.00, 91.28), (42.48, 16.00, 88.41), (37.50, 16.00, 85.53), (32.52, 16.00, 82.66), (27.54, 16.00, 79.78), (22.54, 16.00, 76.28), (18.23, 16.00, 71.97), (14.73, 16.00, 66.97), (12.15, 16.00, 61.44), (10.57, 16.00, 55.55), (10.04, 16.00, 49.47)]),
     ],
     // Issue #144 (GD « Conception des circuits », step 2): the obstacles. On one side of the
     // road each, the other side free (the bots keep to it), never on a shortcut's mouth, a jump's
