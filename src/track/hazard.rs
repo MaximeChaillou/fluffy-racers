@@ -25,8 +25,9 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::prelude::*;
 
-use super::data::{BreakableKind, NpcKind, ObstacleKind, TrackData};
+use super::data::{BreakableKind, COVER_WIDTH, CoverKind, NpcKind, ObstacleKind, TrackData};
 use super::layout::{CenterLine, TrackSample};
+use super::shortcut::Shortcut;
 use crate::kart::KART_HALF_EXTENTS;
 
 /// A swinging stone hangs this far below its pivot (m, its center).
@@ -35,6 +36,12 @@ pub const ROPE_LENGTH: f32 = 7.0;
 pub const STONE_CLEARANCE: f32 = 0.35;
 /// A passer-by stops at each end of its walk for this share of its period (half at each end).
 pub const NPC_PAUSE_SHARE: f32 = 0.3;
+/// Issue #156: a shortcut's panel is this high (m), its boards this thick.
+pub const PANEL_HEIGHT: f32 = 2.8;
+pub const PANEL_THICKNESS: f32 = 0.3;
+/// Issue #156: a curtain of foliage is this high (m), and this deep along its path.
+pub const FOLIAGE_HEIGHT: f32 = 3.2;
+pub const FOLIAGE_DEPTH: f32 = 1.2;
 
 /// What a hazard is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,6 +49,8 @@ pub enum HazardKind {
     Obstacle(ObstacleKind),
     Npc(NpcKind),
     Breakable(BreakableKind),
+    /// Issue #156: what closes or hides a shortcut's entrance, across its path.
+    Cover(CoverKind),
 }
 
 impl HazardKind {
@@ -55,7 +64,7 @@ impl HazardKind {
         match self {
             HazardKind::Obstacle(kind) => kind.moves(),
             HazardKind::Npc(_) => true,
-            HazardKind::Breakable(_) => false,
+            HazardKind::Breakable(_) | HazardKind::Cover(_) => false,
         }
     }
 
@@ -69,9 +78,20 @@ impl HazardKind {
         matches!(self, HazardKind::Breakable(_))
     }
 
-    /// The bots keep clear of it (everything but what bursts).
+    /// Issue #156: a shortcut's panel: solid without a boost, it breaks under a kart with one.
+    pub fn closes(self) -> bool {
+        self == HazardKind::Cover(CoverKind::Panel)
+    }
+
+    /// It is hidden while burst or broken, and comes back (a thing to drive through, a panel).
+    pub fn breaks(self) -> bool {
+        self.bursts() || self.closes()
+    }
+
+    /// The bots keep their lanes clear of it (on the road: everything but what bursts; a cover
+    /// stands on a shortcut's path, off the road).
     pub fn in_the_way(self) -> bool {
-        !self.bursts()
+        !self.bursts() && !matches!(self, HazardKind::Cover(_))
     }
 }
 
@@ -126,6 +146,34 @@ impl Shape {
             HazardKind::Breakable(BreakableKind::Crate) => {
                 shape(0.65, 0.65, Vec3::Y, 0.65, 0.0, 0.75)
             }
+            // Issue #156: a board across the path, its middle at half its height; its contact
+            // shape a capsule along it, thick enough to reach a kart's nose a little before the
+            // boards (a kart with a boost breaks it before it bumps into it).
+            HazardKind::Cover(CoverKind::Panel) => shape(
+                COVER_WIDTH / 2.0,
+                PANEL_THICKNESS / 2.0,
+                Vec3::X,
+                PANEL_HEIGHT / 2.0,
+                COVER_WIDTH / 2.0 - 1.0,
+                1.0,
+            ),
+            HazardKind::Cover(CoverKind::Foliage) => shape(
+                COVER_WIDTH / 2.0,
+                FOLIAGE_DEPTH / 2.0,
+                Vec3::X,
+                FOLIAGE_HEIGHT / 2.0,
+                COVER_WIDTH / 2.0 - 1.0,
+                1.0,
+            ),
+        }
+    }
+
+    /// Issue #156: a cover's box, as one sees it (half extents across, up and along its path),
+    /// around its middle: what it hides.
+    pub fn cover_box(kind: CoverKind) -> Vec3 {
+        match kind {
+            CoverKind::Panel => Vec3::new(COVER_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS) / 2.0,
+            CoverKind::Foliage => Vec3::new(COVER_WIDTH, FOLIAGE_HEIGHT, FOLIAGE_DEPTH) / 2.0,
         }
     }
 }
@@ -247,9 +295,11 @@ pub fn patrol(u: f32, pause: f32) -> (f32, f32) {
 pub struct Hazard {
     pub kind: HazardKind,
     /// Its number on the circuit, in the order of the file (the obstacles, then the passers-by,
-    /// then the things to drive through, row by row): its phase comes from it.
+    /// then the things to drive through, row by row, then issue #156 the covers of the
+    /// shortcuts, in their order): its phase comes from it.
     pub index: u16,
-    /// The road where it stands (the centerline's sample at its parameter).
+    /// The road where it stands (the centerline's sample at its parameter; issue #156: a cover,
+    /// its shortcut's path where it stands).
     pub road: TrackSample,
     /// Across the road from the centerline (m, right positive): its middle.
     pub lateral: f32,
@@ -318,6 +368,24 @@ impl Hazard {
                     road,
                 });
             }
+        }
+        // Issue #156: the covers of the shortcuts, across their path.
+        for shortcut in &data.shortcuts {
+            let Some(cover) = shortcut.cover else {
+                continue;
+            };
+            let road = Shortcut::new(center, shortcut).at(cover.at);
+            hazards.push(Hazard {
+                kind: HazardKind::Cover(cover.kind),
+                index: next(),
+                lateral: 0.0,
+                sweep: 0.0,
+                period: 1.0,
+                size: 1.0,
+                yaw: 0.0,
+                mirrored: data.mirrored,
+                road,
+            });
         }
         hazards
     }

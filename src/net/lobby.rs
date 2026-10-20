@@ -546,6 +546,7 @@ impl Lobby {
             | Message::Effect(_)
             | Message::Rammed(_)
             | Message::PillowGone(_)
+            | Message::PanelDown(_)
             | Message::Retarget(_)
             | Message::Steal(_)
             | Message::Stolen(_)

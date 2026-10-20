@@ -12,7 +12,7 @@ use super::race_tests::{ANA, BOB, player, seated, start_race};
 use super::*;
 use crate::interpolation::PhysicsPose;
 use crate::kart::{HitReaction, KartState, PlayerKart};
-use crate::race::{Course, Race, RaceGrid, RaceProgress, Tow};
+use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceTuning, Tow};
 use crate::track::hazard::{clock_seconds, hazard_phase, kart_capsule};
 use crate::track::{GRID_HEIGHT, HazardBody, HazardKind, NpcKind, TrackLayout};
 
@@ -177,4 +177,151 @@ fn online_the_bison_walks_alike_and_its_victim_decides() {
             .unwrap()
             .is_hit()
     );
+}
+
+/// Issue #156 acceptance (« le même état chez deux pairs »): on the Corniche Cannelle, in a room,
+/// Bob's kart with a boost breaks the grass bridge's panel in Bob's game (the breaker decides):
+/// Ana's game has it down too, until the same tick of the race (the break's tick plus its
+/// respawn time), its splinters there too; it stands again on that tick in both games. Ana's
+/// kart, far from it, has nothing to do with it.
+#[test]
+fn online_a_panel_broken_by_a_peer_is_down_alike_for_every_peer() {
+    use crate::kart::{Boost, KartInput, KartTuning};
+    use crate::track::{Breakable, CoverKind, Panel, hazards::panel_down_ticks};
+    let mut room = seated(&[(ANA, "Ana"), (BOB, "Bob")]);
+    let index = crate::admin::tracks::circuits()
+        .iter()
+        .position(|c| c.name == "Corniche Cannelle")
+        .expect("the Corniche Cannelle in the manifest") as u8;
+    room.act(ANA, NetAction::ChooseCircuit(index));
+    room.until(20.0, "free driving on the Corniche Cannelle", |app| {
+        app.world()
+            .get_resource::<TrackLayout>()
+            .is_some_and(|layout| layout.name == "Corniche Cannelle")
+    });
+    start_race(&mut room, ANA, 0, 1);
+    room.until(8.0, "GO", |app| app.world().resource::<Race>().started());
+    let bob_kart = player(room.app(BOB));
+    for key in [ANA, BOB] {
+        let kart = player(room.app(key));
+        room.app(key)
+            .world_mut()
+            .entity_mut(kart)
+            .remove::<PlayerKart>();
+    }
+    let panel_in = |app: &mut App| {
+        let layout = app.world().resource::<TrackLayout>().clone();
+        let hazard = layout
+            .hazards
+            .iter()
+            .find(|h| h.kind == HazardKind::Cover(CoverKind::Panel))
+            .expect("a panel")
+            .clone();
+        let world = app.world_mut();
+        let entity = world
+            .query::<(Entity, &HazardBody)>()
+            .iter(world)
+            .find(|(_, body)| body.0 == hazard.index)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        (entity, hazard)
+    };
+    let (ana_panel, _) = panel_in(room.app(ANA));
+    let (bob_panel, hazard) = panel_in(room.app(BOB));
+    let path = room
+        .app(BOB)
+        .world()
+        .resource::<TrackLayout>()
+        .shortcuts
+        .iter()
+        .find(|s| s.closed())
+        .unwrap()
+        .clone();
+
+    // Bob's kart on the grass bridge, 10 m before its panel, at speed with a boost.
+    {
+        let app = room.app(BOB);
+        let cover = path.cover.unwrap();
+        let s = path.at(cover.at - 10.0);
+        let standing =
+            Transform::from_translation(s.point(0.0, GRID_HEIGHT)).looking_to(s.forward, s.up);
+        let spacing = app.world().resource::<Course>().checkpoints[1];
+        let strength = app.world().resource::<KartTuning>().mini_turbo_strengths[1];
+        let world = app.world_mut();
+        *world.get_mut::<Transform>(bob_kart).unwrap() = standing;
+        world
+            .get_mut::<PhysicsPose>(bob_kart)
+            .unwrap()
+            .snap(standing);
+        *world.get_mut::<Velocity>(bob_kart).unwrap() = Velocity {
+            linear: s.forward * 20.0,
+            angular: Vec3::ZERO,
+        };
+        world.get_mut::<Boost>(bob_kart).unwrap().add(strength, 1.5);
+        world.get_mut::<KartInput>(bob_kart).unwrap().throttle = 1.0;
+        let mut progress = world.get_mut::<RaceProgress>(bob_kart).unwrap();
+        progress.passed = 1 + (path.from / spacing).floor() as u32;
+        progress.distance = path.from;
+        world
+            .get_mut::<Tow>(bob_kart)
+            .unwrap()
+            .reset(standing.translation);
+    }
+    let down = |app: &App, entity: Entity| app.world().get::<Panel>(entity).unwrap().down_until;
+    let mut broke = None;
+    for _ in 0..60 {
+        room.frame();
+        let app = room.view(BOB);
+        if down(app, bob_panel) > 0 {
+            broke = Some(down(app, bob_panel));
+            break;
+        }
+    }
+    let until = broke.expect("Bob's boosted kart never broke the panel");
+    let tuning = room
+        .view(BOB)
+        .world()
+        .resource::<RaceTuning>()
+        .hazards
+        .clone();
+    let tick = until - panel_down_ticks(&tuning);
+    assert!(
+        room.view(BOB)
+            .world()
+            .get::<Breakable>(bob_panel)
+            .unwrap()
+            .bursts
+            == 1
+    );
+    // Ana's game: down until the same tick, splinters there too.
+    room.until(1.0, "the panel down in Ana's game", |app| {
+        if !super::race_tests::lobby(app).is_host() {
+            return true;
+        }
+        app.world().get::<Panel>(ana_panel).unwrap().down_until > 0
+    });
+    let ana = room.view(ANA);
+    assert_eq!(
+        down(ana, ana_panel),
+        until,
+        "down until the same tick, broken at {tick}"
+    );
+    assert_eq!(ana.world().get::<Breakable>(ana_panel).unwrap().bursts, 1);
+    assert!(
+        ana.world()
+            .get::<bevy_rapier3d::prelude::ColliderDisabled>(ana_panel)
+            .is_some(),
+        "no collider in Ana's game while it is down"
+    );
+    let _ = hazard;
+    // Both stand again on that tick.
+    room.until(10.0, "the panel back in both games", |app| {
+        flow_tick(app) > until + 1
+    });
+    for (key, entity) in [(ANA, ana_panel), (BOB, bob_panel)] {
+        let app = room.view(key);
+        let panel = app.world().get::<Panel>(entity).unwrap();
+        assert_eq!(panel.down_until, until);
+        assert!(app.world().get::<Breakable>(entity).unwrap().available());
+    }
 }

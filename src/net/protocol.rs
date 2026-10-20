@@ -62,6 +62,8 @@
 //! its entrants, the points of each one, the last race's, the overall standings, the podium).
 //! Version 17 (issue #153): the room's settings carry the level of its bots
 //! ([`RoomSetup::difficulty`], one byte after the switches, as [`RaceStart::difficulty`]).
+//! Version 18 (issue #156): a shortcut's panel broken by a kart with a boost ([`PanelDown`]: the
+//! kart's peer tells, every peer has it down until the same tick).
 
 use std::fmt;
 
@@ -71,7 +73,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 17;
+pub const PROTOCOL_VERSION: u8 = 18;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -789,6 +791,19 @@ pub struct PillowGone {
     pub tick: u32,
 }
 
+/// Issue #156: a shortcut's panel (`panel`: its number among the circuit's hazards,
+/// `track::Hazard::index`) broke under `kart`, which had a boost, on tick `tick` of the hazards'
+/// clock (the race's tick, or the room's common tick out of a race). The kart's peer decided and
+/// tells everyone: every peer has the panel down until `tick` + its respawn time, the latest of
+/// all the breaks it was told (the same on every peer, in whatever order they come).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelDown {
+    pub session: u8,
+    pub kart: KartId,
+    pub panel: u16,
+    pub tick: u32,
+}
+
 /// An oreiller géant goes after another kart from common tick `tick` (issue #61): its thrower's
 /// leader changed (`None`: no one to go after). Every peer sends its copy after that kart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -957,6 +972,8 @@ pub enum Message {
     Rammed(Rammed),
     /// An oreiller géant gone without a throw (issue #61).
     PillowGone(PillowGone),
+    /// Issue #156: a shortcut's panel broken by a kart with a boost.
+    PanelDown(PanelDown),
     /// An oreiller géant after another kart (issue #61).
     Retarget(Retarget),
     /// A pie voleuse's theft, asked of the victim's peer (issue #21).
@@ -1035,6 +1052,7 @@ const PILLOW_GONE: u8 = 35;
 const RETARGET: u8 = 36;
 const STEAL: u8 = 37;
 const STOLEN: u8 = 38;
+const PANEL_DOWN: u8 = 39;
 const KART_STATE: u8 = 40;
 const KART_STATES: u8 = 41;
 const FOOT_STATE: u8 = 42;
@@ -1084,6 +1102,7 @@ impl Message {
             Message::Effect(_) => EFFECT,
             Message::Rammed(_) => RAMMED,
             Message::PillowGone(_) => PILLOW_GONE,
+            Message::PanelDown(_) => PANEL_DOWN,
             Message::Retarget(_) => RETARGET,
             Message::Steal(_) => STEAL,
             Message::Stolen(_) => STOLEN,
@@ -1380,6 +1399,11 @@ impl Message {
                 out.extend_from_slice(&[gone.session, gone.kart]);
                 out.extend_from_slice(&gone.index.to_le_bytes());
                 put_u32(out, gone.tick);
+            }
+            Message::PanelDown(down) => {
+                out.extend_from_slice(&[down.session, down.kart]);
+                out.extend_from_slice(&down.panel.to_le_bytes());
+                put_u32(out, down.tick);
             }
             Message::Retarget(retarget) => {
                 out.push(retarget.session);
@@ -1905,6 +1929,12 @@ impl Message {
                 session: reader.u8()?,
                 kart: reader.kart()?,
                 index: reader.u16()?,
+                tick: reader.u32()?,
+            }),
+            PANEL_DOWN => Message::PanelDown(PanelDown {
+                session: reader.u8()?,
+                kart: reader.kart()?,
+                panel: reader.u16()?,
                 tick: reader.u32()?,
             }),
             RETARGET => {
@@ -3125,6 +3155,19 @@ mod tests {
                 index: 0xfedc,
                 tick: 4_000_000_004,
             }),
+            // Issue #156: a shortcut's panel broken.
+            Message::PanelDown(PanelDown {
+                session: 7,
+                kart: 11,
+                panel: 0xfedc,
+                tick: 4_000_000_010,
+            }),
+            Message::PanelDown(PanelDown {
+                session: 0,
+                kart: 0,
+                panel: 0,
+                tick: 0,
+            }),
             Message::Effect(EffectOut {
                 session: 7,
                 kart: 6,
@@ -3255,8 +3298,8 @@ mod tests {
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
         // bundles of kart states; issue #70 the closed results; issue #21 the thefts and what
         // they took; issue #101 the characters on foot (a state, the host's bundles) and their
-        // strikes; issue #122 the championship in progress.
-        assert_eq!(kinds.len(), 36);
+        // strikes; issue #122 the championship in progress; issue #156 the panels broken.
+        assert_eq!(kinds.len(), 37);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -3373,7 +3416,9 @@ mod tests {
                 // Issue #61: an effect in 30 bytes and one per racer of its ranking (42 at most);
                 // a kart knocked over in 10, an oreiller gone in 10, retargeted in 11.
                 Message::Effect(effect) => assert_eq!(length, 30 + effect.order.len()),
-                Message::Rammed(_) | Message::PillowGone(_) => assert_eq!(length, 10),
+                Message::Rammed(_) | Message::PillowGone(_) | Message::PanelDown(_) => {
+                    assert_eq!(length, 10)
+                }
                 Message::Retarget(_) => assert_eq!(length, 11),
                 // Issue #21: a theft in 9 bytes, what it took in 11.
                 Message::Steal(_) => assert_eq!(length, 9),

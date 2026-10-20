@@ -14,7 +14,7 @@
 
 use bevy::prelude::*;
 
-use super::data::{EdgeSide, OpenEdgeData, ShortcutData, ShortcutKind};
+use super::data::{CoverKind, EdgeSide, OpenEdgeData, ShortcutData, ShortcutKind};
 use super::layout::{CenterLine, TrackSample};
 
 /// A shortcut's path is sampled about this often (m).
@@ -114,6 +114,20 @@ pub struct OnPath {
     pub height: f32,
 }
 
+/// Issue #156: what closes or hides a shortcut's entrance, `at` meters along its path.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cover {
+    pub kind: CoverKind,
+    pub at: f32,
+}
+
+impl Cover {
+    /// A panel: solid without a boost (a kart needs one to get through).
+    pub fn closes(&self) -> bool {
+        self.kind == CoverKind::Panel
+    }
+}
+
 /// A shortcut of the circuit (issue #107).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shortcut {
@@ -128,6 +142,8 @@ pub struct Shortcut {
     pub low: f32,
     /// A jump's trick ramp.
     pub ramp: Option<Ramp>,
+    /// Issue #156: what closes or hides its entrance.
+    pub cover: Option<Cover>,
     samples: Vec<TrackSample>,
     length: f32,
 }
@@ -156,9 +172,18 @@ impl Shortcut {
             half_width: data.width / 2.0,
             low: points[0].y.min(points[points.len() - 1].y),
             ramp,
+            cover: data.cover.map(|cover| Cover {
+                kind: cover.kind,
+                at: cover.at,
+            }),
             samples,
             length,
         }
+    }
+
+    /// Issue #156: a panel closes it (a kart needs a boost to get through).
+    pub fn closed(&self) -> bool {
+        self.cover.is_some_and(|cover| cover.closes())
     }
 
     /// The length of its path (m).

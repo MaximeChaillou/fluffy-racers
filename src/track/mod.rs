@@ -32,13 +32,14 @@ pub use circuit::{
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,
 };
 pub use data::{
-    BreakableKind, EdgeSide, NpcKind, ObstacleKind, OffroadZone, PropData, ShortcutKind, TrackData,
+    BreakableKind, CoverKind, EdgeSide, NpcKind, ObstacleKind, OffroadZone, PropData, ShortcutKind,
+    TrackData,
 };
 pub use dressing::CircuitDecor;
 pub use hazard::{Capsule, Hazard, HazardKind, kart_capsule};
-pub use hazards::{Breakable, HazardBody, HazardSystems, HazardVisualPlugin};
+pub use hazards::{Breakable, HazardBody, HazardSystems, HazardVisualPlugin, Panel};
 pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
-pub use shortcut::{OpenEdge, Shortcut};
+pub use shortcut::{Cover, OpenEdge, Shortcut};
 pub use start_line::StartLine;
 pub use water::{Gap, Lake, gap_at, water_depth};
 

@@ -12,7 +12,10 @@
 //! - the **bison**, a big round woolly creature with a dark mane, short horns and a pink nose; its
 //!   four legs step as it walks, its body bobs;
 //! - a **hay bale**, a **balloon** on its string, a **crate**: hidden while they are burst, they
-//!   pop back in.
+//!   pop back in;
+//! - issue #156: a shortcut's **panel**, a big sign board of weathered planks on two posts, a
+//!   little askew (the discreet clue of the guide), hidden while it is broken; a **curtain of
+//!   foliage**, tall grass blades and leafy tufts across a path.
 //!
 //! The moving ones follow their simulated pose between two ticks (`InterpolatedFrom`). The
 //! bursts' straw, splinters and rubber are `crate::vfx`'s, their « pof » `crate::audio`'s.
@@ -22,7 +25,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use bevy::prelude::*;
 
 use super::circuit::to_mesh;
-use super::data::{BreakableKind, NpcKind, ObstacleKind};
+use super::data::{BreakableKind, CoverKind, NpcKind, ObstacleKind};
 use super::hazard::{HazardKind, ROPE_LENGTH, Shape};
 use super::hazards::{Breakable, HazardBody};
 use super::mesh::MeshData;
@@ -72,7 +75,7 @@ impl HazardAssets {
 }
 
 /// Every kind of hazard, for its model.
-pub const ALL_KINDS: [HazardKind; 9] = [
+pub const ALL_KINDS: [HazardKind; 11] = [
     HazardKind::Obstacle(ObstacleKind::Rock),
     HazardKind::Obstacle(ObstacleKind::Trunk),
     HazardKind::Obstacle(ObstacleKind::Pillar),
@@ -82,6 +85,8 @@ pub const ALL_KINDS: [HazardKind; 9] = [
     HazardKind::Breakable(BreakableKind::HayBale),
     HazardKind::Breakable(BreakableKind::Balloon),
     HazardKind::Breakable(BreakableKind::Crate),
+    HazardKind::Cover(CoverKind::Panel),
+    HazardKind::Cover(CoverKind::Foliage),
 ];
 
 fn create_hazard_assets(
@@ -106,9 +111,9 @@ fn create_hazard_assets(
     });
 }
 
-/// The model of a hazard of `kind`, at size 1, in its entity's frame: a fixed obstacle around
-/// its collider's center, a rolling log and a swinging stone around their center, the others on
-/// their foot (local -Z down the road, Y up).
+/// The model of a hazard of `kind`, at size 1, in its entity's frame: a fixed obstacle and a
+/// panel around its collider's center, a rolling log and a swinging stone around their center,
+/// the others on their foot (local -Z down the road, Y up).
 pub fn model(kind: HazardKind) -> MeshData {
     let mut mesh = MeshData::default();
     let shape = Shape::of(kind);
@@ -260,8 +265,111 @@ pub fn model(kind: HazardKind) -> MeshData {
                 },
             );
         }
+        HazardKind::Cover(CoverKind::Panel) => panel(&mut mesh),
+        HazardKind::Cover(CoverKind::Foliage) => foliage(&mut mesh),
     }
     mesh
+}
+
+/// Issue #156: a shortcut's panel around its middle: a big board of weathered planks on two
+/// posts (on the path: the board goes beyond them), across the path (along X), a little askew
+/// (it leans 4°: the discreet clue).
+fn panel(mesh: &mut MeshData) {
+    const POSTS: f32 = 2.1;
+    let half = Shape::cover_box(CoverKind::Panel);
+    let lean = Mat4::from_rotation_z(4f32.to_radians());
+    let (post, light, dark) = (
+        srgb(0.42, 0.29, 0.19),
+        srgb(0.78, 0.60, 0.40),
+        srgb(0.62, 0.45, 0.29),
+    );
+    for side in [-1.0f32, 1.0] {
+        rounded_box(
+            mesh,
+            lean * Mat4::from_translation(Vec3::new(side * POSTS, 0.0, 0.02)),
+            Vec3::new(0.16, half.y, 0.16),
+            0.2,
+            0.4,
+            Detail::new(8, 4),
+            solid(post),
+        );
+    }
+    // Five planks, every other one darker, the top one a little shorter.
+    let planks = 5;
+    let height = 2.0 * (half.y - 0.25) / planks as f32;
+    for k in 0..planks {
+        let y = -half.y + 0.45 + height * (k as f32 + 0.5);
+        let width = half.x - if k == planks - 1 { 0.3 } else { 0.0 };
+        let color = if k % 2 == 0 { light } else { dark };
+        rounded_box(
+            mesh,
+            lean * Mat4::from_translation(Vec3::new(0.0, y, -0.06)),
+            Vec3::new(width, height * 0.46, half.z * 0.6),
+            0.15,
+            0.15,
+            Detail::new(8, 4),
+            solid(color),
+        );
+    }
+    // A cross brace behind the planks.
+    tube(
+        mesh,
+        lean,
+        &[
+            (Vec3::new(-POSTS, -half.y + 0.6, 0.12), 0.09),
+            (Vec3::new(POSTS, half.y - 0.4, 0.12), 0.09),
+        ],
+        Ends::Poles,
+        6,
+        1.0,
+        Vec3::Z,
+        solid(dark),
+    );
+}
+
+/// Issue #156: a curtain of foliage on its foot: leafy tufts along its width and tall grass
+/// blades between them, as high as a kart and more (it hides what is behind it).
+fn foliage(mesh: &mut MeshData) {
+    let half = Shape::cover_box(CoverKind::Foliage);
+    let (leaf, light, straw) = (
+        srgb(0.33, 0.47, 0.20),
+        srgb(0.55, 0.66, 0.28),
+        srgb(0.78, 0.70, 0.36),
+    );
+    let tufts = 7;
+    for k in 0..tufts {
+        let x = -half.x + 0.4 + (2.0 * half.x - 0.8) * k as f32 / (tufts - 1) as f32;
+        let tall = 1.5 + 0.35 * ((k as f32 * 1.7).sin() + 1.0);
+        ellipsoid(
+            mesh,
+            Mat4::from_translation(Vec3::new(x, tall * 0.6, 0.1 * (k % 2) as f32)),
+            Vec3::new(0.75, tall * 0.65, half.z),
+            Detail::new(12, 8),
+            move |p| mix(leaf, light, (p.y + 1.0) / 2.0),
+        );
+    }
+    let blades = 26;
+    for k in 0..blades {
+        let x = -half.x + 0.1 + (2.0 * half.x - 0.2) * k as f32 / (blades - 1) as f32;
+        let tall = 2.3 + 0.9 * ((k as f32 * 2.3).sin() * 0.5 + 0.5);
+        let lean = 0.35 * (k as f32 * 1.3).cos();
+        let z = 0.35 * (k as f32 * 0.9).sin();
+        let color = if k % 3 == 0 { straw } else { light };
+        tube(
+            mesh,
+            Mat4::IDENTITY,
+            &[
+                (Vec3::new(x, 0.0, z), 0.12),
+                (Vec3::new(x + lean * 0.4, tall * 0.6, z), 0.08),
+                (Vec3::new(x + lean, tall, z + 0.1), 0.0),
+            ],
+            Ends::Poles,
+            4,
+            1.0,
+            Vec3::Z,
+            solid(color),
+        );
+    }
 }
 
 /// The bison without its legs (they move): a round woolly body, a dark mane on its hump, its
@@ -510,7 +618,7 @@ fn dress_hazards(
                 .insert(Visibility::default())
                 .with_children(|parent| {
                     let mut child = parent.spawn((model, scale, Visibility::default()));
-                    if hazard.kind.bursts() {
+                    if hazard.kind.breaks() {
                         child.insert(BreakableLook { shown_for: POP_IN });
                     }
                 });
