@@ -31,6 +31,11 @@ pub struct ItemTuning {
     /// (s, at most `roulette_time`). Only the HUD: the item is ready at `roulette_time` all the
     /// same.
     pub roulette_slowdown: f32,
+    /// Issue #155 (« Objets » of the admin panel's « Ressenti », à régler): a kart's distance to
+    /// the leader is multiplied by this before its row of the table (`assets/data/items.ron`) is
+    /// read. Above 1, the strong items come closer behind the leader (more often); below, further
+    /// behind (rarer). 1: the table as it is.
+    pub gap_scale: f32,
 
     // --- Hits (GD § 8) --------------------------------------------------------------------------
     /// A spin out (tête-à-queue: pelure, abeille) lasts this long (GD § 8: about 1 s). How hard
@@ -241,6 +246,7 @@ impl Default for ItemTuning {
             roulette_time: 1.5,
             roulette_scroll_speed: 12.0,
             roulette_slowdown: 0.7,
+            gap_scale: 1.0,
 
             spin_time: 1.0,
             tumble_time: 1.6,

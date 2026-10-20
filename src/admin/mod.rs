@@ -4,30 +4,40 @@
 //! - **P** (same key in AZERTY and QWERTY, no Fn on a Mac) opens and closes it, as does the small
 //!   « admin » button at the bottom of the screen; `?admin` in the page address (`--admin`
 //!   natively) opens it at startup.
-//! - **Réglages**: every tuning resource ([`Tunings`]: `KartTuning`, `CroquetteTuning`,
-//!   `BotTuning` with each difficulty's `BotSkill`, `CameraTuning`, `RaceTuning`, `StatsTuning`
-//!   of issue #15, `ItemTuning` of issue #16, `InteractionTuning` of issue #34, `NetTuning` of
-//!   issue #8 with its network simulator, `DriverTuning` of issue #69, `WobbleTuning` of issue
-//!   #12 and `GrandPrixTuning` of issue #19), edited by reflection (`tuning.rs`): a field added
-//!   later shows up with no extra code; a new tuning resource is one line in [`AdminPlugin`].
-//!   Modified values stand out and each one, or each resource, goes back to its default in a
-//!   click.
-//! - **Partager**: « Copier mes réglages » gives a RON text with only the modified values (and
-//!   their defaults in comments) to paste in an issue; a pasted text loads back. The modified
-//!   values are kept between sessions (`storage.rs`: the browser's local storage).
-//! - **Test**: circuit (manifest `assets/tracks/index.ron`, `tracks.rs`), race or free driving,
-//!   number and level of the bots, restart, skip the countdown, slow motion and pause; and the
-//!   player kart's telemetry.
+//! - **Avancé** (« Réglages » before #155, folded): every tuning resource ([`Tunings`]:
+//!   `KartTuning`, `CroquetteTuning`, `BotTuning` with each difficulty's `BotSkill`,
+//!   `CameraTuning`, `RaceTuning`, `StatsTuning` of issue #15, `ItemTuning` of issue #16,
+//!   `InteractionTuning` of issue #34, `NetTuning` of issue #8 with its network simulator,
+//!   `DriverTuning` of issue #69, `WobbleTuning` of issue #12 and `GrandPrixTuning` of issue
+//!   #19), edited by reflection (`tuning.rs`): a field added later shows up with no extra code; a
+//!   new tuning resource is one line in [`AdminPlugin`]. Values modified by hand stand out and
+//!   each one, or each resource, goes back to its default in a click.
+//! - **Ressenti** (issue #155, `feel.rs`): a handful of knobs, one per feeling (the drift, the
+//!   speed, the grip, the boosts, the bumps, the bots, the items, the camera, the effects, the
+//!   sounds, the music), each one driving several of those values; 50 in the middle gives exactly
+//!   the defaults. The detailed values stay in « Avancé » (folded): one modified by hand is no
+//!   longer moved by its knob until it is back to its default.
+//! - **Partager**: « Copier mes réglages » gives a RON text with the knobs off the middle and only
+//!   the values modified by hand (their defaults in comments) to paste in an issue; a pasted text
+//!   loads back. Both are kept between sessions (`storage.rs`: the browser's local storage).
+//! - **Test** (first, compact): circuit (manifest `assets/tracks/index.ron`, `tracks.rs`), race or
+//!   free driving, number and level of the bots, restart, skip the countdown, slow motion and
+//!   pause, an item to give and the showcase; the sounds; and the player kart's telemetry.
 //!
 //! This plugin is the logic, headless (the tests run it): panel state, keyboard capture, skipped
 //! countdown. The egui interface (`ui.rs`) is only added with a renderer, and costs nothing
 //! while the panel is closed (no egui context then).
 
+pub mod feel;
 pub mod storage;
 pub mod tracks;
 pub mod tuning;
 mod ui;
 
+#[cfg(test)]
+mod feel_scenarios;
+#[cfg(test)]
+mod feel_tests;
 #[cfg(test)]
 mod scenario_tests;
 

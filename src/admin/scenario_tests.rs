@@ -97,9 +97,9 @@ fn load(app: &mut App, request: LoadLevel) {
     app.world_mut().write_message(request);
 }
 
-fn with_tunings<R>(app: &mut App, f: impl FnOnce(&mut World, &Tunings) -> R) -> R {
+fn with_tunings<R>(app: &mut App, f: impl FnOnce(&mut World, &mut Tunings) -> R) -> R {
     app.world_mut()
-        .resource_scope(|world, tunings: Mut<Tunings>| f(world, &tunings))
+        .resource_scope(|world, mut tunings: Mut<Tunings>| f(world, &mut tunings))
 }
 
 /// Acceptance criterion of #36: a value changed the way the panel changes it (its slider, or a

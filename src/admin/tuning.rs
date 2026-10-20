@@ -6,13 +6,21 @@
 //! and the registry of the game's tunings ([`Tunings`]): what differs from the defaults, the
 //! export of only those values as RON text, and the import of such a text.
 //!
-//! The text is a RON map from `"Resource.path"` to the value, with the default in a comment:
+//! Since issue #155, the registry also holds the « Ressenti » knobs ([`Feel`], `super::feel`):
+//! each one drives several values. A value's **baseline** is what the knobs give it (its default
+//! when its knob is in the middle, or when no knob drives it); a value off its baseline was
+//! **modified by hand**, and its knob leaves it alone until it is back to its baseline.
+//!
+//! The text is a RON map from `"Resource.path"` to the value, with the baseline in a comment; the
+//! knobs off the middle come first, as `"Ressenti.<knob>"`; only the values modified by hand
+//! follow:
 //!
 //! ```text
-//! // Fluffy Racers : réglages modifiés dans le panneau d'admin (#36).
+//! // Fluffy Racers : réglages du panneau d'admin (#36, #155), le reste est par défaut.
 //! {
+//!     "Ressenti.derapage": 70, // de 0 à 100, milieu : 50
 //!     "KartTuning.max_speed": 30.0, // défaut : 28.5
-//!     "BotTuning.skills[2].wobble": 0.1, // défaut : 0.15
+//!     "KartTuning.drift_radius_tight": 21.0, // curseur Dérapage : 19.95, défaut : 17.5
 //!     "BotTuning.skills[1].target_tier": "Purple", // défaut : "Orange"
 //! }
 //! ```
@@ -26,6 +34,8 @@ use bevy::reflect::enums::{DynamicEnum, DynamicVariant, VariantInfo, VariantType
 use bevy::reflect::{GetPath, PartialReflect, ReflectRef, TypeInfo, TypePath};
 use serde::Deserialize;
 use serde::de::{self, Visitor};
+
+use super::feel::{self, FEEL_PREFIX, Feel, KNOB_MAX, Knob, LINKS, Link, MIDDLE};
 
 /// A leaf of a tuning: a number, a switch or the variant of a simple enum.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -362,13 +372,16 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, Raw>, String> {
     ron::from_str(text).map_err(|error| error.to_string())
 }
 
-/// A modified value: `tuning` (the resource's name) and the field's `path` in it.
+/// A value modified by hand (off its baseline): `tuning` (the resource's name) and the field's
+/// `path` in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
     pub tuning: &'static str,
     pub path: String,
     pub value: Value,
     pub default: Value,
+    /// The knob that drives it and the value it gives, when that knob is off the middle.
+    pub driven: Option<(Knob, Value)>,
 }
 
 /// What an import did.
@@ -389,12 +402,20 @@ pub struct Tuning {
     reset: fn(&mut World),
     /// The default value's leaves, computed once.
     pub defaults: Vec<Field>,
+    /// The « Ressenti » link of each of them (an index in `feel::LINKS`), in the same order.
+    links: Vec<Option<usize>>,
 }
 
 impl Tuning {
     fn of<T: Resource + Component<Mutability = Mutable> + Reflect + Default + TypePath>() -> Self {
+        let name = T::short_type_path();
+        let defaults = fields(&T::default());
+        let links = defaults
+            .iter()
+            .map(|f| feel::link_for(&format!("{name}.{}", f.path)))
+            .collect();
         Self {
-            name: T::short_type_path(),
+            name,
             read: |world| world.get_resource::<T>().map(|r| r as &dyn Reflect),
             write: |world| {
                 world
@@ -406,7 +427,8 @@ impl Tuning {
                     *r = T::default();
                 }
             },
-            defaults: fields(&T::default()),
+            defaults,
+            links,
         }
     }
 
@@ -439,6 +461,56 @@ impl Tuning {
     pub fn default_of(&self, path: &str) -> Option<&Field> {
         self.defaults.iter().find(|f| f.path == path)
     }
+
+    /// The default and the « Ressenti » link of the field at `path`, `index` being where it
+    /// usually is (its place among the fields: no search then).
+    fn default_and_link(
+        &self,
+        index: usize,
+        path: &str,
+    ) -> Option<(&Field, Option<&'static Link>)> {
+        let index = match self.defaults.get(index) {
+            Some(field) if field.path == path => index,
+            _ => self.defaults.iter().position(|f| f.path == path)?,
+        };
+        let link = self.links[index].map(|i| &LINKS[i]);
+        Some((&self.defaults[index], link))
+    }
+
+    /// The knob that drives the field at `path`, if any.
+    pub fn knob_of(&self, path: &str) -> Option<Knob> {
+        let index = self.defaults.iter().position(|f| f.path == path)?;
+        self.links[index].map(|i| LINKS[i].knob)
+    }
+
+    /// What the knobs of `feel` give the field at `path` (`index`: its usual place): its default
+    /// when no knob drives it or its knob is in the middle. With the knob, when it is off the
+    /// middle.
+    fn baseline_at(
+        &self,
+        feel: &Feel,
+        index: usize,
+        path: &str,
+    ) -> Option<(Value, Value, Option<(Knob, Value)>)> {
+        let (default, link) = self.default_and_link(index, path)?;
+        let driven = link
+            .map(|l| (l.knob, feel.position(l.knob)))
+            .filter(|(_, position)| *position != MIDDLE)
+            .map(|(knob, position)| (knob, link_value(link, default.value, position)));
+        let baseline = driven.map_or(default.value, |(_, value)| value);
+        Some((baseline, default.value, driven))
+    }
+
+    /// The baseline of the field at `path` (see [`Tuning::baseline_at`]).
+    pub fn baseline(&self, feel: &Feel, path: &str) -> Option<Value> {
+        self.baseline_at(feel, usize::MAX, path).map(|(b, _, _)| b)
+    }
+}
+
+/// The value `link` gives a field of default `default` at `position` (its default without a
+/// link).
+fn link_value(link: Option<&Link>, default: Value, position: u8) -> Value {
+    link.map_or(default, |l| l.value(default, position))
 }
 
 fn leaf_or_variant(value: &dyn PartialReflect) -> Option<Value> {
@@ -451,15 +523,20 @@ fn leaf_or_variant(value: &dyn PartialReflect) -> Option<Value> {
     found
 }
 
-/// The game's tuning resources, in the order the panel shows them.
+/// The game's tuning resources, in the order the panel shows them, and the « Ressenti » knobs
+/// over them (issue #155).
 #[derive(Resource, Default)]
 pub struct Tunings {
     pub list: Vec<Tuning>,
+    /// Where the knobs stand (50 everywhere: the defaults). Not a Resource of its own: one more
+    /// Resource in the headless world would be one more archetype before the grid, and every
+    /// race of bots would change (see `STATUS.md`, « Comment ajouter une vérification de course »).
+    pub feel: Feel,
 }
 
 /// First line of an export.
 pub const EXPORT_HEADER: &str =
-    "// Fluffy Racers : réglages modifiés dans le panneau d'admin (#36), le reste est par défaut.";
+    "// Fluffy Racers : réglages du panneau d'admin (#36, #155), le reste est par défaut.";
 
 impl Tunings {
     /// Adds a tuning resource (it must derive `Reflect` and `Default`).
@@ -476,31 +553,50 @@ impl Tunings {
         self.list.iter().find(|t| t.name == name)
     }
 
-    /// Every value that differs from its default, tuning by tuning, in declaration order.
+    /// Every value modified by hand (off its baseline: what the knobs give it, its default when
+    /// they are in the middle), tuning by tuning, in declaration order.
     pub fn changes(&self, world: &World) -> Vec<Change> {
         let mut out = Vec::new();
         for tuning in &self.list {
             let Some(resource) = tuning.read(world) else {
                 continue;
             };
-            for field in fields(resource.as_partial_reflect()) {
-                let default = tuning.default_of(&field.path).map(|d| d.value);
-                if default != Some(field.value) {
-                    out.push(Change {
+            for (i, field) in fields(resource.as_partial_reflect())
+                .into_iter()
+                .enumerate()
+            {
+                let baseline = tuning.baseline_at(&self.feel, i, &field.path);
+                match baseline {
+                    Some((baseline, _, _)) if baseline == field.value => {}
+                    Some((_, default, driven)) => out.push(Change {
                         tuning: tuning.name,
                         path: field.path,
                         value: field.value,
-                        default: default.unwrap_or(field.value),
-                    });
+                        default,
+                        driven,
+                    }),
+                    None => out.push(Change {
+                        tuning: tuning.name,
+                        path: field.path,
+                        value: field.value,
+                        default: field.value,
+                        driven: None,
+                    }),
                 }
             }
         }
         out
     }
 
-    /// The modified values as RON text, to paste in an issue. Empty map when nothing changed.
+    /// Nothing to keep: every knob in the middle and no value modified by hand.
+    pub fn untouched(&self, world: &World) -> bool {
+        self.feel.is_middle() && self.changes(world).is_empty()
+    }
+
+    /// The knobs off the middle and the values modified by hand as RON text, to paste in an issue.
+    /// Empty map when nothing changed.
     pub fn export(&self, world: &World) -> String {
-        export_changes(&self.changes(world))
+        export_text(&self.feel, &self.changes(world))
     }
 
     /// Writes `value` at `full_path` (`"KartTuning.max_speed"`).
@@ -514,21 +610,127 @@ impl Tunings {
         tuning.set(world, path, value)
     }
 
-    /// Every tuning back to its defaults.
-    pub fn reset_all(&self, world: &mut World) {
+    /// Moves `knob` to `position` (0 to 100): every value it drives follows, except those
+    /// modified by hand (off what the knob gave them at its previous position), which keep their
+    /// value. Returns how many values moved.
+    pub fn set_knob(&mut self, world: &mut World, knob: Knob, position: u8) -> usize {
+        let position = position.min(KNOB_MAX);
+        let before = self.feel.position(knob);
+        if before == position {
+            return 0;
+        }
+        let mut moved = 0;
+        let mut edits: Vec<(String, Value)> = Vec::new();
         for tuning in &self.list {
-            tuning.reset(world);
+            edits.clear();
+            let Some(resource) = tuning.read(world) else {
+                continue;
+            };
+            for (i, field) in fields(resource.as_partial_reflect())
+                .into_iter()
+                .enumerate()
+            {
+                let Some((default, Some(link))) = tuning.default_and_link(i, &field.path) else {
+                    continue;
+                };
+                if link.knob != knob || field.value != link.value(default.value, before) {
+                    continue;
+                }
+                let value = link.value(default.value, position);
+                if value != field.value {
+                    edits.push((field.path, value));
+                }
+            }
+            for (path, value) in edits.drain(..) {
+                if tuning.set(world, &path, value).is_ok() {
+                    moved += 1;
+                }
+            }
+        }
+        self.feel.set(knob, position);
+        moved
+    }
+
+    /// The field `path` of `tuning` back to its baseline: its knob drives it again.
+    pub fn reset_field(&self, world: &mut World, tuning: &str, path: &str) -> Result<(), SetError> {
+        let full = || format!("{tuning}.{path}");
+        let tuning = self
+            .get(tuning)
+            .ok_or_else(|| SetError::UnknownField(full()))?;
+        let baseline = tuning
+            .baseline(&self.feel, path)
+            .ok_or_else(|| SetError::UnknownField(full()))?;
+        tuning.set(world, path, baseline)
+    }
+
+    /// The whole resource `name` back to its baselines: its defaults, and what the knobs give the
+    /// values they drive.
+    pub fn reset_tuning(&self, world: &mut World, name: &str) {
+        let Some(tuning) = self.get(name) else {
+            return;
+        };
+        tuning.reset(world);
+        if self.feel.is_middle() {
+            return;
+        }
+        let driven: Vec<(String, Value)> = tuning
+            .defaults
+            .iter()
+            .enumerate()
+            .filter_map(|(i, field)| {
+                let (baseline, default, _) = tuning.baseline_at(&self.feel, i, &field.path)?;
+                (baseline != default).then(|| (field.path.clone(), baseline))
+            })
+            .collect();
+        for (path, value) in driven {
+            let _ = tuning.set(world, &path, value);
         }
     }
 
-    /// Loads a text of [`Tunings::export`]: every tuning back to its defaults, then the values of
-    /// the text. Entries that do not fit (a renamed field, a wrong value) are left out and listed
-    /// in the report; a text that is not RON changes nothing.
-    pub fn import(&self, world: &mut World, text: &str) -> Result<ImportReport, String> {
+    /// Every tuning back to its defaults, every knob back to the middle.
+    pub fn reset_all(&mut self, world: &mut World) {
+        for tuning in &self.list {
+            tuning.reset(world);
+        }
+        self.feel = Feel::default();
+    }
+
+    /// Loads a text of [`Tunings::export`]: every tuning back to its defaults and every knob to
+    /// the middle, then the knobs of the text (their values follow), then its values. Entries
+    /// that do not fit (a renamed field or knob, a wrong value) are left out and listed in the
+    /// report; a text that is not RON changes nothing. A text without knobs (before #155) loads
+    /// as it did.
+    pub fn import(&mut self, world: &mut World, text: &str) -> Result<ImportReport, String> {
         let entries = parse(text)?;
         self.reset_all(world);
         let mut report = ImportReport::default();
+        for (full_path, raw) in &entries {
+            let Some(key) = full_path.strip_prefix(FEEL_PREFIX) else {
+                continue;
+            };
+            let Some(knob) = Knob::from_key(key) else {
+                report
+                    .ignored
+                    .push(format!("{full_path} : réglage inconnu"));
+                continue;
+            };
+            let position = match *raw {
+                Raw::Int(i) if (0..=i128::from(KNOB_MAX)).contains(&i) => i as u8,
+                Raw::Float(x) if (0.0..=f64::from(KNOB_MAX)).contains(&x) => x.round() as u8,
+                _ => {
+                    report
+                        .ignored
+                        .push(format!("{full_path} : valeur {raw:?} refusée"));
+                    continue;
+                }
+            };
+            self.set_knob(world, knob, position);
+            report.applied += 1;
+        }
         for (full_path, raw) in entries {
+            if full_path.starts_with(FEEL_PREFIX) {
+                continue;
+            }
             let Some((name, path)) = full_path.split_once('.') else {
                 report
                     .ignored
@@ -565,22 +767,34 @@ impl Tunings {
     }
 }
 
-/// The RON text of `changes` (see the module documentation).
-pub fn export_changes(changes: &[Change]) -> String {
+/// The RON text of the knobs of `feel` off the middle and of `changes` (see the module
+/// documentation).
+pub fn export_text(feel: &Feel, changes: &[Change]) -> String {
     let mut text = String::new();
     text.push_str(EXPORT_HEADER);
     text.push('\n');
-    if changes.is_empty() {
+    if changes.is_empty() && feel.is_middle() {
         text.push_str("{}\n");
         return text;
     }
     text.push_str("{\n");
-    for change in changes {
+    for (knob, position) in feel.moved() {
         let _ = writeln!(
             text,
-            "    \"{}.{}\": {}, // défaut : {}",
-            change.tuning, change.path, change.value, change.default
+            "    \"{FEEL_PREFIX}{}\": {position}, // de 0 à {KNOB_MAX}, milieu : {MIDDLE}",
+            knob.key()
         );
+    }
+    for change in changes {
+        let _ = write!(
+            text,
+            "    \"{}.{}\": {}, // ",
+            change.tuning, change.path, change.value
+        );
+        if let Some((knob, value)) = change.driven {
+            let _ = write!(text, "curseur {} : {value}, ", knob.label());
+        }
+        let _ = writeln!(text, "défaut : {}", change.default);
     }
     text.push_str("}\n");
     text
@@ -682,7 +896,7 @@ mod tests {
     /// only holds the modified values.
     #[test]
     fn the_export_holds_only_the_modified_values_and_imports_back() {
-        let (mut world, tunings) = world();
+        let (mut world, mut tunings) = world();
         assert!(tunings.changes(&world).is_empty());
         let empty = tunings.export(&world);
         assert_eq!(parse(&empty).unwrap().len(), 0);
@@ -735,7 +949,7 @@ mod tests {
     /// what fits is loaded, the rest is listed.
     #[test]
     fn an_import_skips_what_does_not_fit() {
-        let (mut world, tunings) = world();
+        let (mut world, mut tunings) = world();
         tunings
             .set(&mut world, "KartTuning.coast_decel", Value::F32(1.0))
             .unwrap();
