@@ -597,4 +597,149 @@
              count: 160, height: (0.4, 0.8), radius: 0.35, distance: (0.2, 12.0), shadows: false),
         ],
     ),
+    (
+        // Issue #111: a hillside of pumpkins at dusk (Coteau Citrouille): pumpkins of every size,
+        // some carved, crooked pines (green and autumn), lamp posts and lanterns, hay bales,
+        // fences (Graveyard Kit); autumn trees, maize and a pumpkin patch (Nature Kit). A
+        // lavender sky, violet hills lit orange at their tops, giant pumpkins far away.
+        name: "Citrouilles",
+        music: "neon-sign-circuit",
+        palette: (
+            sky: (0.62, 0.52, 0.76),
+            ambient: (1.0, 0.86, 0.78),
+            ambient_brightness: 680.0,
+            ground: (0.46, 0.54, 0.30),
+            asphalt: (0.36, 0.33, 0.40),
+            curbs: ((0.96, 0.56, 0.16), (0.24, 0.18, 0.30)),
+            shoulder: (0.40, 0.50, 0.30),
+            sand: (0.86, 0.70, 0.46),
+            walls: ((0.98, 0.64, 0.22), (0.36, 0.25, 0.46)),
+            wall_top: (0.99, 0.93, 0.82),
+            skirt: (0.52, 0.40, 0.30),
+        ),
+        far: (
+            fog: (200.0, 1250.0),
+            layers: [
+                // Violet hills all around, their tops in the last sun, and higher mountains behind.
+                Range(distance: 160.0, depth: 150.0, height: (34.0, 72.0), spacing: 44.0,
+                      color: (0.42, 0.36, 0.46), top: ((0.96, 0.66, 0.46), 58.0)),
+                Range(distance: 430.0, depth: 260.0, height: (110.0, 210.0), spacing: 62.0,
+                      color: (0.46, 0.42, 0.64), top: ((0.98, 0.80, 0.70), 170.0)),
+                // Round knolls of the harvest in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (22.0, 44.0),
+                      radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.48, 0.44, 0.26)),
+                Clouds(count: 22, distance: (0.0, 520.0), altitude: (100.0, 180.0),
+                       size: (50.0, 110.0), color: (0.99, 0.76, 0.66)),
+                // Autumn trees and crooked pines at mid-distance, and giant pumpkins among them.
+                Pieces(models: ["nature-kit/tree_oak_fall", "nature-kit/tree_fat_fall",
+                                "graveyard-kit/pine-crooked", "graveyard-kit/pine-fall-crooked"],
+                       count: 140, height: (14.0, 26.0), radius: 6.0, distance: (50.0, 210.0)),
+                Pieces(models: ["graveyard-kit/pumpkin", "graveyard-kit/pumpkin-tall"],
+                       count: 26, height: (10.0, 22.0), radius: 9.0, distance: (50.0, 200.0)),
+            ],
+        ),
+        rows: [
+            // Double lamp posts along the outside of the loop.
+            (models: ["graveyard-kit/lightpost-double"], spacing: 40.0, offset: 12.0, height: 5.0,
+             radius: 0.8, gap: 0.6, side: Outside),
+        ],
+        scatter: [
+            // Giant pumpkins, both sides, some close to the road: the scale of the hillside.
+            (models: ["graveyard-kit/pumpkin", "graveyard-kit/pumpkin-tall",
+                      "graveyard-kit/pumpkin-carved", "graveyard-kit/pumpkin-tall-carved"],
+             count: 18, height: (5.0, 10.0), radius: 4.0, distance: (4.0, 40.0)),
+            // Crooked pines, green and autumn.
+            (models: ["graveyard-kit/pine-crooked", "graveyard-kit/pine-fall-crooked",
+                      "graveyard-kit/pine-fall"],
+             count: 40, height: (7.0, 13.0), radius: 2.4, distance: (2.0, 34.0)),
+            // Autumn trees.
+            (models: ["nature-kit/tree_oak_fall", "nature-kit/tree_fat_fall",
+                      "nature-kit/tree_default_fall", "nature-kit/tree_detailed_fall",
+                      "nature-kit/tree_cone_fall"],
+             count: 50, height: (7.0, 13.0), radius: 2.6, distance: (3.0, 36.0)),
+            // Maize, outside.
+            (models: ["nature-kit/crops_cornStageD"],
+             count: 40, height: (1.8, 2.6), radius: 1.0, distance: (2.0, 24.0), side: Outside),
+            // Hay bales, fences, logs and rocks.
+            (models: ["graveyard-kit/hay-bale", "graveyard-kit/hay-bale-bundled",
+                      "graveyard-kit/fence", "nature-kit/log_stack", "graveyard-kit/trunk-long"],
+             count: 30, height: (0.9, 1.8), radius: 1.6, distance: (0.5, 22.0)),
+            (models: ["graveyard-kit/rocks", "graveyard-kit/rocks-tall"],
+             count: 24, height: (0.8, 2.0), radius: 1.2, distance: (0.5, 20.0)),
+            // Small pumpkins, the pumpkin patch and lanterns: small, no shadows.
+            (models: ["graveyard-kit/pumpkin", "graveyard-kit/pumpkin-carved",
+                      "nature-kit/crop_pumpkin", "graveyard-kit/lantern-candle"],
+             count: 150, height: (0.5, 1.1), radius: 0.5, distance: (0.2, 14.0), shadows: false),
+        ],
+    ),
+    (
+        // Issue #111: a kingdom of meadows, ramparts and a castle (Périple Polochon): towers with
+        // blue roofs, little houses, banners and pennants, pines and rocks (Castle Kit); round
+        // pines, tents, wheat fields, fences (Nature Kit). A bright day, green hills, snowy
+        // mountains, towers far away.
+        name: "Royaume",
+        music: "trance-adventure",
+        palette: (
+            sky: (0.60, 0.80, 0.99),
+            ambient: (0.94, 0.95, 1.0),
+            ambient_brightness: 700.0,
+            ground: (0.47, 0.70, 0.38),
+            asphalt: (0.50, 0.46, 0.44),
+            curbs: ((0.30, 0.42, 0.82), (0.99, 0.86, 0.40)),
+            shoulder: (0.44, 0.68, 0.36),
+            sand: (0.90, 0.82, 0.62),
+            walls: ((0.93, 0.88, 0.80), (0.30, 0.42, 0.82)),
+            wall_top: (0.97, 0.93, 0.85),
+            skirt: (0.66, 0.60, 0.54),
+        ),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // Green hills all around, and snowy mountains behind them.
+                Range(distance: 170.0, depth: 150.0, height: (34.0, 72.0), spacing: 46.0,
+                      color: (0.40, 0.62, 0.36)),
+                Range(distance: 430.0, depth: 260.0, height: (110.0, 230.0), spacing: 62.0,
+                      color: (0.48, 0.54, 0.72), top: ((0.96, 0.97, 1.0), 185.0)),
+                // Round wooded knolls in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (22.0, 46.0),
+                      radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.32, 0.54, 0.32)),
+                Clouds(count: 22, distance: (0.0, 520.0), altitude: (110.0, 190.0),
+                       size: (50.0, 110.0), color: (1.0, 1.0, 1.0)),
+                // Towers far away, and forests of pines.
+                Pieces(models: ["castle-kit/tower-square-roof", "castle-kit/tower-slant-roof"],
+                       count: 24, height: (18.0, 30.0), radius: 8.0, distance: (60.0, 220.0)),
+                Pieces(models: ["castle-kit/tree-large", "nature-kit/tree_pineTallA_detailed"],
+                       count: 140, height: (14.0, 26.0), radius: 6.0, distance: (50.0, 210.0)),
+            ],
+        ),
+        rows: [
+            // Long banners along the outside.
+            (models: ["castle-kit/flag-banner-long"], spacing: 48.0, offset: 20.0, height: 6.0,
+             radius: 0.8, gap: 0.6, side: Outside),
+        ],
+        scatter: [
+            // Towers and little houses, both sides, some close to the road.
+            (models: ["castle-kit/tower-square-roof", "castle-kit/tower-slant-roof",
+                      "castle-kit/tower-square"],
+             count: 16, height: (6.0, 14.0), radius: 4.0, distance: (4.0, 40.0)),
+            // Pines, tall and round.
+            (models: ["castle-kit/tree-large", "castle-kit/tree-small",
+                      "nature-kit/tree_pineRoundD", "nature-kit/tree_pineRoundE",
+                      "nature-kit/tree_pineTallA_detailed"],
+             count: 60, height: (7.0, 14.0), radius: 2.4, distance: (2.0, 34.0)),
+            // Round trees.
+            (models: ["nature-kit/tree_blocks", "nature-kit/tree_plateau"],
+             count: 24, height: (6.0, 10.0), radius: 2.6, distance: (4.0, 36.0)),
+            // Tents of the fair, outside.
+            (models: ["nature-kit/tent_detailedOpen", "nature-kit/tent_detailedClosed"],
+             count: 12, height: (2.6, 3.6), radius: 2.4, distance: (3.0, 26.0), side: Outside),
+            // Pennants, fences, rocks and stones.
+            (models: ["castle-kit/flag-pennant", "nature-kit/fence_planks",
+                      "castle-kit/rocks-large", "castle-kit/rocks-small", "nature-kit/stone_largeC"],
+             count: 40, height: (0.9, 2.2), radius: 1.4, distance: (0.5, 22.0)),
+            // Wheat: small, no shadows.
+            (models: ["nature-kit/crops_wheatStageA", "nature-kit/crops_wheatStageB"],
+             count: 150, height: (0.6, 1.1), radius: 0.5, distance: (0.2, 14.0), shadows: false),
+        ],
+    ),
 ]
