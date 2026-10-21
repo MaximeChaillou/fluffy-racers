@@ -33,7 +33,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 4] = [
+const CIRCUITS: [Circuit; 6] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -66,6 +66,26 @@ const CIRCUITS: [Circuit; 4] = [
         path: "tracks/echappee.track.ron",
         name: "Échappée Pissenlit",
         jump_approach: 60.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #110, the Forêt Frimousse (the Corniche Cannelle's pieces, other covers): the jump
+    // from the straight along the crest, the grass bridge from out of the bulge, the hidden road
+    // from out of the hairpin before its climb.
+    Circuit {
+        path: "tracks/foret.track.ron",
+        name: "Forêt Frimousse",
+        jump_approach: 60.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #110, the Falaises Flanelle (the Corniche Cannelle's pieces mirrored, other covers):
+    // the jump from out of the hairpin before the cliff's edge, the grass bridge from out of the
+    // bulge, the hidden road from the straight along the foot of the cliff.
+    Circuit {
+        path: "tracks/falaises.track.ron",
+        name: "Falaises Flanelle",
+        jump_approach: 45.0,
         grass_approach: 20.0,
         road_approach: 60.0,
     },
@@ -600,7 +620,9 @@ fn crosses_box(from: Vec3, to: Vec3, center: Vec3, rotation: Quat, half: Vec3) -
 /// (with the path under it, 2 m deep: one does not see through the road), or the point is out of
 /// the widest field of view of the camera (its field at top speed with a boost, on a 16:9
 /// screen). Honest and simple: nothing else hides it (no decor counted), and the cover must stand
-/// across the path. The Corniche Cannelle has one of each.
+/// across the path. The Corniche Cannelle has a panel and a curtain of foliage; issue #110: the
+/// Forêt Frimousse a waterfall (and foliage), the Falaises Flanelle a stack of crates (and a
+/// panel).
 #[test]
 fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
     use crate::camera::CameraTuning;
@@ -696,10 +718,19 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
             }
         }
     }
-    for kind in [CoverKind::Panel, CoverKind::Foliage] {
+    // Issue #110: and the new covers on the new circuits (a waterfall in the Forêt Frimousse, a
+    // stack of crates in the Falaises Flanelle).
+    for (circuit, kind) in [
+        ("Corniche Cannelle", CoverKind::Panel),
+        ("Corniche Cannelle", CoverKind::Foliage),
+        ("Forêt Frimousse", CoverKind::Waterfall),
+        ("Forêt Frimousse", CoverKind::Foliage),
+        ("Falaises Flanelle", CoverKind::Crates),
+        ("Falaises Flanelle", CoverKind::Panel),
+    ] {
         assert!(
-            kinds.contains(&("Corniche Cannelle".to_string(), kind)),
-            "the Corniche Cannelle has a {kind:?}: {kinds:?}"
+            kinds.contains(&(circuit.to_string(), kind)),
+            "the {circuit} has a {kind:?}: {kinds:?}"
         );
     }
 }

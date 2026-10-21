@@ -15,7 +15,9 @@
 //!   pop back in;
 //! - issue #156: a shortcut's **panel**, a big sign board of weathered planks on two posts, a
 //!   little askew (the discreet clue of the guide), hidden while it is broken; a **curtain of
-//!   foliage**, tall grass blades and leafy tufts across a path.
+//!   foliage**, tall grass blades and leafy tufts across a path;
+//! - issue #110: a shortcut's **waterfall**, falling from a mossy lintel on two rocks, and its
+//!   **stack of crates** (hidden while it is burst, popping back in, like a crate).
 //!
 //! The moving ones follow their simulated pose between two ticks (`InterpolatedFrom`). The
 //! bursts' straw, splinters and rubber are `crate::vfx`'s, their « pof » `crate::audio`'s.
@@ -75,7 +77,7 @@ impl HazardAssets {
 }
 
 /// Every kind of hazard, for its model.
-pub const ALL_KINDS: [HazardKind; 11] = [
+pub const ALL_KINDS: [HazardKind; 13] = [
     HazardKind::Obstacle(ObstacleKind::Rock),
     HazardKind::Obstacle(ObstacleKind::Trunk),
     HazardKind::Obstacle(ObstacleKind::Pillar),
@@ -87,6 +89,8 @@ pub const ALL_KINDS: [HazardKind; 11] = [
     HazardKind::Breakable(BreakableKind::Crate),
     HazardKind::Cover(CoverKind::Panel),
     HazardKind::Cover(CoverKind::Foliage),
+    HazardKind::Cover(CoverKind::Waterfall),
+    HazardKind::Cover(CoverKind::Crates),
 ];
 
 fn create_hazard_assets(
@@ -267,6 +271,8 @@ pub fn model(kind: HazardKind) -> MeshData {
         }
         HazardKind::Cover(CoverKind::Panel) => panel(&mut mesh),
         HazardKind::Cover(CoverKind::Foliage) => foliage(&mut mesh),
+        HazardKind::Cover(CoverKind::Waterfall) => waterfall(&mut mesh),
+        HazardKind::Cover(CoverKind::Crates) => crates(&mut mesh),
     }
     mesh
 }
@@ -370,6 +376,110 @@ fn foliage(mesh: &mut MeshData) {
             Vec3::Z,
             solid(color),
         );
+    }
+}
+
+/// Issue #110: a waterfall on its foot: two mossy rocks at the sides of the path, a lintel of
+/// rock across them, and the water falling from it to the path between them, in streaks of pale
+/// and deeper blue, foam at its foot (it hides what is behind it; one drives through it).
+fn waterfall(mesh: &mut MeshData) {
+    let half = Shape::cover_box(CoverKind::Waterfall);
+    let (rock, moss, deep, pale, foam) = (
+        srgb(0.46, 0.47, 0.50),
+        srgb(0.34, 0.52, 0.26),
+        srgb(0.36, 0.62, 0.86),
+        srgb(0.70, 0.88, 0.98),
+        srgb(0.97, 0.99, 1.0),
+    );
+    let height = 2.0 * half.y;
+    // The two rocks, as high as the water and more, moss on their tops.
+    for side in [-1.0f32, 1.0] {
+        rounded_box(
+            mesh,
+            Mat4::from_translation(Vec3::new(side * (half.x - 0.75), height / 2.0 + 0.3, 0.0)),
+            Vec3::new(0.9, height / 2.0 + 0.3, half.z + 0.5),
+            0.5,
+            0.6,
+            Detail::new(10, 6),
+            move |p| if p.y > height * 0.3 { moss } else { rock },
+        );
+    }
+    // The lintel the water falls from.
+    rounded_box(
+        mesh,
+        Mat4::from_translation(Vec3::new(0.0, height + 0.45, 0.0)),
+        Vec3::new(half.x, 0.55, half.z + 0.5),
+        0.5,
+        0.4,
+        Detail::new(12, 6),
+        move |p| if p.y > 0.1 { moss } else { rock },
+    );
+    // The falling water: streaks side by side across the opening, from the lintel to the path.
+    let streaks = 9;
+    let span = half.x - 1.4;
+    for k in 0..streaks {
+        let x = -span + 2.0 * span * (k as f32 + 0.5) / streaks as f32;
+        let color = if k % 2 == 0 { pale } else { deep };
+        let z = 0.12 * ((k as f32 * 1.9).sin());
+        rounded_box(
+            mesh,
+            Mat4::from_translation(Vec3::new(x, height / 2.0, z)),
+            Vec3::new(span / streaks as f32 + 0.08, height / 2.0, half.z * 0.35),
+            0.15,
+            0.5,
+            Detail::new(8, 4),
+            move |p| mix(color, pale, ((p.y + 1.0) / 2.0).clamp(0.0, 1.0) * 0.5),
+        );
+    }
+    // The foam at its foot.
+    for k in 0..5 {
+        let x = -span + 2.0 * span * (k as f32 + 0.5) / 5.0;
+        ellipsoid(
+            mesh,
+            Mat4::from_translation(Vec3::new(x, 0.15, 0.0)),
+            Vec3::new(span / 4.0, 0.35, half.z + 0.2),
+            Detail::new(10, 6),
+            solid(foam),
+        );
+    }
+}
+
+/// Issue #110: a stack of crates on its foot, across the path: two deep, three high, a little
+/// askew (it hides what is behind it; it bursts as a kart drives through it).
+fn crates(mesh: &mut MeshData) {
+    let half = Shape::cover_box(CoverKind::Crates);
+    let (wood, plank) = (srgb(0.80, 0.58, 0.34), srgb(0.62, 0.42, 0.22));
+    let columns = 8;
+    let size = 2.0 * half.x / columns as f32;
+    let layers = (2.0 * half.y / size).round() as usize;
+    let crate_half = size / 2.0 - 0.03;
+    for column in 0..columns {
+        for row in 0..2 {
+            for layer in 0..layers {
+                let k = (column * 7 + row * 3 + layer * 5) as f32;
+                let at = Vec3::new(
+                    -half.x + size * (column as f32 + 0.5) + 0.06 * k.sin(),
+                    size * (layer as f32 + 0.5),
+                    (row as f32 - 0.5) * size + 0.05 * k.cos(),
+                );
+                rounded_box(
+                    mesh,
+                    Mat4::from_translation(at) * Mat4::from_rotation_y(0.08 * (k * 1.3).sin()),
+                    Vec3::splat(crate_half),
+                    0.15,
+                    0.15,
+                    Detail::new(8, 4),
+                    move |p| {
+                        // Its frame: darker along its edges.
+                        let edge = [p.x, p.y, p.z]
+                            .iter()
+                            .filter(|v| v.abs() > crate_half * 0.8)
+                            .count();
+                        if edge >= 2 { plank } else { wood }
+                    },
+                );
+            }
+        }
     }
 }
 

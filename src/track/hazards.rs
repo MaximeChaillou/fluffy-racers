@@ -368,7 +368,8 @@ fn burst_breakables(
         let Some(hazard) = layout.hazards.get(usize::from(body.0)) else {
             continue;
         };
-        let HazardKind::Breakable(kind) = hazard.kind else {
+        // Issue #110: a shortcut's stack of crates bursts like a crate.
+        let Some(kind) = hazard.kind.burst_kind().filter(|_| hazard.kind.bursts()) else {
             continue;
         };
         let shape = hazard.body(transform);

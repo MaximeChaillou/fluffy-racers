@@ -1208,11 +1208,11 @@ mod tests {
 
     /// Issue #146 acceptance: every biome has a far decor: a fog within the ground beyond, a
     /// range that closes its horizon, pieces at mid-distance, and more (peaks or clouds); every
-    /// circuit of the game has one (its biome's, and its own layers).
+    /// circuit of the game has one (its biome's, and its own layers). Issue #110: eight biomes.
     #[test]
     fn every_biome_has_a_far_decor() {
         let parsed = parse_biomes(BIOMES_RON).unwrap();
-        assert_eq!(parsed.len(), 6);
+        assert_eq!(parsed.len(), 8);
         for biome in biomes() {
             let far = &biome.far;
             far.validate().unwrap();

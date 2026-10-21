@@ -2304,12 +2304,15 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 /// Issue #107 (GD « Conception des circuits »): the circuits that follow the guide (the reference
 /// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon;
 /// issue #109, the Col des Moufles; issue #119, the Échappée Pissenlit, the first long race:
-/// its figures per section). Their races check the guide's figures too ([`guide_checks`]).
-pub(crate) const GUIDE_CIRCUITS: [&str; 4] = [
+/// its figures per section; issue #110, the Forêt Frimousse and the Falaises Flanelle). Their races
+/// check the guide's figures too ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 6] = [
     "Prairie Pompon",
     "Col des Moufles",
     "Corniche Cannelle",
     "Échappée Pissenlit",
+    "Forêt Frimousse",
+    "Falaises Flanelle",
 ];
 
 /// Issue #119 (GD § 1, « Les courses longues »): a long race lasts about 3 min (Max, #146: measured

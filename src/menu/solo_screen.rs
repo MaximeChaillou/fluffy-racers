@@ -53,6 +53,8 @@ pub struct SoloShape {
     pub mode: GameMode,
     pub cup: usize,
     pub program: Vec<usize>,
+    /// Issue #110: the races shown on the right (`solo::shown_races`).
+    pub shown: std::ops::Range<usize>,
     pub mirror: bool,
     /// The circuits whose vignettes could be drawn (their files loaded).
     pub drawn: Vec<bool>,
@@ -103,6 +105,12 @@ pub struct RaceCard {
     pub race: usize,
     pub circuit: usize,
 }
+
+/// Issue #110: the line under the races that says how many are hidden (more than
+/// `solo::MAX_CARDS` races).
+#[derive(Component, Clone, Copy, Debug, Default)]
+#[require(MenuNode)]
+pub struct SoloMoreRaces;
 
 /// The vignette of a circuit: its biome's colors, and its outline once its file is loaded.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,11 +192,18 @@ fn palette_of(ui: &SoloUi, tracks: &Assets<TrackData>, circuit: usize) -> Palett
 
 /// The shape of the tree for the menu now.
 fn shape_of(menu: &RaceMenu, ui: &SoloUi, tracks: &Assets<TrackData>, seed: u64) -> SoloShape {
+    let rows = menu.rows();
+    let program = menu.setup.program(seed, &ui.catalog);
+    let focus = match rows.get(menu.row) {
+        Some(MenuRow::Race(race)) => Some(*race),
+        _ => None,
+    };
     SoloShape {
-        rows: menu.rows(),
+        shown: solo::shown_races(program.len(), focus),
+        rows,
         mode: menu.setup.mode,
         cup: menu.setup.cup,
-        program: menu.setup.program(seed, &ui.catalog),
+        program,
         mirror: menu.setup.mirror,
         drawn: ui.tracks.iter().map(|h| tracks.contains(h)).collect(),
     }
@@ -293,6 +308,7 @@ pub(super) fn sync_solo_tree(
     });
     let assets = assets.map(|assets| assets.clone()).unwrap_or_default();
     let program = shape.program.clone();
+    let shown = shape.shown.clone();
     spawn_tree(
         &mut commands,
         &Tree {
@@ -302,6 +318,7 @@ pub(super) fn sync_solo_tree(
             assets: &assets,
             record,
             program,
+            shown,
         },
         shape,
     );
@@ -317,6 +334,8 @@ struct Tree<'a> {
     record: Option<String>,
     /// The circuits raced (a random championship's: drawn from the race's seed).
     program: Vec<usize>,
+    /// Issue #110: the races shown on the right.
+    shown: std::ops::Range<usize>,
 }
 
 fn spawn_tree(commands: &mut Commands, tree: &Tree, shape: SoloShape) {
@@ -701,9 +720,28 @@ fn spawn_right(panel: &mut ChildSpawnerCommands, tree: &Tree) {
                     });
                 return;
             }
+            // Issue #110: eight races at most, a window that follows the focus; a line for the
+            // others.
             for (race, circuit) in tree.program.iter().copied().enumerate() {
+                if !tree.shown.contains(&race) {
+                    continue;
+                }
                 let index = rows.iter().position(|row| *row == MenuRow::Race(race));
                 spawn_card(right, tree, race, circuit, index);
+            }
+            let hidden = solo::hidden_races(
+                tree.shown.start,
+                tree.program.len().saturating_sub(tree.shown.end),
+            );
+            if let Some(hidden) = hidden {
+                right.spawn((
+                    SoloMoreRaces,
+                    text(hidden, &assets.medium, size::SOLO_HELP, palette::MYRTILLE),
+                    Node {
+                        margin: UiRect::left(u(12.0)),
+                        ..default()
+                    },
+                ));
             }
         });
 }

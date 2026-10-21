@@ -42,6 +42,14 @@ pub const PANEL_THICKNESS: f32 = 0.3;
 /// Issue #156: a curtain of foliage is this high (m), and this deep along its path.
 pub const FOLIAGE_HEIGHT: f32 = 3.2;
 pub const FOLIAGE_DEPTH: f32 = 1.2;
+/// Issue #110: a waterfall is this high (m, its lintel's underside: the water falls from there to
+/// the path), and this deep along its path (the falling sheet and its spray).
+pub const WATERFALL_HEIGHT: f32 = 4.0;
+pub const WATERFALL_DEPTH: f32 = 1.2;
+/// Issue #110: a stack of crates is this high (m: three crates in its middle), and this deep
+/// along its path (two crates).
+pub const CRATES_HEIGHT: f32 = 3.0;
+pub const CRATES_DEPTH: f32 = 2.0;
 
 /// What a hazard is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -73,9 +81,22 @@ impl HazardKind {
         self.knocks()
     }
 
-    /// Something to drive through.
+    /// Something to drive through. Issue #110: a shortcut's stack of crates too (on its path).
     pub fn bursts(self) -> bool {
-        matches!(self, HazardKind::Breakable(_))
+        matches!(
+            self,
+            HazardKind::Breakable(_) | HazardKind::Cover(CoverKind::Crates)
+        )
+    }
+
+    /// What it bursts like (its slowdown, its splinters): a thing to drive through, a stack of
+    /// crates like a crate (issue #110), a panel into splinters like a crate (issue #156).
+    pub fn burst_kind(self) -> Option<BreakableKind> {
+        match self {
+            HazardKind::Breakable(kind) => Some(kind),
+            HazardKind::Cover(CoverKind::Crates | CoverKind::Panel) => Some(BreakableKind::Crate),
+            _ => None,
+        }
     }
 
     /// Issue #156: a shortcut's panel: solid without a boost, it breaks under a kart with one.
@@ -165,6 +186,24 @@ impl Shape {
                 COVER_WIDTH / 2.0 - 1.0,
                 1.0,
             ),
+            // Issue #110: only seen, like the foliage.
+            HazardKind::Cover(CoverKind::Waterfall) => shape(
+                COVER_WIDTH / 2.0,
+                WATERFALL_DEPTH / 2.0,
+                Vec3::X,
+                WATERFALL_HEIGHT / 2.0,
+                COVER_WIDTH / 2.0 - 1.0,
+                1.0,
+            ),
+            // Issue #110: a capsule across the path, low (a kart touches it as it drives in).
+            HazardKind::Cover(CoverKind::Crates) => shape(
+                COVER_WIDTH / 2.0,
+                CRATES_DEPTH / 2.0,
+                Vec3::X,
+                0.75,
+                COVER_WIDTH / 2.0 - 1.0,
+                CRATES_DEPTH / 2.0,
+            ),
         }
     }
 
@@ -174,6 +213,8 @@ impl Shape {
         match kind {
             CoverKind::Panel => Vec3::new(COVER_WIDTH, PANEL_HEIGHT, PANEL_THICKNESS) / 2.0,
             CoverKind::Foliage => Vec3::new(COVER_WIDTH, FOLIAGE_HEIGHT, FOLIAGE_DEPTH) / 2.0,
+            CoverKind::Waterfall => Vec3::new(COVER_WIDTH, WATERFALL_HEIGHT, WATERFALL_DEPTH) / 2.0,
+            CoverKind::Crates => Vec3::new(COVER_WIDTH, CRATES_HEIGHT, CRATES_DEPTH) / 2.0,
         }
     }
 }

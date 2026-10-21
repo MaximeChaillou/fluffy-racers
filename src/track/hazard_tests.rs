@@ -737,3 +737,77 @@ fn a_panel_back_with_a_kart_in_it_lets_it_out_first() {
     let here = path.locate(app.world().get::<Transform>(kart).unwrap().translation);
     assert!(here.along > cover.at + 1.0, "out of it, past it: {here:?}");
 }
+
+/// Issue #110 acceptance (« une pile de caisses qui cache l'entrée et ralentit un peu »): the
+/// Falaises Flanelle's hidden road (and its mirror) behind a stack of crates: a kart that drives
+/// the path flat out bursts it on its way (no tumble, a crate's slowdown, 4 %, a little at most:
+/// it never stops it), drives on through it, nothing more bursts while it is gone, and it comes
+/// back `respawn_seconds` later. The stack is no wall: no collider; and it is not in the bots'
+/// way (on the path, off the road).
+#[test]
+fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
+    use super::data::CoverKind;
+    for mirrored in [false, true] {
+        let (mut app, kart) = game_on("tracks/falaises.track.ron", mirrored, 0);
+        let tuning = app.world().resource::<RaceTuning>().hazards.clone();
+        let kind = HazardKind::Cover(CoverKind::Crates);
+        let (entity, hazard) = hazard_of(&mut app, kind);
+        assert!(kind.bursts() && kind.breaks() && !kind.in_the_way() && !kind.closes());
+        assert!(app.world().get::<Collider>(entity).is_none());
+        let path = app
+            .world()
+            .resource::<TrackLayout>()
+            .shortcuts
+            .iter()
+            .find(|s| s.cover.is_some_and(|c| c.kind == CoverKind::Crates))
+            .expect("a shortcut behind a stack of crates")
+            .clone();
+        assert!(
+            hazard
+                .road
+                .position
+                .distance(path.at(path.cover.unwrap().at).position)
+                < 1e-3
+        );
+        on_the_path(&mut app, kart, &path, 12.0, 22.0);
+        let speed = |app: &App| app.world().get::<Velocity>(kart).unwrap().linear.length();
+        let mut burst = None;
+        for _ in 0..60 {
+            along_the_path(&mut app, kart, &path);
+            let before = speed(&app);
+            app.update();
+            if app.world().get::<Breakable>(entity).unwrap().burst_by == Some(kart) {
+                burst = Some((before, speed(&app)));
+                break;
+            }
+        }
+        let (before, after) = burst.expect("the stack of crates never burst");
+        assert!(!app.world().get::<KartState>(kart).unwrap().is_hit());
+        let lost = 1.0 - after / before;
+        assert!(
+            (lost - tuning.crate_slowdown).abs() <= 0.02,
+            "mirror {mirrored}: {lost} of its speed lost ({before} → {after})"
+        );
+        // Through it and on along the path, while it is gone; then it comes back.
+        let ticks = crate::race::seconds_to_ticks(tuning.respawn_seconds);
+        for tick in 1..=ticks + 1 {
+            if tick < 60 {
+                along_the_path(&mut app, kart, &path);
+            } else {
+                app.world_mut().get_mut::<KartInput>(kart).unwrap().throttle = 0.0;
+            }
+            app.update();
+            let breakable = *app.world().get::<Breakable>(entity).unwrap();
+            assert_eq!(breakable.bursts, 1, "mirror {mirrored}");
+            assert_eq!(breakable.available(), tick >= ticks, "at tick {tick}");
+            if tick == 30 {
+                let at = app.world().get::<Transform>(kart).unwrap().translation;
+                let here = path.locate(at);
+                assert!(
+                    here.along > path.cover.unwrap().at + 2.0,
+                    "mirror {mirrored}: through the stack ({here:?})"
+                );
+            }
+        }
+    }
+}

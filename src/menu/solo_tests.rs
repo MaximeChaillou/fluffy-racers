@@ -312,6 +312,48 @@ fn the_screen_shows_the_cup_and_the_custom_races() {
     tap(&mut app, KeyCode::ArrowRight);
     assert_eq!(race_menu(&app).setup.chosen[0], 1);
     assert!(texts_of::<RaceCard>(&mut app, |card| card.race == 0).contains(&circuits[1].name));
+    assert_eq!(count::<With<SoloMoreRaces>>(&mut app), 0);
+    // Issue #110: as many races as circuits (10): eight shown, a line for the others; the
+    // window follows the race with the focus.
+    for _ in 0..5 {
+        tap(&mut app, KeyCode::ArrowUp);
+    }
+    assert_eq!(race_menu(&app).row(), Races);
+    for _ in race_menu(&app).setup.races..circuits.len() {
+        tap(&mut app, KeyCode::ArrowRight);
+    }
+    let races = race_menu(&app).setup.races;
+    assert_eq!(races, circuits.len());
+    let shown = |app: &mut App| {
+        let world = app.world_mut();
+        let mut races: Vec<usize> = world
+            .query::<&RaceCard>()
+            .iter(world)
+            .map(|card| card.race)
+            .collect();
+        races.sort_unstable();
+        races
+    };
+    if races > super::solo::MAX_CARDS {
+        assert_eq!(
+            shown(&mut app),
+            (0..super::solo::MAX_CARDS).collect::<Vec<_>>()
+        );
+        let hidden = races - super::solo::MAX_CARDS;
+        assert_eq!(
+            text_of::<SoloMoreRaces>(&mut app),
+            format!("+ {hidden} courses plus bas")
+        );
+        for _ in 0..(5 + races - 1) {
+            tap(&mut app, KeyCode::ArrowDown);
+        }
+        assert_eq!(race_menu(&app).row(), Race(races - 1));
+        assert_eq!(shown(&mut app), (hidden..races).collect::<Vec<_>>());
+        assert_eq!(
+            text_of::<SoloMoreRaces>(&mut app),
+            format!("+ {hidden} courses plus haut")
+        );
+    }
     // « Retour »: home, its background still racing.
     let back = find::<SoloButton>(&mut app, |button| !button.start);
     click(&mut app, back);
@@ -435,7 +477,9 @@ fn the_gamepad_goes_through_the_screen() {
 /// Issue #99: the screen fits the reference window (720 px high): its title, its panel (the
 /// taller of its columns: the left one with its seven lines at most, its help and its buttons;
 /// the right one with its header and six races, or the big vignette and the record) and the
-/// keys, with a margin; its lines and its races fit in their columns.
+/// keys, with a margin; its lines and its races fit in their columns. Issue #110: with ten
+/// circuits (24 at the end), a custom championship's races no longer fit: the column shows
+/// `solo::MAX_CARDS` of them at most, and a line for the others.
 #[test]
 fn the_screen_fits_the_window() {
     use super::style::size;
@@ -446,9 +490,11 @@ fn the_screen_fits_the_window() {
         + size::LINE_GAP
         + 4.0
         + size::PILOT_BUTTON_HEIGHT;
-    let races = crate::admin::tracks::circuits().len() as f32;
+    let races = crate::admin::tracks::circuits()
+        .len()
+        .min(super::solo::MAX_CARDS) as f32;
     let right = line(size::SOLO_HEADER)
-        + (races * (size::CARD_HEIGHT + size::LINE_GAP))
+        + (races * (size::CARD_HEIGHT + size::LINE_GAP) + line(size::SOLO_HELP))
             .max(size::LINE_GAP + size::BIG_VIGNETTE_HEIGHT + 10.0 + line(size::SOLO_HELP + 2.0));
     let panel = 2.0 * size::PANEL_PADDING + left.max(right);
     let screen = line(size::PILOT_TITLE) + 10.0 + panel + 2.0 * (10.0 + line(size::HINT));

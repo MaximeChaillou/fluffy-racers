@@ -22,6 +22,10 @@ http://creativecommons.org/publicdomain/zero/1.0/
   https://opengameart.org/content/hot-roadway
 - cool_highway_bpm140.ogg, cool_highway_climax_bpm155.ogg (CC0 on its page, checked on 2026-10-20):
   https://opengameart.org/content/cool-highway
+- strange_factory_bpm100.ogg, strange_factory_climax_bpm200.ogg (CC0 on its page, checked on
+  2026-10-21): https://opengameart.org/content/strange-factory
+- darkness_road_bpm165.ogg, darkness_road_climax_bpm180.ogg (CC0 on its page, checked on
+  2026-10-21): https://opengameart.org/content/darkness-road
 - racing_game_title_bpm140.ogg: https://opengameart.org/content/racing-game-title
 - racing_game_menu_bpm165.ogg: https://opengameart.org/content/racing-game-menu
 - racing_game_result_best_bpm140.ogg: https://opengameart.org/content/racing-game-result
