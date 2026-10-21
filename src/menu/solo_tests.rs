@@ -267,6 +267,8 @@ fn the_screen_shows_the_cup_and_the_custom_races() {
     run(&mut app, (ACTIVATE_DELAY * 60.0).ceil() as usize + 3);
     assert!(race_menu(&app).open);
     assert!(app.world().resource::<MainMenu>().on_home());
+    // Every circuit file loaded first: the « Retour » clicked below is found in the last tree.
+    wait_for_the_vignettes(&mut app);
     tap(&mut app, KeyCode::ArrowRight);
     use MenuRow::*;
     let menu = race_menu(&app);
@@ -370,7 +372,9 @@ fn the_screen_shows_the_cup_and_the_custom_races() {
 fn the_mouse_focuses_changes_and_starts() {
     let mut app = solo_app();
     tap(&mut app, crate::modes::RACE_MENU_KEY);
-    run(&mut app, 2);
+    // Every circuit file loaded first: one loaded later builds the tree again, and a click on
+    // a button found before would land on a despawned entity.
+    wait_for_the_vignettes(&mut app);
     let bots = find::<SoloLine>(&mut app, |line| line.row == MenuRow::Bots);
     hover(&mut app, bots);
     assert_eq!(race_menu(&app).row(), MenuRow::Bots);
