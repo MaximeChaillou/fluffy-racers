@@ -21,7 +21,8 @@ use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice,
 
 /// A circuit of the guide with a shortcut of each kind (issue #107: the Corniche Cannelle; issue
 /// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn; issue #119: the
-/// Échappée Pissenlit, the first long race), and where the tests
+/// Échappée Pissenlit, the first long race; issue #110: the Forêt Frimousse and the Falaises
+/// Flanelle; issue #111: the Coteau Citrouille and the Périple Polochon), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -33,7 +34,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 6] = [
+const CIRCUITS: [Circuit; 8] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -86,6 +87,27 @@ const CIRCUITS: [Circuit; 6] = [
         path: "tracks/falaises.track.ron",
         name: "Falaises Flanelle",
         jump_approach: 45.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #111, the Coteau Citrouille (the Corniche Cannelle's pieces, other covers): the jump
+    // from out of the hairpin of the crest, the grass bridge from out of the bulge, the hidden
+    // road from out of the last hairpin of the hillside.
+    Circuit {
+        path: "tracks/coteau.track.ron",
+        name: "Coteau Citrouille",
+        jump_approach: 50.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #111, the Périple Polochon, the second long race (the Corniche Cannelle's pieces as in
+    // the Falaises Flanelle and the Forêt Frimousse, other covers): the jump from out of the tight
+    // corner before the cliff's edge, the grass bridge from out of the bulge, the hidden road from
+    // out of the tight corner before its approach.
+    Circuit {
+        path: "tracks/periple.track.ron",
+        name: "Périple Polochon",
+        jump_approach: 50.0,
         grass_approach: 20.0,
         road_approach: 60.0,
     },
@@ -622,7 +644,8 @@ fn crosses_box(from: Vec3, to: Vec3, center: Vec3, rotation: Quat, half: Vec3) -
 /// screen). Honest and simple: nothing else hides it (no decor counted), and the cover must stand
 /// across the path. The Corniche Cannelle has a panel and a curtain of foliage; issue #110: the
 /// Forêt Frimousse a waterfall (and foliage), the Falaises Flanelle a stack of crates (and a
-/// panel).
+/// panel); issue #111: the Coteau Citrouille a stack of crates and foliage, the Périple Polochon a
+/// waterfall and a panel.
 #[test]
 fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
     use crate::camera::CameraTuning;
@@ -719,7 +742,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         }
     }
     // Issue #110: and the new covers on the new circuits (a waterfall in the Forêt Frimousse, a
-    // stack of crates in the Falaises Flanelle).
+    // stack of crates in the Falaises Flanelle); issue #111: the Coteau Citrouille and the Périple
+    // Polochon.
     for (circuit, kind) in [
         ("Corniche Cannelle", CoverKind::Panel),
         ("Corniche Cannelle", CoverKind::Foliage),
@@ -727,6 +751,10 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Forêt Frimousse", CoverKind::Foliage),
         ("Falaises Flanelle", CoverKind::Crates),
         ("Falaises Flanelle", CoverKind::Panel),
+        ("Coteau Citrouille", CoverKind::Crates),
+        ("Coteau Citrouille", CoverKind::Foliage),
+        ("Périple Polochon", CoverKind::Waterfall),
+        ("Périple Polochon", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),

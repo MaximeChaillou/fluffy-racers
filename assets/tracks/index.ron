@@ -8,7 +8,10 @@
 // cup, its last race, a final); `long: true` says so to the screens that only read this list.
 // Issue #110: the Forêt Frimousse (a forest of giant mushrooms: the hidden road behind a waterfall)
 // and the Falaises Flanelle (cliffs at sunset: the glide, the hidden road behind a stack of
-// crates), the first two circuits of the third cup (offered once it has its four).
+// crates), the first two circuits of the third cup. Issue #111: the Coteau Citrouille (a
+// hillside of pumpkins at dusk: its lacets, the hidden road behind a stack of crates) and the
+// Périple Polochon, the second long race (a kingdom: the wall on its rampart, the glide, the
+// ford, the finish under its castle), the final of the third cup, now offered.
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -27,6 +30,8 @@
         (name: "Échappée Pissenlit", file: "echappee.track.ron", long: true),
         (name: "Forêt Frimousse", file: "foret.track.ron"),
         (name: "Falaises Flanelle", file: "falaises.track.ron"),
+        (name: "Coteau Citrouille", file: "coteau.track.ron"),
+        (name: "Périple Polochon", file: "periple.track.ron", long: true),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),

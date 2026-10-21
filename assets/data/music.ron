@@ -86,6 +86,22 @@
          seconds: 127.997098, bpm: 165.0, volume: 0.61, faster: "darkness-road-climax"),
         (id: "darkness-road-climax", file: "music/mintodog/darkness_road_climax_bpm180.ogg",
          seconds: 117.333333, bpm: 180.0, volume: 0.58),
+        // Coteau Citrouille (issue #111, the pumpkin hillside at dusk): « Neon Sign Circuit »,
+        // « techno music that can be used in racing games »; its « Climax » adds handclaps (-12.7
+        // and -12.1 LUFS).
+        (id: "neon-sign-circuit", file: "music/mintodog/neon_sign_circuit_bpm145.ogg",
+         seconds: 99.31034, bpm: 145.0, volume: 0.98, faster: "neon-sign-circuit-climax"),
+        (id: "neon-sign-circuit-climax",
+         file: "music/mintodog/neon_sign_circuit_climax_bpm160.ogg",
+         seconds: 90.0, bpm: 160.0, volume: 0.91),
+        // Périple Polochon (issue #111, the second long race, through a kingdom): « Trance
+        // Adventure », « trance music for field theme »; it has no « Climax »: its version of the
+        // last section is the same music made faster for the game, 140 to 155 bpm at the same pitch
+        // (`ffmpeg -af atempo`, cut to a whole number of bars; -11.9 and -12.0 LUFS).
+        (id: "trance-adventure", file: "music/mintodog/trance_adventure_bpm140.ogg",
+         seconds: 137.142857, bpm: 140.0, volume: 0.89, faster: "trance-adventure-fast"),
+        (id: "trance-adventure-fast", file: "music/mintodog/trance_adventure_fast_bpm155.ogg",
+         seconds: 123.870975, bpm: 155.0, volume: 0.90),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",
