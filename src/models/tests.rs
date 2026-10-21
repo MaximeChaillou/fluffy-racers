@@ -1258,12 +1258,17 @@ fn the_wobble_is_laid_over_the_clips() {
 /// Measure (issue #11): entities, entities with a mesh (shown: neither it nor a parent hidden) and
 /// different (mesh, material) pairs shown (what the renderer batches into one draw call at best)
 /// on Prairie Pompon with 12 karts, with the models and without them (headless, primitives).
-/// `cargo test --lib measure_entities_with_the_models -- --ignored --nocapture`
+/// `cargo test --lib measure_entities_with_the_models -- --ignored --nocapture`; issue #119:
+/// another circuit with `FLUFFY_MEASURE_CIRCUIT=tracks/echappee.track.ron` (and its tiles).
 #[test]
 #[ignore]
 fn measure_entities_with_the_models() {
+    let track = std::env::var("FLUFFY_MEASURE_CIRCUIT").map_or_else(
+        |_| crate::track::TrackChoice::default(),
+        crate::track::TrackChoice::Circuit,
+    );
     for with_models in [false, true] {
-        let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::default(), 11);
+        let mut app = crate::tests::game_app_unloaded(track.clone(), 11);
         if with_models {
             load_gltf_headless(&mut app);
         }
@@ -1334,6 +1339,21 @@ fn measure_entities_with_the_models() {
             .copied()
             .collect();
         println!("  decor: {near:?}; far decor: {far:?}");
+        // Issue #119: the meshes of the circuit and of its decor (tiles on an open circuit).
+        let names: Vec<String> = world
+            .query_filtered::<&Name, With<Mesh3d>>()
+            .iter(world)
+            .map(|n| n.as_str().split(':').next().unwrap_or_default().to_string())
+            .collect();
+        for kind in [
+            "Track",
+            "Decor (shadows)",
+            "Decor (small, no shadows)",
+            "Far decor (pieces)",
+        ] {
+            let count = names.iter().filter(|n| n.as_str() == kind).count();
+            println!("  {kind}: {count} meshes");
+        }
     }
 }
 

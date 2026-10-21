@@ -70,6 +70,22 @@ pub struct Course {
     pub shortcuts: Vec<Shortcut>,
     pub shortcut_margin: f32,
     pub shortcut_exit_reach: f32,
+    /// Issue #119: an open circuit (a long race in sections, `TrackLayout::open`); None on a
+    /// circuit of laps. Its sections are counted as the laps are ([`Course::laps`] is their
+    /// number): « Section 2/3 », a time for each.
+    pub open: Option<OpenRace>,
+}
+
+/// Issue #119: the race on an open circuit, run once from the start line to the finish line, in
+/// sections. Its checkpoints go from the start line to the finish; the finish is global
+/// checkpoint `N` (the number of checkpoints: like the start line at the end of a lap).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenRace {
+    /// Race distance of the finish line (its centerline distance).
+    pub finish: f32,
+    /// The global checkpoint that closes each section: the first one of the next section, the
+    /// finish for the last one.
+    pub section_ends: Vec<u32>,
 }
 
 impl Course {
@@ -84,12 +100,30 @@ impl Course {
             .iter()
             .map(|cp| drop_point(&center, *cp, &layout.respawns))
             .collect();
+        // Issue #119: an open circuit's sections end where the next one begins (one of its
+        // checkpoints), the last one on the finish.
+        let open = layout.open().map(|open| OpenRace {
+            finish: open.finish,
+            section_ends: open.sections[1..]
+                .iter()
+                .map(|start| {
+                    checkpoints
+                        .iter()
+                        .position(|cp| (cp - start).abs() < 0.01)
+                        .expect("a section begins on a checkpoint") as u32
+                })
+                .chain([checkpoints.len() as u32])
+                .collect(),
+        });
         Self {
             center,
             checkpoints,
             drops,
             grid: layout.grid.clone(),
-            laps: tuning.laps.max(1),
+            laps: open
+                .as_ref()
+                .map_or(tuning.laps.max(1), |open| open.section_ends.len() as u32),
+            open,
             backward_window: tuning.backward_window,
             gate_margin: tuning.gate_margin,
             gate_height: tuning.gate_height,
@@ -224,24 +258,88 @@ impl Course {
     }
 
     /// Checkpoints to validate from the grid to the finish: the start line, then `N` per lap.
+    /// Issue #119: on an open circuit, its `N` checkpoints and the finish.
     pub fn checkpoints_to_finish(&self) -> u32 {
-        self.laps * self.checkpoint_count() + 1
+        match &self.open {
+            Some(_) => self.checkpoint_count() + 1,
+            None => self.laps * self.checkpoint_count() + 1,
+        }
     }
 
     /// Race distance of the finish line.
     pub fn finish_distance(&self) -> f32 {
-        self.laps as f32 * self.length()
+        match &self.open {
+            Some(open) => open.finish,
+            None => self.laps as f32 * self.length(),
+        }
+    }
+
+    /// Issue #119: whether the race runs on an open circuit (in sections, no lap).
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+
+    /// The lap (or the section, issue #119), from 1, that the validation of global checkpoint
+    /// `validated` completes, if it completes one: the start line at the end of each lap; on an
+    /// open circuit, the first checkpoint of each section after the first one, and the finish.
+    pub fn lap_closed_by(&self, validated: u32) -> Option<u32> {
+        match &self.open {
+            Some(open) => open
+                .section_ends
+                .iter()
+                .position(|end| *end == validated)
+                .map(|k| k as u32 + 1),
+            None => {
+                let n = self.checkpoint_count();
+                (validated > 0 && validated.is_multiple_of(n)).then_some(validated / n)
+            }
+        }
+    }
+
+    /// Laps (sections, issue #119) completed by a racer that validated `passed` checkpoints.
+    pub fn laps_completed(&self, passed: u32) -> u32 {
+        match &self.open {
+            Some(open) => open
+                .section_ends
+                .iter()
+                .filter(|end| passed > **end)
+                .count() as u32,
+            None => (passed.saturating_sub(1) / self.checkpoint_count()).min(self.laps),
+        }
     }
 
     /// Race distance of global checkpoint `g` (`-1` = the last checkpoint before the start line,
-    /// where karts on the grid come from).
+    /// where karts on the grid come from). Issue #119: on an open circuit, the race distance is
+    /// the centerline distance (no lap): before the start line, on the lead-in, one checkpoint
+    /// spacing apart; `N`, the finish line; after it, on the run-out.
     pub fn checkpoint_distance(&self, g: i64) -> f32 {
         let n = self.checkpoints.len() as i64;
+        if let Some(open) = &self.open {
+            let first = self.checkpoints.get(1).copied().unwrap_or(open.finish);
+            return if g < 0 {
+                g as f32 * first
+            } else if g < n {
+                self.checkpoints[g as usize]
+            } else {
+                open.finish + (g - n) as f32 * first
+            };
+        }
         g.div_euclid(n) as f32 * self.length() + self.checkpoints[g.rem_euclid(n) as usize]
     }
 
     /// Drop point (race distance) for a kart whose last validated checkpoint is `g`.
     pub fn drop_distance(&self, g: i64) -> f32 {
+        // Issue #119: on an open circuit, before the start line (still on the lead-in), its
+        // checkpoint; after the finish, the last checkpoint's drop point.
+        if self.open.is_some() {
+            let n = self.checkpoints.len() as i64;
+            if g < 0 {
+                return self.checkpoint_distance(g);
+            }
+            if g >= n {
+                return self.drop_distance(n - 1);
+            }
+        }
         let k = g.rem_euclid(self.checkpoints.len() as i64) as usize;
         let behind = self.center.wrap(self.checkpoints[k] - self.drops[k]);
         self.checkpoint_distance(g) - behind
@@ -379,6 +477,13 @@ pub(crate) mod tests {
         (data, course)
     }
 
+    /// Issue #119: the open test circuit (a small long race in three sections).
+    pub(crate) fn open_circuit() -> (TrackData, Course) {
+        let data = crate::track::test_open_circuit();
+        let course = Course::new(&TrackLayout::new(&data), &RaceTuning::default());
+        (data, course)
+    }
+
     /// A point on the road at race distance `distance`, `lateral` meters right of the
     /// centerline, at kart height.
     pub(crate) fn at(course: &Course, distance: f32, lateral: f32) -> Vec3 {
@@ -490,6 +595,75 @@ pub(crate) mod tests {
                 assert!(t.forward().dot(forward) > 0.99);
             }
         }
+    }
+
+    /// Issue #119: on an open circuit, the race runs once from the start line to the finish line
+    /// (whatever `RaceTuning::laps`): its laps are its sections, its checkpoints go from the start
+    /// line to the finish (global checkpoint `N`), each section beginning on one; before the start
+    /// line (the grid, on the lead-in) the race distance is negative, without wrapping round the
+    /// loop; a drop point is always at or behind its checkpoint, on the road, in the window of
+    /// a kart that validated it.
+    #[test]
+    fn an_open_circuit_runs_once_from_the_start_line_to_the_finish() {
+        let (data, course) = open_circuit();
+        let open = course.open.clone().expect("an open circuit");
+        let center = &course.center;
+        let ends = center.open().unwrap();
+        assert_eq!(course.laps, 3, "its three sections");
+        assert!(course.is_open());
+        assert!((open.finish - center.param_to_distance(94.0)).abs() < 1e-3);
+        assert_eq!(course.finish_distance(), open.finish);
+        let n = course.checkpoint_count();
+        assert_eq!(course.checkpoints_to_finish(), n + 1);
+        assert_eq!(open.section_ends.len(), 3);
+        assert_eq!(*open.section_ends.last().unwrap(), n);
+        for (k, end) in open.section_ends.iter().enumerate() {
+            let begins = ends.section_end(k);
+            assert!(
+                (course.checkpoint_distance(i64::from(*end)) - begins).abs() < 0.01,
+                "section {k} ends on its checkpoint"
+            );
+            assert_eq!(course.lap_closed_by(*end), Some(k as u32 + 1));
+        }
+        assert_eq!(course.lap_closed_by(0), None);
+        assert_eq!(course.lap_closed_by(1), None);
+        // The checkpoints, from the start line to the finish, 25 m apart or a little more.
+        assert_eq!(course.checkpoint_distance(0), 0.0);
+        for g in 0..i64::from(n) {
+            let (a, b) = (
+                course.checkpoint_distance(g),
+                course.checkpoint_distance(g + 1),
+            );
+            assert!((25.0..34.0).contains(&(b - a)), "{g}: {a} → {b}");
+        }
+        assert!(course.checkpoint_distance(-1) < 0.0);
+        assert!(course.checkpoint_distance(i64::from(n) + 1) > open.finish);
+        // The grid on the lead-in, behind the start line: on the road, the race distance
+        // negative.
+        for slot in 0..12 {
+            let p = course.project(0, course.grid[slot].translation);
+            assert!((-45.0..-4.0).contains(&p.distance), "slot {slot}: {p:?}");
+            assert!(center.on_the_road(p.distance));
+            assert!(p.lateral.abs() < p.wall && p.height.abs() < 1.0);
+        }
+        // The drop points.
+        for g in -1..=i64::from(n) {
+            let (drop, checkpoint) = (course.drop_distance(g), course.checkpoint_distance(g));
+            if g < i64::from(n) {
+                assert!(drop <= checkpoint + 0.01 && drop > checkpoint - 60.0, "{g}");
+            }
+            assert!(center.on_the_road(drop), "{g}: {drop}");
+            let passed = (g + 1) as u32;
+            assert!(drop > course.window(passed).0, "{g}");
+            let t = course.drop_transform(g, 0.0, 0.4);
+            let p = course.project(passed, t.translation);
+            assert!((p.height - GRID_HEIGHT).abs() < 0.05 && p.lateral.abs() < 0.1);
+        }
+        // Nothing of its way back on the road; the way back is not raced.
+        let ways = [ends.road_end + 5.0, ends.road_start - 5.0];
+        assert!(ways.iter().all(|d| !center.on_the_road(*d)));
+        assert!(center.on_the_road(0.0) && center.on_the_road(open.finish));
+        assert!(data.open.is_some());
     }
 
     #[test]

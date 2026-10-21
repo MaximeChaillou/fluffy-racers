@@ -22,6 +22,8 @@ pub enum Banner {
     Count(u32),
     Go,
     FinalLap,
+    /// Issue #119: the last section of an open circuit.
+    FinalSection,
     /// The followed racer crossed the finish line.
     Finished,
 }
@@ -34,6 +36,7 @@ impl Banner {
             Banner::Count(n) => write!(out, "{n}"),
             Banner::Go => write!(out, "GO !"),
             Banner::FinalLap => write!(out, "DERNIER TOUR !"),
+            Banner::FinalSection => write!(out, "DERNIÈRE SECTION !"),
             Banner::Finished => write!(out, "FINI !"),
         };
     }
@@ -47,6 +50,8 @@ pub struct HudValues {
     pub racers: u32,
     pub lap: u32,
     pub laps: u32,
+    /// Issue #119: an open circuit: its laps are sections (« Section 2/3 », « Meilleure section »).
+    pub sections: bool,
     /// The racer's chrono, in hundredths of a second (what is displayed).
     pub time: u32,
     /// Best lap, in hundredths of a second.
@@ -71,6 +76,7 @@ impl HudValues {
             racers: racers as u32,
             lap: progress.current_lap(course),
             laps: course.laps,
+            sections: course.is_open(),
             time: hundredths(progress.time(race_ticks)),
             best_lap: progress.best_lap().map(hundredths),
             banner: banner(race, course, tuning, progress),
@@ -102,7 +108,12 @@ pub fn banner(
     let on_final_lap = course.laps > 1 && progress.laps_completed(course) + 1 == course.laps;
     let lap_ticks = race.race_ticks().saturating_sub(progress.lap_start);
     if on_final_lap && lap_ticks < seconds_to_ticks(tuning.final_lap_banner_seconds) {
-        return Banner::FinalLap;
+        // Issue #119: « DERNIÈRE SECTION ! » on an open circuit.
+        return if course.is_open() {
+            Banner::FinalSection
+        } else {
+            Banner::FinalLap
+        };
     }
     Banner::None
 }
@@ -130,6 +141,16 @@ pub fn write_lap(out: &mut String, lap: u32, laps: u32) {
     let _ = write!(out, "Tour {lap}/{laps}");
 }
 
+/// Issue #119: "Section 2/3" on an open circuit (`sections`), "Tour 2/3" otherwise.
+pub fn write_lap_or_section(out: &mut String, lap: u32, laps: u32, sections: bool) {
+    if sections {
+        out.clear();
+        let _ = write!(out, "Section {lap}/{laps}");
+    } else {
+        write_lap(out, lap, laps);
+    }
+}
+
 /// A time in hundredths: "1:02.35"; `None`: "-:--.--".
 pub fn write_time(out: &mut String, hundredths: Option<u32>) {
     match hundredths {
@@ -145,6 +166,18 @@ pub fn write_best_lap(out: &mut String, hundredths: Option<u32>) {
     out.clear();
     out.push_str("Meilleur tour ");
     write_time(out, hundredths);
+}
+
+/// Issue #119: "Meilleure section 1:02.12" on an open circuit (`sections`), "Meilleur tour
+/// 0:20.12" otherwise.
+pub fn write_best_lap_or_section(out: &mut String, hundredths: Option<u32>, sections: bool) {
+    if sections {
+        out.clear();
+        out.push_str("Meilleure section ");
+        write_time(out, hundredths);
+    } else {
+        write_best_lap(out, hundredths);
+    }
 }
 
 /// Croquettes held (GD § 7, issue #14): "x 0".
@@ -220,10 +253,14 @@ pub fn names_a_key(text: &str) -> bool {
 /// it changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResultsTime {
-    /// Still on track, on lap `lap` of `laps`.
-    Racing { lap: u32, laps: u32 },
-    /// Crossed the line: its time and best lap.
-    Finished { time: u32, best_lap: Option<u32> },
+    /// Still on track, on lap `lap` of `laps` (issue #119: section, on an open circuit).
+    Racing { lap: u32, laps: u32, sections: bool },
+    /// Crossed the line: its time and best lap (issue #119: its best section).
+    Finished {
+        time: u32,
+        best_lap: Option<u32>,
+        sections: bool,
+    },
     /// Still on track when the results closed: its estimated time.
     Estimated(u32),
     /// Gave up (online: its player left).
@@ -238,12 +275,14 @@ impl ResultsTime {
             Some(ResultTime::Finished(ticks)) => Self::Finished {
                 time: hundredths(ticks),
                 best_lap,
+                sections: course.is_open(),
             },
             Some(ResultTime::Estimated(ticks)) => Self::Estimated(hundredths(ticks)),
             Some(ResultTime::GaveUp) => Self::GaveUp,
             None => Self::Racing {
                 lap: progress.current_lap(course),
                 laps: course.laps,
+                sections: course.is_open(),
             },
         }
     }
@@ -265,8 +304,14 @@ impl ResultsTime {
     /// The column after it: "Meilleur tour 0:20.12", "Tour 2/3", "Temps estime", nothing.
     pub fn write_detail(&self, out: &mut String) {
         match *self {
-            Self::Racing { lap, laps } => write_lap(out, lap, laps),
-            Self::Finished { best_lap, .. } => write_best_lap(out, best_lap),
+            Self::Racing {
+                lap,
+                laps,
+                sections,
+            } => write_lap_or_section(out, lap, laps, sections),
+            Self::Finished {
+                best_lap, sections, ..
+            } => write_best_lap_or_section(out, best_lap, sections),
             Self::Estimated(_) => {
                 out.clear();
                 out.push_str(RESULTS_ESTIMATED);
@@ -418,7 +463,11 @@ mod tests {
         let mut progress = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
         assert_eq!(
             ResultsTime::of(&progress, &course, None),
-            ResultsTime::Racing { lap: 1, laps: 3 }
+            ResultsTime::Racing {
+                lap: 1,
+                laps: 3,
+                sections: false
+            }
         );
         // Two laps done, the third one on.
         let n = course.checkpoint_count();
@@ -426,7 +475,14 @@ mod tests {
             progress.validate(&course, tick * 30);
         }
         let racing = ResultsTime::of(&progress, &course, None);
-        assert_eq!(racing, ResultsTime::Racing { lap: 3, laps: 3 });
+        assert_eq!(
+            racing,
+            ResultsTime::Racing {
+                lap: 3,
+                laps: 3,
+                sections: false
+            }
+        );
         let lap1 = progress.lap_times[0];
         let best = hundredths(progress.best_lap().unwrap());
         assert_eq!(best, hundredths(lap1.min(progress.lap_times[1])));
@@ -444,6 +500,7 @@ mod tests {
             ResultsTime::Finished {
                 time: hundredths(finish),
                 best_lap: Some(best),
+                sections: false,
             }
         );
         // Its line of the closed results says the same.
@@ -469,14 +526,16 @@ mod tests {
         assert_eq!(
             cells(ResultsTime::Finished {
                 time: 6_235,
-                best_lap: Some(2_012)
+                best_lap: Some(2_012),
+                sections: false,
             }),
             ("1:02.35".into(), "Meilleur tour 0:20.12".into())
         );
         assert_eq!(
             cells(ResultsTime::Finished {
                 time: 6_235,
-                best_lap: None
+                best_lap: None,
+                sections: false,
             }),
             ("1:02.35".into(), "Meilleur tour -:--.--".into())
         );
@@ -485,6 +544,67 @@ mod tests {
             cells(ResultsTime::GaveUp),
             ("abandon".into(), String::new())
         );
+    }
+
+    /// Issue #119 (« les sections s'affichent et se chronomètrent »): on an open circuit, the HUD
+    /// and the results say « Section 2/3 » and « Meilleure section » (a section's time, as a
+    /// lap's), and « DERNIÈRE SECTION ! » as the last one begins; on a circuit of laps, « Tour »
+    /// as before.
+    #[test]
+    fn an_open_circuit_is_shown_in_sections() {
+        let (_, course) = crate::race::open_course_for_tests();
+        let mut progress = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
+        let racing = ResultsTime::of(&progress, &course, None);
+        assert_eq!(
+            racing,
+            ResultsTime::Racing {
+                lap: 1,
+                laps: 3,
+                sections: true
+            }
+        );
+        let mut out = String::new();
+        racing.write_detail(&mut out);
+        assert_eq!(out, "Section 1/3");
+        // The first two sections done.
+        let ends = course.open.clone().unwrap().section_ends;
+        for tick in 1..=ends[1] + 1 {
+            progress.validate(&course, tick * 40);
+        }
+        assert_eq!(progress.lap_times.len(), 2);
+        ResultsTime::of(&progress, &course, None).write_detail(&mut out);
+        assert_eq!(out, "Section 3/3");
+        // « DERNIÈRE SECTION ! » as it begins.
+        let tuning = RaceTuning::default();
+        let mut race = Race::new(&tuning);
+        let begun = progress.lap_start;
+        race.flow = crate::race::RaceFlow {
+            tick: crate::race::RaceFlow::go_tick(&race.timings) + begun + 10,
+            over_at: None,
+        };
+        assert_eq!(
+            banner(&race, &course, &tuning, &progress),
+            Banner::FinalSection
+        );
+        let mut s = String::new();
+        Banner::FinalSection.write(&mut s);
+        assert_eq!(s, "DERNIÈRE SECTION !");
+        // Then the finish: its best section.
+        for tick in ends[1] + 2..=ends[2] + 1 {
+            progress.validate(&course, begun + tick);
+        }
+        assert!(progress.finished());
+        let finished = ResultsTime::of(&progress, &course, None);
+        finished.write_detail(&mut out);
+        assert!(out.starts_with("Meilleure section "), "{out}");
+        let values = HudValues::new(&race, &course, &tuning, &progress, 12, 0);
+        assert!(values.sections);
+        assert_eq!(values.laps, 3);
+        let mut lap = String::new();
+        write_lap_or_section(&mut lap, values.lap, values.laps, values.sections);
+        assert_eq!(lap, "Section 3/3");
+        write_lap_or_section(&mut lap, 2, 3, false);
+        assert_eq!(lap, "Tour 2/3");
     }
 
     /// Issue #100: the HUD writes in Fredoka, with the accents: every text of the HUD and of the
@@ -504,6 +624,7 @@ mod tests {
             Banner::Count(3),
             Banner::Go,
             Banner::FinalLap,
+            Banner::FinalSection,
             Banner::Finished,
         ] {
             let mut s = String::new();
@@ -512,6 +633,11 @@ mod tests {
         }
         let mut s = String::new();
         write_best_lap(&mut s, Some(5));
+        texts.push(s.clone());
+        // Issue #119: the sections of an open circuit.
+        write_best_lap_or_section(&mut s, Some(5), true);
+        texts.push(s.clone());
+        write_lap_or_section(&mut s, 2, 3, true);
         texts.push(s.clone());
         write_racer_name(&mut s, false, 4, None);
         assert_eq!(s, "Kart 5");

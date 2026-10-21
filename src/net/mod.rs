@@ -110,8 +110,8 @@ pub use foot::{
     FootLook, FootPose, FootRelay, FootSync, LookTrack, RemoteWalker, WalkerEntry, strike_lands,
 };
 pub use guide::{
-    Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, color_notice, race_line, race_now,
-    settings_line,
+    Banner, RaceStage, RoomFacts, Seated, Stage, banner_shown, color_notice, race_line,
+    race_line_on, race_now, settings_line,
 };
 pub use ice::{Candidates, IceServers, PUBLIC_STUN, StunChoice, TurnServer, is_local_signal};
 pub use interp::{

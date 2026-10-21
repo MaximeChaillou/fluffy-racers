@@ -103,6 +103,12 @@ pub const CROQUETTE_HEIGHT: f32 = 0.6;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SpotIndex(pub u16);
 
+/// Issue #119: an open circuit's meshes (its road and walls, its decor) are drawn in square tiles
+/// this wide (m) on the ground plane, each culled on its own: a few draw calls more, and only
+/// what the camera may see is drawn. (Its colliders stay whole: Rapier's trimeshes have their own
+/// tree, and a seam between two of them would bump the wheels.)
+pub const TILE_SIZE: f32 = 200.0;
+
 /// If the circuit file is missing or invalid, say why and fall back to the test ground
 /// instead of leaving a blank screen.
 pub fn fall_back_when_loading_fails(
@@ -154,14 +160,26 @@ pub fn build_circuit_when_loaded(
         ..default()
     });
     let mut drawn = generated.combined();
-    drawn.append(&StartLine::of(&layout.center).mesh(&palette, &layout.lakes));
-    commands.spawn((
-        LevelScoped,
-        Name::new(format!("Track: {}", layout.name)),
-        Mesh3d(meshes.add(to_mesh(&drawn))),
-        MeshMaterial3d(track_material),
-        Transform::default(),
-    ));
+    // Issue #119: and an open circuit's finish line.
+    for line in StartLine::all(&layout.center) {
+        drawn.append(&line.mesh(&palette, &layout.lakes));
+    }
+    // Issue #119: a long open circuit in tiles, each culled on its own (`TILE_SIZE`); a circuit
+    // of laps in one mesh, as before.
+    let tiles = if layout.open().is_some() {
+        drawn.tiles(TILE_SIZE)
+    } else {
+        vec![drawn]
+    };
+    for tile in &tiles {
+        commands.spawn((
+            LevelScoped,
+            Name::new(format!("Track: {}", layout.name)),
+            Mesh3d(meshes.add(to_mesh(tile))),
+            MeshMaterial3d(track_material.clone()),
+            Transform::default(),
+        ));
+    }
 
     // Colliders, one per surface. Internal edges are fixed so karts slide along triangle
     // seams without bumps or snags. Floors are one-sided (seen from above), walls two-sided. The

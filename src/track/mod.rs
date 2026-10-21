@@ -33,13 +33,15 @@ pub use circuit::{
     ItemBoxSpot, SpotIndex, TrackHandle, TrickRamp,
 };
 pub use data::{
-    BreakableKind, CoverKind, EdgeSide, NpcKind, ObstacleKind, OffroadZone, PropData, ShortcutKind,
-    TrackData,
+    BreakableKind, CoverKind, EdgeSide, NpcKind, ObstacleKind, OffroadZone, OpenData, PropData,
+    ShortcutKind, TrackData,
 };
 pub use dressing::CircuitDecor;
 pub use hazard::{Capsule, Hazard, HazardKind, kart_capsule};
 pub use hazards::{Breakable, HazardBody, HazardSystems, HazardVisualPlugin, Panel};
-pub use layout::{CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, TrackLayout, TrackSample};
+pub use layout::{
+    CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, OpenEnds, TrackLayout, TrackSample,
+};
 pub use shortcut::{Cover, OpenEdge, Shortcut};
 pub use start_line::StartLine;
 pub use water::{Gap, Lake, gap_at, water_depth};
@@ -73,6 +75,15 @@ pub const DEFAULT_CIRCUIT: &str = "tracks/prairie.track.ron";
 #[cfg(test)]
 pub(crate) fn test_circuit() -> TrackData {
     TrackData::from_ron(include_str!("test_circuit.track.ron")).unwrap()
+}
+
+/// Issue #119: the open test circuit of the unit tests (`test_open.track.ron`): a small long race
+/// in three sections, not a circuit of the game.
+#[cfg(test)]
+pub(crate) fn test_open_circuit() -> TrackData {
+    let data = TrackData::from_ron(include_str!("test_open.track.ron")).unwrap();
+    data.validate().unwrap();
+    data
 }
 
 /// The mirror mode (issue #19, GD § 1): the circuits are built as the mirror image of their file

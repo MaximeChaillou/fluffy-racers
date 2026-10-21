@@ -478,7 +478,14 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
             view.lines.push(format!(
                 "{race} en cours sur {} : {}.",
                 name(start.track),
-                crate::net::race_line(start)
+                crate::net::race_line_on(
+                    start,
+                    input
+                        .catalog
+                        .circuits
+                        .get(usize::from(start.track))
+                        .is_some_and(|entry| entry.long)
+                )
             ));
             if seated.race == RaceStage::Watching {
                 view.lines.push(if championship.is_some() {

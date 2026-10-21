@@ -14,7 +14,7 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 
 use super::biome::Palette;
-use super::circuit::{TrackHandle, to_mesh};
+use super::circuit::{TILE_SIZE, TrackHandle, to_mesh};
 use super::data::TrackData;
 use super::decor::{decor_models, place_decor_around};
 use super::far::place_far_decor;
@@ -148,17 +148,16 @@ pub fn dress_circuit(
         };
         model.place(out, piece.position, piece.yaw, piece.height, piece.radius);
     }
+    // Issue #119: on an open circuit, the far decor's pieces (along its long road) in a mesh of
+    // their own, drawn in tiles (`TILE_SIZE`); the silhouettes and the ground beyond in one.
+    let open = layout.open().is_some();
+    let mut far_pieces = MeshData::default();
     let far_mesh = far.as_ref().map(|far| {
         let mut mesh = far.mesh();
         for piece in &far.pieces {
+            let out = if open { &mut far_pieces } else { &mut mesh };
             let model = model_of(&far.models[piece.model as usize]);
-            model.place(
-                &mut mesh,
-                piece.position,
-                piece.yaw,
-                piece.height,
-                piece.radius,
-            );
+            model.place(out, piece.position, piece.yaw, piece.height, piece.radius);
         }
         mesh
     });
@@ -183,17 +182,25 @@ pub fn dress_circuit(
             Visibility::default(),
         ))
         .with_children(|decor| {
-            if !casting.indices.is_empty() {
+            // Issue #119: an open circuit's decor in tiles, each culled on its own.
+            let tiled = |mesh: MeshData| {
+                if layout.open().is_some() {
+                    mesh.tiles(TILE_SIZE)
+                } else {
+                    vec![mesh]
+                }
+            };
+            for tile in tiled(casting).iter().filter(|m| !m.indices.is_empty()) {
                 decor.spawn((
                     Name::new("Decor (shadows)"),
-                    Mesh3d(meshes.add(to_mesh(&casting))),
+                    Mesh3d(meshes.add(to_mesh(tile))),
                     MeshMaterial3d(shared.vertex_colors.clone()),
                 ));
             }
-            if !small.indices.is_empty() {
+            for tile in tiled(small).iter().filter(|m| !m.indices.is_empty()) {
                 decor.spawn((
                     Name::new("Decor (small, no shadows)"),
-                    Mesh3d(meshes.add(to_mesh(&small))),
+                    Mesh3d(meshes.add(to_mesh(tile))),
                     MeshMaterial3d(shared.vertex_colors.clone()),
                     NotShadowCaster,
                 ));
@@ -214,13 +221,13 @@ pub fn dress_circuit(
         layout.name,
         far.pieces.len(),
         far.left_out,
-        mesh.triangle_count()
+        mesh.triangle_count() + far_pieces.triangle_count()
     );
     commands.spawn((
         Name::new(format!("Far decor: {}", layout.name)),
         CircuitFarDecor {
             pieces: far.pieces.len(),
-            triangles: mesh.triangle_count(),
+            triangles: mesh.triangle_count() + far_pieces.triangle_count(),
         },
         LevelScoped,
         Mesh3d(meshes.add(to_mesh(&mesh))),
@@ -232,6 +239,16 @@ pub fn dress_circuit(
         Transform::default(),
         NotShadowCaster,
     ));
+    for tile in far_pieces.tiles(TILE_SIZE) {
+        commands.spawn((
+            Name::new(format!("Far decor (pieces): {}", layout.name)),
+            LevelScoped,
+            Mesh3d(meshes.add(to_mesh(&tile))),
+            MeshMaterial3d(shared.vertex_colors.clone()),
+            Transform::default(),
+            NotShadowCaster,
+        ));
+    }
     let (r, g, b) = data
         .biome()
         .map_or(Palette::default().sky, |biome| biome.palette.sky);

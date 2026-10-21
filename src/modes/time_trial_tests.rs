@@ -720,3 +720,110 @@ fn an_unreadable_stored_text_gives_no_record() {
     });
     assert_eq!(records_from_text(&records.to_ron()), records);
 }
+
+/// Issue #119 acceptance (« le contre-la-montre et le fantôme marchent sur la course longue »):
+/// a time trial on the first long race (an open circuit), the kart driven by a Hard bot from the
+/// start line to the finish: its record has the run's time and the time of each of its three
+/// sections (whatever `RaceTuning::laps`), which add up to it; the HUD says « SECTION 1 » to
+/// « SECTION 3 » with their times; the ghost is the run, frame by frame; the next run races
+/// against it, the ghost shown where the run was.
+#[test]
+fn a_time_trial_on_the_long_race_records_its_sections_and_its_ghost() {
+    let mut app = trial_game(0);
+    let long = crate::admin::tracks::circuits()
+        .iter()
+        .position(|entry| entry.name == "Échappée Pissenlit")
+        .expect("the long race in the manifest");
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
+    tap(&mut app, KeyCode::ArrowRight, Key::ArrowRight);
+    app.world_mut().resource_mut::<RaceMenu>().setup.circuit = long;
+    tap(&mut app, KeyCode::Enter, Key::Enter);
+    wait_for_the_level(&mut app, "Échappée Pissenlit");
+    assert_eq!(app.world().resource::<crate::race::Course>().laps, 3);
+    // A Hard bot drives it.
+    let kart = the_kart(&mut app);
+    let tuning = app.world().resource::<crate::bots::BotTuning>().clone();
+    app.world_mut()
+        .entity_mut(kart)
+        .remove::<PlayerKart>()
+        .insert(crate::bots::bot(
+            crate::bots::BotDifficulty::Hard,
+            7,
+            &tuning,
+        ));
+    let mut run: Vec<Vec3> = Vec::new();
+    let finish = loop {
+        app.update();
+        let world = app.world();
+        let race_ticks = world.resource::<Race>().race_ticks() as usize;
+        let at = world.get::<Transform>(kart).unwrap().translation;
+        run.truncate(race_ticks);
+        while run.len() <= race_ticks {
+            run.push(at);
+        }
+        if let Some(finish) = world.get::<RaceProgress>(kart).unwrap().finish {
+            run.truncate(finish as usize + 1);
+            break finish;
+        }
+        assert!(race_ticks < 300 * 60, "the run never finished");
+    };
+    let state = app.world().resource::<TimeTrialState>();
+    let key = state.run.key.clone().unwrap();
+    assert_eq!(key.circuit, "tracks/echappee.track.ron");
+    let record = state.records.get(&key).unwrap().clone();
+    assert_eq!(record.time, finish);
+    assert_eq!(record.laps.len(), 3, "its three sections");
+    assert_eq!(record.laps.iter().sum::<u32>(), finish);
+    let seconds = crate::race::ticks_to_seconds(finish);
+    assert!((150.0..210.0).contains(&seconds), "{seconds} s");
+    let ghost = record.ghost.clone().unwrap();
+    assert_eq!(ghost.frames.len(), run.len(), "a frame per race tick");
+    for (k, (frame, at)) in ghost.frames.iter().zip(&run).enumerate() {
+        let recorded = frame.pose().position;
+        assert!(
+            (recorded - *at).abs().max_element() < 0.001,
+            "tick {k}: {recorded} vs {at}"
+        );
+    }
+    app.update();
+    assert_eq!(trial_text(&mut app, TrialText::Record), "RECORD !");
+    for section in 0..3 {
+        let text = trial_text(&mut app, TrialText::Lap(section));
+        assert!(
+            text.starts_with(&format!("SECTION {}  ", section + 1)),
+            "{text}"
+        );
+    }
+
+    // The next run, against the ghost: shown where the run was.
+    for _ in 0..(30 * 60) {
+        app.update();
+        let race = app.world().resource::<Race>();
+        if race.phase() == crate::race::RacePhase::Results && race.flow.can_restart(&race.timings) {
+            break;
+        }
+    }
+    tap(&mut app, KeyCode::Enter, Key::Enter);
+    let mut shown = 0;
+    for _ in 0..(40 * 60) {
+        app.update();
+        let race_ticks = app.world().resource::<Race>().race_ticks();
+        let world = app.world_mut();
+        let visuals: Vec<Transform> = world
+            .query_filtered::<&Transform, With<GhostVisual>>()
+            .iter(world)
+            .copied()
+            .collect();
+        assert_eq!(visuals.len(), 1);
+        if race_ticks >= 2 {
+            let recorded = run[race_ticks as usize - 1];
+            assert!(
+                (visuals[0].translation - recorded).abs().max_element() < 0.001,
+                "race tick {race_ticks}"
+            );
+            shown += 1;
+        }
+    }
+    assert!(shown > 1000, "{shown}");
+}

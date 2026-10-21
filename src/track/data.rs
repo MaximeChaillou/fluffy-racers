@@ -111,6 +111,11 @@ pub struct TrackData {
     /// placed after it. Only on a circuit with a biome.
     #[serde(default)]
     pub far_decor: Vec<FarLayer>,
+    /// Issue #119 (GD § 1, « Les courses longues »): an **open** circuit, a long race from its
+    /// start to a finish elsewhere, in sections instead of laps (`open: (finish: 600.0, ...)`).
+    /// None: a circuit of laps, as before.
+    #[serde(default)]
+    pub open: Option<OpenData>,
     /// Issue #19: this is the mirror image of the file ([`TrackData::mirrored`]), never written in
     /// a file. The starting grid follows (the pole on the other side).
     #[serde(skip)]
@@ -121,6 +126,40 @@ pub struct TrackData {
     #[serde(skip)]
     pub fingerprint: u64,
 }
+
+/// Issue #119: an open circuit (GD § 1, « Les courses longues »): one long way from the start line
+/// (point 0) to the finish line, in sections. Its centerline still closes up (a Catmull-Rom loop,
+/// as every circuit's): its last stretch, **the way back** from `road_end` round to `road_start`,
+/// is never built nor driven (no road, no wall, no decor, no checkpoint), and a barrier closes the
+/// road at both ends. The race runs once from the start line to the finish (no lap); the karts
+/// that finished coast down the run-out after it; the grid sits on the lead-in before the start
+/// line. Every position is a spline parameter (like `at`), in this order along the loop: the
+/// start line (0), `sections`, `finish`, `road_end`, the way back, `road_start` (before the last
+/// point), the start line again.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OpenData {
+    /// The finish line.
+    pub finish: f32,
+    /// Where the road ends, after the run-out ([`MIN_RUN_OUT`] at least after the finish).
+    pub road_end: f32,
+    /// Where the road begins, on the lead-in ([`MIN_LEAD_IN`] at least before the start line,
+    /// round the loop): the grid stands on it.
+    pub road_start: f32,
+    /// Where each section after the first one begins (the start line begins the first one): « Section 2/3 »...
+    pub sections: Vec<f32>,
+}
+
+/// Issue #119: an open circuit's run-out is this long at least (m): a kart that crossed the finish
+/// line at full speed coasts to a stop before its end (from 35 m/s at `KartTuning::coast_decel`,
+/// 6 m/s², about 100 m).
+pub const MIN_RUN_OUT: f32 = 130.0;
+/// Issue #119: its lead-in, before the start line, is this long at least (m): the grid (38 m) and
+/// the race's backward window behind it.
+pub const MIN_LEAD_IN: f32 = 70.0;
+/// Issue #119: a section is this long at least (m), and there are 2 to [`MAX_SECTIONS`] of them.
+pub const MIN_SECTION: f32 = 200.0;
+pub const MAX_SECTIONS: usize = 6;
 
 /// A piece placed by hand beyond the walls (issue #11), facing the track.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -728,6 +767,7 @@ impl TrackData {
         }
         self.validate_edges_and_shortcuts()?;
         self.validate_hazards()?;
+        self.validate_open()?;
         // Issue #146: its own far decor, on top of its biome's.
         if !self.far_decor.is_empty() && self.biome.is_none() {
             return fail("far_decor without a biome".to_string());
@@ -953,6 +993,119 @@ impl TrackData {
         Ok(())
     }
 
+    /// Issue #119: an open circuit's sections, finish and ends, in their order along the loop, a
+    /// run-out, a lead-in and sections long enough; nothing of the circuit on its way back (a
+    /// gap, an anti-gravity zone, a side without wall, a shortcut, an obstacle, a passer-by, a
+    /// thing to drive through, a ramp, a pad, a box, a croquette, a sand patch, a drop point, a
+    /// prop).
+    fn validate_open(&self) -> Result<(), InvalidTrack> {
+        let Some(open) = &self.open else {
+            return Ok(());
+        };
+        let fail = |message: String| Err(InvalidTrack(message));
+        let n = self.points.len() as f32;
+        let mut order = vec![0.0];
+        order.extend(&open.sections);
+        order.extend([open.finish, open.road_end, open.road_start, n]);
+        if order.iter().any(|p| !p.is_finite())
+            || order.windows(2).any(|w| w[0] >= w[1])
+            || open.sections.is_empty()
+            || open.sections.len() + 1 > MAX_SECTIONS
+        {
+            return fail(format!(
+                "open circuit: 0 < sections {:?} < finish {} < road_end {} < road_start {} < {n}                  (the points), 2 to {MAX_SECTIONS} sections",
+                open.sections, open.finish, open.road_end, open.road_start
+            ));
+        }
+        let center = super::layout::CenterLine::of(self);
+        let distance = |p: f32| center.param_to_distance(p);
+        let run_out = distance(open.road_end) - distance(open.finish);
+        let lead_in = center.length() - distance(open.road_start);
+        if run_out < MIN_RUN_OUT || lead_in < MIN_LEAD_IN {
+            return fail(format!(
+                "open circuit: a run-out of {run_out:.0} m ({MIN_RUN_OUT} at least), a lead-in of                  {lead_in:.0} m ({MIN_LEAD_IN} at least)"
+            ));
+        }
+        let starts: Vec<f32> = std::iter::once(0.0)
+            .chain(open.sections.iter().copied())
+            .chain([open.finish])
+            .collect();
+        if let Some(w) = starts
+            .windows(2)
+            .find(|w| distance(w[1]) - distance(w[0]) < MIN_SECTION)
+        {
+            return fail(format!(
+                "open circuit: the section from {} to {} is shorter than {MIN_SECTION} m",
+                w[0], w[1]
+            ));
+        }
+        // On the road: from `road_start` round to `road_end` (a range's both ends, and the way
+        // back never inside it).
+        let on_road = |p: f32| {
+            let p = p.rem_euclid(n);
+            p <= open.road_end || p >= open.road_start
+        };
+        let range_on_road = |from: f32, to: f32| {
+            on_road(from) && on_road(to) && {
+                let (from, to) = (from.rem_euclid(n), to.rem_euclid(n));
+                // Through the start line (from the lead-in), or forward before the end.
+                if from >= open.road_start {
+                    to >= from || to <= open.road_end
+                } else {
+                    to >= from && to <= open.road_end
+                }
+            }
+        };
+        let ranges = self
+            .gaps
+            .iter()
+            .map(|g| ("gap", g.from, g.to))
+            .chain(
+                self.anti_gravity
+                    .iter()
+                    .map(|z| ("anti-gravity zone", z.from, z.to)),
+            )
+            .chain(self.open_edges.iter().map(|e| ("open edge", e.from, e.to)))
+            .chain(self.shortcuts.iter().map(|s| ("shortcut", s.from, s.to)))
+            .chain(self.offroad.iter().map(|z| ("sand patch", z.from, z.to)));
+        for (what, from, to) in ranges {
+            if !range_on_road(from, to) {
+                return fail(format!(
+                    "open circuit: the {what} {from}..{to} is on the way back (off the road)"
+                ));
+            }
+        }
+        let spots = self
+            .obstacles
+            .iter()
+            .map(|o| ("obstacle", o.at))
+            .chain(self.npcs.iter().map(|p| ("passer-by", p.at)))
+            .chain(
+                self.breakables
+                    .iter()
+                    .map(|b| ("thing to drive through", b.at)),
+            )
+            .chain(
+                self.trick_ramps
+                    .iter()
+                    .chain(&self.glide_ramps)
+                    .map(|r| ("ramp", r.at)),
+            )
+            .chain(self.boost_pads.iter().map(|p| ("boost pad", p.at)))
+            .chain(self.item_boxes.iter().map(|b| ("item box", b.at)))
+            .chain(self.croquettes.iter().map(|c| ("croquette", c.from)))
+            .chain(self.respawns.iter().map(|r| ("drop point", *r)))
+            .chain(self.props.iter().map(|p| ("prop", p.at)));
+        for (what, at) in spots {
+            if !on_road(at) {
+                return fail(format!(
+                    "open circuit: the {what} at {at} is on the way back (off the road)"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Issue #78: the first spline parameter (in steps of 1/16) where the road banks beyond
     /// [`MAX_BANK`] out of every anti-gravity zone, if there is one. The banking blends between
     /// two control points (`layout::bank_between`), so a steep point banks its neighbouring
@@ -1059,6 +1212,69 @@ mod tests {
     use super::*;
 
     const MINIMAL: &str = "(name: \"Square\", points: [(pos: (0.0, 0.0, 0.0)), (pos: (0.0, 0.0, -50.0)), (pos: (50.0, 0.0, -50.0)), (pos: (50.0, 0.0, 0.0))])";
+
+    /// Issue #119: an open circuit's file is refused when its ends are out of order, its run-out
+    /// or its lead-in too short, a section too short, no section after the first one, or
+    /// something of the circuit on its way back; its mirror keeps its ends.
+    #[test]
+    fn an_open_circuit_that_makes_no_sense_is_rejected() {
+        let base = crate::track::test_open_circuit();
+        assert_eq!(base.validate(), Ok(()));
+        assert_eq!(base.mirrored().open, base.open);
+        assert_eq!(base.mirrored().validate(), Ok(()));
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = base.clone();
+            change(&mut data);
+            data.validate().unwrap_err().0
+        };
+        for (what, change) in [
+            (
+                "order",
+                &(|d: &mut TrackData| d.open.as_mut().unwrap().finish = 120.0)
+                    as &dyn Fn(&mut TrackData),
+            ),
+            ("order", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().sections = vec![64.0, 36.0];
+            }),
+            ("order", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().sections.clear();
+            }),
+            ("order", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().road_start = 140.0;
+            }),
+            ("run-out", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().road_end = 100.0;
+            }),
+            ("lead-in", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().road_start = 135.0;
+            }),
+            ("shorter", &|d: &mut TrackData| {
+                d.open.as_mut().unwrap().sections = vec![36.0, 40.0];
+            }),
+            ("way back", &|d: &mut TrackData| {
+                d.boost_pads.push(Spot {
+                    at: 120.0,
+                    offset: 0.0,
+                });
+            }),
+            ("way back", &|d: &mut TrackData| {
+                d.gaps.push(GapData {
+                    from: 110.0,
+                    to: 116.0,
+                });
+            }),
+        ] {
+            let error = broken(change);
+            let wanted = match what {
+                "order" => "open circuit: 0 < sections",
+                "run-out" => "a run-out of",
+                "lead-in" => "a lead-in of",
+                "shorter" => "shorter than",
+                _ => "on the way back",
+            };
+            assert!(error.contains(wanted), "{what}: {error}");
+        }
+    }
 
     /// Issue #156: a shortcut's cover: on a road or a grass path (never a jump), 2 m from its ends
     /// at least, the path narrow enough for it to stand across it; the mirror keeps it.

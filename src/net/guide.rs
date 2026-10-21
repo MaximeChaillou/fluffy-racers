@@ -39,11 +39,21 @@ pub fn settings_line(setup: RoomSetup) -> String {
 /// Issue #99: what a race started has, after its circuit: « 3 tours, 9 bots, en miroir, sans
 /// objets ».
 pub fn race_line(start: &RaceStart) -> String {
-    let mut line = format!(
-        "{} tour{}, ",
-        start.laps,
-        if start.laps > 1 { "s" } else { "" }
-    );
+    race_line_on(start, false)
+}
+
+/// Issue #119: the same on a circuit that may be a long race (`long`, the manifest's): « course
+/// longue, 9 bots » (its sections are its own, not the host's laps).
+pub fn race_line_on(start: &RaceStart, long: bool) -> String {
+    let mut line = if long {
+        "course longue, ".to_string()
+    } else {
+        format!(
+            "{} tour{}, ",
+            start.laps,
+            if start.laps > 1 { "s" } else { "" }
+        )
+    };
     match start.bots {
         0 => line.push_str("sans bots"),
         1 => line.push_str("1 bot"),
@@ -687,5 +697,10 @@ mod tests {
         );
         start.bots = 1;
         assert!(race_line(&start).contains("1 bot,"));
+        // Issue #119: on a long race, no lap.
+        assert_eq!(
+            race_line_on(&start, true),
+            "course longue, 1 bot, en miroir, sans objets"
+        );
     }
 }

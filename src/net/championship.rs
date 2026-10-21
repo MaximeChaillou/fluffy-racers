@@ -393,6 +393,7 @@ mod tests {
                 .map(|k| TrackEntry {
                     name: format!("Circuit {k}"),
                     file: format!("c{k}.track.ron"),
+                    long: false,
                 })
                 .collect(),
             cups: (0..circuits.div_ceil(4))

@@ -695,7 +695,9 @@ fn follow_room_clock(
     time: Res<Time<Fixed>>,
     mut flow: ResMut<OnlineFlow>,
 ) {
+    // Issue #119: an open circuit's sections are its own (its file's), the same on every peer.
     if let Some(mut course) = course
+        && !course.is_open()
         && course.laps != u32::from(online.shared.start.laps)
     {
         course.laps = u32::from(online.shared.start.laps);

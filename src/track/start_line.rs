@@ -69,6 +69,16 @@ impl StartLine {
         }
     }
 
+    /// Issue #119: every line of the circuit of `center`: its start line, and on an open circuit
+    /// its finish line too (elsewhere: an arch of its own).
+    pub fn all(center: &CenterLine) -> Vec<Self> {
+        std::iter::once(Self::of(center))
+            .chain(center.open().map(|open| Self {
+                sample: center.at(open.finish),
+            }))
+            .collect()
+    }
+
     /// Half the band's width: the road and its curbs.
     pub fn half_width(&self) -> f32 {
         self.sample.half_width + CURB_WIDTH
@@ -301,7 +311,8 @@ mod tests {
     /// 3 cm (the race measures them from the centerline's samples 1 m away, whose frame turns a
     /// little on a start straight that bends gently: 2.1 cm at the curbs of the Crique Câline). It
     /// covers the road from curb to curb, just above it, facing up. A point of the band 1 cm past
-    /// its middle completes a lap, a point 1 cm short of it does not.
+    /// its middle completes a lap, a point 1 cm short of it does not. Issue #119: an open
+    /// circuit's finish line too (it ends the race).
     #[test]
     fn the_band_is_on_the_line_where_the_laps_are_counted() {
         let tuning = RaceTuning::default();
@@ -310,66 +321,88 @@ mod tests {
             let layout = TrackLayout::new(&data);
             let course = Course::new(&layout, &tuning);
             assert_eq!(course.checkpoints[0], 0.0, "{name}: the lap line");
-            let line = StartLine::of(&layout.center);
-            assert_eq!(line.sample, layout.checkpoints[0].sample, "{name}");
-            let band = line.band();
-            assert!(band.triangle_count() >= 2 * 2 * 16, "{name}");
-            let (mut left, mut right, mut on_the_line) = (f32::MAX, f32::MIN, 0);
-            for v in vertices(&band) {
-                let p = course.project(1, v);
-                let (edge, tolerance) = if p.distance.abs() < LINE_DEPTH / 4.0 {
-                    on_the_line += 1;
-                    (0.0, 0.01)
-                } else {
-                    (LINE_DEPTH / 2.0 * p.distance.signum(), 0.03)
-                };
-                assert!(
-                    (p.distance - edge).abs() < tolerance,
-                    "{name}: a corner of the band {:.3} m from the line",
-                    p.distance
-                );
-                assert!(
-                    (p.height - LINE_HEIGHT).abs() < 0.005,
-                    "{name}: {}",
-                    p.height
-                );
-                left = left.min(p.lateral);
-                right = right.max(p.lateral);
-            }
-            assert_eq!(
-                on_the_line,
-                band.positions.len() / 2,
-                "{name}: half on the line"
-            );
-            let curbs = line.sample.half_width + CURB_WIDTH;
-            assert!(
-                (left + curbs).abs() < 0.01 && (right - curbs).abs() < 0.01,
-                "{name}: the band from {left} to {right}, the curbs at ±{curbs}"
-            );
-            for (_, normal) in quads(&band) {
-                assert!(normal.dot(line.sample.up) > 0.999, "{name}: facing up");
-            }
-
-            // The race: about to finish lap 1 (next checkpoint: the line), on the middle of the
-            // band, then just past it.
+            let lines = StartLine::all(&layout.center);
+            assert_eq!(lines[0].sample, layout.checkpoints[0].sample, "{name}");
+            // Issue #119: an open circuit has its finish line too, where the race ends: checked
+            // the same way (its band about the finish's race distance, from the window of a racer
+            // about to finish).
+            assert_eq!(lines.len(), if course.is_open() { 2 } else { 1 }, "{name}");
             let n = course.checkpoint_count();
-            let middle =
-                |along: f32| line.sample.point(0.3, LINE_HEIGHT) + line.sample.forward * along;
-            let mut progress = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
-            for _ in 0..n {
-                progress.validate(&course, 100);
+            for (k, line) in lines.iter().enumerate() {
+                let (at, passed) = if k == 0 {
+                    (0.0, 1)
+                } else {
+                    (course.finish_distance(), n)
+                };
+                let band = line.band();
+                assert!(band.triangle_count() >= 2 * 2 * 16, "{name}");
+                let (mut left, mut right, mut on_the_line) = (f32::MAX, f32::MIN, 0);
+                for v in vertices(&band) {
+                    let p = course.project(passed, v);
+                    let along = p.distance - at;
+                    let (edge, tolerance) = if along.abs() < LINE_DEPTH / 4.0 {
+                        on_the_line += 1;
+                        (0.0, 0.01)
+                    } else {
+                        (LINE_DEPTH / 2.0 * along.signum(), 0.03)
+                    };
+                    assert!(
+                        (along - edge).abs() < tolerance,
+                        "{name}: a corner of the band {along:.3} m from the line"
+                    );
+                    assert!(
+                        (p.height - LINE_HEIGHT).abs() < 0.005,
+                        "{name}: {}",
+                        p.height
+                    );
+                    left = left.min(p.lateral);
+                    right = right.max(p.lateral);
+                }
+                assert_eq!(
+                    on_the_line,
+                    band.positions.len() / 2,
+                    "{name}: half on the line"
+                );
+                let curbs = line.sample.half_width + CURB_WIDTH;
+                assert!(
+                    (left + curbs).abs() < 0.01 && (right - curbs).abs() < 0.01,
+                    "{name}: the band from {left} to {right}, the curbs at ±{curbs}"
+                );
+                for (_, normal) in quads(&band) {
+                    assert!(normal.dot(line.sample.up) > 0.999, "{name}: facing up");
+                }
+                if k == 0 && course.is_open() {
+                    // The start line of an open circuit is crossed once, at the start (the race's
+                    // tests: `race::progress`).
+                    continue;
+                }
+
+                // The race: about to finish lap 1 (next checkpoint: the line), on the middle of
+                // the band, then just past it. Issue #119: about to finish the race, on an open
+                // circuit's finish line.
+                let middle =
+                    |along: f32| line.sample.point(0.3, LINE_HEIGHT) + line.sample.forward * along;
+                let mut progress = RaceProgress::on_grid(&course, course.grid[0].translation, 3);
+                for _ in 0..n {
+                    progress.validate(&course, 100);
+                }
+                let short = course.project(progress.passed, middle(-0.01));
+                assert_eq!(
+                    progress.clone().update(&course, &short, Some(200), true),
+                    None
+                );
+                let past = course.project(progress.passed, middle(0.01));
+                let wanted = if course.is_open() {
+                    crate::race::ProgressEvent::Finished
+                } else {
+                    crate::race::ProgressEvent::Lap(1)
+                };
+                assert_eq!(
+                    progress.update(&course, &past, Some(200), true),
+                    Some(wanted),
+                    "{name}"
+                );
             }
-            let short = course.project(progress.passed, middle(-0.01));
-            assert_eq!(
-                progress.clone().update(&course, &short, Some(200), true),
-                None
-            );
-            let past = course.project(progress.passed, middle(0.01));
-            assert_eq!(
-                progress.update(&course, &past, Some(200), true),
-                Some(crate::race::ProgressEvent::Lap(1)),
-                "{name}"
-            );
         }
     }
 

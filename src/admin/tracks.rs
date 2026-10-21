@@ -28,6 +28,10 @@ pub struct TrackEntry {
     pub name: String,
     /// Its file in `assets/tracks/`.
     pub file: String,
+    /// Issue #119: a long race (its file is `open`: in sections, no lap). The screens that only
+    /// have the manifest say so (the lobby: « 3 sections » rather than « 3 tours »).
+    #[serde(default)]
+    pub long: bool,
 }
 
 /// Issue #99: a cup of the manifest: its name (original) and its icon.
@@ -131,6 +135,8 @@ mod tests {
             let data = TrackData::from_ron(&text).unwrap();
             data.validate().unwrap();
             assert_eq!(data.name, entry.name);
+            // Issue #119: the manifest knows the long races.
+            assert_eq!(entry.long, data.open.is_some(), "{}: `long`", entry.name);
             let layout = TrackLayout::new(&data);
             assert_eq!(layout.grid.len(), crate::track::GRID_SLOTS);
         }

@@ -143,6 +143,35 @@ impl MeshData {
         self.indices.len() / 3
     }
 
+    /// Issue #119: the triangles split into square tiles of `size` meters on the ground plane (by
+    /// their first corner), one mesh per tile that has any, in the order of the tiles (by row,
+    /// then by column): each one is culled on its own (its bounding box), where one mesh for a
+    /// whole long circuit would always be drawn whole. The same triangles, their vertices with
+    /// them.
+    pub fn tiles(&self, size: f32) -> Vec<MeshData> {
+        type Tile = (MeshData, std::collections::HashMap<u32, u32>);
+        let mut tiles: std::collections::BTreeMap<(i32, i32), Tile> = default();
+        for triangle in self.indices.as_chunks::<3>().0 {
+            let first = self.positions[triangle[0] as usize];
+            let key = (
+                (first[2] / size).floor() as i32,
+                (first[0] / size).floor() as i32,
+            );
+            let (tile, remap) = tiles.entry(key).or_default();
+            for &i in triangle {
+                let index = *remap.entry(i).or_insert_with(|| {
+                    let k = i as usize;
+                    tile.positions.push(self.positions[k]);
+                    tile.normals.push(self.normals[k]);
+                    tile.colors.push(self.colors[k]);
+                    tile.positions.len() as u32 - 1
+                });
+                tile.indices.push(index);
+            }
+        }
+        tiles.into_values().map(|(tile, _)| tile).collect()
+    }
+
     /// Vertices and triangles for a Rapier trimesh collider.
     pub fn collider_data(&self) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         (
@@ -231,7 +260,19 @@ pub const SHORTCUT_LIFT: f32 = 0.02;
 /// in its gaps (the ends of the road there closed by a face down to the ground), and the skirts
 /// down to the floor of a lake.
 pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> TrackMeshes {
-    let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(center, g)).collect();
+    // Issue #119: an open circuit's way back is never built: no road there, like a gap (its two
+    // ends closed down to the ground, and a barrier across the road).
+    let way_back = center.open().map(|open| Gap {
+        from: open.road_end,
+        to: open.road_start,
+        low: GROUND_HEIGHT,
+    });
+    let gaps: Vec<Gap> = data
+        .gaps
+        .iter()
+        .map(|g| Gap::new(center, g))
+        .chain(way_back)
+        .collect();
     // Issue #107: the stretches without wall: whether the wall of side `sign` stands between two
     // samples (their middle).
     let edges: Vec<OpenEdge> = data
@@ -534,7 +575,47 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         }
     }
 
+    // Issue #119: a barrier across the road at both ends of an open circuit, between its walls:
+    // the run-out's end (facing the karts that coast down it) and the lead-in's start (behind
+    // the grid).
+    if let Some(gap) = way_back {
+        let top = rgba(palette.wall_top);
+        barrier(&mut meshes.walls, &center.at(gap.from), -1.0, panels, top);
+        barrier(&mut meshes.walls, &center.at(gap.to), 1.0, panels, top);
+    }
+
     meshes
+}
+
+/// Issue #119: a barrier across the road at `s`, [`WALL_HEIGHT`] high and [`WALL_THICKNESS`]
+/// thick from one wall's inner face to the other's, on the side `road` of `s` (-1 behind it, 1
+/// ahead): its two faces and its top, each drawn both ways (seen from the road and from the
+/// way back); solid like the walls (their mesh).
+fn barrier(walls: &mut MeshData, s: &TrackSample, road: f32, panels: [[f32; 4]; 2], top: [f32; 4]) {
+    let w = wall_offset(s);
+    let depth = s.forward * (road * WALL_THICKNESS);
+    let at = |lateral: f32, height: f32, inner: bool| {
+        s.point(lateral, height) + if inner { depth } else { Vec3::ZERO }
+    };
+    let h = WALL_HEIGHT;
+    for (inner, color) in [(true, panels[0]), (false, panels[1])] {
+        let face = [
+            at(-w, 0.0, inner),
+            at(w, 0.0, inner),
+            at(w, h, inner),
+            at(-w, h, inner),
+        ];
+        walls.quad(face, color);
+        walls.quad([face[3], face[2], face[1], face[0]], color);
+    }
+    let lid = [
+        at(-w, h, true),
+        at(w, h, true),
+        at(w, h, false),
+        at(-w, h, false),
+    ];
+    walls.quad(lid, top);
+    walls.quad([lid[3], lid[2], lid[1], lid[0]], top);
 }
 
 /// The stretches of the centerline the road is built on (issue #20): between the gaps, each
@@ -724,6 +805,136 @@ mod tests {
     /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     pub(crate) fn test_track() -> TrackData {
         crate::track::test_circuit()
+    }
+
+    /// Issue #119: on an open circuit, nothing is built on the way back (no road, no shoulder, no
+    /// wall: every vertex of them is by a sample of the road, the ends of the way back included);
+    /// a barrier closes the road at both ends, across it from wall to wall, as high as the walls
+    /// (in the walls' mesh: solid); and the road runs on from the lead-in, through the start
+    /// line, to the end of the run-out.
+    #[test]
+    fn an_open_circuit_has_no_road_on_its_way_back_and_a_barrier_at_each_end() {
+        let data = crate::track::test_open_circuit();
+        let center = CenterLine::of(&data);
+        let open = center.open().unwrap().clone();
+        let meshes = generate(&center, &data, &Palette::default());
+        let road = center.road_samples();
+        let near_the_road = |p: Vec3| road.iter().any(|s| s.position.distance(p) < 15.0);
+        for (name, mesh) in [
+            ("road", &meshes.road),
+            ("offroad", &meshes.offroad),
+            ("walls", &meshes.walls),
+        ] {
+            for p in &mesh.positions {
+                let p = Vec3::from_array(*p);
+                assert!(near_the_road(p), "{name}: {p} on the way back");
+            }
+        }
+        // The way back is not on the road.
+        let back = open.road_end + center.wrap(open.road_start - open.road_end) / 2.0;
+        assert!(!center.on_the_road(back));
+        for (end, inward) in [(open.road_end, -1.0), (open.road_start, 1.0)] {
+            let s = center.at(end);
+            // Wall triangles across the road there: their middles from one wall to the other.
+            let across: Vec<Vec3> = meshes
+                .walls
+                .indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| {
+                    t.iter()
+                        .map(|i| Vec3::from_array(meshes.walls.positions[*i as usize]))
+                        .sum::<Vec3>()
+                        / 3.0
+                })
+                .filter(|m| (*m - s.position).dot(s.forward).abs() < WALL_THICKNESS + 0.01)
+                .collect();
+            let lateral = |m: &Vec3| (*m - s.position).dot(s.right);
+            let reach = across
+                .iter()
+                .map(lateral)
+                .fold(0.0f32, |a, l| a.max(l.abs()));
+            assert!(
+                across.iter().any(|m| lateral(m) < -1.0) && across.iter().any(|m| lateral(m) > 1.0),
+                "a barrier across the road at {end}"
+            );
+            assert!(reach <= wall_offset(&s) + WALL_THICKNESS + 0.01, "{reach}");
+            // On the road's side of the end.
+            assert!(
+                across
+                    .iter()
+                    .all(|m| (*m - s.position).dot(s.forward) * inward >= -0.01)
+            );
+            assert!(
+                across
+                    .iter()
+                    .any(|m| (*m - s.position).dot(s.up) > WALL_HEIGHT * 0.6)
+            );
+        }
+        // The road through the start line, from the lead-in to the run-out.
+        for distance in [open.road_start + 5.0, 0.0, open.finish, open.road_end - 5.0] {
+            let p = center.at(distance).position;
+            assert!(
+                meshes
+                    .road
+                    .positions
+                    .iter()
+                    .any(|q| Vec3::from_array(*q).distance(p) < 8.0),
+                "the road at {distance}"
+            );
+        }
+    }
+
+    /// Issue #119: the tiles of a mesh are its triangles, each one whole in one tile (by its
+    /// first corner), none lost nor doubled.
+    #[test]
+    fn a_mesh_in_tiles_keeps_every_triangle() {
+        let data = crate::track::test_open_circuit();
+        let center = CenterLine::of(&data);
+        let mesh = generate(&center, &data, &Palette::default()).combined();
+        let tiles = mesh.tiles(200.0);
+        assert!(tiles.len() > 3, "{}", tiles.len());
+        assert_eq!(
+            tiles.iter().map(MeshData::triangle_count).sum::<usize>(),
+            mesh.triangle_count()
+        );
+        let triangle = |m: &MeshData, t: &[u32; 3]| {
+            t.map(|i| {
+                let i = i as usize;
+                (m.positions[i], m.normals[i], m.colors[i])
+            })
+        };
+        let key = |c: [([f32; 3], [f32; 3], [f32; 4]); 3]| format!("{c:?}");
+        let mut all: Vec<String> = mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| key(triangle(&mesh, t)))
+            .collect();
+        let mut tiled: Vec<String> = tiles
+            .iter()
+            .flat_map(|m| {
+                m.indices
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|t| key(triangle(m, t)))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        all.sort();
+        tiled.sort();
+        assert_eq!(all, tiled);
+        for tile in &tiles {
+            assert!(tile.positions.len() <= 3 * tile.triangle_count());
+            let first = tile.positions[tile.indices[0] as usize];
+            let cell = |p: [f32; 3]| ((p[2] / 200.0).floor(), (p[0] / 200.0).floor());
+            for t in tile.indices.as_chunks::<3>().0 {
+                assert_eq!(cell(tile.positions[t[0] as usize]), cell(first));
+            }
+        }
     }
 
     #[test]

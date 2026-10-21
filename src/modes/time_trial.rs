@@ -650,6 +650,8 @@ struct TrialHudValues {
     /// The run's time, whether it is the record, and the record before it.
     finish: Option<(u32, bool, Option<u32>)>,
     laps: [Option<u32>; LAP_LINES],
+    /// Issue #119: an open circuit: « SECTION 2 » instead of « TOUR 2 ».
+    sections: bool,
 }
 
 /// Issue #100: the HUD's colors and font (the charter's: `ui`).
@@ -753,6 +755,7 @@ fn write_gap(out: &mut String, gap: i64) {
 fn update_trial_hud(
     state: Res<TimeTrialState>,
     race: Res<Race>,
+    course: Option<Res<Course>>,
     progress: Query<&RaceProgress>,
     huds: Query<Entity, With<TrialHud>>,
     mut shown: Local<Option<(Entity, TrialHudValues)>>,
@@ -781,6 +784,7 @@ fn update_trial_hud(
             )
         }),
         laps: std::array::from_fn(|lap| laps.get(lap).copied().map(hundredths)),
+        sections: course.is_some_and(|course| course.is_open()),
     };
     // A new HUD (a new level) is written whole.
     let Ok(hud) = huds.single() else {
@@ -837,7 +841,8 @@ fn update_trial_hud(
             TrialText::Lap(lap) => {
                 if let Some(time) = values.laps.get(lap).copied().flatten() {
                     use std::fmt::Write;
-                    let _ = write!(out, "TOUR {}  ", lap + 1);
+                    let label = if values.sections { "SECTION" } else { "TOUR" };
+                    let _ = write!(out, "{label} {}  ", lap + 1);
                     write_time(out, Some(time));
                 }
             }

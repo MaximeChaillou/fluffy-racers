@@ -20,7 +20,8 @@ use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_play
 use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice, TrackLayout};
 
 /// A circuit of the guide with a shortcut of each kind (issue #107: the Corniche Cannelle; issue
-/// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn), and where the tests
+/// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn; issue #119: the
+/// Échappée Pissenlit, the first long race), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -32,7 +33,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 3] = [
+const CIRCUITS: [Circuit; 4] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -57,6 +58,16 @@ const CIRCUITS: [Circuit; 3] = [
         jump_approach: 25.0,
         grass_approach: 20.0,
         road_approach: 20.0,
+    },
+    // Issue #119, the first long race (its shortcuts are the Corniche Cannelle's pieces): the jump
+    // from out of the tight corner before the cliff's edge, the grass bridge from out of the
+    // bulge, the hidden road from the climb before it.
+    Circuit {
+        path: "tracks/echappee.track.ron",
+        name: "Échappée Pissenlit",
+        jump_approach: 60.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
     },
 ];
 
