@@ -844,101 +844,116 @@ fn the_start_line_is_drawn_and_nothing_of_it_is_solid() {
                     let name = format!("{}{}", layout.name, if *mirror { " (miroir)" } else { "" });
                     let mut failures = Vec::new();
 
-                    // Drawn: every vertex of the line is one of the circuit's mesh.
-                    let line = StartLine::of(&layout.center);
-                    let handle = world
+                    // Drawn: every vertex of the line is one of the circuit's mesh (issue #119:
+                    // of its tiles, on an open circuit).
+                    let handles: Vec<Handle<Mesh>> = world
                         .query::<(&Name, &Mesh3d)>()
                         .iter(world)
-                        .find(|(name, _)| name.as_str().starts_with("Track:"))
+                        .filter(|(name, _)| name.as_str().starts_with("Track:"))
                         .map(|(_, mesh)| mesh.0.clone())
-                        .expect("the circuit's mesh");
-                    let drawn: HashSet<[i64; 3]> = match world
-                        .resource::<Assets<Mesh>>()
-                        .get(&handle)
-                        .unwrap()
-                        .attribute(Mesh::ATTRIBUTE_POSITION)
-                    {
-                        Some(VertexAttributeValues::Float32x3(positions)) => {
-                            positions.iter().map(|p| mm(Vec3::from_array(*p))).collect()
-                        }
-                        other => panic!("positions: {other:?}"),
-                    };
-                    let mesh = line.mesh(&Default::default(), &layout.lakes);
-                    let undrawn = mesh
-                        .positions
-                        .iter()
-                        .filter(|p| !drawn.contains(&mm(Vec3::from_array(**p))))
-                        .count();
-                    if undrawn > 0 {
-                        failures.push(format!("{name}: {undrawn} vertices of the line not drawn"));
-                    }
-
-                    // Not solid: rays against every collider of the game.
-                    let colliders: Vec<(Collider, GlobalTransform, Option<Surface>)> = world
-                        .query::<(&Collider, &GlobalTransform, Option<&Surface>)>()
-                        .iter(world)
-                        .map(|(c, t, s)| (c.clone(), *t, s.copied()))
                         .collect();
-                    let first_hit = |from: Vec3, to: Vec3| {
-                        let (direction, length) = ((to - from).normalize(), from.distance(to));
-                        colliders
+                    assert!(!handles.is_empty(), "the circuit's mesh");
+                    let mut drawn: HashSet<[i64; 3]> = HashSet::new();
+                    for handle in &handles {
+                        match world
+                            .resource::<Assets<Mesh>>()
+                            .get(handle)
+                            .unwrap()
+                            .attribute(Mesh::ATTRIBUTE_POSITION)
+                        {
+                            Some(VertexAttributeValues::Float32x3(positions)) => {
+                                drawn.extend(positions.iter().map(|p| mm(Vec3::from_array(*p))))
+                            }
+                            other => panic!("positions: {other:?}"),
+                        }
+                    }
+                    // Issue #119: an open circuit's finish line too.
+                    for line in StartLine::all(&layout.center) {
+                        let mesh = line.mesh(&Default::default(), &layout.lakes);
+                        let undrawn = mesh
+                            .positions
                             .iter()
-                            .filter_map(|(collider, transform, surface)| {
-                                let (_, rotation, translation) =
-                                    transform.to_scale_rotation_translation();
-                                collider
-                                    .cast_ray(translation, rotation, from, direction, length, true)
-                                    .map(|toi| (toi, *surface))
-                            })
-                            .min_by(|a, b| a.0.total_cmp(&b.0))
-                    };
-                    let s = line.sample;
-                    let right = s.forward.cross(Vec3::Y).normalize();
-                    let back = right.cross(Vec3::Y);
-                    let top = s.position.y + line.top();
-                    for post in line.posts() {
-                        let ground = ground_height(&layout.lakes, post.xz());
-                        let edge = 0.45 * POST_WIDTH;
-                        for (a, b) in [
-                            (0.0, 0.0),
-                            (-1.0, -1.0),
-                            (-1.0, 1.0),
-                            (1.0, -1.0),
-                            (1.0, 1.0),
-                        ] {
-                            let p = post + right * a * edge + back * b * edge;
-                            let (from, to) = (p.with_y(top + 1.0), p.with_y(ground + 0.05));
-                            if let Some(hit) = first_hit(from, to) {
-                                failures.push(format!(
-                                    "{name}: a post is solid at {hit:?} under {from}"
-                                ));
+                            .filter(|p| !drawn.contains(&mm(Vec3::from_array(**p))))
+                            .count();
+                        if undrawn > 0 {
+                            failures
+                                .push(format!("{name}: {undrawn} vertices of the line not drawn"));
+                        }
+
+                        // Not solid: rays against every collider of the game.
+                        let colliders: Vec<(Collider, GlobalTransform, Option<Surface>)> = world
+                            .query::<(&Collider, &GlobalTransform, Option<&Surface>)>()
+                            .iter(world)
+                            .map(|(c, t, s)| (c.clone(), *t, s.copied()))
+                            .collect();
+                        let first_hit = |from: Vec3, to: Vec3| {
+                            let (direction, length) = ((to - from).normalize(), from.distance(to));
+                            colliders
+                                .iter()
+                                .filter_map(|(collider, transform, surface)| {
+                                    let (_, rotation, translation) =
+                                        transform.to_scale_rotation_translation();
+                                    collider
+                                        .cast_ray(
+                                            translation,
+                                            rotation,
+                                            from,
+                                            direction,
+                                            length,
+                                            true,
+                                        )
+                                        .map(|toi| (toi, *surface))
+                                })
+                                .min_by(|a, b| a.0.total_cmp(&b.0))
+                        };
+                        let s = line.sample;
+                        let right = s.forward.cross(Vec3::Y).normalize();
+                        let back = right.cross(Vec3::Y);
+                        let top = s.position.y + line.top();
+                        for post in line.posts() {
+                            let ground = ground_height(&layout.lakes, post.xz());
+                            let edge = 0.45 * POST_WIDTH;
+                            for (a, b) in [
+                                (0.0, 0.0),
+                                (-1.0, -1.0),
+                                (-1.0, 1.0),
+                                (1.0, -1.0),
+                                (1.0, 1.0),
+                            ] {
+                                let p = post + right * a * edge + back * b * edge;
+                                let (from, to) = (p.with_y(top + 1.0), p.with_y(ground + 0.05));
+                                if let Some(hit) = first_hit(from, to) {
+                                    failures.push(format!(
+                                        "{name}: a post is solid at {hit:?} under {from}"
+                                    ));
+                                }
                             }
                         }
-                    }
-                    let [left, right_post] = line.posts();
-                    for height in [0.05, BANNER_HEIGHT / 2.0, BANNER_HEIGHT - 0.05] {
-                        for along in [-0.45, 0.0, 0.45] {
-                            let shift = Vec3::Y * (BANNER_BOTTOM + height)
-                                + back * along * BANNER_THICKNESS;
-                            if let Some(hit) = first_hit(left + shift, right_post + shift) {
-                                failures.push(format!(
-                                    "{name}: the banner is solid ({hit:?}) at {height} m"
-                                ));
+                        let [left, right_post] = line.posts();
+                        for height in [0.05, BANNER_HEIGHT / 2.0, BANNER_HEIGHT - 0.05] {
+                            for along in [-0.45, 0.0, 0.45] {
+                                let shift = Vec3::Y * (BANNER_BOTTOM + height)
+                                    + back * along * BANNER_THICKNESS;
+                                if let Some(hit) = first_hit(left + shift, right_post + shift) {
+                                    failures.push(format!(
+                                        "{name}: the banner is solid ({hit:?}) at {height} m"
+                                    ));
+                                }
                             }
                         }
-                    }
-                    let half = line.half_width();
-                    for across in [-0.97, -0.5, 0.0, 0.5, 0.97] {
-                        for along in [-0.4, 0.0, 0.4] {
-                            let on_band = s.point(across * half, LINE_HEIGHT)
-                                + s.forward * along * LINE_DEPTH;
-                            let hit = first_hit(on_band + s.up, on_band - s.up);
-                            match hit {
-                                Some((toi, Some(Surface::Road)))
-                                    if (toi - 1.0 - LINE_HEIGHT).abs() < 0.002 => {}
-                                other => failures.push(format!(
-                                    "{name}: under the band at {on_band}: {other:?}"
-                                )),
+                        let half = line.half_width();
+                        for across in [-0.97, -0.5, 0.0, 0.5, 0.97] {
+                            for along in [-0.4, 0.0, 0.4] {
+                                let on_band = s.point(across * half, LINE_HEIGHT)
+                                    + s.forward * along * LINE_DEPTH;
+                                let hit = first_hit(on_band + s.up, on_band - s.up);
+                                match hit {
+                                    Some((toi, Some(Surface::Road)))
+                                        if (toi - 1.0 - LINE_HEIGHT).abs() < 0.002 => {}
+                                    other => failures.push(format!(
+                                        "{name}: under the band at {on_band}: {other:?}"
+                                    )),
+                                }
                             }
                         }
                     }

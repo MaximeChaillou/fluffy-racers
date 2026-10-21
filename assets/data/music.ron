@@ -67,6 +67,12 @@
          seconds: 120.0, bpm: 160.0, volume: 0.59, faster: "hot-roadway-climax"),
         (id: "hot-roadway-climax", file: "music/mintodog/hot_roadway_climax_bpm175.ogg",
          seconds: 109.714286, bpm: 175.0, volume: 0.59),
+        // Échappée Pissenlit (issue #119, the first long race): « Cool Highway » (-7.9 and -8.0
+        // LUFS).
+        (id: "cool-highway", file: "music/mintodog/cool_highway_bpm140.ogg",
+         seconds: 89.142834, bpm: 140.0, volume: 0.56, faster: "cool-highway-climax"),
+        (id: "cool-highway-climax", file: "music/mintodog/cool_highway_climax_bpm155.ogg",
+         seconds: 80.516122, bpm: 155.0, volume: 0.57),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

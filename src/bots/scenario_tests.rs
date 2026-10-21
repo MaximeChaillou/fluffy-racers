@@ -974,10 +974,16 @@ impl RaceResult {
             })
             .collect();
         let course = app.world().resource::<Course>();
+        // Issue #119: a section of an open circuit counts as a lap.
+        let lap_length = if course.is_open() {
+            course.finish_distance() / course.laps as f32
+        } else {
+            course.length()
+        };
         let kart_laps = log
             .karts
             .iter()
-            .map(|(entity, _)| (progress(app, *entity).distance / course.length()).max(0.0))
+            .map(|(entity, _)| (progress(app, *entity).distance / lap_length).max(0.0))
             .sum();
         Self {
             karts,
@@ -2229,9 +2235,35 @@ struct CircuitRun {
     race: RaceResult,
     /// The circuit was built mirrored, its centerline the mirror image of the file's.
     mirrored: bool,
-    length: f32,
+    /// The length of each lap (issue #119: of each section, on an open circuit).
+    lap_lengths: Vec<f32>,
+    /// Issue #119: an open circuit (a long race in sections).
+    open: bool,
     /// Issue #144: the circuit has obstacles or passers-by in the way.
     hazards: bool,
+}
+
+impl CircuitRun {
+    /// Issue #119: the fastest lap of the race as an average speed (m/s): its length over its
+    /// time (a section's, on an open circuit, each over its own length).
+    fn fastest_lap_speed(&self) -> f32 {
+        self.race
+            .karts
+            .iter()
+            .flat_map(|k| {
+                k.laps
+                    .iter()
+                    .take(3)
+                    .zip(&self.lap_lengths)
+                    .map(|(time, length)| length / time)
+            })
+            .fold(f32::NAN, f32::max)
+    }
+
+    /// Issue #119: the fastest finish of the race (s): the winner's time.
+    fn fastest_finish(&self) -> f32 {
+        lowest(&self.race.finishes())
+    }
 }
 
 fn run_on_circuit(path: &str, mirror: bool, seed: u64) -> CircuitRun {
@@ -2246,22 +2278,44 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
     }
     let layout = app.world().resource::<TrackLayout>().clone();
     let mut log = RaceLog::new(&mut app);
-    run_race(&mut app, &mut log, 180.0);
+    // Issue #119: a long race lasts about 3 min (a race of laps, about 2).
+    let open = layout.open().cloned();
+    run_race(
+        &mut app,
+        &mut log,
+        if open.is_some() { 360.0 } else { 180.0 },
+    );
     let label = format!("{}{}", layout.name, if mirror { " (miroir)" } else { "" });
+    let lap_lengths = match &open {
+        Some(open) => (0..open.section_count())
+            .map(|k| open.section_end(k) - open.sections[k])
+            .collect(),
+        None => vec![layout.center.length(); 3],
+    };
     CircuitRun {
         race: RaceResult::of(&app, &log, &label),
         mirrored: layout.mirrored,
-        length: layout.center.length(),
+        lap_lengths,
+        open: open.is_some(),
         hazards: layout.hazards.iter().any(|h| h.kind.in_the_way()),
     }
 }
 
 /// Issue #107 (GD « Conception des circuits »): the circuits that follow the guide (the reference
 /// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon;
-/// issue #109, the Col des Moufles). Their races check the guide's figures too
-/// ([`guide_checks`]).
-pub(crate) const GUIDE_CIRCUITS: [&str; 3] =
-    ["Prairie Pompon", "Col des Moufles", "Corniche Cannelle"];
+/// issue #109, the Col des Moufles; issue #119, the Échappée Pissenlit, the first long race:
+/// its figures per section). Their races check the guide's figures too ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 4] = [
+    "Prairie Pompon",
+    "Col des Moufles",
+    "Corniche Cannelle",
+    "Échappée Pissenlit",
+];
+
+/// Issue #119 (GD § 1, « Les courses longues »): a long race lasts about 3 min (Max, #146: measured
+/// with Hard bots, an order of magnitude; the issue: from 2 min 30 to 3 min 30 for a Normal bot):
+/// the winner's time from 2 min 30 to 3 min 30, Normal or Hard.
+const LONG_RACE_TIME: (f32, f32) = (150.0, 210.0);
 
 /// Issue #144: knocks by a hazard in a race of 12 Normal bots (the karts' total), at worst and
 /// on average over the seeds.
@@ -2375,21 +2429,36 @@ fn bots_race_every_circuit_and_its_mirror() {
                 "every kart finishes",
                 mine.iter().map(|r| r.race.all_finished()),
             );
-            let length = mine[0].length;
             // The fastest lap of the race, as an average speed (m/s): the karts' top speed is
-            // 28.5 m/s (boosts above it).
+            // 28.5 m/s (boosts above it). Issue #119: the fastest section of a long race.
             checks.at_least(
                 "fastest lap, average speed (m/s)",
-                &per_race(&mine, |r| length / lowest(&r.race.laps(0..3))),
+                &per_race(&mine, |r| r.fastest_lap_speed()),
                 Some(26.0),
                 Some(28.0),
             );
             checks.at_most(
                 "fastest lap, average speed (m/s), not faster than boosted all along",
-                &per_race(&mine, |r| length / lowest(&r.race.laps(0..3))),
+                &per_race(&mine, |r| r.fastest_lap_speed()),
                 Some(33.0),
                 None,
             );
+            // Issue #119 (a long race of about 3 min; the issue: 2 min 30 to 3 min 30 for a
+            // Normal bot): the winner's time.
+            if mine[0].open {
+                checks.at_least(
+                    "long race: the winner's time (s)",
+                    &per_race(&mine, |r| r.fastest_finish()),
+                    Some(LONG_RACE_TIME.0),
+                    None,
+                );
+                checks.at_most(
+                    "long race: the winner's time (s)",
+                    &per_race(&mine, |r| r.fastest_finish()),
+                    Some(LONG_RACE_TIME.1),
+                    None,
+                );
+            }
             checks.below(
                 "slowest finish / fastest finish",
                 &per_race(&mine, |r| {
@@ -2533,9 +2602,163 @@ fn hard_bots_lap_the_guide_circuits_in_the_guide_s_time() {
             );
             let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
             guide_lap_checks(&mut checks, &races);
+            // Issue #119: a long race in about 3 min, measured with Hard bots (Max, #146).
+            if runs[0].open {
+                checks.at_least(
+                    "long race (Hard): the winner's time (s)",
+                    &per_race(&runs, |r| r.fastest_finish()),
+                    Some(LONG_RACE_TIME.0),
+                    None,
+                );
+                checks.at_most(
+                    "long race (Hard): the winner's time (s), about 3 min",
+                    &per_race(&runs, |r| r.fastest_finish()),
+                    Some(LONG_RACE_TIME.1),
+                    None,
+                );
+            }
             println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
             failures.append(&mut checks.failures);
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #119 acceptance (« la progression, le classement et le pélican sont justes sur un tracé
+/// ouvert », « les sections s'affichent et se chronomètrent »), end to end on the first long race:
+/// 12 Normal bots from the grid to the finish, one run. The HUD counts the sections (« Section
+/// 1/3 » to « 3/3 », « DERNIÈRE SECTION ! » as the last one begins); the ranking follows the race
+/// distances all along (a racer that finished before one still on the way, then by distance);
+/// a kart that falls in the middle of section 2 is brought back by the pelican to the drop point
+/// of its last checkpoint, on the road, its checkpoints kept; every kart finishes, its three
+/// section times adding up to its total, the final order the order of the finish; the karts
+/// that finished coast to a stop on the run-out (between the finish line and the barrier, never
+/// towed, never beyond it).
+#[test]
+fn the_long_race_is_raced_in_sections_from_its_start_to_its_finish() {
+    let mut app = race_on_circuit("tracks/echappee.track.ron", false, 0);
+    let course = app.world().resource::<Course>().clone();
+    let open = course.open.clone().expect("an open circuit");
+    let ends = course.center.open().unwrap().clone();
+    let tuning = app.world().resource::<RaceTuning>().clone();
+    // The faller: the kart at the back of the grid (the player's, driven by a bot).
+    let faller = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &Racer)>()
+            .iter(world)
+            .max_by_key(|(_, racer)| racer.grid_slot)
+            .map(|(entity, _)| entity)
+            .unwrap()
+    };
+    let hud = |app: &mut App, field: HudText| {
+        let world = app.world_mut();
+        world
+            .query::<(&HudText, &Text)>()
+            .iter(world)
+            .find(|(f, _)| **f == field)
+            .map(|(_, t)| t.0.clone())
+            .unwrap()
+    };
+    let (mut laps, mut last_section_banner, mut fell) = (Vec::<String>::new(), false, None);
+    let mut carried = false;
+    let max_ticks = (300.0 * TICK_HZ as f32) as u32 + race(&app).timings.before_go();
+    for tick in 0..max_ticks {
+        app.update();
+        let lap = hud(&mut app, HudText::Lap);
+        if laps.last() != Some(&lap) {
+            laps.push(lap);
+        }
+        last_section_banner |= hud(&mut app, HudText::Banner) == "DERNIÈRE SECTION !";
+        // The faller: off the road, 30 m under it, in the middle of section 2.
+        let p = progress(&app, faller);
+        if fell.is_none() && p.passed > open.section_ends[0] + 10 {
+            app.world_mut()
+                .get_mut::<Transform>(faller)
+                .unwrap()
+                .translation
+                .y -= 30.0;
+            fell = Some(p.passed);
+        }
+        let tow = *app.world().get::<Tow>(faller).unwrap();
+        if let Some(passed) = fell
+            && !carried
+            && tow.is_carrying()
+        {
+            carried = true;
+            assert_eq!(tow.carry.unwrap().reason, TowReason::Fell);
+            assert_eq!(progress(&app, faller).passed, passed, "no checkpoint lost");
+        }
+        if carried && !tow.is_carrying() {
+            let lane = app.world().get::<Racer>(faller).unwrap().drop_lane();
+            let passed = progress(&app, faller).passed;
+            let drop = course.drop_transform(passed as i64 - 1, lane, tuning.tow_drop_lane);
+            let at = app.world().get::<Transform>(faller).unwrap().translation;
+            assert!(at.distance(drop.translation) < 0.05, "{at} / {drop:?}");
+            assert!(
+                course
+                    .center
+                    .on_the_road(course.drop_distance(passed as i64 - 1))
+            );
+            fell = Some(u32::MAX);
+            carried = false;
+        }
+        // The ranking: the finished racers first (by their time), then by race distance.
+        if tick % 30 == 0 {
+            let world = app.world_mut();
+            let mut racers: Vec<RaceProgress> = world
+                .query::<&RaceProgress>()
+                .iter(world)
+                .cloned()
+                .collect();
+            racers.sort_by_key(|p| p.rank);
+            for pair in racers.windows(2) {
+                let (a, b) = (&pair[0], &pair[1]);
+                match (a.finish, b.finish) {
+                    (Some(x), Some(y)) => assert!(x <= y, "{a:?} / {b:?}"),
+                    (Some(_), None) => {}
+                    (None, Some(_)) => panic!("a racer on the way before a finished one"),
+                    (None, None) => assert!(a.distance >= b.distance - 1e-3, "{a:?} / {b:?}"),
+                }
+            }
+        }
+        let world = app.world_mut();
+        if world
+            .query::<&RaceProgress>()
+            .iter(world)
+            .all(|p| p.finished())
+        {
+            break;
+        }
+    }
+    assert_eq!(laps, ["Section 1/3", "Section 2/3", "Section 3/3"]);
+    assert!(last_section_banner, "« DERNIÈRE SECTION ! »");
+    assert_eq!(fell, Some(u32::MAX), "the faller was towed and dropped");
+    // Every kart finished, in three sections; the finished karts coast to a stop on the run-out.
+    for _ in 0..(8.0 * TICK_HZ as f32) as usize {
+        app.update();
+    }
+    let world = app.world_mut();
+    let mut karts: Vec<(RaceProgress, Transform, Velocity, Tow)> = world
+        .query_filtered::<(&RaceProgress, &Transform, &Velocity, &Tow), With<Racer>>()
+        .iter(world)
+        .map(|(p, t, v, tow)| (p.clone(), *t, *v, *tow))
+        .collect();
+    assert_eq!(karts.len(), 12);
+    karts.sort_by_key(|(p, ..)| p.rank);
+    for (k, (p, transform, velocity, tow)) in karts.iter().enumerate() {
+        assert_eq!(p.rank, k as u32 + 1);
+        assert_eq!(p.passed, course.checkpoints_to_finish());
+        assert_eq!(p.lap_times.len(), 3, "{p:?}");
+        assert_eq!(p.lap_times.iter().sum::<u32>(), p.finish.unwrap());
+        let along = course.project_anywhere(transform.translation).distance;
+        assert!(
+            (ends.finish..ends.road_end).contains(&along),
+            "stopped at {along:.0} m (the finish at {:.0}, the barrier at {:.0})",
+            ends.finish,
+            ends.road_end
+        );
+        assert!(velocity.linear.length() < 1.0, "{velocity:?}");
+        assert!(!tow.is_carrying());
+    }
 }

@@ -413,8 +413,9 @@ impl GroundRect {
 }
 
 /// The slab's center and half size, as `circuit::spawn_ground` computes them.
+/// Issue #119: around an open circuit's road (not its way back).
 pub fn slab(center: &CenterLine) -> (Vec2, Vec2) {
-    let (min, max) = center.samples().iter().fold(
+    let (min, max) = center.road_samples().iter().fold(
         (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
         |(lo, hi), s| {
             let p = Vec2::new(s.position.x, s.position.z);
@@ -673,7 +674,9 @@ pub fn place_far_decor(
                 side,
             } => {
                 let sea_line = sea.map(|(_, from, beach)| from - beach);
-                let samples = center.samples();
+                // Issue #119: beside an open circuit's road only.
+                let road = center.road_samples();
+                let samples = &road[..];
                 let inside = decor::inside_sign(center);
                 let options = decor::sides(*side, inside);
                 for _ in 0..*count {
@@ -683,6 +686,9 @@ pub fn place_far_decor(
                         let side = options[(rng.next_u64() % options.len() as u64) as usize];
                         let gap = rng.range(distance.0, distance.1);
                         let h = rng.range(height.0, height.1);
+                        if !center.on_the_road(sample.distance) {
+                            continue;
+                        }
                         let p = decor::beside(&sample, side, gap, *radius);
                         let clear = decor::clear_of_the_circuit(samples, p, *radius)
                             && shortcuts.iter().all(|shortcut| {
@@ -1320,8 +1326,9 @@ mod tests {
                 plan.pieces.len()
             ));
         }
-        let samples = center.samples();
-        let step = (40.0 / (center.length() / samples.len() as f32)).max(1.0) as usize;
+        // Issue #119: from the road only (an open circuit's way back is never driven).
+        let samples = center.road_samples();
+        let step = (40.0 / (center.length() / center.samples().len() as f32)).max(1.0) as usize;
         let mut worst = 0.0f32;
         for s in samples.iter().step_by(step) {
             for lift in [3.0, 12.0] {
@@ -1387,7 +1394,7 @@ mod tests {
             for piece in &plan.pieces {
                 assert!(
                     decor::clear_of_the_circuit(
-                        center.samples(),
+                        &center.road_samples(),
                         piece.position.xz(),
                         piece.radius
                     ),

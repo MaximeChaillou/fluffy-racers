@@ -3,7 +3,9 @@
 // circuit's `name`, `file` its file in this folder. The first one is the game's circuit. The
 // Lagon Duvet (issue #20) shows the special environments: the glider and the water; the Ruban
 // Réglisse (issue #78), the anti-gravity; the Corniche Cannelle (issue #107), the reference circuit
-// of the guide « Conception des circuits » (the sides without wall, the shortcuts, the risky jump).
+// of the guide « Conception des circuits » (the sides without wall, the shortcuts, the risky jump);
+// the Échappée Pissenlit (issue #119), the first long race: an open circuit, in sections (one per
+// cup, its last race, a final); `long: true` says so to the screens that only read this list.
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -19,6 +21,7 @@
         (name: "Lagon Duvet", file: "lagon.track.ron"),
         (name: "Ruban Réglisse", file: "ruban.track.ron"),
         (name: "Corniche Cannelle", file: "corniche.track.ron"),
+        (name: "Échappée Pissenlit", file: "echappee.track.ron", long: true),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),

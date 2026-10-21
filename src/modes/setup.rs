@@ -660,6 +660,7 @@ mod tests {
         TrackEntry {
             name: format!("Circuit {k}"),
             file: format!("c{k}.track.ron"),
+            long: false,
         }
     }
 

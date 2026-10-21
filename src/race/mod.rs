@@ -30,11 +30,14 @@ mod tuning;
 
 #[cfg(test)]
 mod scenario_tests;
+/// Issue #119: the open test circuit's course, for unit tests elsewhere.
+#[cfg(test)]
+pub(crate) use course::tests::open_circuit as open_course_for_tests;
 /// Prairie Pompon's course, for unit tests elsewhere.
 #[cfg(test)]
 pub(crate) use course::tests::prairie as course_for_tests;
 
-pub use course::{Course, Projection, drop_point};
+pub use course::{Course, OpenRace, Projection, drop_point};
 pub use flow::{FlowTimings, RaceFlow, RacePhase, race_over};
 pub use grand_prix::{
     CHAMPIONSHIP, CupRace, GrandPrix, GrandPrixStage, GrandPrixTuning, OnlineStandings, points_for,
@@ -483,9 +486,11 @@ fn judge_rocket_starts(
 /// Nothing moves before GO (no input, and no boost: a boost pushes even without throttle);
 /// finished racers coast (they keep their steering), unless they drive on (bots). Looking
 /// behind (issue #17) stays allowed: only the camera reads it. A parked racer (issue #19) never
-/// moves again.
+/// moves again. Issue #119: on an open circuit, every finished racer coasts (the bots too: the
+/// road ends after the run-out).
 fn gate_inputs(
     race: Res<Race>,
+    course: Option<Res<Course>>,
     mut racers: Query<
         (
             &mut KartInput,
@@ -499,7 +504,9 @@ fn gate_inputs(
     >,
 ) {
     let started = race.started();
+    let open = course.is_some_and(|course| course.is_open());
     for (mut input, mut boost, mut stall, progress, drives_on, parked) in &mut racers {
+        let drives_on = drives_on && !open;
         if !started || parked {
             input.set_if_neq(KartInput {
                 look_back: input.look_back,
@@ -567,9 +574,10 @@ fn update_progress(
             } else {
                 tow.carry = Some(carry);
             }
-        } else if started {
+        } else if started && !(progress.finished() && course.is_open()) {
             // A finished racer's progress no longer follows it: if it drives on (bots), watch it
-            // wherever it is on the track.
+            // wherever it is on the track. Issue #119: on an open circuit, it coasts to a stop on
+            // the run-out: nobody watches it any more.
             let watched = if progress.finished() {
                 course.project_anywhere(transform.translation)
             } else {

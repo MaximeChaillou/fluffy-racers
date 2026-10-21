@@ -213,6 +213,12 @@ pub fn clear_of_the_arch(line: &StartLine, p: Vec2, radius: f32) -> bool {
         .all(|(post, reach)| post.distance(p) >= reach + radius + CLEARANCE)
 }
 
+/// Issue #119: the same for every arch of the circuit (an open circuit has two: its start and
+/// its finish, `StartLine::all`).
+pub fn clear_of_the_arches(lines: &[StartLine], p: Vec2, radius: f32) -> bool {
+    lines.iter().all(|line| clear_of_the_arch(line, p, radius))
+}
+
 /// Places the decor of a circuit: first its file's `props` (where it says, left out where there
 /// is no room), then its biome's rows along the walls, then the biome's scattered pieces
 /// (`seed`), each one where it does not touch the circuit, the posts of its start line's arch
@@ -238,7 +244,10 @@ pub fn place_decor_around(
     lakes: &[Lake],
     shortcuts: &[Shortcut],
 ) -> DecorPlan {
-    let samples = center.samples();
+    // Issue #119: on an open circuit, only its road (nothing is built on its way back: the decor
+    // may stand there, and never along it).
+    let road = center.road_samples();
+    let samples = &road[..];
     let clear_of_the_circuit = |samples: &[TrackSample], p: Vec2, radius: f32| {
         clear_of_the_circuit(samples, p, radius)
             && shortcuts
@@ -255,7 +264,7 @@ pub fn place_decor_around(
     };
     let inside = inside_sign(center);
     let turns = tight_turns(center);
-    let line = StartLine::of(center);
+    let lines = StartLine::all(center);
     let mut plan = DecorPlan {
         models: decor_models(biome, props),
         ..default()
@@ -266,7 +275,7 @@ pub fn place_decor_around(
         for &side in sides(prop.side, inside) {
             let p = beside(&sample, side, prop.gap, prop.radius);
             if !clear_of_the_circuit(samples, p, prop.radius)
-                || !clear_of_the_arch(&line, p, prop.radius)
+                || !clear_of_the_arches(&lines, p, prop.radius)
                 || plan.overlaps(p, prop.radius)
                 || hides_a_turn(&turns, p, prop.height)
                 || wet(p, prop.radius)
@@ -295,10 +304,14 @@ pub fn place_decor_around(
         let mut along = row.offset;
         while along < center.length() {
             let sample = center.at(along);
+            if !center.on_the_road(along) {
+                along += row.spacing;
+                continue;
+            }
             for &side in sides(row.side, inside) {
                 let p = beside(&sample, side, row.gap, row.radius);
                 if clear_of_the_circuit(samples, p, row.radius)
-                    && clear_of_the_arch(&line, p, row.radius)
+                    && clear_of_the_arches(&lines, p, row.radius)
                     && !plan.overlaps(p, row.radius)
                     && !hides_a_turn(&turns, p, row.height)
                     && !wet(p, row.radius)
@@ -320,17 +333,23 @@ pub fn place_decor_around(
     }
 
     let mut rng = BotRng::new(seed);
+    // Issue #119: as dense along an open circuit's long road as along a lap.
+    let scale = center.decor_scale();
     for group in &biome.scatter {
-        for _ in 0..group.count {
+        for _ in 0..(group.count as f32 * scale).round() as u32 {
             for _ in 0..ATTEMPTS {
                 let sample = center.at(rng.range(0.0, center.length()));
+                // Issue #119: beside the road only (never along an open circuit's way back).
+                if !center.on_the_road(sample.distance) {
+                    continue;
+                }
                 let options = sides(group.side, inside);
                 let side = options[(rng.next_u64() % options.len() as u64) as usize];
                 let gap = rng.range(group.distance.0, group.distance.1);
                 let height = rng.range(group.height.0, group.height.1);
                 let p = beside(&sample, side, gap, group.radius);
                 if !clear_of_the_circuit(samples, p, group.radius)
-                    || !clear_of_the_arch(&line, p, group.radius)
+                    || !clear_of_the_arches(&lines, p, group.radius)
                     || plan.overlaps(p, group.radius)
                     || hides_a_turn(&turns, p, height)
                     || wet(p, group.radius)

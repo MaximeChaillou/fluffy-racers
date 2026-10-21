@@ -53,6 +53,37 @@ pub struct CenterLine {
     length: f32,
     /// Distance of each control point from the start line (control point 0).
     control_distances: Vec<f32>,
+    /// Issue #119: an open circuit's ends (its file's `open`); None on a circuit of laps.
+    open: Option<OpenEnds>,
+}
+
+/// Issue #119: where an open circuit's race and road begin and end, as distances along its
+/// centerline from the start line (`TrackData::open`). The road runs from `road_start` (on the
+/// lead-in, round the loop: behind the start line) to `road_end`; the rest of the loop is the way
+/// back, never built nor driven.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenEnds {
+    /// The finish line.
+    pub finish: f32,
+    /// The end of the run-out after the finish line: a barrier across the road.
+    pub road_end: f32,
+    /// The start of the lead-in before the start line (in `[0, length)`): a barrier across the
+    /// road.
+    pub road_start: f32,
+    /// Where each section begins: 0 (the start line), then the file's `sections`.
+    pub sections: Vec<f32>,
+}
+
+impl OpenEnds {
+    /// The number of sections (« Section 1/3 »).
+    pub fn section_count(&self) -> usize {
+        self.sections.len()
+    }
+
+    /// Where section `k` (from 0) ends: where the next one begins, or the finish line.
+    pub fn section_end(&self, k: usize) -> f32 {
+        self.sections.get(k + 1).copied().unwrap_or(self.finish)
+    }
 }
 
 /// Fine sub-steps per spline segment used to measure lengths.
@@ -134,8 +165,21 @@ impl CenterLine {
 
     /// The centerline of a circuit's file: its points, its step, and its anti-gravity zones,
     /// where the banking flows from point to point (issue #78, [`bank_slopes`]).
+    /// Issue #119: an open circuit's ends too.
     pub fn of(data: &TrackData) -> Self {
-        Self::with_zones(&data.points, data.sample_step, &data.anti_gravity)
+        let mut center = Self::with_zones(&data.points, data.sample_step, &data.anti_gravity);
+        center.open = data.open.as_ref().map(|open| {
+            let distance = |p: f32| center.param_to_distance(p);
+            OpenEnds {
+                finish: distance(open.finish),
+                road_end: distance(open.road_end),
+                road_start: distance(open.road_start),
+                sections: std::iter::once(0.0)
+                    .chain(open.sections.iter().map(|p| distance(*p)))
+                    .collect(),
+            }
+        });
+        center
     }
 
     /// The same, the banking flowing in the anti-gravity zones `zones` ([`bank_slopes`]).
@@ -216,11 +260,46 @@ impl CenterLine {
             samples,
             length,
             control_distances,
+            open: None,
         }
     }
 
     pub fn length(&self) -> f32 {
         self.length
+    }
+
+    /// Issue #119: an open circuit's ends; None on a circuit of laps.
+    pub fn open(&self) -> Option<&OpenEnds> {
+        self.open.as_ref()
+    }
+
+    /// Issue #119: whether the centerline distance `distance` (wrapped) is on the road: always on
+    /// a circuit of laps; on an open one, from its `road_start` round to its `road_end` (not on
+    /// its way back).
+    pub fn on_the_road(&self, distance: f32) -> bool {
+        self.open.as_ref().is_none_or(|open| {
+            self.wrap(distance - open.road_start) <= self.wrap(open.road_end - open.road_start)
+        })
+    }
+
+    /// Issue #119: how much more scattered decor its road takes than a biome's (made for a lap
+    /// of about [`DECOR_LAP`]): its road's length over it on an open circuit (at least 1), 1 on a
+    /// circuit of laps (nothing changes there).
+    pub fn decor_scale(&self) -> f32 {
+        self.open.as_ref().map_or(1.0, |open| {
+            let road = self.wrap(open.road_end - open.road_start);
+            (road / DECOR_LAP).max(1.0)
+        })
+    }
+
+    /// Issue #119: the samples on the road ([`CenterLine::on_the_road`]): all of them on a
+    /// circuit of laps.
+    pub fn road_samples(&self) -> Vec<TrackSample> {
+        self.samples
+            .iter()
+            .filter(|s| self.on_the_road(s.distance))
+            .copied()
+            .collect()
     }
 
     pub fn samples(&self) -> &[TrackSample] {
@@ -279,8 +358,28 @@ impl CenterLine {
             .map_or(0, |(i, _)| i)
     }
 
-    /// Checkpoints every `spacing` meters, the first one on the start line.
+    /// Checkpoints every `spacing` meters, the first one on the start line. Issue #119: on an
+    /// open circuit, from the start line to the finish line (not on it: like the start line at
+    /// the end of a lap, the finish is the checkpoint after the last one), every `spacing` meters
+    /// or a little more in each section, the first one of each section where it begins.
     pub fn checkpoints(&self, spacing: f32) -> Vec<Checkpoint> {
+        if let Some(open) = &self.open {
+            let mut checkpoints = Vec::new();
+            for k in 0..open.section_count() {
+                let (from, to) = (open.sections[k], open.section_end(k));
+                let count = (((to - from) / spacing).floor() as usize).max(1);
+                let spacing = (to - from) / count as f32;
+                checkpoints.extend((0..count).map(|i| from + i as f32 * spacing));
+            }
+            return checkpoints
+                .into_iter()
+                .enumerate()
+                .map(|(index, distance)| Checkpoint {
+                    index,
+                    sample: self.at(distance),
+                })
+                .collect();
+        }
         let count = ((self.length / spacing).floor() as usize).max(2);
         let spacing = self.length / count as f32;
         (0..count)
@@ -323,6 +422,11 @@ impl CenterLine {
     }
 }
 
+/// Issue #119: a biome's scattered decor is counted for a lap of about this long (m): an open
+/// circuit, much longer, takes more of it in proportion ([`CenterLine::decor_scale`]), as dense
+/// along its road. (Not its far decor's pieces: they stand further, a few are enough.)
+pub const DECOR_LAP: f32 = 1400.0;
+
 /// Distance from the start line to the first grid row (m).
 const GRID_FIRST_ROW: f32 = 5.0;
 /// Distance between two consecutive (staggered) grid places (m).
@@ -360,6 +464,13 @@ pub struct TrackLayout {
     /// Issue #157: the fingerprint of its file and its biome (`TrackData::fingerprint`): the
     /// time trial keeps its records with it.
     pub fingerprint: u64,
+}
+
+impl TrackLayout {
+    /// Issue #119: an open circuit's ends (a long race in sections); None on a circuit of laps.
+    pub fn open(&self) -> Option<&OpenEnds> {
+        self.center.open()
+    }
 }
 
 /// Racers on the grid (GD § 1).
@@ -915,6 +1026,7 @@ mod tests {
     /// and no two parts of the track far apart along it (60 m and more) come so close that their
     /// walls would touch: a meter at least between their outer faces. Issue #20: in a lake, above
     /// its floor (and under its water where the road dips); a gap has neither road nor walls.
+    /// Issue #119: on an open circuit, its road only (its way back is never built).
     #[test]
     fn every_circuit_and_its_mirror_keep_their_parts_apart() {
         let circuits = every_circuit();
@@ -929,6 +1041,10 @@ mod tests {
             let center = CenterLine::of(&data);
             let samples = center.samples();
             for (i, s) in samples.iter().enumerate() {
+                // Issue #119: an open circuit's way back is never built.
+                if !center.on_the_road(s.distance) {
+                    continue;
+                }
                 let radius = center.turn_radius(i);
                 let wall = wall_offset(s) + WALL_THICKNESS;
                 assert!(
@@ -958,7 +1074,13 @@ mod tests {
             }
             let length = center.length();
             for (i, a) in samples.iter().enumerate().step_by(2) {
-                for b in &samples[i + 1..] {
+                if !center.on_the_road(a.distance) {
+                    continue;
+                }
+                for b in samples[i + 1..]
+                    .iter()
+                    .filter(|b| center.on_the_road(b.distance))
+                {
                     let along = (b.distance - a.distance).min(length - (b.distance - a.distance));
                     if along < 60.0 {
                         continue;

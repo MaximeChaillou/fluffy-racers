@@ -42,8 +42,8 @@ use crate::menu::style::{palette, size, u};
 use crate::race::{Course, Race, RacePhase, RaceProgress, RaceTuning, Racer, RacerName};
 use crate::track::GRID_SLOTS;
 use format::{
-    HudValues, RESULTS_TITLE, ResultsTime, write_best_lap, write_croquettes, write_lap,
-    write_ordinal, write_racer_count, write_racer_name, write_time,
+    HudValues, RESULTS_TITLE, ResultsTime, write_best_lap_or_section, write_croquettes,
+    write_lap_or_section, write_ordinal, write_racer_count, write_racer_name, write_time,
 };
 use roulette::{ReelFrame, RouletteClock};
 
@@ -706,9 +706,11 @@ fn update_hud(
         match field {
             HudText::Rank => old.rank != values.rank,
             HudText::RacerCount => old.racers != values.racers,
-            HudText::Lap => old.lap != values.lap || old.laps != values.laps,
+            HudText::Lap => {
+                old.lap != values.lap || old.laps != values.laps || old.sections != values.sections
+            }
             HudText::Chrono => old.time != values.time,
-            HudText::BestLap => old.best_lap != values.best_lap,
+            HudText::BestLap => old.best_lap != values.best_lap || old.sections != values.sections,
             HudText::Banner => old.banner != values.banner,
             HudText::Croquettes => old.croquettes != values.croquettes,
         }
@@ -724,12 +726,12 @@ fn update_hud(
         match field {
             HudText::Rank => write_ordinal(out, values.rank),
             HudText::RacerCount => write_racer_count(out, values.racers),
-            HudText::Lap => write_lap(out, values.lap, values.laps),
+            HudText::Lap => write_lap_or_section(out, values.lap, values.laps, values.sections),
             HudText::Chrono => {
                 out.clear();
                 write_time(out, Some(values.time));
             }
-            HudText::BestLap => write_best_lap(out, values.best_lap),
+            HudText::BestLap => write_best_lap_or_section(out, values.best_lap, values.sections),
             HudText::Banner => values.banner.write(out),
             HudText::Croquettes => {
                 write_croquettes(out, values.croquettes);

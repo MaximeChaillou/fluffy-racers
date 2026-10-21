@@ -73,9 +73,9 @@ impl RaceProgress {
         self.finish.is_some()
     }
 
-    /// Laps completed.
+    /// Laps completed (issue #119: sections, on an open circuit).
     pub fn laps_completed(&self, course: &Course) -> u32 {
-        (self.passed.saturating_sub(1) / course.checkpoint_count()).min(course.laps)
+        course.laps_completed(self.passed)
     }
 
     /// Lap being driven, from 1 (the last lap once finished): "Tour 2/3".
@@ -131,15 +131,15 @@ impl RaceProgress {
     pub fn validate(&mut self, course: &Course, tick: u32) -> ProgressEvent {
         let validated = self.passed;
         self.passed += 1;
-        let n = course.checkpoint_count();
-        if validated > 0 && validated.is_multiple_of(n) {
+        // Issue #119: a lap, or a section of an open circuit (its time is a lap's).
+        if let Some(lap) = course.lap_closed_by(validated) {
             self.lap_times.push(tick.saturating_sub(self.lap_start));
             self.lap_start = tick;
             if self.passed >= course.checkpoints_to_finish() {
                 self.finish = Some(tick);
                 ProgressEvent::Finished
             } else {
-                ProgressEvent::Lap(validated / n)
+                ProgressEvent::Lap(lap)
             }
         } else {
             ProgressEvent::Checkpoint
@@ -164,7 +164,7 @@ fn clamp_to_window(course: &Course, passed: u32, distance: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::race::course::tests::{at, corniche, prairie};
+    use crate::race::course::tests::{at, corniche, open_circuit, prairie};
     use crate::track::{GRID_HEIGHT, ShortcutKind};
 
     /// A kart driven along the centerline by moving its position directly.
@@ -567,6 +567,68 @@ mod tests {
         let frozen = copy.distance;
         copy.follow(&course, &ahead);
         assert_eq!(copy.distance, frozen);
+    }
+
+    /// Issue #119 acceptance (« les sections s'affichent et se chronomètrent »): on an open
+    /// circuit, a kart from the grid validates its checkpoints in order; the first checkpoint of
+    /// each section completes the one before (a section time, like a lap's: « Section 2/3 »), the
+    /// finish line the last one and the race (its total, the sum of its section times); after it,
+    /// its progress is frozen, wherever it coasts. A kart that skips a stretch does not finish.
+    #[test]
+    fn an_open_circuit_is_raced_in_sections_to_the_finish() {
+        let (_, course) = open_circuit();
+        let open = course.open.clone().unwrap();
+        let ends = course.center.open().unwrap().clone();
+        let mut kart = Driver::on_grid(&course, 5);
+        assert_eq!(kart.progress.current_lap(&course), 1);
+        // To the start line, then section 1 at 0.45 m a tick, section 2 at 0.5, section 3 at 0.4.
+        let start = kart.progress.distance;
+        let events = kart.drive(start, 2.0, 0.45, 0.0);
+        assert_eq!(events, vec![ProgressEvent::Checkpoint]);
+        let (s2, s3) = (ends.sections[1], ends.sections[2]);
+        let events = kart.drive(2.0, s2 + 2.0, 0.45, 0.0);
+        assert_eq!(events.last(), Some(&ProgressEvent::Lap(1)));
+        assert_eq!(kart.progress.laps_completed(&course), 1);
+        assert_eq!(kart.progress.current_lap(&course), 2);
+        assert_eq!(kart.progress.passed, open.section_ends[0] + 1);
+        let events = kart.drive(s2 + 2.0, s3 + 2.0, 0.5, 0.0);
+        assert_eq!(events.last(), Some(&ProgressEvent::Lap(2)));
+        assert_eq!(kart.progress.current_lap(&course), 3);
+        let events = kart.drive(s3 + 2.0, ends.finish + 1.0, 0.4, 0.0);
+        assert_eq!(events.last(), Some(&ProgressEvent::Finished));
+        assert!(kart.progress.finished());
+        assert_eq!(kart.progress.passed, course.checkpoints_to_finish());
+        assert_eq!(kart.progress.current_lap(&course), 3);
+        let times = kart.progress.lap_times.clone();
+        assert_eq!(times.len(), 3);
+        let (end1, end2) = (
+            kart.tick_of(ProgressEvent::Lap(1)),
+            kart.tick_of(ProgressEvent::Lap(2)),
+        );
+        let end3 = kart.tick_of(ProgressEvent::Finished);
+        assert_eq!(times, vec![end1, end2 - end1, end3 - end2]);
+        assert!(
+            ((end2 - end1) as f32 - (s3 - s2) / 0.5).abs() < 3.0,
+            "{times:?}"
+        );
+        assert!(((end3 - end2) as f32 - (ends.finish - s3) / 0.4).abs() < 3.0);
+        assert_eq!(kart.progress.finish, Some(end3));
+        assert_eq!(times.iter().sum::<u32>(), end3);
+        assert_eq!(kart.progress.best_lap(), Some(times[1]));
+        // Frozen on the run-out.
+        let finished = kart.progress.clone();
+        let run_out = kart.drive(ends.finish + 1.0, ends.road_end - 10.0, 0.45, 0.0);
+        assert!(run_out.is_empty());
+        assert_eq!(kart.progress, finished);
+
+        // A kart that skips a stretch of section 2 counts nothing beyond it, and never finishes.
+        let mut cheat = Driver::on_grid(&course, 0);
+        cheat.drive(-5.0, s2 + 30.0, 0.45, 0.0);
+        let passed = cheat.progress.passed;
+        cheat.drive(s2 + 140.0, ends.finish + 20.0, 0.45, 0.0);
+        assert_eq!(cheat.progress.passed, passed);
+        assert!(!cheat.progress.finished());
+        assert_eq!(cheat.progress.current_lap(&course), 2);
     }
 
     #[test]
