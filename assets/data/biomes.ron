@@ -458,4 +458,143 @@
              count: 70, height: (0.6, 1.6), radius: 1.0, distance: (0.3, 18.0), shadows: false),
         ],
     ),
+    (
+        // Issue #110: the undergrowth of a forest of giant mushrooms (Forêt Frimousse): dark
+        // trees, tall pines, red and tan mushrooms as big as trees, mossy logs and stumps, ferns
+        // (Nature Kit), green banner towers along it (Racing Kit). Misty: a shorter fog.
+        name: "Sous-bois",
+        music: "strange-factory",
+        palette: (
+            sky: (0.66, 0.80, 0.74),
+            ambient: (0.86, 0.96, 0.88),
+            ambient_brightness: 720.0,
+            ground: (0.30, 0.50, 0.30),
+            asphalt: (0.37, 0.33, 0.30),
+            curbs: ((0.86, 0.28, 0.32), (0.97, 0.95, 0.88)),
+            shoulder: (0.36, 0.56, 0.30),
+            sand: (0.50, 0.52, 0.40),
+            walls: ((0.95, 0.92, 0.84), (0.82, 0.30, 0.32)),
+            wall_top: (0.98, 0.96, 0.90),
+            skirt: (0.45, 0.35, 0.25),
+        ),
+        far: (
+            fog: (190.0, 1150.0),
+            layers: [
+                // Wooded hills all around, and blue mountains behind them in the haze.
+                Range(distance: 150.0, depth: 140.0, height: (40.0, 80.0), spacing: 40.0,
+                      color: (0.24, 0.42, 0.26)),
+                Range(distance: 420.0, depth: 250.0, height: (110.0, 200.0), spacing: 60.0,
+                      color: (0.42, 0.53, 0.56), top: ((0.80, 0.87, 0.88), 175.0)),
+                // Round wooded knolls in front of the hills.
+                Peaks(count: 14, distance: (30.0, 150.0), height: (24.0, 48.0),
+                      radius: (28.0, 50.0), flat: 0.3, sides: 8, color: (0.22, 0.38, 0.24)),
+                Clouds(count: 16, distance: (0.0, 520.0), altitude: (110.0, 180.0),
+                       size: (50.0, 100.0), color: (0.96, 0.98, 0.97)),
+                // A forest of giant pines and dark trees at mid-distance, and mushrooms as big
+                // as them.
+                Pieces(models: ["nature-kit/tree_pineTallC", "nature-kit/tree_pineTallD",
+                                "nature-kit/tree_oak_dark", "nature-kit/tree_cone_dark"],
+                       count: 150, height: (18.0, 32.0), radius: 6.0, distance: (45.0, 210.0)),
+                Pieces(models: ["nature-kit/mushroom_redTall", "nature-kit/mushroom_tanTall"],
+                       count: 26, height: (14.0, 28.0), radius: 8.0, distance: (50.0, 200.0)),
+            ],
+        ),
+        rows: [
+            // Green banner towers along the outside of the loop.
+            (models: ["racing-kit/bannerTowerGreen"], spacing: 60.0, offset: 24.0, height: 6.0,
+             radius: 1.6, gap: 0.6, side: Outside),
+        ],
+        scatter: [
+            // Giant mushrooms, red and tan, both sides: the scale of the forest.
+            (models: ["nature-kit/mushroom_redTall", "nature-kit/mushroom_tanTall"],
+             count: 16, height: (8.0, 16.0), radius: 4.0, distance: (4.0, 40.0)),
+            // Dark round trees.
+            (models: ["nature-kit/tree_oak_dark", "nature-kit/tree_default_dark",
+                      "nature-kit/tree_detailed_dark", "nature-kit/tree_cone_dark"],
+             count: 64, height: (8.0, 14.0), radius: 2.6, distance: (2.0, 32.0)),
+            // Tall pines further away, outside.
+            (models: ["nature-kit/tree_pineTallC", "nature-kit/tree_pineTallD"],
+             count: 30, height: (14.0, 22.0), radius: 2.6, distance: (10.0, 40.0), side: Outside),
+            // Mossy logs and old stumps.
+            (models: ["nature-kit/log", "nature-kit/log_large", "nature-kit/stump_oldTall",
+                      "nature-kit/stump_roundDetailed"],
+             count: 30, height: (0.8, 1.8), radius: 1.6, distance: (0.5, 20.0)),
+            // Small mushrooms, ferns and flowers: small, no shadows.
+            (models: ["nature-kit/mushroom_red", "nature-kit/mushroom_tan"],
+             count: 60, height: (0.5, 1.0), radius: 0.5, distance: (0.3, 14.0), shadows: false),
+            (models: ["nature-kit/grass_leafsLarge", "nature-kit/plant_bushLargeTriangle",
+                      "nature-kit/flower_purpleC", "nature-kit/flower_redC"],
+             count: 160, height: (0.5, 1.1), radius: 0.4, distance: (0.2, 12.0), shadows: false),
+        ],
+    ),
+    (
+        // Issue #110: chalk cliffs at sunset (Falaises Flanelle): needles of white stone, pines
+        // and slim trees, ruins (a ring, broken columns, blocks), heather and flowers (Nature
+        // Kit), red banner towers along it (Racing Kit). A peach sky, mauve cliffs far away.
+        name: "Falaises",
+        music: "darkness-road",
+        palette: (
+            sky: (0.98, 0.74, 0.66),
+            ambient: (1.0, 0.88, 0.84),
+            ambient_brightness: 700.0,
+            ground: (0.62, 0.52, 0.52),
+            asphalt: (0.41, 0.37, 0.43),
+            curbs: ((0.56, 0.40, 0.78), (0.97, 0.95, 0.98)),
+            shoulder: (0.46, 0.62, 0.40),
+            sand: (0.92, 0.84, 0.74),
+            walls: ((0.97, 0.95, 0.97), (0.60, 0.44, 0.80)),
+            wall_top: (0.99, 0.98, 0.99),
+            skirt: (0.86, 0.82, 0.78),
+        ),
+        far: (
+            fog: (240.0, 1400.0),
+            layers: [
+                // Mauve cliffs all around, their tops in the sun, and higher mountains behind.
+                Range(distance: 160.0, depth: 150.0, height: (40.0, 85.0), spacing: 42.0,
+                      color: (0.70, 0.56, 0.66), top: ((0.98, 0.80, 0.66), 70.0)),
+                Range(distance: 430.0, depth: 260.0, height: (120.0, 220.0), spacing: 64.0,
+                      color: (0.56, 0.48, 0.66), top: ((0.99, 0.86, 0.80), 180.0)),
+                // Needles of white chalk.
+                Peaks(count: 18, distance: (20.0, 260.0), height: (40.0, 90.0),
+                      radius: (8.0, 18.0), flat: 0.2, sides: 5, color: (0.90, 0.87, 0.86)),
+                // Pink clouds, low and high.
+                Clouds(count: 26, distance: (0.0, 520.0), altitude: (70.0, 170.0),
+                       size: (60.0, 120.0), color: (1.0, 0.84, 0.82)),
+                // Giant needles of stone and pines at mid-distance.
+                Pieces(models: ["nature-kit/stone_tallC", "nature-kit/stone_tallD",
+                                "nature-kit/stone_tallE"],
+                       count: 40, height: (25.0, 50.0), radius: 10.0, distance: (50.0, 210.0)),
+                Pieces(models: ["nature-kit/tree_pineRoundB", "nature-kit/tree_pineRoundC"],
+                       count: 90, height: (14.0, 24.0), radius: 6.0, distance: (50.0, 190.0)),
+            ],
+        ),
+        rows: [
+            // Red banner towers along the outside of the loop.
+            (models: ["racing-kit/bannerTowerRed"], spacing: 64.0, offset: 30.0, height: 6.0,
+             radius: 1.6, gap: 0.6, side: Outside),
+        ],
+        scatter: [
+            // Giant needles of white stone, both sides, some close to the road.
+            (models: ["nature-kit/stone_tallC", "nature-kit/stone_tallD", "nature-kit/stone_tallE",
+                      "nature-kit/stone_tallG"],
+             count: 24, height: (10.0, 22.0), radius: 5.0, distance: (3.0, 44.0)),
+            // Pines, round and small.
+            (models: ["nature-kit/tree_pineRoundB", "nature-kit/tree_pineRoundC",
+                      "nature-kit/tree_pineSmallA", "nature-kit/tree_pineSmallB"],
+             count: 50, height: (6.0, 12.0), radius: 2.4, distance: (2.0, 32.0)),
+            // Slim trees.
+            (models: ["nature-kit/tree_simple", "nature-kit/tree_small", "nature-kit/tree_thin",
+                      "nature-kit/tree_tall"],
+             count: 30, height: (7.0, 12.0), radius: 2.4, distance: (4.0, 36.0)),
+            // Ruins: a stone ring, broken columns, blocks.
+            (models: ["nature-kit/statue_ring", "nature-kit/statue_columnDamaged",
+                      "nature-kit/statue_block"],
+             count: 10, height: (3.0, 7.0), radius: 2.5, distance: (4.0, 30.0)),
+            // Stones, heather and flowers: small, no shadows.
+            (models: ["nature-kit/stone_largeA", "nature-kit/stone_largeB", "nature-kit/rock_smallA"],
+             count: 50, height: (0.6, 1.6), radius: 1.0, distance: (0.3, 18.0), shadows: false),
+            (models: ["nature-kit/flower_purpleB", "nature-kit/flower_yellowC", "nature-kit/grass"],
+             count: 160, height: (0.4, 0.8), radius: 0.35, distance: (0.2, 12.0), shadows: false),
+        ],
+    ),
 ]

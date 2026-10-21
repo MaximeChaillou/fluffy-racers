@@ -1,0 +1,344 @@
+// "Falaises Flanelle": cliffs at sunset (issue #110, the 10th circuit), after the guide « Conception
+// des circuits » (docs/GAME_DESIGN.md § 16). Original layout, about 1530 m a lap,
+// turning left: the start straight on the cliff top, 14 m up; two hairpins (left, right) along
+// it, to the risky jump's corner on the edge (a tight corner to the left, its inside a drop, that
+// a ramp crosses); along the edge to the glide ramp, and the glide down to the foot of the cliff;
+// the snake back up (a hairpin to the left, one to the right, two tight turns, a hairpin to the
+// right, two tight turns), along the foot of the cliff; the bulge round a giant needle of white
+// stone, whose hidden road runs straight behind a stack of crates; the last corner, that the
+// grass bridge crosses behind a panel that breaks under a boost. Five hairpins of 180° (a Normal
+// bot drifts them), the bulge's S (left 150° between two right 75°), tight corners of 90°: no
+// long soft curve, one long straight. The pieces of the shortcuts (the jump's corner, its
+// landing and the glide; the bulge, the last corner and their paths) are the Corniche
+// Cannelle's, mirrored (issues #107, #156: their gains and their hiding were tuned), with other
+// covers; the rest is new.
+//
+// Drawn as a plan of straights and arcs, its points every 8 m along it (the parameters below
+// follow them).
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn left. The grid sits on the straight behind point 0.
+(
+    name: "Falaises Flanelle",
+    // Dressing (issue #11): the cliffs at sunset (`assets/data/biomes.ron`), the same every time
+    // (seed), and pieces placed by hand: checkered flags at the start line, a giant needle of
+    // white stone that hides the hidden road, another one by the jump's corner.
+    biome: "Falaises",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "darkness-road",
+    decor_seed: 1010,
+    props: [
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
+        (model: "nature-kit/stone_tallI", at: 166.216, side: Left, height: 22.0, radius: 3.8, gap: 0.1),
+        (model: "nature-kit/stone_tallF", at: 49.204, side: Right, height: 24.0, radius: 6.0, gap: 2.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        (pos: (0.00, 14.00, 0.00), width: 15.0, shoulder: 3.0),
+        // 0-13: the start straight on the cliff top, 14 m up, heading north: the one long straight
+        // (the slipstream, the items). The grid sits behind point 0.
+        (pos: (0.00, 14.00, -8.02), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -16.05), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -24.07), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -32.09), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -40.12), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -48.14), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -56.16), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -64.18), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -72.21), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -80.23), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -88.25), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -96.28), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -104.30), width: 15.0, shoulder: 3.0),
+        // a hairpin to the left (radius 22 m).
+        (pos: (-1.33, 14.00, -111.82), width: 13.0, shoulder: 2.0),
+        (pos: (-5.15, 14.00, -118.44), width: 13.0, shoulder: 2.0),
+        (pos: (-11.00, 14.00, -123.35), width: 13.0, shoulder: 2.0),
+        (pos: (-18.18, 14.00, -125.97), width: 13.0, shoulder: 2.0),
+        (pos: (-25.82, 14.00, -125.97), width: 13.0, shoulder: 2.0),
+        (pos: (-33.00, 14.00, -123.35), width: 13.0, shoulder: 2.0),
+        (pos: (-38.85, 14.00, -118.44), width: 13.0, shoulder: 2.0),
+        (pos: (-42.67, 14.00, -111.82), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -104.30), width: 13.0, shoulder: 2.0),
+        // south along the cliff top.
+        (pos: (-44.00, 14.00, -96.30), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -88.30), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -80.30), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -72.30), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -64.30), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -56.30), width: 13.0, shoulder: 2.0),
+        // a hairpin to the right.
+        (pos: (-45.33, 14.00, -48.78), width: 13.0, shoulder: 2.0),
+        (pos: (-49.15, 14.00, -42.16), width: 13.0, shoulder: 2.0),
+        (pos: (-55.00, 14.00, -37.25), width: 13.0, shoulder: 2.0),
+        (pos: (-62.18, 14.00, -34.63), width: 13.0, shoulder: 2.0),
+        (pos: (-69.82, 14.00, -34.63), width: 13.0, shoulder: 2.0),
+        (pos: (-77.00, 14.00, -37.25), width: 13.0, shoulder: 2.0),
+        (pos: (-82.85, 14.00, -42.16), width: 13.0, shoulder: 2.0),
+        (pos: (-86.67, 14.00, -48.78), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -56.30), width: 13.0, shoulder: 2.0),
+        // north, to the edge of the cliff.
+        (pos: (-88.00, 14.00, -63.38), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -70.46), width: 13.0, shoulder: 2.0),
+        // the risky jump's corner and the glide (the Corniche Cannelle's piece, mirrored): north,
+        // then a tight corner to the left (90°), its inside a drop that the jump cuts across; the
+        // wide landing along the edge, west, the glide ramp; the glide down to the foot of the
+        // cliff (no road: the gap); the landing at the foot, wide.
+        (pos: (-88.00, 14.00, -78.46), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -86.48), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -94.50), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -102.52), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -110.54), width: 13.0, shoulder: 2.0),
+        (pos: (-87.98, 14.00, -118.56), width: 13.0, shoulder: 2.0),
+        (pos: (-87.98, 14.00, -126.59), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -134.60), width: 13.0, shoulder: 2.0),
+        (pos: (-88.55, 14.00, -142.58), width: 13.0, shoulder: 2.0),
+        (pos: (-92.15, 14.00, -149.67), width: 13.0, shoulder: 2.0),
+        (pos: (-98.48, 14.00, -154.50), width: 13.0, shoulder: 2.0),
+        (pos: (-106.26, 13.99, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-114.28, 13.82, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-122.30, 13.64, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-130.32, 13.46, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-138.34, 13.28, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-146.36, 13.10, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-154.39, 12.48, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-162.41, 11.27, -156.17), width: 20.0, shoulder: 2.0),
+        (pos: (-170.42, 10.05, -156.17), width: 20.0, shoulder: 2.0),
+        (pos: (-178.45, 8.84, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-186.47, 7.62, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-194.49, 6.41, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-202.52, 5.19, -156.19), width: 20.0, shoulder: 2.0),
+        (pos: (-210.54, 3.98, -156.19), width: 20.0, shoulder: 2.0),
+        (pos: (-218.55, 2.97, -156.19), width: 18.0, shoulder: 2.0),
+        (pos: (-226.58, 2.81, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-234.60, 2.65, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-242.62, 2.49, -156.21), width: 18.0, shoulder: 2.0),
+        (pos: (-250.65, 2.33, -156.21), width: 18.0, shoulder: 2.0),
+        (pos: (-258.66, 2.17, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-266.68, 2.01, -156.21), width: 18.0, shoulder: 2.0),
+        // the snake back up: a hairpin to the left.
+        (pos: (-274.21, 2.10, -154.89), width: 13.0, shoulder: 2.0),
+        (pos: (-280.82, 2.19, -151.07), width: 13.0, shoulder: 2.0),
+        (pos: (-285.73, 2.27, -145.21), width: 13.0, shoulder: 2.0),
+        (pos: (-288.35, 2.36, -138.03), width: 13.0, shoulder: 2.0),
+        (pos: (-288.35, 2.45, -130.39), width: 13.0, shoulder: 2.0),
+        (pos: (-285.73, 2.54, -123.21), width: 13.0, shoulder: 2.0),
+        (pos: (-280.82, 2.62, -117.36), width: 13.0, shoulder: 2.0),
+        (pos: (-274.21, 2.71, -113.54), width: 13.0, shoulder: 2.0),
+        (pos: (-266.68, 2.80, -112.21), width: 13.0, shoulder: 2.0),
+        // east, climbing.
+        (pos: (-258.96, 2.95, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-251.24, 3.10, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-243.51, 3.25, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-235.79, 3.40, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-228.07, 3.55, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-220.34, 3.70, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-212.62, 3.85, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-204.90, 4.00, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-197.17, 4.15, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-189.45, 4.30, -112.21), width: 13.0, shoulder: 2.0),
+        // a hairpin to the right.
+        (pos: (-181.93, 4.38, -110.89), width: 13.0, shoulder: 2.0),
+        (pos: (-175.31, 4.46, -107.07), width: 13.0, shoulder: 2.0),
+        (pos: (-170.40, 4.53, -101.21), width: 13.0, shoulder: 2.0),
+        (pos: (-167.78, 4.61, -94.03), width: 13.0, shoulder: 2.0),
+        (pos: (-167.78, 4.69, -86.39), width: 13.0, shoulder: 2.0),
+        (pos: (-170.40, 4.77, -79.21), width: 13.0, shoulder: 2.0),
+        (pos: (-175.31, 4.84, -73.36), width: 13.0, shoulder: 2.0),
+        (pos: (-181.93, 4.92, -69.54), width: 13.0, shoulder: 2.0),
+        (pos: (-189.45, 5.00, -68.21), width: 13.0, shoulder: 2.0),
+        // west, climbing.
+        (pos: (-196.95, 5.12, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-204.45, 5.25, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-211.95, 5.38, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-219.45, 5.50, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-226.95, 5.62, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-234.45, 5.75, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-241.95, 5.88, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-249.45, 6.00, -68.21), width: 13.0, shoulder: 2.0),
+        // a tight turn to the left, south, and another one, east.
+        (pos: (-256.34, 6.08, -66.84), width: 13.0, shoulder: 2.0),
+        (pos: (-262.18, 6.15, -62.94), width: 13.0, shoulder: 2.0),
+        (pos: (-266.08, 6.22, -57.10), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.30, -50.21), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.40, -42.57), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.50, -34.93), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.60, -27.29), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.70, -19.65), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.80, -12.01), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 6.90, -4.37), width: 13.0, shoulder: 2.0),
+        (pos: (-266.08, 6.98, 2.52), width: 13.0, shoulder: 2.0),
+        (pos: (-262.18, 7.05, 8.36), width: 13.0, shoulder: 2.0),
+        (pos: (-256.34, 7.12, 12.26), width: 13.0, shoulder: 2.0),
+        (pos: (-249.45, 7.20, 13.63), width: 13.0, shoulder: 2.0),
+        // east, climbing.
+        (pos: (-241.45, 7.36, 13.63), width: 13.0, shoulder: 2.0),
+        (pos: (-233.45, 7.52, 13.63), width: 13.0, shoulder: 2.0),
+        (pos: (-225.45, 7.68, 13.63), width: 13.0, shoulder: 2.0),
+        (pos: (-217.45, 7.84, 13.63), width: 13.0, shoulder: 2.0),
+        (pos: (-209.45, 8.00, 13.63), width: 13.0, shoulder: 2.0),
+        // a hairpin to the right.
+        (pos: (-201.93, 8.06, 14.96), width: 13.0, shoulder: 2.0),
+        (pos: (-195.31, 8.11, 18.78), width: 13.0, shoulder: 2.0),
+        (pos: (-190.40, 8.17, 24.63), width: 13.0, shoulder: 2.0),
+        (pos: (-187.78, 8.22, 31.81), width: 13.0, shoulder: 2.0),
+        (pos: (-187.78, 8.28, 39.45), width: 13.0, shoulder: 2.0),
+        (pos: (-190.40, 8.33, 46.63), width: 13.0, shoulder: 2.0),
+        (pos: (-195.31, 8.39, 52.48), width: 13.0, shoulder: 2.0),
+        (pos: (-201.93, 8.44, 56.30), width: 13.0, shoulder: 2.0),
+        (pos: (-209.45, 8.50, 57.63), width: 13.0, shoulder: 2.0),
+        // west.
+        (pos: (-217.45, 8.60, 57.63), width: 13.0, shoulder: 2.0),
+        (pos: (-225.45, 8.70, 57.63), width: 13.0, shoulder: 2.0),
+        (pos: (-233.45, 8.80, 57.63), width: 13.0, shoulder: 2.0),
+        (pos: (-241.45, 8.90, 57.63), width: 13.0, shoulder: 2.0),
+        (pos: (-249.45, 9.00, 57.63), width: 13.0, shoulder: 2.0),
+        // a tight turn to the left, south, and another one, east.
+        (pos: (-256.34, 9.04, 59.00), width: 13.0, shoulder: 2.0),
+        (pos: (-262.18, 9.07, 62.90), width: 13.0, shoulder: 2.0),
+        (pos: (-266.08, 9.11, 68.74), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 9.15, 75.63), width: 13.0, shoulder: 2.0),
+        (pos: (-267.45, 9.25, 83.63), width: 13.0, shoulder: 2.0),
+        (pos: (-266.08, 9.29, 90.52), width: 13.0, shoulder: 2.0),
+        (pos: (-262.18, 9.32, 96.36), width: 13.0, shoulder: 2.0),
+        (pos: (-256.34, 9.36, 100.26), width: 13.0, shoulder: 2.0),
+        (pos: (-249.45, 9.40, 101.63), width: 13.0, shoulder: 2.0),
+        // east, along the foot of the cliff.
+        (pos: (-239.45, 9.50, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-229.45, 9.60, 101.63), width: 13.0, shoulder: 2.0),
+        // the bulge and the last corner (the Corniche Cannelle's piece, mirrored): east, up to the
+        // cliff top; the bulge (right 75°, left 150°, right 75°) round a giant needle of white stone:
+        // the hidden road goes straight behind it, through a stack of crates; the last corner, to
+        // the left (90°), its inside a drop that the grass bridge crosses behind a panel; the start
+        // straight.
+        (pos: (-221.45, 9.78, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-213.42, 10.61, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-205.40, 11.45, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-197.38, 12.28, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-189.36, 13.11, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-181.34, 13.94, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-173.40, 14.00, 102.61), width: 13.0, shoulder: 2.0),
+        (pos: (-166.07, 14.00, 105.79), width: 13.0, shoulder: 2.0),
+        (pos: (-159.93, 14.00, 110.91), width: 13.0, shoulder: 2.0),
+        (pos: (-155.49, 14.00, 117.56), width: 13.0, shoulder: 2.0),
+        (pos: (-152.82, 14.00, 125.11), width: 13.0, shoulder: 2.0),
+        (pos: (-148.93, 14.00, 132.10), width: 13.0, shoulder: 2.0),
+        (pos: (-143.23, 14.00, 137.70), width: 13.0, shoulder: 2.0),
+        (pos: (-136.18, 14.00, 141.46), width: 13.0, shoulder: 2.0),
+        (pos: (-128.35, 14.00, 143.08), width: 13.0, shoulder: 2.0),
+        (pos: (-120.39, 14.00, 142.42), width: 13.0, shoulder: 2.0),
+        (pos: (-112.93, 14.00, 139.54), width: 13.0, shoulder: 2.0),
+        (pos: (-106.60, 14.00, 134.66), width: 13.0, shoulder: 2.0),
+        (pos: (-101.89, 14.00, 128.20), width: 13.0, shoulder: 2.0),
+        (pos: (-99.10, 14.00, 120.70), width: 13.0, shoulder: 2.0),
+        (pos: (-95.50, 14.00, 113.56), width: 13.0, shoulder: 2.0),
+        (pos: (-90.02, 14.00, 107.74), width: 13.0, shoulder: 2.0),
+        (pos: (-83.12, 14.00, 103.70), width: 13.0, shoulder: 2.0),
+        (pos: (-75.36, 14.00, 101.77), width: 13.0, shoulder: 2.0),
+        (pos: (-67.35, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-59.33, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-51.30, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-43.28, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-35.26, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-27.24, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-19.22, 14.00, 101.61), width: 15.0, shoulder: 3.0),
+        (pos: (-11.48, 14.00, 99.72), width: 15.0, shoulder: 3.0),
+        (pos: (-5.09, 14.00, 94.95), width: 15.0, shoulder: 3.0),
+        (pos: (-1.07, 14.00, 88.08), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 80.17), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 72.15), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 64.13), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 56.11), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 48.09), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 40.07), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 32.05), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 24.02), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 16.00), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 7.98), width: 15.0, shoulder: 3.0),
+    ],
+    // The glide (issue #20): its ramp as wide as the road between the walls, its top where the gap
+    // starts; the gap, down to the foot of the cliff.
+    glide_ramps: [
+        (at: 55.579, offset: 0.0, width: 24.0, length: 8.0, angle: 12.0),
+    ],
+    gaps: [
+        (from: 56.576, to: 64.804),
+    ],
+    // Issue #107: the sides without wall: the inside of the jump's corner, along the bulge (the
+    // hidden road) and inside the last corner (the grass bridge), each over a drop of 14 m.
+    // Everywhere else, walls: around the hairpins and the snake, where the pack bunches up, along
+    // the edge of the cliff.
+    open_edges: [
+        (from: 43.826, to: 54.457, side: Left),
+        (from: 158.000, to: 176.351, side: Left),
+        (from: 176.173, to: 189.900, side: Left),
+    ],
+    shortcuts: [
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
+        // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it
+        // falls.
+        (from: 44.450, to: 54.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(-89.49, 14.00, -114.14), (-91.48, 14.00, -129.15), (-99.01, 14.00, -134.09), (-124.99, 13.58, -151.15), (-133.99, 13.58, -151.15)]),
+        // The hidden road: narrow (5 m), straight behind the needle of stone while the road goes
+        // round it, behind a stack of crates 18 m in, where it leaves the road's edge (they burst
+        // as one drives through them, a little slower, and come back).
+        (from: 158.000, to: 175.603, kind: Road, width: 5.0,
+         points: [(-172.00, 14.00, 97.63), (-121.27, 14.00, 97.63), (-70.53, 14.00, 97.63)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the last corner: narrow (5 m), closed by a panel 26 m in that
+        // breaks only under a kart with a boost (the mini-turbo of the bulge's last turn, a
+        // piment); without one, the kart bounces off it.
+        (from: 176.921, to: 189.828, kind: Grass, width: 5.0,
+         cover: Some((kind: Panel, at: 26.0)),
+         points: [(-59.96, 14.00, 94.63), (-53.49, 14.00, 93.78), (-47.46, 14.00, 91.28), (-42.48, 14.00, 88.41), (-37.50, 14.00, 85.53), (-32.52, 14.00, 82.66), (-27.54, 14.00, 79.78), (-22.54, 14.00, 76.28), (-18.23, 14.00, 71.97), (-14.73, 14.00, 66.97), (-12.15, 14.00, 61.44), (-10.57, 14.00, 55.55), (-10.04, 14.00, 49.47)]),
+    ],
+    // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
+    // the next turn does not want. A trunk fallen on the right shoulder along the cliff top (the
+    // karts keep left for the hairpin to the right); a rock and a pillar of stone at the edges of
+    // the landing at the foot of the cliff; a stone swinging over the right side of the snake's
+    // first leg and a log rolling across the right side of its second east leg (they keep left for
+    // the hairpins to the right).
+    obstacles: [
+        (kind: Trunk, at: 26.000, offset: 1.12, yaw: -4.0),
+        (kind: Rock, at: 66.600, offset: 0.92, size: 1.2, yaw: -25.0),
+        (kind: Pillar, at: 70.600, offset: -0.9),
+        (kind: SwingingStone, at: 86.000, offset: 0.5, sweep: 0.35, period: 3.6),
+        (kind: RollingLog, at: 124.500, offset: 0.5, sweep: 0.32, period: 5.0),
+    ],
+    // Issue #144: the bison of the foot of the cliff, pacing across the left side of the snake's
+    // west leg (the karts keep right for the tight turn to the left after it).
+    npcs: [
+        (kind: Bison, at: 103.000, offset: -0.55, sweep: 0.3, period: 6.5),
+    ],
+    // Issue #144: balloons just after the start line (the pack bursts them at GO), a hay bale on
+    // the snake, crates on the climb back to the cliff top.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 115.000, offsets: [0.5]),
+        (kind: Crate, at: 153.400, offsets: [0.6, 0.25]),
+    ],
+    // Boost pads (issue #13): out of the first hairpin, on the cliff top, and out of the snake's
+    // last tight turn. None before the grass bridge: it pays only with a boost of one's own.
+    boost_pads: [
+        (at: 23.500, offset: 0.0),
+        (at: 151.435, offset: 0.0),
+    ],
+    item_boxes: [
+        (at: 6.857, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 41.832, offsets: [-0.5, 0.0, 0.5]),
+        (at: 68.544, offsets: [-0.4, 0.0, 0.4]),
+        (at: 138.000, offsets: [-0.4, 0.4]),
+        (at: 154.670, offsets: [-0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on the
+    // grid; one along the glide (for the divers).
+    croquettes: [
+        (from: 3.740, count: 5, spacing: 3.0, offset: -0.42),
+        (from: 12.467, count: 4, spacing: 3.0, offset: 0.42),
+        (from: 57.324, count: 6, spacing: 5.0, offset: 0.0),
+        (from: 83.500, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 122.500, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 175.853, count: 4, spacing: 3.0, offset: 0.4),
+    ],
+)

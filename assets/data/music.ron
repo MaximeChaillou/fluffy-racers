@@ -73,6 +73,19 @@
          seconds: 89.142834, bpm: 140.0, volume: 0.56, faster: "cool-highway-climax"),
         (id: "cool-highway-climax", file: "music/mintodog/cool_highway_climax_bpm155.ogg",
          seconds: 80.516122, bpm: 155.0, volume: 0.57),
+        // Forêt Frimousse (issue #110, the forest of giant mushrooms): « Strange Factory », made for
+        // « a course where the atmosphere changes drastically on the final lap » (-12.5 and -11.2
+        // LUFS).
+        (id: "strange-factory", file: "music/mintodog/strange_factory_bpm100.ogg",
+         seconds: 91.2, bpm: 100.0, volume: 0.95, faster: "strange-factory-climax"),
+        (id: "strange-factory-climax", file: "music/mintodog/strange_factory_climax_bpm200.ogg",
+         seconds: 93.6, bpm: 200.0, volume: 0.82),
+        // Falaises Flanelle (issue #110, the cliffs at sunset): « Darkness Road », techno « with
+        // tension » (-8.6 and -8.2 LUFS).
+        (id: "darkness-road", file: "music/mintodog/darkness_road_bpm165.ogg",
+         seconds: 127.997098, bpm: 165.0, volume: 0.61, faster: "darkness-road-climax"),
+        (id: "darkness-road-climax", file: "music/mintodog/darkness_road_climax_bpm180.ogg",
+         seconds: 117.333333, bpm: 180.0, volume: 0.58),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

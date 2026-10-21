@@ -92,8 +92,8 @@ pub use preview::{
 pub use screen::{MainMenuRoot, MenuAssets, MenuButton, MenuNode, TitleWord};
 pub use showcase::{HomeTuning, SHOWCASE_LAPS, Showcase, ShowcaseKart, ShowcasePhase, pack_scale};
 pub use solo_screen::{
-    RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloLine, SoloRoot,
-    SoloShape, SoloUi, SoloValue, Vignette,
+    RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloLine, SoloMoreRaces,
+    SoloRoot, SoloShape, SoloUi, SoloValue, Vignette,
 };
 pub use style::{ButtonLook, ButtonState, UI_FILES, button_look};
 

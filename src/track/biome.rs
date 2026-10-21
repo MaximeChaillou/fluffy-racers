@@ -314,14 +314,24 @@ mod tests {
 
     /// Issue #11, and #19 (Max: « des ambiances variées »): four ambiances, the meadow, the
     /// pastry land, the snow and the beach; issue #20: a fifth, the lagoon; issue #107: a sixth,
-    /// the canyon.
+    /// the canyon; issue #110: an eighth and a ninth, the undergrowth of giant mushrooms and the
+    /// cliffs at sunset.
     #[test]
-    fn the_biomes_file_is_valid_and_has_the_six_ambiances() {
+    fn the_biomes_file_is_valid_and_has_the_eight_ambiances() {
         let biomes = parse_biomes(BIOMES_RON).unwrap();
         let names: Vec<&str> = biomes.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Prairie", "Guimauve", "Neige", "Plage", "Lagon", "Corniche"]
+            [
+                "Prairie",
+                "Guimauve",
+                "Neige",
+                "Plage",
+                "Lagon",
+                "Corniche",
+                "Sous-bois",
+                "Falaises"
+            ]
         );
         assert_eq!(biomes, super::biomes());
         // Distinct ambiances, two by two: other sky, ground and road, and no model in common.

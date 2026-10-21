@@ -6,6 +6,9 @@
 // of the guide « Conception des circuits » (the sides without wall, the shortcuts, the risky jump);
 // the Échappée Pissenlit (issue #119), the first long race: an open circuit, in sections (one per
 // cup, its last race, a final); `long: true` says so to the screens that only read this list.
+// Issue #110: the Forêt Frimousse (a forest of giant mushrooms: the hidden road behind a waterfall)
+// and the Falaises Flanelle (cliffs at sunset: the glide, the hidden road behind a stack of
+// crates), the first two circuits of the third cup (offered once it has its four).
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -22,9 +25,12 @@
         (name: "Ruban Réglisse", file: "ruban.track.ron"),
         (name: "Corniche Cannelle", file: "corniche.track.ron"),
         (name: "Échappée Pissenlit", file: "echappee.track.ron", long: true),
+        (name: "Forêt Frimousse", file: "foret.track.ron"),
+        (name: "Falaises Flanelle", file: "falaises.track.ron"),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),
         (name: "Coupe Nuage", icon: Medal),
+        (name: "Coupe Câlin", icon: Rosette),
     ],
 )

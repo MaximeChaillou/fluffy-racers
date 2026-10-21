@@ -39,6 +39,36 @@ pub fn header(setup: &RaceSetup, catalog: &Catalog) -> String {
     }
 }
 
+/// Issue #110: the right column shows this many races at most. A custom championship has up to
+/// as many races as there are circuits (10 now, 24 at the end): beyond this, the column shows a
+/// window of them that follows the race with the focus, and a line says how many are hidden.
+pub const MAX_CARDS: usize = 8;
+
+/// Issue #110: the races shown on the right, out of `races`: all of them up to [`MAX_CARDS`];
+/// beyond, [`MAX_CARDS`] of them, the race with the focus (`focus`, if a race has it) among them
+/// with three before it when it can (the first ones without the focus on a race).
+pub fn shown_races(races: usize, focus: Option<usize>) -> std::ops::Range<usize> {
+    if races <= MAX_CARDS {
+        return 0..races;
+    }
+    let first = focus
+        .map_or(0, |race| race.saturating_sub(MAX_CARDS / 2 - 1))
+        .min(races - MAX_CARDS);
+    first..first + MAX_CARDS
+}
+
+/// Issue #110: the line under the races when some are hidden (`before` above the ones shown,
+/// `after` below them), or none.
+pub fn hidden_races(before: usize, after: usize) -> Option<String> {
+    let plural = |n: usize| if n > 1 { "s" } else { "" };
+    match (before, after) {
+        (0, 0) => None,
+        (b, 0) => Some(format!("+ {b} course{} plus haut", plural(b))),
+        (0, a) => Some(format!("+ {a} course{} plus bas", plural(a))),
+        (b, a) => Some(format!("+ {b} plus haut, + {a} plus bas")),
+    }
+}
+
 /// The record line of a time trial: « Ton record : 0:40.00 », or none yet.
 pub fn record_line(record: Option<&str>) -> String {
     match record {
@@ -136,6 +166,29 @@ fn spread(points: &[Vec2], aspect: f32, count: usize) -> Vec<Vec2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #110: up to eight races, all shown; more, eight of them, the one with the focus among
+    /// them (three before it when it can), and a line for the others.
+    #[test]
+    fn the_races_shown_follow_the_focus() {
+        assert_eq!(shown_races(4, None), 0..4);
+        assert_eq!(shown_races(8, Some(7)), 0..8);
+        assert_eq!(shown_races(10, None), 0..8);
+        assert_eq!(shown_races(10, Some(2)), 0..8);
+        assert_eq!(shown_races(10, Some(5)), 2..10);
+        assert_eq!(shown_races(10, Some(9)), 2..10);
+        assert_eq!(shown_races(24, Some(12)), 9..17);
+        for races in 2..=24 {
+            for focus in 0..races {
+                let shown = shown_races(races, Some(focus));
+                assert!(shown.contains(&focus) && shown.len() == races.min(MAX_CARDS));
+            }
+        }
+        assert_eq!(hidden_races(0, 0), None);
+        assert_eq!(hidden_races(0, 2).unwrap(), "+ 2 courses plus bas");
+        assert_eq!(hidden_races(1, 0).unwrap(), "+ 1 course plus haut");
+        assert_eq!(hidden_races(3, 5).unwrap(), "+ 3 plus haut, + 5 plus bas");
+    }
 
     fn prairie() -> TrackData {
         TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()

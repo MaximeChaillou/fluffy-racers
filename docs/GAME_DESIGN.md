@@ -30,7 +30,7 @@ Demande de Max (2026-10-17) : « Dans solo on a le choix de championnat, contre 
 
 - **Trois modes**, dans cet ordre : **Championnat** (ci-dessous), **Contre-la-montre** (le circuit et le miroir), **Circuit seul** (un circuit, une course).
 - **Le championnat** est :
-  - **une coupe** : quatre circuits de `assets/tracks/index.ron`, dans son ordre (la 1re coupe court les quatre premiers, la 2e les quatre suivants…), chacune avec un nom original et son icône (le manifeste : « Coupe Doudou », « Coupe Nuage »…). **Une coupe qui n'a pas encore ses quatre circuits n'est pas proposée** (notre choix : une coupe a quatre courses ; ses circuits se courent seuls ou dans un championnat personnalisé). Avec 6 circuits aujourd'hui, il y en a une ; avec 24 à terme, six ;
+  - **une coupe** : quatre circuits de `assets/tracks/index.ron`, dans son ordre (la 1re coupe court les quatre premiers, la 2e les quatre suivants…), chacune avec un nom original et son icône (le manifeste : « Coupe Doudou », « Coupe Nuage »…). **Une coupe qui n'a pas encore ses quatre circuits n'est pas proposée** (notre choix : une coupe a quatre courses ; ses circuits se courent seuls ou dans un championnat personnalisé). Avec 10 circuits aujourd'hui (#110), il y en a deux (la 3e attend ses circuits 11 et 12) ; avec 24 à terme, six ;
   - **ou un championnat personnalisé** : un **nombre de courses** (de 2 au nombre de circuits), puis ses circuits **au choix** (un par un, courus dans l'ordre choisi ; un circuit peut revenir) ou **au hasard** : tirés de la graine de la course (`RaceGrid::seed`) et du numéro du tirage, **toujours les mêmes pour la même graine et le même tirage, et jamais deux fois le même circuit tant qu'il en reste** ; l'écran montre le tirage avant le départ, et chaque nouveau nombre de courses, chaque retour à « Au hasard » et chaque championnat lancé fait un nouveau tirage.
   - Les points, les égalités, la grille inversée, les mêmes adversaires et le podium sont ceux de la suite (« Grand Prix (#19) »), quelles que soient ses courses. Ses écrans disent son nom : celui de la coupe (« Coupe Doudou 2/4 · Anneau Guimauve »), ou « Championnat » (#100 : avec les accents, en Fredoka).
 - **Bots : Facile, Normal ou Difficile** (#153, Max : « rajoute des options dans le dropdown bot avec les modes de difficulté et non ») : ils complètent la grille jusqu'à 12, **à ce niveau** (§ 12), pour un circuit seul comme pour tout un championnat ; **Normal par défaut** (le niveau des bots d'avant). **Bots : Non** : seuls les joueurs courent ; en solo, une course seul, sans fantôme, avec les objets si on les veut (un championnat aussi : le podium n'a que le joueur). Le nombre de bots du joueur est gardé et revient avec un niveau. Le contre-la-montre n'a pas de bots. **Le choix est gardé dans le navigateur** : le jeu suivant repart avec. Pas de grille « mélangée » (des bots de plusieurs niveaux) : elle reste celle des tests des bots. Le panneau d'admin change le même niveau (à côté du nombre de bots).
@@ -485,7 +485,7 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 
 « Ajouter une musique par circuit. [...] Tout ça pour rendre plus vivant » (Max). Les morceaux sont des fichiers **CC0** (`assets/music/`, crédités dans `assets/CREDITS.md`) : aujourd'hui la bande-son de jeu de course de **MintoDog** (OpenGameArt), qui a pour chaque circuit une version « Climax » pour le dernier tour, un titre, un menu, des jingles d'arrivée et leurs boucles. Aucune musique de jeu de kart ni de marque.
 
-- **Une musique par circuit**, en boucle sans coupure, dans l'ambiance de son biome : Prairie Pompon (« le premier circuit », synthés lumineux, 160 bpm), Anneau Guimauve (joyeux, « le ciel », 165 bpm), Crique Câline (saxophone et piano, 120 bpm), Col des Moufles (une montagne, lumineuse, 140 bpm), Lagon Duvet (la jungle, 140 bpm), Ruban Réglisse (eurobeat, l'anti-gravité, 165 bpm), Corniche Cannelle (#107 : techno, le canyon, 160 bpm). Le circuit nomme sa musique dans son fichier (`music`), sinon il prend celle de son biome. **Chaque circuit du manifeste a la sienne** (un test le vérifie) : les suivants (24 à terme, les courses longues de #119 comprises) en auront une aussi.
+- **Une musique par circuit**, en boucle sans coupure, dans l'ambiance de son biome : Prairie Pompon (« le premier circuit », synthés lumineux, 160 bpm), Anneau Guimauve (joyeux, « le ciel », 165 bpm), Crique Câline (saxophone et piano, 120 bpm), Col des Moufles (une montagne, lumineuse, 140 bpm), Lagon Duvet (la jungle, 140 bpm), Ruban Réglisse (eurobeat, l'anti-gravité, 165 bpm), Corniche Cannelle (#107 : techno, le canyon, 160 bpm), Échappée Pissenlit (#119 : « Cool Highway », 140 bpm), Forêt Frimousse (#110 : « Strange Factory », mystérieux, 100 bpm ; sa version du dernier tour, à 200 bpm, change d'ambiance), Falaises Flanelle (#110 : « Darkness Road », techno avec de la tension, 165 bpm). Le circuit nomme sa musique dans son fichier (`music`), sinon il prend celle de son biome. **Chaque circuit du manifeste a la sienne** (un test le vérifie) : les suivants (24 à terme, les courses longues de #119 comprises) en auront une aussi.
 - **Elle part au GO** (le compte à rebours bipe dans le silence), d'un coup, comme MK8DX.
 - **Le dernier tour** : la musique s'arrête vite (0,3 s, à régler), un jingle, puis **la version plus rapide** du morceau (la « Climax » de son compositeur, 15 bpm de plus). Un morceau qui n'en a pas joue plus vite (×1,06, à régler : un peu plus aigu aussi).
 - **L'arrivée** : la musique de la course **ne coupe pas net** (elle descend en 1,2 s, à régler), puis le jingle de l'arrivée, puis la musique des résultats, en boucle, selon la place : **1er** (la meilleure), **2e et 3e** (la bonne), **à partir du 4e** (la moins bonne) (à régler). Une course qui se termine sans que le joueur ait fini : la moins bonne. Le classement général du championnat garde la musique des résultats.
@@ -844,7 +844,7 @@ Cinq épingles, quatre virages serrés, les S des lacets et du sommet : aucune l
   - **le pont d'herbe** : 5 m de large (9 avant), redessiné (une courbe douce depuis la droite de la chaussée, 30° vers la droite, tout droit, puis une longue courbe jusqu'au bas-côté de la ligne droite de départ, qu'il rejoint un peu plus tôt), et **fermé par un panneau** 26 m après son début, là où le vide le sépare de la route : il faut un mini-turbo du dernier virage du renflement ou un piment, sinon le kart rebondit. Le panneau fait face aux karts qui longent le bord du canyon, et le chemin derrière lui s'éloigne dans leur axe : on ne le voit pas ;
   - **les mesures** (bot Difficile, `bots::shortcut_tests`) : la route cachée fait gagner 0,78 s (0,90 en miroir) ; le pont d'herbe avec un boost 0,70 s (0,60), et sans boost un kart s'arrête à 1 m du panneau ; le saut risqué, inchangé, 0,50 s. Les courses de bots : voir `STATUS.md`.
 - **Le saut risqué** n'a pas de couverture : c'est un passage risqué (règle 6), qu'on doit voir pour viser le tremplin.
-- **Pas encore fait** : Prairie Pompon et le Col des Moufles (#162), et les autres façons de cacher (la cascade, la grotte, la planche, le tremplin discret, la pile de caisses, le passage qui s'ouvre au 2e tour).
+- **Pas encore fait** : Prairie Pompon et le Col des Moufles (#162), et les autres façons de cacher (la grotte, la planche, le tremplin discret, le passage qui s'ouvre au 2e tour). La cascade et la pile de caisses : #110, plus bas.
 
 ### Notre implémentation (#146) : le décor lointain
 
@@ -898,12 +898,66 @@ Une échappée à travers les prés (le biome « Prairie »), **du départ à un
 - **Réglages** : aucun nouveau (les durées et les longueurs de section viennent du fichier ; `MIN_RUN_OUT`, `MIN_LEAD_IN`, `MIN_SECTION`, `MAX_SECTIONS` sont des règles de validation du format, comme celles des vides ou des zones d'anti-gravité).
 - **Fluidité** : la route, les murets et le décor d'un tracé ouvert en tuiles de 200 m (le culling), le décor semé au prorata de la route (`DECOR_LAP`, 1,4 km), rien par image de plus. Voir `docs/ARCHITECTURE.md` et `STATUS.md` (les triangles).
 
+### La Forêt Frimousse (#110, le 9e circuit)
+
+Une forêt de champignons géants (le biome « Sous-bois », `biomes.ron` : des champignons rouges et beiges aussi grands que les arbres, des arbres sombres, de grands pins, des troncs et des souches moussus, des fougères ; des collines boisées et des montagnes bleues dans la brume, un brouillard plus court). Environ **1 330 m le tour**, à droite :
+
+- **la ligne droite du départ** sur une crête moussue, 10 m au-dessus du sous-bois, la seule longue (l'aspiration, les boîtes ; des ballons au GO, un rocher au bord droit) ;
+- **trois épingles** (droite, gauche, droite) pour monter jusqu'au faîte, 14 m plus haut : **un rondin roule** sur la gauche de la première montée, **un tremplin à figures** au début de la seconde ; puis un S (l'épingle, un virage serré à gauche) ;
+- **le long du faîte** jusqu'au **virage du saut risqué** (à droite, 90°) : son intérieur est un vide de 14 m, qu'un tremplin traverse ; la réception élargie à 20 m ;
+- **la descente** : un virage serré à droite, **un deuxième tremplin à figures** à sa sortie, un tronc tombé sur le bas-côté ; une épingle à gauche jusqu'au ruisseau ;
+- **le gué** : la route plonge sous l'eau du ruisseau ; **le bison** le garde, sur la droite avant l'eau ; une botte de foin à la sortie ; une épingle à droite pour en sortir ;
+- **la remontée** vers la crête (des caisses), **le renflement** (gauche 75°, droite 150°, gauche 75°) autour d'un pin géant, derrière lequel **la route cachée** passe tout droit, **derrière une cascade** (#110 : on la traverse sans ralentir) ;
+- **le dernier virage** (à droite, 90°), que traverse **le pont d'herbe**, **derrière un rideau de hautes fougères** : plus lent sans boost, plus rapide avec (le mini-turbo du renflement, un piment).
+
+Cinq épingles, le S du renflement, quatre virages serrés, un S : aucune longue courbe molle. **Les pièces des raccourcis** (le virage du saut et sa réception ; le renflement, le dernier virage et leurs chemins) sont celles de la Corniche Cannelle (#107, #156 : leurs gains et le test « caché » ont fait leurs preuves), avec d'autres couvertures ; le tracé autour d'elles est neuf. Les bords sans muret : l'intérieur du virage du saut, le renflement, l'intérieur du dernier virage (un vide de 10 m et plus) ; partout ailleurs, des murets. Sa musique : « Strange Factory » de MintoDog (CC0 ; sa version du dernier tour change d'ambiance, comme il a été écrit pour). 9e du manifeste, le premier de la 3e coupe. Son miroir marche.
+
+**Les mesures** (graines 0 à 3 et 1000 à 1019, le miroir aussi) : **bots Difficile, le tour le plus rapide en 38,5 à 40,1 s** ; bots Normal, le plus rapide en 42,0 à 43,7 s, le plus lent en 48,4 à 48,9 s ; **4,2 à 5,0 drifts et 2,3 à 3,3 mini-turbos orange par tour** (Normal) ; aucun pélican en conduite libre ni en Normal ni en Difficile. **Les raccourcis** (bot Difficile, `bots::shortcut_tests`) : le saut fait gagner 0,58 s (0,54 en miroir), la route cachée 0,87 s (0,80), le pont d'herbe avec un boost 0,70 s (0,60), et sans boost il fait perdre 1,03 s (1,15).
+
+![Le départ de la Forêt Frimousse : la crête moussue, les champignons géants, les pins bleutés](img/foret-depart.jpg)
+
+![Le long du faîte, le tremplin du saut risqué au bout, le vide à droite](img/foret-saut.jpg)
+
+![Le gué : le ruisseau, le bison qui le garde sur la droite](img/foret-gue.jpg)
+
+![La route cachée, étroite, et la cascade qu'elle traverse (vue depuis le chemin : de la ligne idéale, on ne la voit pas)](img/foret-cascade.jpg)
+
+### Les Falaises Flanelle (#110, le 10e circuit)
+
+Des falaises de craie au coucher du soleil (le biome « Falaises », `biomes.ron` : des aiguilles de pierre blanche, des pins, des arbres fins, des ruines (un anneau, des colonnes brisées, des blocs), de la bruyère ; un ciel pêche, des falaises mauves au loin, des nuages roses). Environ **1 530 m le tour**, à gauche :
+
+- **la ligne droite du départ** en haut de la falaise, 14 m de haut, la seule longue ;
+- **deux épingles** (gauche, droite) sur le plateau (un tronc sur le bas-côté), jusqu'au bord ;
+- **le virage du saut risqué** (à gauche, 90°), son intérieur un vide de 14 m ; **le long du bord**, la réception élargie, **le tremplin du planeur** ; **le planeur**, du haut de la falaise jusqu'à son pied, 11 m plus bas ; la réception au pied (un rocher et un pilier de pierre à ses bords) ;
+- **le serpent** pour remonter : une épingle à gauche, **une pierre qui balance** sur la droite de la longue montée qui suit, une épingle à droite, **le bison** sur la gauche de la branche suivante, deux virages serrés à gauche (une botte de foin entre eux), **un rondin qui roule** sur la droite, une épingle à droite, deux virages serrés à gauche ;
+- **le long du pied de la falaise** (des caisses), **le renflement** (droite 75°, gauche 150°, droite 75°) autour d'une aiguille de pierre blanche, derrière laquelle **la route cachée** passe tout droit, **derrière une pile de caisses** (#110 : elle éclate quand on la traverse, un peu plus lent, et revient) ;
+- **le dernier virage** (à gauche, 90°), que traverse **le pont d'herbe, fermé par un panneau qui casse au boost**.
+
+Cinq épingles, le S du renflement, six virages serrés : technique, beaucoup de drifts. **Les pièces** du saut, du planeur, du renflement et du dernier virage sont celles de la Corniche Cannelle **retournées en miroir** (#109 : reprendre une pièce réglée, même retournée, donne les mêmes gains) ; le reste est neuf. Sa musique : « Darkness Road » de MintoDog (CC0, de la tension). 10e du manifeste. Son miroir marche.
+
+**Les mesures** (graines 0 à 3 et 1000 à 1019, le miroir aussi) : **bots Difficile, le tour le plus rapide en 44,6 à 46,0 s** ; bots Normal, le plus rapide en 48,6 à 49,9 s, le plus lent en 54,3 à 55,2 s ; **4,6 à 5,6 drifts et 3,4 à 4,3 mini-turbos orange par tour** (Normal) ; aucun pélican en conduite libre. **Les raccourcis** (bot Difficile) : le saut fait gagner 0,47 s (0,60 en miroir), la route cachée, à travers ses caisses, 0,80 s (0,87), le pont d'herbe avec un boost 0,60 s (0,70) ; sans boost, le kart s'arrête à 1 m du panneau.
+
+![Le départ des Falaises Flanelle : le haut de la falaise au coucher du soleil, les aiguilles de craie](img/falaises-depart.jpg)
+
+![Le tremplin du planeur au bord de la falaise](img/falaises-planeur.jpg)
+
+![La route cachée et sa pile de caisses (vue depuis le chemin)](img/falaises-caisses.jpg)
+
+- **Ce qu'elles ont appris** : **un tremplin à figures suivi trop vite d'un virage** (une épingle à 50 m, un virage serré à 60 m) envoyait des bots par-dessus le muret de ce virage, surtout le peloton au premier tour : les deux tremplins des Falaises sont partis (le tremplin du saut et celui du planeur restent), ceux de la Forêt sont à la sortie d'un virage, devant une branche de 60 m ; **la fin d'un tracé dessiné doit refermer le cap exactement** : une pièce reprise tourne de 89,93° et pas de 90°, et le petit coude à la ligne de départ laissait un trou dans le collider de la route sous la bande (le test de la ligne de départ l'a vu) : le cap de sortie d'une pièce est imposé.
+
+### Notre implémentation (#110) : la cascade et la pile de caisses
+
+- **Deux couvertures de plus** (`CoverKind`, règle 7), à varier d'un circuit à l'autre : **`Waterfall`, la cascade** (8 m de large, 4 m de haut : deux rochers moussus, un linteau de roche, l'eau en bandes bleu pâle et plus foncé, de l'écume au pied), qu'on traverse sans ralentir (ni collider ni système, comme le rideau) ; **`Crates`, la pile de caisses** (8 m de large, 3 m de haut, deux de profondeur), **un objet à traverser posé sur le chemin** : elle éclate sous le premier kart qui la touche (des éclats, un « pof »), le ralentit comme une caisse (`HazardTuning::crate_slowdown`, 4 %), et revient `respawn_seconds` (5 s) plus tard ; rien de plus sur le réseau (chaque pair l'éclate sous les karts qu'il voit, comme les caisses de #144).
+- **Le test « caché »** les compte comme les autres (leur boîte, celle de leur modèle) ; il vérifie aussi que la Forêt Frimousse a sa cascade et les Falaises Flanelle leur pile de caisses.
+- **Aucun réglage nouveau** ; rien de nouveau sur un circuit qui n'en a pas.
+
 ### La suite
 
 - ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
 - Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148 ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150 ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
 - **Des raccourcis étroits et cachés** (#156, règle 7) : faits sur la Corniche Cannelle ; Prairie Pompon et le Col des Moufles : #162. Chaque nouveau circuit suit la règle 7 et varie les façons de cacher.
-- **Les courses longues** (#119) : la première (l'Échappée Pissenlit, la Coupe Nuage) ; une par coupe, la dernière, comme un final : celle de la Coupe Doudou et des coupes suivantes (#110). 
+- **Les courses longues** (#119) : la première (l'Échappée Pissenlit, la Coupe Nuage) ; une par coupe, la dernière, comme un final : celle de la Coupe Doudou et des coupes suivantes.
+- **Les nouveaux circuits** (#110) : la Forêt Frimousse et les Falaises Flanelle (9e et 10e), avec l'Échappée Pissenlit (8e) : les circuits 8 à 10 sont faits. La 3e coupe sera proposée avec ses circuits 11 et 12 (#111 et la suite).
 - **Le décor lointain** (#146, règle 4) : fait pour les 7 circuits. **La Corniche Cannelle plus technique et plus verticale** (l'autre moitié de #146 : plus de virages et plus serrés, des niveaux superposés, de vraies montées le long des parois, un passage en hauteur) : **#164**, avec les prérequis d'une route qui passe au-dessus d'elle-même (règle 3). Chaque circuit refait ou nouveau garde un décor lointain qui ferme son horizon (le test le vérifie tout seul : il parcourt tous les circuits du manifeste).
 
 ## 17. Priorités

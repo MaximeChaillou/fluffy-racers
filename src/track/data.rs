@@ -350,6 +350,15 @@ pub enum CoverKind {
     /// A curtain of tall grass and leaves across the path: one drives through it without slowing
     /// down, it hides what is behind it.
     Foliage,
+    /// Issue #110: a waterfall across the path, falling from a mossy lintel on two rocks: one
+    /// drives through it without slowing down (only seen, like the foliage), it hides what is
+    /// behind it.
+    Waterfall,
+    /// Issue #110: a stack of crates across the path, two and three high: it bursts as a kart
+    /// drives through it (splinters, a « pof », a little slower: a crate's
+    /// `HazardTuning::crate_slowdown`), and comes back after a while
+    /// (`HazardTuning::respawn_seconds`), like the crates on the road (issue #144).
+    Crates,
 }
 
 /// Issue #156: a cover of a shortcut, `at` meters along its path from its start, across it.
@@ -1297,9 +1306,14 @@ mod tests {
             data.validate().is_err()
         };
         assert!(!broken(&|s| s.kind = ShortcutKind::Grass));
-        assert!(!broken(
-            &|s| s.cover.as_mut().unwrap().kind = CoverKind::Foliage
-        ));
+        // Issue #110: the waterfall and the stack of crates stand on a path the same way.
+        for kind in [CoverKind::Foliage, CoverKind::Waterfall, CoverKind::Crates] {
+            assert!(!broken(&|s| s.cover.as_mut().unwrap().kind = kind));
+            assert!(broken(&|s| {
+                s.cover.as_mut().unwrap().kind = kind;
+                s.width = COVER_WIDTH;
+            }));
+        }
         assert!(!broken(&|s| s.width = COVER_WIDTH - 2.0 * COVER_OVERLAP));
         assert!(broken(&|s| s.width = COVER_WIDTH));
         assert!(broken(&|s| s.cover.as_mut().unwrap().at = 1.0));
