@@ -476,8 +476,10 @@ fn hop_is_a_short_jump_that_keeps_the_speed() {
     );
 }
 
+/// Issue #170 (Max's drift): the tiers 302.4 / 638.4 / 974.4 at +5 per tick (54 / 114 / 174
+/// ticks with the 270 / 570 / 870 of before).
 #[test]
-fn inward_drift_reaches_blue_orange_and_purple_at_54_114_and_174_ticks() {
+fn inward_drift_reaches_blue_orange_and_purple_at_61_128_and_195_ticks() {
     let mut scenario = Scenario::flat(Surface::Road);
     let max = scenario.tuning().max_speed;
     scenario.enter_right_drift(1.0);
@@ -501,7 +503,7 @@ fn inward_drift_reaches_blue_orange_and_purple_at_54_114_and_174_ticks() {
             scenario.state()
         );
     }
-    assert_eq!(first_tick, [Some(54), Some(114), Some(174)]);
+    assert_eq!(first_tick, [Some(61), Some(128), Some(195)]);
     // A tight drift does not slow the kart down, and it really turned (to the right).
     assert!(lowest_speed > 0.95 * max, "{lowest_speed}");
     let turned = start_heading.angle_between(*scenario.transform().forward());
@@ -515,12 +517,12 @@ fn outward_drift_charges_2_5_times_slower() {
     // Land with the stick back to neutral (keeps the right side), then steer outward.
     scenario.enter_right_drift(0.0);
     let outward = scenario.drift_until(-1.0, MiniTurbo::Blue);
-    assert_eq!(outward, 135, "2.5 × 54 ticks");
+    assert_eq!(outward, 152, "2.5 × 61 ticks");
 
     let mut scenario = Scenario::flat(Surface::Road);
     scenario.enter_right_drift(1.0);
     let inward = scenario.drift_until(1.0, MiniTurbo::Blue);
-    assert_eq!(inward, 54);
+    assert_eq!(inward, 61);
     let ratio = outward as f32 / inward as f32;
     assert!((ratio - 2.5).abs() < 0.05, "{ratio}");
 }
@@ -682,12 +684,12 @@ fn assisted_steering_charges_slower_and_never_reaches_purple() {
             assisted_steering: true,
         });
     scenario.enter_right_drift(1.0);
-    // 270 / 2 and 570 / 2 ticks.
+    // 302.4 / 2 and 638.4 / 2 ticks (#170).
     let blue = scenario.drift_until(1.0, MiniTurbo::Blue);
-    assert_eq!(blue, 135);
+    assert_eq!(blue, 152);
     // `drift_until` counts the current tick as its first one.
     let orange = blue - 1 + scenario.drift_until(1.0, MiniTurbo::Orange);
-    assert_eq!(orange, 285);
+    assert_eq!(orange, 320);
     let mut purple = false;
     scenario.run_with(5.0, drifting(1.0), |s| {
         purple |= s.tier() == Some(MiniTurbo::Purple);
@@ -1357,14 +1359,16 @@ fn the_rear_slides_out_progressively_while_the_front_follows_the_trajectory() {
         (front, rear) = (new_front, new_rear);
     }
     assert!(settled_checks > 30, "{settled_checks}");
-    // Progressive: no more than 1° per tick, under 30 % of the angle after 0.1 s, 80 % between
-    // 0.25 s and 0.9 s; a light overshoot at most (damped spring), then settled.
+    // Progressive: no more than 6 % of the angle per tick (1° of the 17° of #30; 1.3° of the
+    // 22° of Max's drift, #170), under 30 % of the angle after 0.1 s, 80 % between 0.25 s and
+    // 0.9 s; a light overshoot at most (no more than the damped spring's own, 14 % with the
+    // damping of #170), then settled.
     let largest = slips
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).abs())
         .fold(0.0, f32::max);
     assert!(
-        largest < 1f32.to_radians(),
+        largest < 0.06 * target,
         "{} ° in a tick",
         largest.to_degrees()
     );
@@ -1372,17 +1376,22 @@ fn the_rear_slides_out_progressively_while_the_front_follows_the_trajectory() {
     let eighty = slips.iter().position(|s| *s >= 0.8 * target).unwrap() as f32 / TICKS_PER_SECOND;
     assert!((0.25..=0.9).contains(&eighty), "80 % after {eighty} s");
     let highest = slips.iter().copied().fold(0.0, f32::max);
+    let zeta = tuning.drift_slip_damping;
+    let overshoot = (-std::f32::consts::PI * zeta / (1.0 - zeta * zeta).sqrt()).exp();
     assert!(
-        highest <= 1.1 * target,
+        highest <= (1.0 + overshoot) * target && overshoot < 0.15,
         "overshoot to {}°",
         highest.to_degrees()
     );
     assert!((slips.last().unwrap() - target).abs() < 0.01);
 }
 
-/// Issue #30: no tight angle. At top speed, the drift's radius is 16 to 20 m steered fully
-/// inward (about the normal steering at full lock, ≈ 17 m; #4 had 10 m), 22 to 32 m neutral
-/// (15 m) and 45 to 65 m fully outward (32 m); the body slips by 10° to 20° at most (26°).
+/// Issue #30: no tight angle. Issue #170 (Max's drift, « Dérapage » at 80 of #155): radii 21 %
+/// wider and slip angles 30 % larger than with #30, the same windows around them. At top speed,
+/// the drift's radius is 19.4 to 24.2 m steered fully inward (16 to 20 m with #30, about the
+/// normal steering at full lock, ≈ 17 m, never tighter; #4 had 10 m), 26.6 to 38.7 m neutral
+/// (22 to 32 m; 15 m) and 54.5 to 78.7 m fully outward (45 to 65 m; 32 m); the body slips by 13°
+/// to 26° at most (10° to 20°; 26° with #4).
 #[test]
 fn drift_radii_at_top_speed_are_wide() {
     let tuning = KartTuning::default();
@@ -1398,16 +1407,16 @@ fn drift_radii_at_top_speed_are_wide() {
     let (neutral, _, _) = settled(0.0);
     let (wide, wide_slip, _) = settled(-1.0);
     assert!(speed > 0.98 * tuning.max_speed, "{speed}");
-    assert!((16.0..=20.0).contains(&tight), "tight {tight} m");
-    assert!((22.0..=32.0).contains(&neutral), "neutral {neutral} m");
-    assert!((45.0..=65.0).contains(&wide), "wide {wide} m");
+    assert!((19.4..=24.2).contains(&tight), "tight {tight} m");
+    assert!((26.6..=38.7).contains(&neutral), "neutral {neutral} m");
+    assert!((54.5..=78.7).contains(&wide), "wide {wide} m");
     let normal_steering = tuning.max_speed / tuning.steer_rate_at_max_speed;
     assert!(
         tight > normal_steering - 1.5,
         "{tight} vs {normal_steering}"
     );
     assert!(
-        (10.0..=20.0).contains(&tight_slip.to_degrees()),
+        (13.0..=26.0).contains(&tight_slip.to_degrees()),
         "{}°",
         tight_slip.to_degrees()
     );
@@ -1446,9 +1455,15 @@ fn releasing_the_drift_realigns_the_body_without_a_snap() {
     assert!(body_step <= 0.25, "body turn rate jumped by {body_step}");
     // The heading keeps curving for a moment: the first tick still turns at 90 % of the drift.
     assert!(after[0].yaw.abs() > 0.9 * before[0].yaw.abs());
-    // Back in line within 1.2 s, never more than 1.5° past it.
+    // Back in line within 1.2 s, never more than 9 % of the tight slip angle past it (1.5° of
+    // the 17° of #30; 2° of the 22° of Max's drift, #170, whose lighter rear swings a little
+    // more).
     let lowest = after.iter().map(|s| s.motion.slip).fold(f32::MAX, f32::min);
-    assert!(lowest > -1.5f32.to_radians(), "{}°", lowest.to_degrees());
+    assert!(
+        lowest > -0.09 * tuning.drift_slip_angle_tight,
+        "{}°",
+        lowest.to_degrees()
+    );
     let aligned = after
         .iter()
         .position(|s| s.motion.slip.abs() < 1f32.to_radians())
@@ -1647,8 +1662,9 @@ fn the_speed_stat_scales_the_top_speed() {
     assert!((fast - 28.5 * 1.08).abs() < 0.1, "{fast}");
 }
 
-/// Issue #15: the Mini-turbo stat moves the drift's tiers. The middle level keeps the 54 / 114 /
-/// 174 ticks of issue #4 (270 / 570 / 870 at +5 per tick); 20 is 10 % lower, 0 is 10 % higher.
+/// Issue #15: the Mini-turbo stat moves the drift's tiers. The middle level keeps the 61 / 128 /
+/// 195 ticks of the kart (302.4 / 638.4 / 974.4 at +5 per tick since #170; 54 / 114 / 174
+/// before); 20 is 10 % lower, 0 is 10 % higher.
 /// Its mini-turbos also last longer.
 #[test]
 fn the_mini_turbo_stat_moves_the_drift_tiers() {
@@ -1666,14 +1682,14 @@ fn the_mini_turbo_stat_moves_the_drift_tiers() {
         ([blue, orange, purple], boost, scenario.kart_tuning())
     };
     let (middle, middle_boost, middle_tuning) = first_ticks(10);
-    assert_eq!(middle, [54, 114, 174]);
-    assert_eq!(middle_tuning.mini_turbo_thresholds, [270.0, 570.0, 870.0]);
+    assert_eq!(middle, [61, 128, 195]);
+    assert_eq!(middle_tuning.mini_turbo_thresholds, [302.4, 638.4, 974.4]);
     let (quick, quick_boost, quick_tuning) = first_ticks(20);
     let (slow, slow_boost, _) = first_ticks(0);
-    // 243 / 513 / 783 and 297 / 627 / 957, at 5 per tick.
-    assert_eq!(quick, [49, 103, 157]);
-    assert_eq!(slow, [60, 126, 192]);
-    assert!((quick_tuning.mini_turbo_thresholds[0] - 243.0).abs() < 0.01);
+    // 272.16 / 574.56 / 876.96 and 332.64 / 702.24 / 1071.84, at 5 per tick.
+    assert_eq!(quick, [55, 115, 176]);
+    assert_eq!(slow, [67, 141, 215]);
+    assert!((quick_tuning.mini_turbo_thresholds[0] - 272.16).abs() < 0.01);
     // The purple boost: 2.63 s × 1.15 and × 0.85.
     assert!((middle_boost - 2.63).abs() < 1e-4, "{middle_boost}");
     assert!((quick_boost - 2.63 * 1.15).abs() < 1e-3, "{quick_boost}");

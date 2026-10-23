@@ -151,6 +151,10 @@ pub struct BotTuning {
     pub hazard_before: f32,
     pub hazard_after: f32,
     /// In a drift, the bot counts on this share of the drift's tightest turn rate (planning).
+    /// 0.8 since #170 (0.9 before): Max's drift is wider (its tightest turn rate 18 % lower) and
+    /// sets in more slowly; counting on 90 % of it, the bots came into the turns too fast, could
+    /// not turn enough and let go of the drift before their orange (the guide's oranges per lap
+    /// fell under 2 on three circuits).
     pub drift_turn_margin: f32,
 
     // --- Avoidance ----------------------------------------------------------------------------
@@ -372,7 +376,7 @@ impl Default for BotTuning {
             hazard_margin: 1.6,
             hazard_before: 8.0,
             hazard_after: 18.0,
-            drift_turn_margin: 0.9,
+            drift_turn_margin: 0.8,
 
             avoid_distance: 14.0,
             avoid_gap: 2.4,

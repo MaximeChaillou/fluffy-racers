@@ -378,6 +378,10 @@ enum Driving {
 const DRIFT_HOLD: u32 = 50;
 /// ...then released this many.
 const DRIFT_RELEASE: u32 = 16;
+/// A drift is also released this far off its lane (m). Issue #170: 3.5 m (3 m before): Max's
+/// drift is wider and its rear swings out further (radii × 1.21, slip angles × 1.3), and with
+/// 3 m the fastest kart let go of its drift on the wall after 20 ticks (more than 20 asked).
+const DRIFT_LANE_ROOM: f32 = 3.5;
 
 /// One run through the zone from 40 m before it to 40 m past it: what it saw.
 fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
@@ -421,8 +425,8 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
         let mut input = ribbon.autopilot(kart, lane, speed);
         if driving == Driving::Drift && ticks > 30 {
             // Hop toward `side` (the stick there for the hop), hold the drift (the autopilot's
-            // stick widens or tightens it) until it is 3 m off its lane, release, then the other
-            // side.
+            // stick widens or tightens it) until it is `DRIFT_LANE_ROOM` off its lane, release,
+            // then the other side.
             // Reaching the wall (70°; issue #94: the ceiling, 160°), a fresh drift, whatever the
             // timing of those before it: let go for a tick (unless in the middle of a hop), then
             // hop again. It lands on the wall itself (90°; the ceiling, 180°) and drifts there,
@@ -435,7 +439,7 @@ fn run_through(ribbon: &mut Ribbon, driving: Driving) -> Log {
             }
             since += 1;
             let drifting = matches!(ribbon.state(kart), KartState::Drifting { .. });
-            if drifting && ribbon.lateral(kart).abs() > 3.0 && since <= DRIFT_HOLD {
+            if drifting && ribbon.lateral(kart).abs() > DRIFT_LANE_ROOM && since <= DRIFT_HOLD {
                 since = DRIFT_HOLD + 1;
             }
             if since <= DRIFT_HOLD {

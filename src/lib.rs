@@ -431,11 +431,11 @@ mod tests {
             ) {
                 drifting_ticks += 1;
             }
-            if drifting_ticks == 60 {
+            if drifting_ticks == 70 {
                 break;
             }
         }
-        assert_eq!(drifting_ticks, 60, "the kart never drifted");
+        assert_eq!(drifting_ticks, 70, "the kart never drifted");
 
         let world = app.world_mut();
         assert!(matches!(
@@ -449,7 +449,8 @@ mod tests {
         assert_eq!(world.get::<CameraLean>(kart), Some(&CameraLean(1.0)));
         let slip = world.query::<&KartBodyPivot>().single(world).unwrap().slip;
         assert!(slip < -0.2, "slip angle {slip}");
-        // 60 ticks steering inward: blue sparks, at both rear wheels.
+        // 70 ticks steering inward (blue on the 61st since #170, Max's drift; orange on the
+        // 128th): blue sparks, at both rear wheels.
         let visible_sparks = |world: &mut World| {
             let mut sparks = world.query::<(&DriftSpark, &Visibility)>();
             let mut shown = [0; 3];

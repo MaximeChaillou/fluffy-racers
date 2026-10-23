@@ -430,8 +430,8 @@ pub struct StatsTuning {
     pub traction_offroad: StatRange,
 
     // --- Mini-turbo -----------------------------------------------------------------------------
-    /// Multiplier of the drift's charge thresholds (GD § 3.4: 270 / 570 / 870 in the middle):
-    /// below 1 at 20, the tiers come sooner.
+    /// Multiplier of the drift's charge thresholds (GD § 3.4: 302.4 / 638.4 / 974.4 in the
+    /// middle): below 1 at 20, the tiers come sooner.
     pub mini_turbo_thresholds: StatRange,
     /// Multiplier of the mini-turbos' boost durations (GD § 3.4).
     pub mini_turbo_durations: StatRange,
@@ -840,10 +840,10 @@ mod tests {
             assert_eq!(effects.apply(&base), base);
             assert!(matches!(effects.tuning(&base), Cow::Borrowed(_)));
         }
-        // GD § 3.4: the thresholds of the middle are 270 / 570 / 870.
+        // GD § 3.4: the thresholds of the middle are 302.4 / 638.4 / 974.4 (#170, Max's drift).
         assert_eq!(
             effects.apply(&KartTuning::default()).mini_turbo_thresholds,
-            [270.0, 570.0, 870.0]
+            [302.4, 638.4, 974.4]
         );
     }
 
