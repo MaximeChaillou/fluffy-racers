@@ -16,15 +16,25 @@
 //! - A tick for each item that passes, a « ding » at the stop (`audio::RouletteSounds`): only for
 //!   the player's own kart (not the home screen's race), one of each at most per frame (a double
 //!   box turns both reels together).
+//! - Issue #171: **an item lost** (hit, the pelican, deflated, stolen, a shield that broke...:
+//!   `items::ItemStats::last_loss`): the hand's slot shakes and flashes in Fraise, a short text
+//!   pops out beside the slots (« Volé ! », « Dégonflé ! »: `items::ItemLoss::label`, never a
+//!   key) and fades away, with a sound for the player's own kart.
 
 use bevy::prelude::*;
 
 use super::roulette::{self, REEL, ReelFrame, RouletteClock};
-use super::{CroquetteCounter, ICON_SCALES, ItemIcon, ItemSlot, PANEL_COLOR, followed};
+use super::{
+    CroquetteCounter, ICON_SCALES, ItemIcon, ItemSlot, PANEL_COLOR, SLOT_GAP, SLOT_SIZES,
+    TEXT_SHADOW, followed,
+};
 use crate::audio::{RouletteSounds, SoundEffect, play_roulette};
-use crate::items::{ItemIconPlugin, ItemIcons, ItemKind, ItemSlots, ItemTuning, Slot};
+use crate::items::{
+    ItemIconPlugin, ItemIcons, ItemKind, ItemLoss, ItemSlots, ItemStats, ItemTuning, Slot,
+};
 use crate::kart::PlayerKart;
 use crate::menu::style::palette;
+use crate::menu::{MenuAssets, kit};
 use crate::race::{Race, RaceProgress, Racer};
 
 /// The reel of the HUD's slots, with a renderer.
@@ -57,6 +67,16 @@ impl Plugin for RoulettePlugin {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Reel;
 
+/// Issue #171: the short text of an item lost, under the slots.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct LossLabel;
+
+/// Issue #171: its size (px of the reference window) and color (the charter's Fraise: what
+/// hurts), and how far right of the reserve's slot it is (px), level with the slots.
+const LOSS_LABEL_SIZE: f32 = 30.0;
+const LOSS_COLOR: Color = palette::FRAISE;
+const LOSS_LABEL_GAP: f32 = 14.0;
+
 /// A cell of a slot's reel: `item`'s icon, in slot `index` (0 = the hand).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReelCell {
@@ -84,10 +104,36 @@ fn create_sounds(mut commands: Commands) {
 fn build_reels(
     mut commands: Commands,
     item_icons: Res<ItemIcons>,
-    mut slots: Query<(Entity, &ItemSlot, &mut Node, &Children), Without<Reel>>,
+    menu_assets: Option<Res<MenuAssets>>,
+    mut slots: Query<(Entity, &ItemSlot, &mut Node, &Children, &ChildOf), Without<Reel>>,
     icons: Query<(), With<ItemIcon>>,
 ) {
-    for (entity, slot, mut node, children) in &mut slots {
+    for (entity, slot, mut node, children, child_of) in &mut slots {
+        if slot.index == 0 {
+            // Issue #171: the text of an item lost, beside the slots (hidden until then).
+            let (_, face) = kit::faces(menu_assets.as_deref());
+            commands.spawn((
+                LossLabel,
+                kit::text("", &face, LOSS_LABEL_SIZE, LOSS_COLOR),
+                TextShadow {
+                    offset: Vec2::new(2.0, 3.0),
+                    color: TEXT_SHADOW,
+                },
+                TextLayout {
+                    linebreak: bevy::text::LineBreak::NoWrap,
+                    ..default()
+                },
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(SLOT_SIZES[0] + SLOT_GAP + SLOT_SIZES[1] + LOSS_LABEL_GAP),
+                    top: px((SLOT_SIZES[1] - LOSS_LABEL_SIZE) / 2.0),
+                    ..default()
+                },
+                UiTransform::default(),
+                Visibility::Hidden,
+                ChildOf(child_of.parent()),
+            ));
+        }
         for child in children.iter() {
             if icons.contains(child) {
                 commands.entity(child).despawn();
@@ -182,6 +228,24 @@ impl Default for ReelMemory {
     }
 }
 
+/// Issue #171: the last item loss of the followed kart, and how long ago (s).
+#[derive(Clone, Copy, Debug)]
+struct LossMemory {
+    kart: Option<Entity>,
+    losses: u32,
+    since: f32,
+}
+
+impl Default for LossMemory {
+    fn default() -> Self {
+        Self {
+            kart: None,
+            losses: 0,
+            since: f32::INFINITY,
+        }
+    }
+}
+
 /// What a slot's window shows: nothing, its reel turning, or an item (stopped).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Window {
@@ -221,9 +285,9 @@ fn spin_reels(
     fixed: Res<Time<Fixed>>,
     tuning: Res<ItemTuning>,
     sounds: Option<Res<RouletteSounds>>,
-    mut memory: Local<[ReelMemory; 2]>,
+    (mut memory, mut lost): (Local<[ReelMemory; 2]>, Local<LossMemory>),
     racers: Query<(Entity, &Racer, &RaceProgress, Has<PlayerKart>)>,
-    held: Query<&ItemSlots>,
+    (held, stats): (Query<&ItemSlots>, Query<&ItemStats>),
     mut slots: Query<
         (
             &ItemSlot,
@@ -233,7 +297,14 @@ fn spin_reels(
         ),
         With<Reel>,
     >,
-    mut cells: Query<(&ReelCell, &mut UiTransform, &mut Visibility), Without<ItemSlot>>,
+    mut cells: Query<
+        (&ReelCell, &mut UiTransform, &mut Visibility),
+        (Without<ItemSlot>, Without<LossLabel>),
+    >,
+    mut labels: Query<
+        (&mut Text, &mut TextColor, &mut UiTransform, &mut Visibility),
+        (With<LossLabel>, Without<ItemSlot>, Without<ReelCell>),
+    >,
 ) {
     let followed = followed(racers.iter()).map(|(entity, _)| entity);
     let items = followed.and_then(|entity| held.get(entity).ok());
@@ -268,17 +339,69 @@ fn spin_reels(
             Window::Empty => *memory = ReelMemory::default(),
         }
     }
+    // Issue #171: an item lost by the followed kart (none counted when it starts being followed).
+    let stat = followed.and_then(|entity| stats.get(entity).ok());
+    let losses = stat.map_or(0, |s| s.losses());
+    let cause = stat.and_then(|s| s.last_loss).map(|(cause, _)| cause);
+    let new_loss = lost.kart == followed && losses > lost.losses;
+    if lost.kart != followed {
+        *lost = LossMemory {
+            kart: followed,
+            ..default()
+        };
+    }
+    lost.losses = losses;
+    let label = cause.and_then(ItemLoss::label);
+    if new_loss && label.is_some() {
+        lost.since = 0.0;
+        for (mut text, ..) in &mut labels {
+            if let Some(label) = label
+                && text.0 != label
+            {
+                text.0 = label.to_string();
+            }
+        }
+    } else if lost.since.is_finite() {
+        lost.since += dt;
+        if lost.since > roulette::LOSS_TIME {
+            lost.since = f32::INFINITY;
+        }
+    }
+    let shown_loss = new_loss && label.is_some();
     if player && let Some(sounds) = &sounds {
-        if stop {
+        if shown_loss {
+            play_roulette(&mut commands, sounds, SoundEffect::CroquettesLost);
+        } else if stop {
             play_roulette(&mut commands, sounds, SoundEffect::RouletteStop);
         } else if tick {
             play_roulette(&mut commands, sounds, SoundEffect::RouletteTick);
         }
     }
+    for (_, mut color, mut transform, mut visibility) in &mut labels {
+        match roulette::loss_label(lost.since) {
+            Some((scale, alpha)) => {
+                transform.set_if_neq(UiTransform::from_scale(Vec2::splat(scale)));
+                color.set_if_neq(TextColor(LOSS_COLOR.with_alpha(alpha)));
+                visibility.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
     for (slot, mut transform, mut outline, mut background) in &mut slots {
         let index = slot.index.min(1);
         let since = memory[index].since_stop;
-        transform.set_if_neq(UiTransform::from_scale(roulette::ding_scale(since)));
+        let mut wanted = UiTransform::from_scale(roulette::ding_scale(since));
+        let (mut shake, mut hurt) = (0.0, 0.0);
+        if index == 0 {
+            shake = roulette::loss_shake(lost.since);
+            hurt = roulette::loss_flash(lost.since);
+        }
+        if shake != 0.0 {
+            wanted.translation = Val2::px(shake, 0.0);
+        }
+        transform.set_if_neq(wanted);
         let ring = match roulette::burst(since) {
             Some((out, alpha)) => Outline::new(
                 px(roulette::BURST_WIDTH),
@@ -292,6 +415,7 @@ fn spin_reels(
             Window::Turning(_) => SPIN_PANEL,
             _ => mix(PANEL_COLOR, FLASH_COLOR, roulette::flash(since)),
         };
+        let panel = mix(panel, LOSS_COLOR.with_alpha(0.85), hurt);
         background.set_if_neq(BackgroundColor(panel));
     }
     for (cell, mut transform, mut visibility) in &mut cells {

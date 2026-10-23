@@ -299,7 +299,7 @@ pub struct OpenEdgeData {
 pub enum ShortcutKind {
     /// A road (asphalt and curbs), no wall: a hidden way, behind the decor.
     Road,
-    /// A grass path, no wall: off-road (GD § 2: about 55 % of the top speed), worth it only with
+    /// A grass path, no wall: off-road (GD § 2: about 40 % of the top speed since #171), worth it only with
     /// a boost (which ignores the off-road).
     Grass,
     /// A risky jump: a trick ramp on the road, then nothing (the drop) until the landing on the

@@ -247,7 +247,10 @@ pub const LINKS: &[Link] = &[
     link(Speed, "ItemTuning.boomerang_speed", 0.8, 1.2),
     // --- Tenue de route: slippery (0) to grippy (100) ---------------------------------------------
     link(Grip, "KartTuning.lateral_grip", 0.5, 1.5),
-    bounded(Grip, "KartTuning.offroad_speed_factor", 0.75, 1.3, 1.0),
+    // Issue #171: recentred on 40 % (55 % before): from 35 % at 0 to 55 % (the old default) at
+    // 100; the brake at the entry of the grass, harder at 0. Before: 0.75 / 1.3 around 55 %.
+    bounded(Grip, "KartTuning.offroad_speed_factor", 0.875, 1.375, 1.0),
+    link(Grip, "KartTuning.offroad_decel", 1.3, 0.7),
     link(Grip, "KartTuning.suspension_damping", 0.6, 1.6),
     link(Grip, "KartTuning.tilt_damping", 0.7, 1.4),
     // --- Boosts: strength and duration of every boost ---------------------------------------------

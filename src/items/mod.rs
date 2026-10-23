@@ -115,11 +115,11 @@ use crate::croquettes::{
 };
 use crate::kart::{
     Autopilot, Boost, DeflatedScale, HitReaction, Invincibility, ItemEffects, KART_HALF_EXTENTS,
-    Kart, KartInput, KartState, KartSystems, MaxSpeedFactors, PlayerKart, Remote,
+    Kart, KartInput, KartState, KartSystems, KartWheels, MaxSpeedFactors, PlayerKart, Remote,
 };
 use crate::level::{LevelScoped, Online};
 use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceSystems, Racer, seconds_to_ticks};
-use crate::track::{GRID_SLOTS, ItemBoxSpot};
+use crate::track::{GRID_SLOTS, ItemBoxSpot, ShortcutKind};
 
 /// An item box of the track (GD § 8), on each `ItemBoxSpot`: there to take when `respawn_in` is 0.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
@@ -147,6 +147,87 @@ pub struct ItemStats {
     pub hits_landed: u32,
     /// Items stopped by what it held out (shields).
     pub blocked: u32,
+    /// Issue #171: the times it lost items it held without using them, per cause
+    /// ([`ItemLoss::index`]), how many items in all, and the last loss (the HUD shows it).
+    pub lost: [u32; ItemLoss::ALL.len()],
+    pub lost_items: u32,
+    pub last_loss: Option<(ItemLoss, ItemKind)>,
+}
+
+impl ItemStats {
+    /// Issue #171: it lost `count` of `item` (none: nothing lost) by `cause`.
+    pub fn note_loss(&mut self, cause: ItemLoss, item: Option<(ItemKind, u32)>) {
+        let Some((item, count)) = item.filter(|(_, count)| *count > 0) else {
+            return;
+        };
+        self.lost[cause.index()] += 1;
+        self.lost_items += count;
+        self.last_loss = Some((cause, item));
+    }
+
+    /// Issue #171: the times it lost items, every cause.
+    pub fn losses(&self) -> u32 {
+        self.lost.iter().sum()
+    }
+}
+
+/// Issue #171: why a kart's items are gone without being used (GD § 8, « Les objets perdus »).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ItemLoss {
+    /// Hit by an item: what it held out (a dragged Cac's or pelote, an « x3 » or a piñata out).
+    Hit,
+    /// Carried by the pelican (a fall, a kart stuck): what it held out.
+    Pelican,
+    /// Over the finish line: what it held out (the race is over for it).
+    Finish,
+    /// Deflated by another kart's dégonflage: everything (both slots, the roulettes, what it
+    /// held out).
+    Deflated,
+    /// A pie voleuse took the item ready in its hand, or else in its reserve.
+    Stolen,
+    /// One of what it held out stopped another item (both broke): a shield did its job.
+    Shield,
+    /// One of what it held out touched another kart (it hit it, or broke on it if it was
+    /// immune: GD § 8).
+    Touched,
+    /// Another kart's klaxon-canard broke what it held out.
+    Honked,
+    /// Online (issue #53): the box was another kart's after all; its roulette stops, empty.
+    Refused,
+}
+
+impl ItemLoss {
+    pub const ALL: [ItemLoss; 9] = [
+        ItemLoss::Hit,
+        ItemLoss::Pelican,
+        ItemLoss::Finish,
+        ItemLoss::Deflated,
+        ItemLoss::Stolen,
+        ItemLoss::Shield,
+        ItemLoss::Touched,
+        ItemLoss::Honked,
+        ItemLoss::Refused,
+    ];
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+    }
+
+    /// Its short text on the HUD, over the slots (issue #171: so that the loss is understood;
+    /// never a key, #136). None: nothing shown (the race is over).
+    pub fn label(self) -> Option<&'static str> {
+        Some(match self {
+            ItemLoss::Hit => "Lâché !",
+            ItemLoss::Pelican => "Tombé !",
+            ItemLoss::Finish => return None,
+            ItemLoss::Deflated => "Dégonflé !",
+            ItemLoss::Stolen => "Volé !",
+            ItemLoss::Shield => "Bouclier !",
+            ItemLoss::Touched => "Touché !",
+            ItemLoss::Honked => "Coin-coin !",
+            ItemLoss::Refused => "Trop tard !",
+        })
+    }
 }
 
 /// How an item out moves.
@@ -1251,7 +1332,15 @@ fn use_items(
         };
         let out = *state == KartState::Respawning || progress.is_some_and(|p| p.finished());
         if out || state.is_hit() || !started || effects.rocket > 0.0 {
+            let held = slots.held_out_loss();
             if out && slots.lose_held_out() {
+                // Issue #171: counted, by cause (the pelican, or over the line).
+                let cause = if *state == KartState::Respawning {
+                    ItemLoss::Pelican
+                } else {
+                    ItemLoss::Finish
+                };
+                stats.note_loss(cause, held);
                 for (entity, _) in held_out() {
                     commands.entity(entity).try_despawn();
                 }
@@ -1466,14 +1555,14 @@ fn lose_held(slots: &mut ItemSlots, hold: Option<Hold>) {
 /// nothing.
 fn apply_steals(
     mut steals: MessageReader<ItemSteal>,
-    mut karts: Query<&mut ItemSlots, With<Kart>>,
+    mut karts: Query<(&mut ItemSlots, &mut ItemStats), With<Kart>>,
     mut stolen: MessageWriter<ItemStolen>,
 ) {
     for steal in steals.read() {
         if steal.thief == steal.victim {
             continue;
         }
-        let Ok(mut victim) = karts.get_mut(steal.victim) else {
+        let Ok((mut victim, mut stats)) = karts.get_mut(steal.victim) else {
             continue;
         };
         let mut next = *victim;
@@ -1481,7 +1570,8 @@ fn apply_steals(
             continue;
         };
         victim.set_if_neq(next);
-        if let Ok(mut thief) = karts.get_mut(steal.thief) {
+        stats.note_loss(ItemLoss::Stolen, Some((item, u32::from(count))));
+        if let Ok((mut thief, _)) = karts.get_mut(steal.thief) {
             thief.give(item, count, 0);
         }
         stolen.write(ItemStolen {
@@ -1517,7 +1607,7 @@ fn apply_item_effects(
             &KartState,
             &Invincibility,
             &mut ItemEffects,
-            &mut ItemSlots,
+            (&mut ItemSlots, &mut ItemStats),
             Option<&RaceProgress>,
         ),
         With<Kart>,
@@ -1531,8 +1621,15 @@ fn apply_item_effects(
         let racers = effect.standings.map_or(racers_here, |s| s.len());
         match effect.item {
             ItemKind::Chantilly | ItemKind::Degonflage => {
-                for (kart, transform, state, invincibility, mut effects, mut slots, progress) in
-                    &mut karts
+                for (
+                    kart,
+                    transform,
+                    state,
+                    invincibility,
+                    mut effects,
+                    (mut slots, mut stats),
+                    progress,
+                ) in &mut karts
                 {
                     let finished = progress.is_some_and(|p| p.finished());
                     if kart == effect.by || immune_to_effects(state, invincibility, finished) {
@@ -1563,8 +1660,10 @@ fn apply_item_effects(
                     effects.deflated = seconds;
                     effects.deflated_for = seconds;
                     let mut next = *slots;
+                    let held = next.loss();
                     if next.drop_all() {
                         slots.set_if_neq(next);
+                        stats.note_loss(ItemLoss::Deflated, held);
                         for (entity, object) in &objects {
                             if object.owner == kart && object.held().is_some() {
                                 commands.entity(entity).try_despawn();
@@ -1582,9 +1681,10 @@ fn apply_item_effects(
                     }
                     commands.entity(entity).try_despawn();
                     if object.held().is_some()
-                        && let Ok((.., mut slots, _)) = karts.get_mut(object.owner)
+                        && let Ok((.., (mut slots, mut stats), _)) = karts.get_mut(object.owner)
                     {
                         lose_held(&mut slots, object.held());
+                        stats.note_loss(ItemLoss::Honked, Some((object.item, 1)));
                     }
                     blocked.write(ItemBlocked {
                         object: entity,
@@ -1604,20 +1704,31 @@ fn apply_item_effects(
 /// The fusées' autopilots (issue #18): a point of the bots' racing line ahead of the kart (its
 /// lane), the fusée's speed. Without a racing line (the test ground), straight ahead. Done (or
 /// past the finish line), the driver has the kart back.
+///
+/// Issue #171: a fusée launched on a shortcut (or that finds itself on one: the race counts the
+/// kart on it, `Course::project`) follows the shortcut's path to its end, then its racing line:
+/// never back to the line across the void ([`fusee_target`]). Over a risky jump, it flies along
+/// the path's height (`Autopilot::fly`), and it lasts until it is back on the ground: the kart
+/// never falls during a fusée.
+#[allow(clippy::type_complexity)]
 fn steer_rockets(
+    time: Res<Time>,
     tuning: Res<ItemTuning>,
     line: Option<Res<RacingLine>>,
+    course: Option<Res<Course>>,
     mut karts: Query<
         (
             &Transform,
             &mut ItemEffects,
             &mut Autopilot,
             Option<&RaceProgress>,
+            Option<&KartWheels>,
         ),
         With<Kart>,
     >,
 ) {
-    for (transform, mut effects, mut pilot, progress) in &mut karts {
+    let dt = time.delta_secs();
+    for (transform, mut effects, mut pilot, progress, wheels) in &mut karts {
         // Past the finish line, the driver has the kart back (it coasts).
         if effects.rocket > 0.0 && progress.is_some_and(|p| p.finished()) {
             effects.rocket = 0.0;
@@ -1630,12 +1741,18 @@ fn steer_rockets(
         }
         let target = match line.as_deref() {
             Some(line) => {
-                let here = line.locate(transform.translation, pilot.sample);
-                pilot.sample = Some(here.index);
-                let ahead = here.distance + tuning.fusee_lookahead;
-                line.center()
-                    .at(ahead)
-                    .point(line.offset_at(ahead), KART_RIDE_HEIGHT)
+                // Counted on a shortcut by the race: it follows that one.
+                let counted = course.as_deref().zip(progress).and_then(|(course, p)| {
+                    course.project(p.passed, transform.translation).shortcut
+                });
+                fusee_target(
+                    line,
+                    transform.translation,
+                    *transform.forward(),
+                    counted,
+                    tuning.fusee_lookahead,
+                    &mut pilot,
+                )
             }
             None => {
                 transform.translation
@@ -1643,12 +1760,83 @@ fn steer_rockets(
                         * tuning.fusee_lookahead
             }
         };
+        // Over the void of a jump, it does not stop before it is back on the ground.
+        let airborne = wheels.is_some_and(|w| w.ticks_without_ground > 0);
+        if pilot.fly && airborne {
+            effects.rocket = effects.rocket.max(2.0 * dt);
+        }
         pilot.target = target;
         pilot.speed = tuning.fusee_speed;
         pilot.accel = tuning.fusee_accel;
         pilot.turn_response = tuning.fusee_turn_response;
         pilot.max_turn_rate = tuning.fusee_max_turn_rate;
     }
+}
+
+/// Issue #171: how far off a shortcut's path a fusée still follows it (m, beyond its half
+/// width): it cuts its curves a little, and over a jump its path is all there is.
+const FUSEE_PATH_MARGIN: f32 = 4.0;
+
+/// Issue #171: the point a fusée heads for, `lookahead` ahead (and the shortcut it follows, kept
+/// in `pilot`): on a shortcut (the one it already follows, or `counted`, the one the race counts
+/// the kart on), along its path to its end, then along the racing line from the shortcut's
+/// exit; elsewhere, along the racing line. `pilot.fly`: it follows a risky jump.
+pub fn fusee_target(
+    line: &RacingLine,
+    position: Vec3,
+    forward: Vec3,
+    counted: Option<usize>,
+    lookahead: f32,
+    pilot: &mut Autopilot,
+) -> Vec3 {
+    let branches = line.branches();
+    if pilot.branch.is_none()
+        && let Some(k) = counted.filter(|k| *k < branches.len())
+    {
+        let path = &branches[k].shortcut;
+        let at = path.locate(position);
+        let along = path.at(at.along).forward;
+        // Heading along it (not back the way it came).
+        if at.along < path.length() - 1.0 && forward.dot(along) > 0.0 {
+            pilot.branch = Some(k);
+        }
+    }
+    if let Some(k) = pilot.branch {
+        let on = branches.get(k).and_then(|branch| {
+            let path = &branch.shortcut;
+            let at = path.locate(position);
+            (at.along < path.length() - 1.0
+                && at.lateral.abs() <= path.half_width + FUSEE_PATH_MARGIN)
+                .then_some((branch, at))
+        });
+        match on {
+            Some((branch, at)) => {
+                let path = &branch.shortcut;
+                pilot.fly = branch.kind() == ShortcutKind::Jump;
+                pilot.sample = None;
+                let ahead = at.along.max(0.0) + lookahead;
+                if ahead <= path.length() {
+                    let s = path.at(ahead);
+                    return s.position + s.up * KART_RIDE_HEIGHT;
+                }
+                let d = path.to + (ahead - path.length());
+                return line
+                    .center()
+                    .at(d)
+                    .point(line.offset_at(d), KART_RIDE_HEIGHT);
+            }
+            None => {
+                pilot.branch = None;
+                pilot.fly = false;
+            }
+        }
+    }
+    let here = line.locate(position, pilot.sample);
+    pilot.sample = Some(here.index);
+    let ahead = here.distance + lookahead;
+    line.center()
+        .at(ahead)
+        .point(line.offset_at(ahead), KART_RIDE_HEIGHT)
 }
 
 /// The ground under an item at `position` (its height, if any within `below` of its bottom).
@@ -2379,6 +2567,7 @@ fn collide_items(
                     {
                         lose_held(&mut held, c.held);
                         stats.blocked += 1;
+                        stats.note_loss(ItemLoss::Shield, Some((c.item, 1)));
                     }
                     if c.explodes() {
                         burst(&c, c.from.lerp(c.to, t.min(1.0)), &mut blasts);
@@ -2393,9 +2582,10 @@ fn collide_items(
             Some((t, Err(kart))) => {
                 broken[i] = true;
                 if a.held.is_some()
-                    && let Ok((mut held, _)) = slots.get_mut(a.owner)
+                    && let Ok((mut held, mut stats)) = slots.get_mut(a.owner)
                 {
                     lose_held(&mut held, a.held);
+                    stats.note_loss(ItemLoss::Touched, Some((a.item, 1)));
                 }
                 if a.explodes() || a.unstoppable() {
                     burst(&a, a.from.lerp(a.to, t.min(1.0)), &mut blasts);
@@ -2495,7 +2685,9 @@ fn apply_item_hits(
         *state = KartState::hit(reaction, seconds, TICK_HZ as f32);
         *boost = Boost::default();
         stats.hits_taken += 1;
+        let held = slots.held_out_loss();
         if slots.lose_held_out() {
+            stats.note_loss(ItemLoss::Hit, held);
             for (entity, object) in &objects {
                 if object.owner == hit.kart && object.held().is_some() {
                     commands.entity(entity).try_despawn();

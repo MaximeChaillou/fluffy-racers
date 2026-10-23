@@ -335,3 +335,91 @@ fn the_reel_follows_its_tuning_in_the_admin_panel() {
     assert!(cells(&app) < slower);
     assert_eq!(app.world().resource::<ItemTuning>().roulette_time, 1.5);
 }
+
+/// The text of an item lost under the slots (issue #171), its slot's shake.
+fn loss_shown(app: &mut App) -> (Option<String>, f32) {
+    let world = app.world_mut();
+    let text = world
+        .query_filtered::<(&Text, &Visibility), With<super::reel::LossLabel>>()
+        .iter(world)
+        .find(|(_, visibility)| **visibility != Visibility::Hidden)
+        .map(|(text, _)| text.0.clone());
+    let shake = world
+        .query::<(&ItemSlot, &UiTransform)>()
+        .iter(world)
+        .find(|(slot, _)| slot.index == 0)
+        .map_or(0.0, |(_, transform)| match transform.translation.x {
+            Val::Px(x) => x,
+            _ => 0.0,
+        });
+    (text, shake)
+}
+
+/// Issue #171 acceptance (« un retour visible quand on perd un objet »): the player drags a Cac's
+/// out and gets hit: its text « Lâché ! » pops out under the slots, the hand's slot shakes, a
+/// sound plays (once); the text is gone a while later. Then a pie voleuse takes its piment:
+/// « Volé ! ». Never a key in it (#136).
+#[test]
+fn a_lost_item_shows_why() {
+    let (mut app, kart) = race_with_reel();
+    app.update();
+    assert_eq!(loss_shown(&mut app).0, None);
+    app.world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .give(ItemKind::Pelure, 1, 0);
+    hold_keys(&mut app, &[KeyCode::KeyE]);
+    app.update();
+    app.update();
+    assert_eq!(slots(&app, kart).dragging, Some(ItemKind::Pelure));
+    app.world_mut().write_message(crate::items::ItemHit {
+        kart,
+        by: kart,
+        item: ItemKind::Pelote,
+        object: None,
+    });
+    app.update();
+    app.update();
+    let stats = *app.world().get::<ItemStats>(kart).unwrap();
+    assert_eq!(stats.lost[crate::items::ItemLoss::Hit.index()], 1);
+    assert_eq!(
+        stats.last_loss,
+        Some((crate::items::ItemLoss::Hit, ItemKind::Pelure))
+    );
+    let (text, _) = loss_shown(&mut app);
+    assert_eq!(text.as_deref(), Some("Lâché !"));
+    let shook = (0..20)
+        .map(|_| {
+            app.update();
+            loss_shown(&mut app).1.abs()
+        })
+        .fold(0.0, f32::max);
+    assert!(shook > 2.0, "the slot shakes: {shook}");
+    assert_eq!(sounds(&mut app, SoundEffect::CroquettesLost), 1);
+    for _ in 0..90 {
+        app.update();
+    }
+    assert_eq!(loss_shown(&mut app).0, None, "gone after a while");
+    hold_keys(&mut app, &[]);
+    // A pie voleuse (another kart's) takes its piment.
+    let thief = app.world_mut().spawn_empty().id();
+    app.world_mut()
+        .get_mut::<ItemSlots>(kart)
+        .unwrap()
+        .give(ItemKind::Piment, 1, 0);
+    app.world_mut().write_message(crate::items::ItemSteal {
+        thief,
+        victim: kart,
+    });
+    app.update();
+    app.update();
+    assert!(slots(&app, kart).hand.is_empty());
+    assert_eq!(loss_shown(&mut app).0.as_deref(), Some("Volé !"));
+    for cause in crate::items::ItemLoss::ALL {
+        let label = cause.label().unwrap_or("");
+        assert!(
+            label.len() < 16 && !label.contains('[') && !label.contains("Touche"),
+            "{label}"
+        );
+    }
+}

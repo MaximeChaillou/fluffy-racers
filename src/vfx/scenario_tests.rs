@@ -454,7 +454,32 @@ fn a_hit_kart_sees_stars_over_its_head() {
     let tuning = app.world().resource::<VfxTuning>().impact.clone();
     let stars = shown(&mut app);
     assert_eq!(stars.len() as u32, tuning.dizzy_stars);
-    assert!(stars.iter().all(|t| t.translation.y > 1.0), "over the head");
+    // Issue #171: a ring around the driver's head (in its frame: their height around its head,
+    // all as far from it), under its driver.
+    assert!(
+        stars
+            .iter()
+            .all(|t| (t.translation.y - tuning.dizzy_height).abs() < 0.3),
+        "around the head: {stars:?}"
+    );
+    assert!(stars.iter().all(|t| {
+        let flat = Vec2::new(t.translation.x, t.translation.z).length();
+        (flat - tuning.dizzy_radius).abs() < 0.1
+    }));
+    {
+        let world = app.world_mut();
+        let parents: Vec<Entity> = world
+            .query_filtered::<&ChildOf, With<DizzyStar>>()
+            .iter(world)
+            .map(|c| c.parent())
+            .collect();
+        assert!(
+            parents
+                .iter()
+                .all(|p| world.get::<crate::kart::DriverVisual>(*p).is_some()),
+            "under the driver"
+        );
+    }
     // They turn.
     let before = stars[0].translation;
     run(&mut app, 5);
@@ -789,4 +814,213 @@ fn the_lagoon_splashes_and_leaves_a_wake() {
     assert!(out_drops > 0, "{splashes:?}");
     assert!(wake > 30, "a wake: {wake}");
     assert_eq!(deep_wake, 0, "no wake from deep under the water");
+}
+
+/// The stars shown now: each one's kart.
+fn stars_shown(app: &mut App) -> Vec<Entity> {
+    let world = app.world_mut();
+    world
+        .query::<(&DizzyStar, &Visibility)>()
+        .iter(world)
+        .filter(|(_, v)| **v != Visibility::Hidden)
+        .map(|(star, _)| star.body)
+        .collect()
+}
+
+/// Issue #171 (« les étoiles restent trop longtemps, voire ne disparaissent pas »): two karts
+/// rubbing side by side bump at every tick, hard (14 m/s): only the moment of the shock counts,
+/// the stars are gone 0.9 s after it although they still rub; a new shock after they parted (0.5
+/// s later) brings them back for 0.9 s.
+#[test]
+fn rubbing_against_a_kart_does_not_keep_the_stars() {
+    let (mut app, kart) = started(1);
+    run(&mut app, 30);
+    let bot = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<Bot>>()
+            .single(world)
+            .unwrap()
+    };
+    let impact = app.world().resource::<VfxTuning>().impact.clone();
+    let bump = |app: &mut App| {
+        app.world_mut().write_message(KartBump {
+            kart,
+            by: bot,
+            closing_speed: 14.0,
+        });
+    };
+    let mut last_seen = None;
+    for tick in 0..180 {
+        bump(&mut app);
+        app.update();
+        if stars_shown(&mut app).contains(&kart) {
+            last_seen = Some(tick);
+        }
+    }
+    let last = last_seen.expect("the first shock shows them") as f32 * DT;
+    assert!(
+        last <= impact.dizzy_after_shock + 2.0 * DT && last >= impact.dizzy_after_shock - 0.1,
+        "{last} s"
+    );
+    run(&mut app, 30);
+    assert!(stars_shown(&mut app).is_empty());
+    bump(&mut app);
+    app.update();
+    assert!(stars_shown(&mut app).contains(&kart), "a new shock");
+    run(&mut app, (impact.dizzy_after_shock * 60.0) as usize + 2);
+    assert!(stars_shown(&mut app).is_empty());
+}
+
+/// Issue #171: another visual that follows the kart (here an item's flourish, as when it uses an
+/// item while it sees stars; the pelican, the looks of the super câlin or the fusée are made the
+/// same way) leaves no ring behind: before #171, each of them made a new ring at every frame,
+/// and the old ones stood still, shown for good. One ring, gone with its time.
+#[test]
+fn another_visual_of_the_kart_leaves_no_stars_behind() {
+    let (mut app, kart) = started(1);
+    run(&mut app, 30);
+    let impact = app.world().resource::<VfxTuning>().impact.clone();
+    app.world_mut().write_message(ItemHit {
+        kart,
+        by: kart,
+        item: ItemKind::Abeille,
+        object: None,
+    });
+    run(&mut app, 3);
+    app.world_mut().spawn((
+        crate::interpolation::InterpolatedFrom(kart),
+        Transform::default(),
+        Visibility::default(),
+    ));
+    let mut ticks = 0;
+    while app.world().get::<KartState>(kart).unwrap().is_hit() {
+        app.update();
+        ticks += 1;
+        assert!(ticks < 600);
+    }
+    assert_eq!(
+        count::<With<DizzyStar>>(&mut app) as u32,
+        impact.dizzy_stars,
+        "one ring"
+    );
+    run(&mut app, (impact.dizzy_after_hit * 60.0) as usize + 2);
+    assert!(stars_shown(&mut app).is_empty());
+    assert_eq!(
+        count::<With<DizzyStar>>(&mut app) as u32,
+        impact.dizzy_stars
+    );
+}
+
+/// What a kart went through, tick by tick (issue #171): the last tick it was spinning out or
+/// tumbling, the last new shock (a hard bump after `dizzy_contact_gap` without any, or a paw
+/// strike), and since when it sees stars.
+#[derive(Clone, Copy, Debug, Default)]
+struct Dazed {
+    hit: Option<u32>,
+    shock: Option<u32>,
+    last_bump: Option<u32>,
+    struck: u32,
+    shown_since: Option<u32>,
+}
+
+/// The bumps of each tick, for the test (`KartBump` is read by the particles too).
+#[derive(Resource, Default)]
+struct TickBumps(Vec<(Entity, f32)>);
+
+fn note_bumps(mut bumps: MessageReader<KartBump>, mut noted: ResMut<TickBumps>) {
+    noted.0.clear();
+    for bump in bumps.read() {
+        noted.0.push((bump.kart, bump.closing_speed));
+        noted.0.push((bump.by, bump.closing_speed));
+    }
+}
+
+/// Issue #171 acceptance (« aucun kart ne garde ses étoiles plus longtemps que la règle, même en
+/// frottant contre un autre »): the game's grid (12 karts, all bots, with items and the paws) on
+/// Prairie Pompon, 50 s from GO. At every frame, a kart that sees stars is spinning out or
+/// tumbling, or did less than 1.2 s ago, or had a new shock less than 0.9 s ago (a hard bump,
+/// 12 m/s, after 0.3 s without any contact, or a paw strike); no ring is ever made twice for a
+/// kart. Its longest stars are printed.
+#[test]
+fn no_kart_keeps_its_stars_longer_than_the_rule() {
+    let (mut app, player_kart) = started(11);
+    app.init_resource::<TickBumps>()
+        .add_systems(FixedPostUpdate, note_bumps.before(VfxSystems::Watch));
+    let slot = app.world().get::<Racer>(player_kart).unwrap().grid_slot;
+    let seed = bot_seed(app.world().resource::<RaceGrid>().seed, slot);
+    let bots = app.world().resource::<BotTuning>().clone();
+    app.world_mut()
+        .entity_mut(player_kart)
+        .remove::<PlayerKart>()
+        .insert(bot(BotDifficulty::Normal, seed, &bots));
+    let impact = app.world().resource::<VfxTuning>().impact.clone();
+    let karts: Vec<Entity> = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<Racer>>()
+            .iter(world)
+            .collect()
+    };
+    assert_eq!(karts.len(), 12);
+    let mut dazed = vec![Dazed::default(); karts.len()];
+    let gap = (impact.dizzy_contact_gap * 60.0).round() as u32;
+    let slack = 2;
+    let (mut longest, mut shown_frames) = (0u32, 0u32);
+    for tick in 0..(50 * 60) {
+        app.update();
+        let bumps = app.world().resource::<TickBumps>().0.clone();
+        let shown = stars_shown(&mut app);
+        for (i, kart) in karts.iter().enumerate() {
+            let d = &mut dazed[i];
+            let world = app.world();
+            if world.get::<KartState>(*kart).unwrap().is_hit() {
+                d.hit = Some(tick);
+            }
+            let struck = world
+                .get::<crate::interactions::Paw>(*kart)
+                .map_or(0, |p| p.struck_count);
+            if struck > d.struck {
+                d.shock = Some(tick);
+            }
+            d.struck = struck;
+            let bump = bumps
+                .iter()
+                .filter(|(k, _)| k == kart)
+                .map(|(_, speed)| *speed)
+                .fold(0.0, f32::max);
+            if bump > 0.0 {
+                let fresh = d.last_bump.is_none_or(|last| tick - last > gap);
+                if bump >= impact.dizzy_bump_speed && fresh {
+                    d.shock = Some(tick);
+                }
+                d.last_bump = Some(tick);
+            }
+            if shown.contains(kart) {
+                let since = d.shown_since.get_or_insert(tick);
+                longest = longest.max(tick - *since);
+                shown_frames += 1;
+                let after_hit = d.hit.is_some_and(|hit| {
+                    tick - hit <= (impact.dizzy_after_hit * 60.0) as u32 + slack
+                });
+                let after_shock = d.shock.is_some_and(|shock| {
+                    tick - shock <= (impact.dizzy_after_shock * 60.0) as u32 + slack
+                });
+                assert!(
+                    after_hit || after_shock,
+                    "tick {tick}: kart {i} sees stars ({d:?})"
+                );
+            } else {
+                d.shown_since = None;
+            }
+        }
+    }
+    let rings = count::<With<DizzyStar>>(&mut app) as u32;
+    println!(
+        "12 karts, 50 s: {shown_frames} kart-frames with stars, the longest {:.2} s, {} rings",
+        longest as f32 / 60.0,
+        rings / impact.dizzy_stars.max(1)
+    );
+    assert!(shown_frames > 0, "someone saw stars");
+    assert!(rings <= 12 * impact.dizzy_stars, "{rings} stars made");
 }

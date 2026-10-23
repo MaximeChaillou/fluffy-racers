@@ -74,9 +74,9 @@ use crate::croquettes::{
 };
 use crate::items::{
     Blast, BoxBroken, CatchUp, Flight, Hold, Honked, ItemBlocked, ItemBox, ItemEffect,
-    ItemHitJudged, ItemKind, ItemObject, ItemSlots, ItemStats, ItemSteal, ItemStolen, ItemSystems,
-    ItemTable, ItemTuning, Motion, OnlineItemTable, PINATA_ITEMS, PillowFlight, Prize,
-    SharedStandings, blast_radius, draw_unit, held_offset, item_radius,
+    ItemHitJudged, ItemKind, ItemLoss, ItemObject, ItemSlots, ItemStats, ItemSteal, ItemStolen,
+    ItemSystems, ItemTable, ItemTuning, Motion, OnlineItemTable, PINATA_ITEMS, PillowFlight, Prize,
+    SharedStandings, Slot, blast_radius, draw_unit, held_offset, item_radius,
 };
 use crate::kart::{Kart, KartSystems};
 use crate::race::{Course, Race, RaceGrid, seconds_to_ticks};
@@ -918,9 +918,22 @@ fn apply_verdict(
                 key.spot, key.kart
             );
             items.log.refused.push(key);
-            if let Ok((mut slots, _, held)) = ours.get_mut(mine.kart) {
+            if let Ok((mut slots, mut stats, held)) = ours.get_mut(mine.kart) {
                 match mine.undo {
-                    Undo::Box(filled) => slots.revoke(filled),
+                    Undo::Box(filled) => {
+                        // Issue #171: counted (and shown) as a loss.
+                        let before = *slots;
+                        slots.revoke(filled);
+                        let gone = before.units().saturating_sub(slots.units());
+                        let item = [before.hand, before.reserve]
+                            .into_iter()
+                            .zip(filled)
+                            .find_map(|(slot, filled)| match slot {
+                                Slot::Spinning { item, .. } if filled => Some(item),
+                                _ => None,
+                            });
+                        stats.note_loss(ItemLoss::Refused, item.map(|item| (item, gone)));
+                    }
                     Undo::Croquettes(gained) => {
                         if let Some(mut held) = held {
                             held.lose(gained);
@@ -1058,11 +1071,13 @@ fn apply_break(
             return;
         };
         let mut pinata = false;
-        if let Ok((mut slots, ..)) = ours.get_mut(owner) {
+        if let Ok((mut slots, mut stats, _)) = ours.get_mut(owner) {
             // Issue #21: one of a piñata's (its first one left: its item goes with it,
             // `items::move_items`).
             pinata = slots.pinata != 0;
+            let held = slots.held_out_loss().map(|(item, _)| (item, 1));
             slots.lose_one_held_out();
+            stats.note_loss(ItemLoss::Touched, held);
         }
         let leaving = objects
             .iter()

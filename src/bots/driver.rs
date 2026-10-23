@@ -1318,7 +1318,11 @@ fn planned_speed(
             drift_from = Some(distance);
         }
         let corner = if drifting {
-            drift_corner_speed(kart, curvature, tuning.drift_turn_margin)
+            drift_corner_speed(
+                kart,
+                curvature,
+                tuning.drift_turn_margin + skill.drift_turn_extra,
+            )
         } else {
             corner_speed(kart, curvature) * margin
         };
@@ -1721,14 +1725,18 @@ mod tests {
             let corner = drift_corner_speed(
                 &k,
                 line.curvature(at, skill.line_fidelity),
-                t.drift_turn_margin,
+                t.drift_turn_margin + skill.drift_turn_extra,
             );
             assert!(
                 drift <= corner + 1e-3 && drift < k.max_speed,
                 "{drift} vs {corner}"
             );
         }
-        let hard_corner = drift_corner_speed(&k, line.curvature(at, 1.0), t.drift_turn_margin);
+        let hard_corner = drift_corner_speed(
+            &k,
+            line.curvature(at, 1.0),
+            t.drift_turn_margin + hard.drift_turn_extra,
+        );
         assert!(plan(&hard, at, Some(hairpin)) > 0.9 * hard_corner);
         assert!(plan(&easy, at, None) < plan(&normal, at, None));
         assert!(plan(&normal, at, None) < plan(&hard, at, None));
@@ -1742,7 +1750,7 @@ mod tests {
             let corner = drift_corner_speed(
                 &k,
                 line.curvature(apex, skill.line_fidelity),
-                t.drift_turn_margin,
+                t.drift_turn_margin + skill.drift_turn_extra,
             );
             let coasting = (corner * corner + 2.0 * k.coast_decel * to_apex).sqrt();
             assert!(drift <= coasting + 0.01, "{drift} vs {coasting}");

@@ -237,9 +237,11 @@ pub struct ImpactVfx {
     pub cream_size: f32,
     pub cream_speed: f32,
     pub cream_life: f32,
-    /// **Seeing stars** over the head (« sonné »): this many, turning this fast (rad/s), this far
-    /// around and this high above the kart, this big. During a spin out or a tumble and this long
-    /// after it; after a paw strike or a bump from `dizzy_bump_speed`, this long.
+    /// **Seeing stars** around the head (« sonné »): this many, turning this fast (rad/s), this
+    /// far around and this high in the driver's frame (issue #171: a ring around its head, which
+    /// follows it: the seat, the size, the spin out and the tumble, the head going round), this
+    /// big. During a spin out or a tumble and this long after it; after a paw strike or a bump
+    /// from `dizzy_bump_speed`, this long.
     pub dizzy_stars: u32,
     pub dizzy_spin: f32,
     pub dizzy_radius: f32,
@@ -248,6 +250,15 @@ pub struct ImpactVfx {
     pub dizzy_after_hit: f32,
     pub dizzy_after_shock: f32,
     pub dizzy_bump_speed: f32,
+    /// Issue #171: the ring leans this much (rad, its front down), and each star twinkles (its
+    /// size pulses by `dizzy_twinkle` of itself, this fast: rad/s).
+    pub dizzy_tilt: f32,
+    pub dizzy_twinkle: f32,
+    pub dizzy_twinkle_speed: f32,
+    /// Issue #171: only the moment of a bump counts: a kart that touched another one this
+    /// recently (s, any bump) is still in the same contact, and its stars do not start again
+    /// (two karts rubbing side by side bumped at every tick, and kept their stars for good).
+    pub dizzy_contact_gap: f32,
     /// The player's camera shakes (m, then for `shake_time`): a bump (at 15 m/s of closing
     /// speed, more or less with it), a wall, an item hit.
     pub shake_bump: f32,
@@ -283,14 +294,18 @@ impl Default for ImpactVfx {
             cream_size: 0.22,
             cream_speed: 5.0,
             cream_life: 0.9,
-            dizzy_stars: 3,
-            dizzy_spin: 5.5,
-            dizzy_radius: 0.42,
-            dizzy_height: 1.5,
+            dizzy_stars: 5,
+            dizzy_spin: 7.5,
+            dizzy_radius: 0.62,
+            dizzy_height: 0.72,
             dizzy_size: 0.2,
             dizzy_after_hit: 1.2,
             dizzy_after_shock: 0.9,
             dizzy_bump_speed: 12.0,
+            dizzy_tilt: 0.3,
+            dizzy_twinkle: 0.35,
+            dizzy_twinkle_speed: 14.0,
+            dizzy_contact_gap: 0.3,
             shake_bump: 0.12,
             shake_wall: 0.1,
             shake_hit: 0.18,

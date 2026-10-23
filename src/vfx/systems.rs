@@ -32,9 +32,9 @@ use crate::interactions::Paw;
 use crate::interpolation::InterpolatedFrom;
 use crate::items::{Blast, BoxBroken, ItemSlots, Slot};
 use crate::kart::{
-    Boost, BoostFlame, DeflatedScale, DriftMotion, ItemEffects, Kart, KartAssists, KartBodyPivot,
-    KartBump, KartEnvironment, KartState, KartTuning, KartWheels, MiniTurbo, PlayerKart, Remote,
-    Slipstream, Stall, StatEffects, StepVelocity, flame_size, hit_pose, slip_pose,
+    Boost, BoostFlame, DeflatedScale, DriftMotion, DriverVisual, ItemEffects, Kart, KartAssists,
+    KartBodyPivot, KartBump, KartEnvironment, KartState, KartTuning, KartWheels, MiniTurbo,
+    PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity, flame_size, slip_pose,
 };
 use crate::level::LoadLevel;
 use crate::menu::MainMenu;
@@ -126,11 +126,14 @@ pub struct KartVfx {
     /// Where its visual was on the last frame, and how fast it goes (m/s).
     shown_at: Option<Vec3>,
     pub velocity: Vec3,
-    /// How long it still sees stars (s), and their turn.
+    /// How long it still sees stars (s, counted down each tick: issue #171), and their turn.
     pub dizzy: f32,
     spin: f32,
-    /// Its stars, under its visual (`root`), once it first saw them.
+    /// Its stars, under its driver (issue #171: around its head), once it first saw them.
     stars: Option<(Entity, [Entity; MAX_DIZZY_STARS])>,
+    /// Issue #171: ticks left of its last contact with another kart (any bump), so that a
+    /// contact that goes on is not a new shock.
+    contact_left: u32,
 }
 
 /// The field of view's extra of the camera's kart (degrees): while it boosts, and the punch of a
@@ -464,15 +467,28 @@ pub(super) fn watch_karts(
         if !std::mem::replace(&mut memory.seen, true) {
             continue;
         }
+        let bump = bumped
+            .iter()
+            .find(|(k, _)| *k == kart)
+            .map_or(0.0, |(_, speed)| *speed);
+        // Issue #171: still the contact of a bump a moment ago.
+        let gap = (tuning.impact.dizzy_contact_gap / dt).round() as u32;
+        let contact = memory.contact_left > 0;
+        memory.contact_left = if bump > 0.0 {
+            gap.max(1)
+        } else {
+            memory.contact_left.saturating_sub(1)
+        };
         let events = TickEvents {
             go,
             croquette: croquettes.contains(&kart),
-            bump: bumped
-                .iter()
-                .find(|(k, _)| *k == kart)
-                .map_or(0.0, |(_, speed)| *speed),
+            bump,
+            contact,
         };
         let bursts = kart_bursts(&last, &now, events, &tuning, dt);
+        // Issue #171: the stars count down with the ticks, for every kart (seen or not, far
+        // from the camera or not, whatever its visual): never longer than their rule.
+        memory.dizzy = (memory.dizzy - dt).max(0.0).max(bursts.dizzy);
         match bursts.boost {
             // A croquette's mini-boost does not take over a boost already running (its flames
             // stay the color of the stronger one).
@@ -753,11 +769,7 @@ pub(super) fn emit_karts(
             };
             vfx.shown_at = Some(root.translation);
         }
-        vfx.dizzy = (vfx.dizzy - dt).max(0.0);
         let bursts = std::mem::take(&mut vfx.pending);
-        if bursts.dizzy > 0.0 {
-            vfx.dizzy = vfx.dizzy.max(bursts.dizzy);
-        }
         // The player's camera shakes on a shock.
         if player && tuning.enabled {
             let shake = if bursts.hit.is_some() {
@@ -1229,73 +1241,72 @@ pub(super) fn show_particles(
     }
 }
 
-/// The stars over the head of a kart that sees them (« sonné »): made the first time, under its
-/// visual, turning around above its head.
+/// Each frame, the stars of a kart that sees them (« sonné », GD § 14): issue #171, **a ring
+/// around its driver's head**, under its driver (`kart::DriverVisual`): they follow its seat
+/// and its size, the body's spin out and tumble (the pivot), the head going round (#130: the
+/// driver's turn). The ring leans a little and turns fast; each star twinkles. Made once per
+/// kart, the first time it sees stars, and only ever under one driver: a kart with another
+/// visual on screen (a pelican, an item's look, a flourish: they follow the kart too) gets no
+/// second ring, and nothing is left behind (#171: those visuals made a new ring on every frame,
+/// the old ones stood still and shown for good). Hidden as soon as its time is over.
+#[allow(clippy::type_complexity)]
 pub(super) fn show_dizzy_stars(
     mut commands: Commands,
     time: Res<Time>,
-    fixed: Res<Time<Fixed>>,
     tuning: Res<VfxTuning>,
     assets: Res<VfxAssets>,
     cameras: Query<&Transform, (With<ChaseCamera>, Without<DizzyStar>)>,
-    roots: Query<(Entity, &InterpolatedFrom, &Transform), Without<DizzyStar>>,
-    mut karts: Query<(&mut KartVfx, &KartState, &ItemEffects)>,
-    mut stars: Query<
-        (&mut Transform, &mut Visibility),
-        (With<DizzyStar>, Without<InterpolatedFrom>),
-    >,
+    drivers: Query<(Entity, &ChildOf, &GlobalTransform), (With<DriverVisual>, Without<DizzyStar>)>,
+    pivots: Query<&KartBodyPivot>,
+    mut karts: Query<(&mut KartVfx, &ItemEffects)>,
+    mut stars: Query<(&mut Transform, &mut Visibility), With<DizzyStar>>,
 ) {
     let dt = time.delta_secs();
-    let alpha = fixed.overstep_fraction();
+    let now = time.elapsed_secs();
     let camera = cameras.iter().next().map(|t| t.translation);
     let impact = &tuning.impact;
     let count = (impact.dizzy_stars as usize).min(MAX_DIZZY_STARS);
-    for (root, InterpolatedFrom(body), root_transform) in &roots {
-        let Ok((mut vfx, state, effects)) = karts.get_mut(*body) else {
+    for (driver, child_of, global) in &drivers {
+        let Ok(pivot) = pivots.get(child_of.parent()) else {
+            continue;
+        };
+        let body = pivot.body;
+        let Ok((mut vfx, effects)) = karts.get_mut(body) else {
             continue;
         };
         // Not over an invisible kart (a pie voleuse): they would show where it is.
         let dizzy = vfx.dizzy > 0.0 && tuning.enabled && count > 0 && !effects.hidden();
-        // Its stars: made once, under its visual (again under a new visual).
-        let owned = vfx.stars.filter(|(owner, _)| *owner == root);
-        let Some((_, ids)) = owned.or_else(|| {
-            dizzy.then(|| {
+        // Its stars: under one driver only (again under a new one once the old one is gone).
+        let ids = match vfx.stars {
+            Some((owner, ids)) if owner == driver => ids,
+            Some((owner, _)) if drivers.contains(owner) => continue,
+            _ if !dizzy => continue,
+            _ => {
                 let ids = std::array::from_fn(|index| {
                     commands
                         .spawn((
                             Name::new("Étoile"),
-                            DizzyStar { body: *body, index },
+                            DizzyStar { body, index },
                             Mesh3d(assets.mesh(Shape::Star).clone()),
                             MeshMaterial3d(assets.material(Paint::Star).clone()),
                             Transform::from_scale(Vec3::ZERO),
                             Visibility::Hidden,
                             NotShadowCaster,
                             NotShadowReceiver,
-                            ChildOf(root),
+                            ChildOf(driver),
                         ))
                         .id()
                 });
-                vfx.stars = Some((root, ids));
-                (root, ids)
-            })
-        }) else {
-            continue;
+                vfx.stars = Some((driver, ids));
+                ids
+            }
         };
         vfx.spin = (vfx.spin + impact.dizzy_spin * dt).rem_euclid(TAU);
-        // Thrown up by a tumble, they go up with it.
-        let lift = match *state {
-            KartState::Hit {
-                reaction,
-                elapsed,
-                duration,
-            } => hit_pose(reaction, (elapsed as f32 + alpha) / duration.max(1) as f32).1,
-            _ => 0.0,
-        };
         // They pop in, and shrink away in their last 0.25 s.
         let size = impact.dizzy_size * (vfx.dizzy / 0.25).min(1.0);
-        let to_camera = camera.map_or(Vec3::Z, |c| {
-            root_transform.rotation.inverse() * (c - root_transform.translation)
-        });
+        // The camera in the driver's frame (last frame's: the stars only face it).
+        let to_camera = camera.map_or(Vec3::Z, |c| global.affine().inverse().transform_point3(c));
+        let tilt = Quat::from_rotation_x(-impact.dizzy_tilt);
         for (index, id) in ids.iter().enumerate() {
             let Ok((mut transform, mut visibility)) = stars.get_mut(*id) else {
                 continue;
@@ -1310,18 +1321,17 @@ pub(super) fn show_dizzy_stars(
                 continue;
             }
             let angle = vfx.spin + index as f32 * TAU / count as f32;
-            let bob = 0.06 * (angle * 2.0).sin();
-            let at = Vec3::new(
-                angle.cos() * impact.dizzy_radius,
-                impact.dizzy_height + lift + bob,
-                angle.sin() * impact.dizzy_radius,
-            );
+            let ring = Vec3::new(angle.cos(), 0.0, angle.sin()) * impact.dizzy_radius;
+            let at = tilt * ring + Vec3::Y * impact.dizzy_height;
+            let twinkle = 1.0
+                + impact.dizzy_twinkle
+                    * (now * impact.dizzy_twinkle_speed + index as f32 * 2.4).sin();
             let facing = (to_camera - at).normalize_or(Vec3::Z);
             *transform = Transform::from_translation(at)
                 .with_rotation(
                     Quat::from_rotation_arc(Vec3::Z, facing) * Quat::from_rotation_z(angle * 1.5),
                 )
-                .with_scale(Vec3::splat(size));
+                .with_scale(Vec3::splat(size * twinkle.max(0.0)));
         }
     }
 }

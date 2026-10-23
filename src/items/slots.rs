@@ -274,6 +274,30 @@ impl ItemSlots {
         }
     }
 
+    /// Issue #171: how many items it holds: in its slots (spinning or ready: an « x3 » counts
+    /// three, a piñata the items left of it) and the one dragged.
+    pub fn units(&self) -> u32 {
+        let count = |slot: &Slot| slot.item().map_or(0, |(_, count)| u32::from(count));
+        count(&self.hand) + count(&self.reserve) + u32::from(self.dragging.is_some())
+    }
+
+    /// Issue #171: what it would show as lost: the dragged item, else the hand's, else the
+    /// reserve's, and how many it holds in all.
+    pub fn loss(&self) -> Option<(ItemKind, u32)> {
+        let item = self
+            .dragging
+            .or(self.hand.item().map(|(item, _)| item))
+            .or(self.reserve.item().map(|(item, _)| item))?;
+        Some((item, self.units()))
+    }
+
+    /// Issue #171: what it holds out (the dragged item, or the « x3 » or piñata out), and how
+    /// many: what a hit or the pelican takes.
+    pub fn held_out_loss(&self) -> Option<(ItemKind, u32)> {
+        self.held_out()
+            .map(|(item, count)| (item, u32::from(count)))
+    }
+
     /// Hit by an item or carried by the pelican: what the kart held out is lost (the dragged
     /// item, the rest of an "x3" out). The slots keep the rest. Returns whether it lost anything.
     pub fn lose_held_out(&mut self) -> bool {

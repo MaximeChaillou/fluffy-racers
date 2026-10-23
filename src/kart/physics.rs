@@ -188,6 +188,9 @@ pub fn hit_forward_speed(tuning: &KartTuning, speed: f32, reaction: HitReaction,
 /// - Brake: brakes while moving forward; once (almost) stopped, drives backwards.
 ///   Throttle and brake together: just brake, no reverse.
 /// - Nothing pressed: coast down.
+///
+/// On the road; [`next_forward_speed_on`] on the off-road.
+#[cfg(test)]
 pub fn next_forward_speed(
     tuning: &KartTuning,
     speed: f32,
@@ -196,14 +199,36 @@ pub fn next_forward_speed(
     boosting: bool,
     dt: f32,
 ) -> f32 {
+    next_forward_speed_on(tuning, speed, input, top_speed, boosting, 0.0, dt)
+}
+
+/// Issue #171: how hard a kart faster than its top speed slows down to it: `overspeed_decel`
+/// (a boost that ends, a slope), harder on the off-road (`offroad_ratio`: the share of its
+/// wheels on it), up to `offroad_decel` with all four on it (GD § 2: the grass brakes at once).
+pub fn overspeed_decel(tuning: &KartTuning, offroad_ratio: f32) -> f32 {
+    tuning
+        .overspeed_decel
+        .max(tuning.offroad_decel * offroad_ratio.clamp(0.0, 1.0))
+}
+
+/// [`next_forward_speed`] with `offroad_ratio` of the wheels on the off-road (issue #171): over
+/// its (off-road) top speed, the kart slows down at [`overspeed_decel`].
+pub fn next_forward_speed_on(
+    tuning: &KartTuning,
+    speed: f32,
+    input: &KartInput,
+    top_speed: f32,
+    boosting: bool,
+    offroad_ratio: f32,
+    dt: f32,
+) -> f32 {
     let throttle = input.throttle.clamp(0.0, 1.0);
     let brake = input.brake.clamp(0.0, 1.0);
 
     // Going faster than allowed (boost ended, off-road...): ease back down, whatever the input.
     if speed > top_speed && brake == 0.0 {
-        let decel = tuning
-            .overspeed_decel
-            .max(tuning.coast_decel * (1.0 - throttle));
+        let decel =
+            overspeed_decel(tuning, offroad_ratio).max(tuning.coast_decel * (1.0 - throttle));
         return approach(speed, top_speed, decel * dt);
     }
 
@@ -401,9 +426,10 @@ mod tests {
         let t = KartTuning::default();
         let no_boost = Boost::default();
         assert_eq!(max_speed(&t, 0.0, &no_boost), t.max_speed);
-        assert!((max_speed(&t, 1.0, &no_boost) - 0.55 * t.max_speed).abs() < 1e-4);
+        // Issue #171: 40 % (55 % before: the grass did not slow down enough, Max).
+        assert!((max_speed(&t, 1.0, &no_boost) - 0.4 * t.max_speed).abs() < 1e-4);
         let half = max_speed(&t, 0.5, &no_boost);
-        assert!(half < t.max_speed && half > 0.55 * t.max_speed);
+        assert!(half < t.max_speed && half > 0.4 * t.max_speed);
     }
 
     #[test]
@@ -412,6 +438,32 @@ mod tests {
         let cap = max_speed(&t, 1.0, &Boost::default());
         let speed = drive(&t, t.max_speed, &input(1.0, 0.0, 0.0), cap, 2.0);
         assert!((speed - cap).abs() < 1e-3, "{speed} vs {cap}");
+    }
+
+    /// Issue #171: entering the grass at full speed, the kart brakes at once: it is down to the
+    /// off-road's top speed within 0.6 s (it took 1.3 s at `overspeed_decel`), never below it;
+    /// half its wheels on it, it brakes less hard.
+    #[test]
+    fn entering_offroad_brakes_fast() {
+        let t = KartTuning::default();
+        let cap = max_speed(&t, 1.0, &Boost::default());
+        let full = input(1.0, 0.0, 0.0);
+        let mut speed = t.max_speed;
+        let mut ticks = 0;
+        while speed > cap + 1e-3 {
+            speed = next_forward_speed_on(&t, speed, &full, cap, false, 1.0, 1.0 / 60.0);
+            ticks += 1;
+            assert!(ticks < 600);
+        }
+        assert!((speed - cap).abs() < 1e-3, "{speed}");
+        assert!(ticks <= 36, "{ticks} ticks");
+        let slow = drive(&t, t.max_speed, &full, cap, 0.6);
+        assert!(
+            slow > cap + 1.0,
+            "the plain overspeed decel is slower: {slow}"
+        );
+        assert!(overspeed_decel(&t, 0.5) < overspeed_decel(&t, 1.0));
+        assert_eq!(overspeed_decel(&t, 0.0), t.overspeed_decel);
     }
 
     #[test]

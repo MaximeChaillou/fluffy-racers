@@ -225,20 +225,25 @@ impl KartEnvironment {
 pub const GRAVITY: f32 = 9.81;
 
 /// Issue #78: whether the kart is in anti-gravity after this tick: with a wheel on the ground,
-/// whether one is on the road of a zone (`on_zone`); in the air, as it was (a hop, a jump on the
-/// wall: it lands back on it). Never under its glider nor under water.
+/// whether one is on the road of a zone (`on_zone`: how many); in the air, as it was (a hop, a
+/// jump on the wall: it lands back on it). Never under its glider nor under water. Issue #171:
+/// out of it, it goes in with most of its wheels on the ground on the zone's road (more than
+/// half), not one: half on the zone and half on the road that follows it, a kart came out and
+/// went back in from a tick to the next (its rays turn with its up), at the end of a zone.
 pub fn next_anti_gravity(
     environment: &KartEnvironment,
     wheels_on_ground: usize,
-    on_zone: bool,
+    on_zone: usize,
 ) -> bool {
     if environment.gliding || environment.underwater {
         return false;
     }
-    if wheels_on_ground > 0 {
-        on_zone
-    } else {
+    if wheels_on_ground == 0 {
         environment.anti_gravity
+    } else if environment.anti_gravity {
+        on_zone > 0
+    } else {
+        2 * on_zone > wheels_on_ground
     }
 }
 
@@ -505,8 +510,8 @@ mod tests {
         );
     }
 
-    /// Issue #78: a wheel on the road of a zone puts the kart in anti-gravity, a wheel on any
-    /// other ground takes it out; in the air, it stays as it was; never under the glider or
+    /// Issue #78: a wheel on the road of a zone puts the kart in anti-gravity (issue #171: most
+    /// of its wheels on the ground), its wheels all on any other ground take it out; in the air, it stays as it was; never under the glider or
     /// under water. Its gravity there pulls toward the road, as strong as elsewhere; its terrain
     /// is the anti-gravity's.
     #[test]
@@ -517,22 +522,26 @@ mod tests {
             up: Vec3::X,
             ..default()
         };
-        assert!(next_anti_gravity(&out, 2, true));
-        assert!(!next_anti_gravity(&out, 2, false));
-        assert!(!next_anti_gravity(&out, 0, true), "in the air: as it was");
-        assert!(next_anti_gravity(&inside, 0, false), "a hop on the wall");
-        assert!(!next_anti_gravity(&inside, 1, false), "back on the ground");
-        assert!(next_anti_gravity(&inside, 4, true));
+        assert!(next_anti_gravity(&out, 2, 2));
+        assert!(!next_anti_gravity(&out, 2, 0));
+        assert!(!next_anti_gravity(&out, 0, 0), "in the air: as it was");
+        assert!(next_anti_gravity(&inside, 0, 0), "a hop on the wall");
+        assert!(!next_anti_gravity(&inside, 1, 0), "back on the ground");
+        assert!(next_anti_gravity(&inside, 4, 4));
+        // Issue #171: in with most of its wheels on the zone, out with none.
+        assert!(!next_anti_gravity(&out, 4, 2), "half of them: not yet");
+        assert!(next_anti_gravity(&out, 4, 3));
+        assert!(next_anti_gravity(&inside, 4, 1), "one of them still on it");
         let gliding = KartEnvironment {
             gliding: true,
             ..inside
         };
-        assert!(!next_anti_gravity(&gliding, 0, true));
+        assert!(!next_anti_gravity(&gliding, 0, 4));
         let wet = KartEnvironment {
             underwater: true,
             ..inside
         };
-        assert!(!next_anti_gravity(&wet, 3, true));
+        assert!(!next_anti_gravity(&wet, 3, 3));
         assert_eq!(inside.terrain(), Terrain::AntiGravity);
         assert_eq!(gliding.terrain(), Terrain::Air);
         assert_eq!(out.up, Vec3::Y);

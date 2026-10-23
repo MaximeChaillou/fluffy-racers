@@ -49,7 +49,9 @@ use crate::croquettes::{CroquetteSystems, LoseCroquettes, LossCause};
 use crate::interactions::InteractionSystems;
 use crate::interpolation::PhysicsPose;
 use crate::items::{ItemSystems, immune_to_items};
-use crate::kart::{Boost, HitReaction, Invincibility, Kart, KartState, KartSystems, Remote};
+use crate::kart::{
+    Boost, HitReaction, Invincibility, ItemEffects, Kart, KartState, KartSystems, Remote,
+};
 use crate::level::LevelScoped;
 use crate::net::{KartSync, NetKart, OnlineItems};
 use crate::race::{HazardTuning, Race, RaceGrid, RaceProgress, RaceSystems, RaceTuning};
@@ -436,6 +438,7 @@ pub fn break_panels(
             &Boost,
             &KartState,
             Option<&NetKart>,
+            Option<&ItemEffects>,
         ),
         (With<Kart>, Without<HazardBody>),
     >,
@@ -473,15 +476,19 @@ pub fn break_panels(
         }
         if now >= panel.down_until {
             let contact = hazard.body(&hazard.pose(0.0, 0.0));
-            let breaker = karts.iter().find(|(_, kart, velocity, boost, state, _)| {
-                if !boost.is_active() || **state == KartState::Respawning {
-                    return false;
-                }
-                let mut shape = kart_capsule(kart);
-                shape.b += velocity.linear * dt * 2.0;
-                contact.gap(&shape).0 <= tuning.panel_reach
-            });
-            if let Some((kart, _, _, _, _, net)) = breaker {
+            let breaker = karts
+                .iter()
+                .find(|(_, kart, velocity, boost, state, _, effects)| {
+                    // Issue #171: a fusée breaks it too (it drives on along the shortcut).
+                    let rocket = effects.is_some_and(|e| e.rocket > 0.0);
+                    if !(boost.is_active() || rocket) || **state == KartState::Respawning {
+                        return false;
+                    }
+                    let mut shape = kart_capsule(kart);
+                    shape.b += velocity.linear * dt * 2.0;
+                    contact.gap(&shape).0 <= tuning.panel_reach
+                });
+            if let Some((kart, _, _, _, _, net, _)) = breaker {
                 panel.down_until = now.saturating_add(down_for);
                 breakable.burst_by = Some(kart);
                 breakable.bursts += 1;

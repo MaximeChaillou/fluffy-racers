@@ -57,6 +57,9 @@ pub struct TickEvents {
     pub croquette: bool,
     /// It bumped into another kart, this hard (m/s of closing speed; 0: no bump).
     pub bump: f32,
+    /// Issue #171: it was already touching another kart (a bump less than
+    /// `ImpactVfx::dizzy_contact_gap` ago): the same contact, not a new shock.
+    pub contact: bool,
 }
 
 /// Where a boost comes from (GD § 2: one system for all; each its look).
@@ -230,7 +233,8 @@ pub fn kart_bursts(
         bursts.struck = true;
         bursts.dizzy = bursts.dizzy.max(impact.dizzy_after_shock);
     }
-    if events.bump >= impact.dizzy_bump_speed {
+    // Issue #171: the moment of the shock, not the contact that lasts.
+    if events.bump >= impact.dizzy_bump_speed && !events.contact {
         bursts.dizzy = bursts.dizzy.max(impact.dizzy_after_shock);
     }
     if now.underwater != prev.underwater {
@@ -498,6 +502,17 @@ mod tests {
         assert_eq!(bumped.dizzy, 0.0);
         let hard = kart_bursts(&rest, &rest, events(14.0), &tuning, DT);
         assert_eq!(hard.dizzy, tuning.impact.dizzy_after_shock);
+        // Issue #171: the same hard contact that goes on is no new shock.
+        let rubbing = TickEvents {
+            contact: true,
+            ..events(14.0)
+        };
+        let still = kart_bursts(&rest, &rest, rubbing, &tuning, DT);
+        assert_eq!(still.dizzy, 0.0);
+        assert_eq!(
+            still.bump, 14.0,
+            "its stars and « pof » between the karts stay"
+        );
         let struck = VfxSnapshot { struck: 1, ..rest };
         let b = bursts(rest, struck);
         assert!(b.struck && b.dizzy == tuning.impact.dizzy_after_shock);
