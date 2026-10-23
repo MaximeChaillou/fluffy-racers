@@ -16,11 +16,11 @@
 //! follow:
 //!
 //! ```text
-//! // Fluffy Racers : réglages du panneau d'admin (#36, #155), le reste est par défaut.
+//! // Fluffy Racers : réglages du panneau d'admin (#36, #155, #170), le reste est par défaut.
 //! {
 //!     "Ressenti.derapage": 70, // de 0 à 100, milieu : 50
 //!     "KartTuning.max_speed": 30.0, // défaut : 28.5
-//!     "KartTuning.drift_radius_tight": 21.0, // curseur Dérapage : 19.95, défaut : 17.5
+//!     "KartTuning.drift_radius_tight": 24.0, // curseur Dérapage : 22.869, défaut : 21.175
 //!     "BotTuning.skills[1].target_tier": "Purple", // défaut : "Orange"
 //! }
 //! ```
@@ -391,6 +391,9 @@ pub struct ImportReport {
     pub applied: usize,
     /// Entries left out, and why (unknown tuning or field, value that does not fit).
     pub ignored: Vec<String>,
+    /// Entries of a text from an older version read differently, and how (#170: « Dérapage »
+    /// back in the middle). The text kept in the browser is then written again.
+    pub converted: Vec<String>,
 }
 
 /// One tuning resource, seen by reflection.
@@ -536,6 +539,11 @@ pub struct Tunings {
 
 /// First line of an export.
 pub const EXPORT_HEADER: &str =
+    "// Fluffy Racers : réglages du panneau d'admin (#36, #155, #170), le reste est par défaut.";
+
+/// First line of an export from before #170, when the middle of « Dérapage » was the drift of
+/// before Max's choice (see `feel::RECENTRED`).
+pub const EXPORT_HEADER_BEFORE_170: &str =
     "// Fluffy Racers : réglages du panneau d'admin (#36, #155), le reste est par défaut.";
 
 impl Tunings {
@@ -699,9 +707,15 @@ impl Tunings {
     /// the middle, then the knobs of the text (their values follow), then its values. Entries
     /// that do not fit (a renamed field or knob, a wrong value) are left out and listed in the
     /// report; a text that is not RON changes nothing. A text without knobs (before #155) loads
-    /// as it did.
+    /// as it did. A text from before #170 ([`EXPORT_HEADER_BEFORE_170`]) puts the knobs whose
+    /// middle moved (`feel::RECENTRED`, « Dérapage ») in the middle: its 80 is the new middle,
+    /// and any other position of it is read as the middle too (listed in `converted`).
     pub fn import(&mut self, world: &mut World, text: &str) -> Result<ImportReport, String> {
         let entries = parse(text)?;
+        let before_170 = text
+            .lines()
+            .next()
+            .is_some_and(|line| line.trim() == EXPORT_HEADER_BEFORE_170);
         self.reset_all(world);
         let mut report = ImportReport::default();
         for (full_path, raw) in &entries {
@@ -724,6 +738,15 @@ impl Tunings {
                     continue;
                 }
             };
+            if before_170
+                && let Some((_, middle)) = feel::RECENTRED.iter().find(|(k, _)| *k == knob)
+            {
+                report.converted.push(format!(
+                    "{full_path} : {position} (avant #170) remis au milieu : le milieu est \
+                     maintenant l'ancien {middle}"
+                ));
+                continue;
+            }
             self.set_knob(world, knob, position);
             report.applied += 1;
         }
@@ -822,8 +845,8 @@ mod tests {
         assert_eq!(find("max_speed"), Some(Value::F32(28.5)));
         assert_eq!(find("airborne_grace_ticks"), Some(Value::U32(4)));
         assert_eq!(find("inertia.y"), Some(Value::F32(120.0)));
-        assert_eq!(find("mini_turbo_thresholds[1]"), Some(Value::F32(570.0)));
-        assert_eq!(find("drift_radius_tight"), Some(Value::F32(17.5)));
+        assert_eq!(find("mini_turbo_thresholds[1]"), Some(Value::F32(638.4)));
+        assert_eq!(find("drift_radius_tight"), Some(Value::F32(21.175)));
         // Every f32 and u32 of the struct, the 3 of `inertia` and the 3 of each array.
         assert!(kart.len() > 70, "{}", kart.len());
 

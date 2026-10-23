@@ -207,6 +207,19 @@ fn load_stored_tunings(world: &mut World) {
                 for ignored in &report.ignored {
                     warn!("admin panel: stored value ignored: {ignored}");
                 }
+                // A text from an older version, read differently (#170): kept as it reads now,
+                // so that it is converted once.
+                if !report.converted.is_empty() {
+                    for converted in &report.converted {
+                        info!("admin panel: stored value converted: {converted}");
+                    }
+                    let text = if tunings.untouched(world) {
+                        String::new()
+                    } else {
+                        tunings.export(world)
+                    };
+                    storage::save(&text);
+                }
             }
             Err(error) => warn!("admin panel: stored tunings ignored: {error}"),
         },
@@ -1475,6 +1488,10 @@ fn share_section(
             Ok(report) => {
                 *changed = true;
                 let mut message = format!("{} valeur(s) chargée(s).", report.applied);
+                for converted in report.converted {
+                    message.push_str("\nConverti : ");
+                    message.push_str(&converted);
+                }
                 for ignored in report.ignored {
                     message.push_str("\nIgnoré : ");
                     message.push_str(&ignored);

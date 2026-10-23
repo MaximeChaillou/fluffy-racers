@@ -8,8 +8,9 @@
 //!   outward widens it, and the side never changes.
 //! - The mini-turbo charges every tick: +5 steering inward (≥ 0.5), +2 otherwise (assisted
 //!   steering: 2 and 0.8). The tick that enters the drift is the first charging tick, so with
-//!   the inward rate the blue tier (270) is reached on the 54th tick spent drifting, orange
-//!   (570) on the 114th and purple (870) on the 174th.
+//!   the inward rate the blue tier (302.4 since #170, Max's drift; 270 before) is reached on the
+//!   61st tick spent drifting (54th before), orange (638.4) on the 128th and purple (974.4) on
+//!   the 195th.
 //! - Releasing the button fires the boost of the reached tier; before blue, nothing.
 //! - The drift breaks, without boost, below `drift_exit_speed` (wall, brake) or after
 //!   `drift_max_air_ticks` in the air. Shorter flights keep it, charge frozen.
@@ -643,23 +644,25 @@ mod tests {
         assert_eq!(state, KartState::Airborne);
     }
 
+    /// Issue #170 (Max's drift): the tiers 302.4 / 638.4 / 974.4 at +5 per tick (54 / 114 / 174
+    /// ticks with the 270 / 570 / 870 of before).
     #[test]
-    fn inward_steering_reaches_the_tiers_at_54_114_and_174_ticks() {
+    fn inward_steering_reaches_the_tiers_at_61_128_and_195_ticks() {
         let t = KartTuning::default();
-        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Blue), Some(54));
-        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Orange), Some(114));
-        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Purple), Some(174));
+        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Blue), Some(61));
+        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Orange), Some(128));
+        assert_eq!(ticks_to(&t, 1.0, false, MiniTurbo::Purple), Some(195));
         // Exactly the threshold for "inward" (GD: ≥ 0.5).
-        assert_eq!(ticks_to(&t, 0.5, false, MiniTurbo::Blue), Some(54));
+        assert_eq!(ticks_to(&t, 0.5, false, MiniTurbo::Blue), Some(61));
     }
 
     #[test]
     fn outward_or_neutral_steering_charges_2_5_times_slower() {
         let t = KartTuning::default();
-        // 270 / 2 = 135 ticks = 2.5 × 54.
-        assert_eq!(ticks_to(&t, -1.0, false, MiniTurbo::Blue), Some(135));
-        assert_eq!(ticks_to(&t, 0.0, false, MiniTurbo::Blue), Some(135));
-        assert_eq!(ticks_to(&t, 0.49, false, MiniTurbo::Blue), Some(135));
+        // 302.4 / 2 = 151.2 → 152 ticks ≈ 2.5 × 61.
+        assert_eq!(ticks_to(&t, -1.0, false, MiniTurbo::Blue), Some(152));
+        assert_eq!(ticks_to(&t, 0.0, false, MiniTurbo::Blue), Some(152));
+        assert_eq!(ticks_to(&t, 0.49, false, MiniTurbo::Blue), Some(152));
     }
 
     #[test]
@@ -668,25 +671,26 @@ mod tests {
         assert_eq!(charge_rate(&t, DriftSide::Right, 1.0, true), 2.0);
         assert_eq!(charge_rate(&t, DriftSide::Right, -1.0, true), 0.8);
         assert_eq!(charge_rate(&t, DriftSide::Left, -1.0, true), 2.0);
-        // 270 / 2 = 135 ticks; 570 / 2 = 285.
-        assert_eq!(ticks_to(&t, 1.0, true, MiniTurbo::Blue), Some(135));
-        assert_eq!(ticks_to(&t, 1.0, true, MiniTurbo::Orange), Some(285));
+        // 302.4 / 2 = 151.2 → 152 ticks; 638.4 / 2 = 319.2 → 320.
+        assert_eq!(ticks_to(&t, 1.0, true, MiniTurbo::Blue), Some(152));
+        assert_eq!(ticks_to(&t, 1.0, true, MiniTurbo::Orange), Some(320));
         assert_eq!(ticks_to(&t, 1.0, true, MiniTurbo::Purple), None);
-        // 270 / 0.8 = 337.5 → 338 ticks.
-        assert_eq!(ticks_to(&t, -1.0, true, MiniTurbo::Blue), Some(338));
+        // 302.4 / 0.8 = 378 ticks, and one more: 0.8 added up in f32 stays just under on the
+        // 378th.
+        assert_eq!(ticks_to(&t, -1.0, true, MiniTurbo::Blue), Some(379));
         // Even a huge charge stays orange.
         assert_eq!(mini_turbo_tier(&t, 10_000.0, true), Some(MiniTurbo::Orange));
-        assert_eq!(max_charge(&t, true), 570.0);
+        assert_eq!(max_charge(&t, true), 638.4);
     }
 
     #[test]
     fn charge_is_capped_at_the_highest_tier() {
         let t = KartTuning::default();
-        let mut state = drifting(DriftSide::Right, 860.0);
+        let mut state = drifting(DriftSide::Right, 964.4);
         for _ in 0..10 {
             state = step_state(&t, state, &ctx(true, true, 1.0)).state;
         }
-        assert_eq!(state, drifting(DriftSide::Right, 870.0));
+        assert_eq!(state, drifting(DriftSide::Right, 974.4));
     }
 
     #[test]
@@ -694,11 +698,12 @@ mod tests {
         let t = KartTuning::default();
         let release = ctx(false, true, 1.0);
         let cases = [
-            (269.0, None),
-            (270.0, Some(MiniTurbo::Blue)),
-            (569.0, Some(MiniTurbo::Blue)),
-            (570.0, Some(MiniTurbo::Orange)),
-            (870.0, Some(MiniTurbo::Purple)),
+            (302.0, None),
+            (302.4, Some(MiniTurbo::Blue)),
+            (638.0, Some(MiniTurbo::Blue)),
+            (638.4, Some(MiniTurbo::Orange)),
+            (974.0, Some(MiniTurbo::Orange)),
+            (974.4, Some(MiniTurbo::Purple)),
         ];
         for (charge, tier) in cases {
             let step = step_state(&t, drifting(DriftSide::Left, charge), &release);
@@ -811,7 +816,7 @@ mod tests {
         // Releasing in the air still fires the boost.
         let step = step_state(
             &t,
-            drifting(DriftSide::Left, 600.0),
+            drifting(DriftSide::Left, 700.0),
             &airborne(ctx(false, true, 0.0), 10),
         );
         assert_eq!(step.boost, Some(MiniTurbo::Orange));
@@ -913,7 +918,8 @@ mod tests {
         // First tick: barely off the rotation in progress.
         let first = motion.yaw_target(normal, drift);
         assert!((first - entry).abs() < 0.01, "{first}");
-        let ticks_in = (t.drift_curve_in_time / DT).round() as usize;
+        // Whole ticks: 0.455 s is 27.3 ticks, set in on the 28th.
+        let ticks_in = (t.drift_curve_in_time / DT).ceil() as usize;
         let mut previous = first;
         for _ in 1..ticks_in {
             motion.step(&t, &state, -1.0, 1.0, DT);
@@ -924,7 +930,7 @@ mod tests {
         assert!((motion.curve - 1.0).abs() < 1e-3, "{}", motion.curve);
         assert!((motion.yaw_target(normal, drift) - drift).abs() < 1e-3);
         // Released: from the drift's back to the normal steering, then nothing left.
-        let ticks_out = (t.drift_curve_out_time / DT).round() as usize;
+        let ticks_out = (t.drift_curve_out_time / DT).ceil() as usize;
         motion.step(&t, &KartState::Grounded, drift, 0.0, DT);
         assert!(!motion.drifting);
         assert_eq!(motion.side, Some(DriftSide::Right));
@@ -978,8 +984,17 @@ mod tests {
             "no jump on the first tick: {}",
             slips[0]
         );
+        // Issue #170 (Max's drift: damping 0.532, a lighter rear): the overshoot of a damped
+        // spring, exp(−πζ / √(1 − ζ²)), 14 % (5 % with the 0.7 of #30), within 2 % of the target
+        // (the 60 Hz steps overshoot a little less: 12.6 %).
         let highest = slips.iter().copied().fold(0.0, f32::max);
-        assert!(highest > target && highest < 1.1 * target, "{highest}");
+        let zeta = t.drift_slip_damping;
+        let overshoot = (-std::f32::consts::PI * zeta / (1.0 - zeta * zeta).sqrt()).exp();
+        assert!(highest > target && highest < 1.15 * target, "{highest}");
+        assert!(
+            (highest / target - 1.0 - overshoot).abs() < 0.02,
+            "{highest}: {overshoot} expected"
+        );
         assert!(
             (slips[119] - target).abs() < 0.005 * target,
             "{}",

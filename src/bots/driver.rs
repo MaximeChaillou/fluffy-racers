@@ -1404,9 +1404,11 @@ mod tests {
         assert!(drift_corner_speed(&k, 1.0 / 25.0, 0.9) > k.max_speed);
         // Issue #30 (Max: no tight angle): the tightest drift is about as tight as the normal
         // steering at full lock at top speed, no longer much tighter (10 m against 17 m in #4).
+        // Issue #170 (Max's drift, « Dérapage » at 80): never tighter, and at most 4 m wider
+        // (21.2 m against 17.3 m).
         let full_lock = k.max_speed / k.steer_rate_at_max_speed;
         assert!(
-            (k.drift_radius_tight - full_lock).abs() < 2.0,
+            k.drift_radius_tight >= full_lock && k.drift_radius_tight - full_lock < 4.0,
             "{} vs {full_lock}",
             k.drift_radius_tight
         );
@@ -1420,8 +1422,9 @@ mod tests {
         let speed = k.max_speed;
         let side = DriftSide::Right;
         let (wide, tight) = drift_rates(&k, side, speed);
-        // A curve of 18 m at top speed.
-        let wanted = speed / 18.0;
+        // A curve of 22 m at top speed, just wider than the tightest drift (21.2 m since #170; 18 m
+        // with the 17.5 m of #30).
+        let wanted = speed / 22.0;
         assert!(wanted > wide && wanted < tight);
         let mut feather = 0.0;
         let (mut yaw, mut charge) = (0.0, 0.0);
@@ -1456,11 +1459,12 @@ mod tests {
         let k = kart();
         let t = BotTuning::default();
         let per_radian = charge_per_radian(&k, 60.0);
-        // With the default kart tuning a drift charges about 220 per radian at best (issue #30;
-        // 130 with the tighter drift of #4): an orange fits in 160° of drift, less than the big
-        // turns of Prairie Pompon (176°); the purple needs more than a half turn (≈ 230°).
-        assert!((200.0..240.0).contains(&per_radian), "{per_radian}");
-        assert!(160f32.to_radians() * per_radian >= k.mini_turbo_thresholds[1]);
+        // With the default kart tuning a drift charges about 263 per radian at best (issue #170,
+        // Max's wider drift; 217 with #30, 130 with the tighter drift of #4): an orange fits in
+        // 140° of drift (160° with #30), less than the big turns of Prairie Pompon (176°); the
+        // purple needs more than a half turn (≈ 212°).
+        assert!((245.0..285.0).contains(&per_radian), "{per_radian}");
+        assert!(140f32.to_radians() * per_radian >= k.mini_turbo_thresholds[1]);
         assert!(std::f32::consts::PI * per_radian < k.mini_turbo_thresholds[2]);
         let half_turn = std::f32::consts::PI;
         let easy = t.skill(BotDifficulty::Easy);
@@ -1813,8 +1817,10 @@ mod tests {
         let mut brain = BotBrain::new(3, &t);
         brain.drift_this_turn = true;
         brain.decided_turn = Some(hairpin);
-        // At the turn-in, at speed, wide: it hops, steering right.
-        let senses = senses_at(&line, turn_in + 4.0, -2.0, 26.0, KartState::Grounded, &[]);
+        // At the turn-in, at the speed it plans for the drift, wide: it hops, steering right.
+        // (Issue #170: 20 m/s, Max's wider drift and the bots' drift margin of 0.8; 26 m/s with
+        // the tighter drift of #30.)
+        let senses = senses_at(&line, turn_in + 4.0, -2.0, 20.0, KartState::Grounded, &[]);
         let input = drive(&mut brain, &skill, &t, &k, &line, &senses);
         assert!(input.jump_drift, "{:?}", brain.drift);
         assert!(input.steer >= HOP_STEER, "{input:?}");
@@ -1831,26 +1837,27 @@ mod tests {
             ticks: 5,
             side: Some(DriftSide::Right),
         };
-        let senses = senses_at(&line, turn_in, -1.5, 26.0, hop, &[]);
+        let senses = senses_at(&line, turn_in, -1.5, 20.0, hop, &[]);
         let input = drive(&mut brain, &skill, &t, &k, &line, &senses);
         assert!(input.jump_drift && input.steer >= HOP_STEER);
-        // Drifting with a blue charge: Normal holds on for orange...
+        // Drifting with a blue charge: Normal holds on for orange... (Issue #170: at 17 m/s, the
+        // speed Max's wider drift takes the hairpin at; 26 m/s with the tighter drift of #30.)
         let mid = turn_in + 20.0;
         let lateral = line.offset_at(mid);
         let blue = KartState::Drifting {
             side: DriftSide::Right,
-            charge: 300.0,
+            charge: k.mini_turbo_thresholds[0] + 20.0,
         };
-        let senses = senses_at(&line, mid, lateral, 26.0, blue, &[]);
+        let senses = senses_at(&line, mid, lateral, 17.0, blue, &[]);
         let input = drive(&mut brain, &skill, &t, &k, &line, &senses);
         assert!(input.jump_drift, "{:?}", brain.drift);
         assert_eq!(input.throttle, 1.0, "no braking in a drift");
         // ...and releases on the tick orange is reached.
         let orange = KartState::Drifting {
             side: DriftSide::Right,
-            charge: 570.0,
+            charge: k.mini_turbo_thresholds[1],
         };
-        let senses = senses_at(&line, mid + 0.5, lateral, 26.0, orange, &[]);
+        let senses = senses_at(&line, mid + 0.5, lateral, 17.0, orange, &[]);
         let input = drive(&mut brain, &skill, &t, &k, &line, &senses);
         assert!(!input.jump_drift);
         assert!(matches!(brain.drift, DriftPlan::Cooldown { .. }));
@@ -1862,7 +1869,7 @@ mod tests {
             target: MiniTurbo::Blue,
             turn: hairpin,
         };
-        let senses = senses_at(&line, mid, lateral, 26.0, blue, &[]);
+        let senses = senses_at(&line, mid, lateral, 17.0, blue, &[]);
         let input = drive(&mut brain, &easy, &t, &k, &line, &senses);
         assert!(!input.jump_drift);
     }

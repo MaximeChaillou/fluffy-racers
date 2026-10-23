@@ -488,3 +488,213 @@ fn the_knobs_and_the_values_by_hand_are_read_back_after_a_reload() {
     assert!(old_tunings.untouched(&old));
     assert_eq!(*old.resource::<CameraTuning>(), CameraTuning::default());
 }
+
+/// The drift of before #170: « Dérapage »'s links over the defaults of #30, as #155 made them
+/// (pattern, default, factor at 0, factor at 100, upper bound).
+const DRIFT_BEFORE_170: [(&str, &[f32], f64, f64, f64); 10] = [
+    (
+        "KartTuning.drift_radius_tight",
+        &[17.5],
+        0.75,
+        1.35,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.drift_radius_wide",
+        &[55.0],
+        0.75,
+        1.35,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.drift_slip_angle_tight",
+        &[0.3],
+        0.7,
+        1.5,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.drift_slip_angle_wide",
+        &[0.12],
+        0.7,
+        1.5,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.drift_slip_frequency",
+        &[9.0],
+        1.3,
+        0.7,
+        f64::INFINITY,
+    ),
+    ("KartTuning.drift_slip_damping", &[0.7], 1.3, 0.6, 1.0),
+    (
+        "KartTuning.drift_curve_in_time",
+        &[0.35],
+        0.6,
+        1.5,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.drift_curve_out_time",
+        &[0.3],
+        0.6,
+        1.5,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.hop_steer_response",
+        &[4.0],
+        1.3,
+        0.75,
+        f64::INFINITY,
+    ),
+    (
+        "KartTuning.mini_turbo_thresholds",
+        &[270.0, 570.0, 870.0],
+        0.8,
+        1.2,
+        f64::INFINITY,
+    ),
+];
+
+/// Acceptance criterion of #170: the defaults are the values « Dérapage » gave at 80 before
+/// (Max's drift of 2026-10-21), field by field: the same `f32` as the slider of #155 computed,
+/// to the rounding of the literal (one `f32` step at most: 0.39 is written for 0.3 × 1.3).
+/// They are the middle of the slider now (the test of the middle above holds with them), and
+/// « Dérapage » still drives exactly these values.
+#[test]
+fn the_defaults_are_the_drift_of_max_the_old_slider_at_80() {
+    let (world, tunings) = all_tunings();
+    let driven = driven_by(&tunings, Knob::Drift);
+    let patterns: Vec<&str> = LINKS
+        .iter()
+        .filter(|l| l.knob == Knob::Drift)
+        .map(|l| l.pattern)
+        .collect();
+    assert_eq!(
+        patterns,
+        DRIFT_BEFORE_170.map(|(pattern, ..)| pattern),
+        "« Dérapage » drives the same values as before"
+    );
+    let mut checked = 0;
+    for (pattern, old_defaults, low, high, max) in DRIFT_BEFORE_170 {
+        let old = super::feel::Link {
+            knob: Knob::Drift,
+            pattern,
+            low,
+            high,
+            min: if max.is_finite() {
+                0.0
+            } else {
+                f64::NEG_INFINITY
+            },
+            max,
+        };
+        let mine: Vec<_> = driven.iter().filter(|(p, ..)| old.matches(p)).collect();
+        assert_eq!(mine.len(), old_defaults.len(), "{pattern}");
+        for ((path, default, _), old_default) in mine.into_iter().zip(old_defaults) {
+            let Value::F32(at_80) = old.value(Value::F32(*old_default), 80) else {
+                panic!("{path}: not a float");
+            };
+            let Value::F32(new) = *default else {
+                panic!("{path}: not a float");
+            };
+            assert!(
+                (new - at_80).abs() <= at_80.abs() * f32::EPSILON,
+                "{path}: {new} is not the old 80, {at_80}"
+            );
+            assert_ne!(new, *old_default, "{path} did not move");
+            // What the game reads.
+            assert_eq!(value_of(&world, &tunings, path), *default, "{path}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 12);
+    assert_eq!(
+        KartTuning::default().mini_turbo_thresholds,
+        [302.4, 638.4, 974.4]
+    );
+}
+
+/// #170: the recentred slider still goes both ways, as far on each side (give or take): more
+/// than half and at most twice its amplitude on the other side, for each value it drives.
+#[test]
+fn the_recentred_drift_knob_goes_about_as_far_each_way() {
+    for link in LINKS.iter().filter(|l| l.knob == Knob::Drift) {
+        let (below, above) = ((1.0 - link.low).abs(), (link.high - 1.0).abs());
+        let ratio = above / below;
+        assert!(
+            (0.5..=2.0).contains(&ratio),
+            "{}: {} / {}",
+            link.pattern,
+            link.low,
+            link.high
+        );
+    }
+}
+
+/// #170: a text kept from before (the header of #155) does not add its « Dérapage » to the new
+/// defaults: its 80 is the new middle, so the knob goes back to the middle (any other position of
+/// it too), the values by hand stay, the other knobs read as before, and the report says so.
+/// A text of now reads its « Dérapage » as it is.
+#[test]
+fn a_drift_kept_from_before_170_goes_back_to_the_middle() {
+    let old = format!(
+        "{}\n{{\n    \"Ressenti.derapage\": 80, // de 0 à 100, milieu : 50\n    \
+         \"Ressenti.vitesse\": 60, // de 0 à 100, milieu : 50\n    \
+         \"KartTuning.drift_radius_wide\": 60.0, // curseur Dérapage : 66.55, défaut : 55.0\n}}\n",
+        super::tuning::EXPORT_HEADER_BEFORE_170
+    );
+    let (mut world, mut tunings) = all_tunings();
+    let report = tunings.import(&mut world, &old).unwrap();
+    assert_eq!(report.applied, 2, "{report:?}");
+    assert!(report.ignored.is_empty(), "{report:?}");
+    assert_eq!(
+        report.converted,
+        [
+            "Ressenti.derapage : 80 (avant #170) remis au milieu : le milieu est maintenant \
+          l'ancien 80"
+        ]
+    );
+    assert_eq!(tunings.feel.position(Knob::Drift), MIDDLE);
+    assert_eq!(tunings.feel.position(Knob::Speed), 60);
+    let kart = world.resource::<KartTuning>().clone();
+    let defaults = KartTuning::default();
+    assert_eq!(kart.drift_radius_wide, 60.0);
+    assert_eq!(kart.drift_radius_tight, defaults.drift_radius_tight);
+    assert_eq!(kart.drift_slip_angle_tight, defaults.drift_slip_angle_tight);
+    assert_eq!(kart.mini_turbo_thresholds, defaults.mini_turbo_thresholds);
+    // Written again (as the startup does), it reads the same and is converted no more.
+    let text = tunings.export(&world);
+    assert!(text.starts_with(super::tuning::EXPORT_HEADER), "{text}");
+    assert!(!text.contains("derapage"), "{text}");
+    let (mut again, mut again_tunings) = all_tunings();
+    let report = again_tunings.import(&mut again, &text).unwrap();
+    assert!(report.converted.is_empty() && report.ignored.is_empty());
+    assert_eq!(values(&again, &again_tunings), values(&world, &tunings));
+
+    // Another position of before: the middle too.
+    let (mut world, mut tunings) = all_tunings();
+    let report = tunings
+        .import(&mut world, &old.replace("derapage\": 80", "derapage\": 30"))
+        .unwrap();
+    assert_eq!(report.converted.len(), 1, "{report:?}");
+    assert!(tunings.feel.position(Knob::Drift) == MIDDLE);
+    assert_eq!(
+        world.resource::<KartTuning>().drift_radius_tight,
+        defaults.drift_radius_tight
+    );
+
+    // A text of now: its 80 is an 80 of the recentred slider.
+    let now = old.replace(
+        super::tuning::EXPORT_HEADER_BEFORE_170,
+        super::tuning::EXPORT_HEADER,
+    );
+    let (mut world, mut tunings) = all_tunings();
+    let report = tunings.import(&mut world, &now).unwrap();
+    assert_eq!(report.applied, 3);
+    assert!(report.converted.is_empty());
+    assert_eq!(tunings.feel.position(Knob::Drift), 80);
+    assert!(world.resource::<KartTuning>().drift_radius_tight > defaults.drift_radius_tight);
+}

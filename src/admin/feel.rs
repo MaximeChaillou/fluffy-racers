@@ -23,6 +23,12 @@ pub const KNOB_MAX: u8 = 100;
 /// The first part of a knob's entry in the text of « Copier mes réglages »: `"Ressenti.derapage"`.
 pub const FEEL_PREFIX: &str = "Ressenti.";
 
+/// The knobs whose middle moved, with the position of before that is their middle now: since
+/// #170, « Dérapage » at 50 gives what 80 gave (the drift Max chose on 2026-10-21, the new
+/// defaults). A text kept from before (`tuning::EXPORT_HEADER_BEFORE_170`) puts them back in the
+/// middle rather than add its position to the new defaults (an 80 would count twice).
+pub const RECENTRED: &[(Knob, u8)] = &[(Knob::Drift, 80)];
+
 /// One feeling of the « Ressenti » section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Knob {
@@ -215,16 +221,22 @@ use Knob::*;
 /// the value grow along the slider; the other way round, shrink.
 pub const LINKS: &[Link] = &[
     // --- Dérapage: tight and lively (0) to wide and slippery (100) -------------------------------
-    link(Drift, "KartTuning.drift_radius_tight", 0.75, 1.35),
-    link(Drift, "KartTuning.drift_radius_wide", 0.75, 1.35),
-    link(Drift, "KartTuning.drift_slip_angle_tight", 0.7, 1.5),
-    link(Drift, "KartTuning.drift_slip_angle_wide", 0.7, 1.5),
-    link(Drift, "KartTuning.drift_slip_frequency", 1.3, 0.7),
-    bounded(Drift, "KartTuning.drift_slip_damping", 1.3, 0.6, 1.0),
-    link(Drift, "KartTuning.drift_curve_in_time", 0.6, 1.5),
-    link(Drift, "KartTuning.drift_curve_out_time", 0.6, 1.5),
+    // Recentred by #170: the middle is now what 80 gave (Max's drift, the new defaults). The
+    // tight side keeps the factors of #155; the wide side, which started from wider values, goes
+    // a little less far (× 1.2 instead of × 1.35 on the radii...) so that its end stays within
+    // the playable bounds of `feel_tests` (wide radius ≤ 80 m, slip angle ≤ 0.5 rad, damping
+    // ≥ 0.3). Before: radii 0.75 / 1.35, angles 0.7 / 1.5, frequency 1.3 / 0.7, damping
+    // 1.3 / 0.6, curve 0.6 / 1.5, hop 1.3 / 0.75, thresholds 0.8 / 1.2.
+    link(Drift, "KartTuning.drift_radius_tight", 0.75, 1.2),
+    link(Drift, "KartTuning.drift_radius_wide", 0.75, 1.2),
+    link(Drift, "KartTuning.drift_slip_angle_tight", 0.7, 1.25),
+    link(Drift, "KartTuning.drift_slip_angle_wide", 0.7, 1.25),
+    link(Drift, "KartTuning.drift_slip_frequency", 1.3, 0.75),
+    bounded(Drift, "KartTuning.drift_slip_damping", 1.3, 0.65, 1.0),
+    link(Drift, "KartTuning.drift_curve_in_time", 0.6, 1.25),
+    link(Drift, "KartTuning.drift_curve_out_time", 0.6, 1.25),
     link(Drift, "KartTuning.hop_steer_response", 1.3, 0.75),
-    link(Drift, "KartTuning.mini_turbo_thresholds", 0.8, 1.2),
+    link(Drift, "KartTuning.mini_turbo_thresholds", 0.8, 1.15),
     // --- Vitesse: top speed and acceleration, the thrown items with them -------------------------
     link(Speed, "KartTuning.max_speed", 0.8, 1.2),
     link(Speed, "KartTuning.time_to_max_speed", 1.25, 0.75),
