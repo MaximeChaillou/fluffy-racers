@@ -230,15 +230,87 @@ impl KartParts {
 
 /// Every part from the kart model (the soap box and the marshmallow tyres) and the tractor
 /// tyre's file (`None`: missing, the marshmallow tyres stand in).
+///
+/// Issue #176: each set of wheels has its band painted across it ([`paint_band`],
+/// [`WHEEL_BANDS`]), so that it shows its turn.
 pub fn kart_parts(kart: &KartModelData, tractor: Option<&BakedModel>) -> KartParts {
     let marshmallow = marshmallow(kart);
     let tractor = tractor
         .and_then(tractor_wheels)
         .unwrap_or_else(|| marshmallow.clone());
+    let mut wheels = [spools(), marshmallow, tractor];
+    for (set, color) in wheels.iter_mut().zip(WHEEL_BANDS) {
+        paint_band(&mut set.mesh, color);
+    }
     KartParts {
         bodies: [wicker_basket(), soap_box(kart), bathtub()],
-        wheels: [spools(), marshmallow, tractor],
+        wheels,
         feather: feather(),
+    }
+}
+
+// --- The band of the wheels (issue #176) --------------------------------------------------------
+
+/// Issue #176: the color of the band across each set of wheels, by [`WheelLook::index`] (linear):
+/// a blue thread on the pink spools, a strawberry stripe on the marshmallow tyres, a yellow one on
+/// the tractor tyres.
+pub const WHEEL_BANDS: [[f32; 4]; 3] = [
+    [0.05, 0.2, 0.85, 1.0],
+    [1.0, 0.32, 0.48, 1.0],
+    [1.0, 0.62, 0.03, 1.0],
+];
+
+/// How far around the axle the band reaches on each side of where it starts (rad): the faces of
+/// the mesh that overlap it take its color.
+pub const BAND_HALF_ANGLE: f32 = 0.12;
+
+/// Where the band is around the axle (rad from the top, +Y, toward +Z): a little off any corner,
+/// so that it falls inside a column of faces.
+const BAND_AT: f32 = 0.05;
+
+/// The angle of `p` around the X axis, from `BAND_AT` (rad, -π to π), and how far it is from it.
+fn around_axle(p: Vec3) -> (f32, f32) {
+    let angle = p.z.atan2(p.y) - BAND_AT;
+    let wrapped =
+        (angle + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    (wrapped, Vec2::new(p.y, p.z).length())
+}
+
+/// Issue #176: paints a band of `color` across a wheel turning around the X axis (its tread, its
+/// faces from the hub to the rim): every face that overlaps the band around the axle
+/// ([`BAND_HALF_ANGLE`] on each side) takes its color, on corners of its own (its neighbours keep
+/// theirs). One band only: the wheel looks different at each angle of its turn (it never seems
+/// to turn backward, as stripes all around would at speed). A face across the whole face of the
+/// wheel (more than a quarter turn) is left as it is.
+pub fn paint_band(mesh: &mut MeshData, color: [f32; 4]) {
+    if mesh.colors.len() != mesh.positions.len() || mesh.normals.len() != mesh.positions.len() {
+        return;
+    }
+    let triangles = mesh.indices.len() / 3;
+    for t in 0..triangles {
+        let corners = [0, 1, 2].map(|k| mesh.indices[3 * t + k] as usize);
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for &c in &corners {
+            let (angle, radius) = around_axle(Vec3::from(mesh.positions[c]));
+            // A corner on the axle (the middle of a face) is at every angle.
+            if radius > 1e-4 {
+                lo = lo.min(angle);
+                hi = hi.max(angle);
+            }
+        }
+        if lo > hi || hi - lo > std::f32::consts::FRAC_PI_2 {
+            continue;
+        }
+        if lo > BAND_HALF_ANGLE || hi < -BAND_HALF_ANGLE {
+            continue;
+        }
+        for (k, &c) in corners.iter().enumerate() {
+            let new = mesh.positions.len() as u32;
+            mesh.positions.push(mesh.positions[c]);
+            mesh.normals.push(mesh.normals[c]);
+            mesh.colors.push(color);
+            mesh.indices[3 * t + k] = new;
+        }
     }
 }
 
@@ -866,14 +938,16 @@ pub fn spools() -> WheelData {
     let wood = srgb(0.87, 0.69, 0.46);
     let edge = srgb(0.72, 0.53, 0.33);
     let dark = srgb(0.3, 0.2, 0.13);
-    let thread = [srgb(0.96, 0.47, 0.62), srgb(0.86, 0.36, 0.52)];
+    // Issue #176: one pink all around (stripes all around would seem to turn backward at speed):
+    // its band shows the turn (`paint_band`).
+    let thread = srgb(0.96, 0.47, 0.62);
     let mut mesh = MeshData::default();
-    lathe(&mut mesh, &profile, SPOOL_SEGMENTS, |i, j| match i {
+    lathe(&mut mesh, &profile, SPOOL_SEGMENTS, |i, _| match i {
         0 | 9 => dark,
         1 | 8 => wood,
         2 | 7 => edge,
         3 | 6 => wood,
-        _ => thread[j % 2],
+        _ => thread,
     });
     WheelData {
         mesh,
@@ -1195,6 +1269,55 @@ mod tests {
         }
         let pink = srgb(0.96, 0.47, 0.62);
         assert!(mesh.colors.contains(&pink));
+    }
+
+    /// Issue #176: the band of a set of wheels: across its tread and its faces (from its hub to
+    /// its rim), around one angle only (so the wheel looks different at each angle of its turn),
+    /// its faces still facing out, the rest of the wheel untouched.
+    #[test]
+    fn a_band_across_the_wheel_shows_its_turn() {
+        let before = spools();
+        let mut banded = before.clone();
+        let band = WHEEL_BANDS[WheelLook::Spools.index()];
+        paint_band(&mut banded.mesh, band);
+        let total = triangles(&banded.mesh).count();
+        assert_eq!(total, triangles(&before.mesh).count());
+        let painted: Vec<([Vec3; 3], Vec3)> = banded
+            .mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(triangles(&banded.mesh))
+            .filter(|(t, _)| t.iter().all(|i| banded.mesh.colors[*i as usize] == band))
+            .map(|(_, triangle)| triangle)
+            .collect();
+        assert!(
+            !painted.is_empty() && painted.len() * 6 < total,
+            "{} of {total}",
+            painted.len()
+        );
+        let (mut tread, mut outer) = (false, false);
+        for (corners, n) in &painted {
+            let middle = (corners[0] + corners[1] + corners[2]) / 3.0;
+            let (angle, radius) = around_axle(middle);
+            if radius > 0.02 {
+                assert!(angle.abs() < 0.6, "around one angle: {angle}");
+            }
+            tread |= n.yz().length() > 0.9 && radius > SPOOL_THREAD - 0.01;
+            outer |= n.x < -0.99 && (middle.x + SPOOL_WIDTH).abs() < 1e-4;
+        }
+        assert!(tread && outer, "across the tread and the outer face");
+        // Nothing else changes: the same shape, the band's corners its own.
+        let (lo, hi) = bounds(&banded.mesh);
+        assert_eq!((lo, hi), bounds(&before.mesh));
+        assert!(before.mesh.colors.iter().all(|c| *c != band));
+        assert!(banded.mesh.colors.contains(&srgb(0.96, 0.47, 0.62)));
+        // A mesh without its colors is left as it is.
+        let mut bare = before.mesh.clone();
+        bare.colors.clear();
+        paint_band(&mut bare, band);
+        assert!(bare.colors.is_empty() && bare.positions.len() == before.mesh.positions.len());
     }
 
     /// The feather: across the kart like the pillowcase (4.5 m), over the driver (its back vane

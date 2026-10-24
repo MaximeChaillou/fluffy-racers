@@ -9,7 +9,7 @@ use bevy::prelude::*;
 
 use super::cues::SparkStyle;
 use super::pool::{Curve, Facing, Paint, Particle, ParticlePool, Shape};
-use super::tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxTuning, WorldVfx};
+use super::tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxTuning, WheelVfx, WorldVfx};
 use crate::track::BreakableKind;
 
 /// Where the sparks leave a rear wheel (the right one; the left one at −x), in the kart's frame
@@ -348,6 +348,88 @@ pub fn drift_smoke(
         puff.stretch = pool.rng.range(1.0, 1.5);
         puff.glow = drift.smoke_opacity * pool.rng.range(0.8, 1.1);
         puff.tint = drift.smoke_tint;
+        puff.tint_paint = ground;
+        puff.variant = (pool.rng.next_u32() & 1) as u8;
+        pool.spawn(puff);
+    }
+}
+
+/// Issue #176: the smoke of a back wheel spinning (`side`: −1 left, 1 right; on the spot on the
+/// grid, or setting off): soft puffs out of where the tyre rubs the road, rolled back and up off
+/// it, spreading and thinning out, the color of the ground under the wheel (`ground`, as the
+/// drift's smoke).
+pub fn spin_smoke(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    side: f32,
+    ground: Paint,
+    wheels: &WheelVfx,
+    count: u32,
+    dt: f32,
+) {
+    let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.05, -0.05));
+    let up = frame.up();
+    for i in 0..count {
+        let mut puff = Particle::new(
+            Shape::Haze,
+            Paint::Smoke,
+            along(at, frame.velocity * dt, i, count),
+            wheels.smoke_life * pool.rng.range(0.8, 1.25),
+            wheels.smoke_size * pool.rng.range(0.7, 1.2),
+        );
+        puff.curve = Curve::Puff;
+        puff.facing = Facing::Camera;
+        // Thrown back off the tyre, low, a little out of the wheel and up.
+        let back = frame.direction(Vec3::new(side * 0.35, 0.0, 1.0));
+        puff.velocity = back * wheels.smoke_push * pool.rng.range(0.6, 1.3)
+            + up * wheels.smoke_rise * pool.rng.range(0.6, 1.3);
+        puff.carrier = frame.velocity * 0.2;
+        puff.drag = 2.2;
+        puff.angle = pool.rng.unit() * TAU;
+        puff.spin = pool.rng.signed() * 1.8;
+        puff.stretch = pool.rng.range(1.0, 1.4);
+        puff.glow = wheels.smoke_opacity * pool.rng.range(0.8, 1.1);
+        puff.tint = wheels.smoke_tint;
+        puff.tint_paint = ground;
+        puff.variant = (pool.rng.next_u32() & 1) as u8;
+        pool.spawn(puff);
+    }
+}
+
+/// Issue #176: the cloud of a standing start, out of both back wheels (`count` puffs, `size`
+/// big, living `life` s, blown back at `push` m/s and spreading out to the sides): at GO by the
+/// start's quality, smaller when a kart sets off again from a full stop. The color of the ground
+/// under the wheels (`ground`).
+pub fn start_cloud(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    ground: Paint,
+    (count, size, life, push): (u32, f32, f32, f32),
+    wheels: &WheelVfx,
+) {
+    let up = frame.up();
+    for k in 0..count {
+        let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+        let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.1, 0.1));
+        let out = pool.rng.range(0.1, 1.0);
+        let back = frame.direction(Vec3::new(side * out, 0.0, 1.0));
+        let mut puff = Particle::new(
+            Shape::Haze,
+            Paint::Smoke,
+            at + pool.rng.direction() * 0.2,
+            life * pool.rng.range(0.75, 1.25),
+            size * pool.rng.range(0.7, 1.3),
+        );
+        puff.curve = Curve::Puff;
+        puff.facing = Facing::Camera;
+        puff.velocity = back * push * pool.rng.range(0.4, 1.2) + up * pool.rng.range(0.4, 1.4);
+        puff.carrier = frame.velocity * 0.1;
+        puff.drag = 2.5;
+        puff.angle = pool.rng.unit() * TAU;
+        puff.spin = pool.rng.signed() * 1.2;
+        puff.stretch = pool.rng.range(1.0, 1.5);
+        puff.glow = wheels.smoke_opacity * pool.rng.range(0.9, 1.2);
+        puff.tint = wheels.smoke_tint;
         puff.tint_paint = ground;
         puff.variant = (pool.rng.next_u32() & 1) as u8;
         pool.spawn(puff);

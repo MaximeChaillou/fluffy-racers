@@ -1119,3 +1119,280 @@ fn no_kart_keeps_its_stars_longer_than_the_rule() {
     assert!(shown_frames > 0, "someone saw stars");
     assert!(rings <= 12 * impact.dizzy_stars, "{rings} stars made");
 }
+
+/// Issue #176: the visual of `kart`, its pivot and its wheels (by index).
+fn wheels_of(app: &mut App, kart: Entity) -> (Entity, [Entity; 4]) {
+    let world = app.world_mut();
+    let pivot = world
+        .query::<(Entity, &crate::kart::KartBodyPivot)>()
+        .iter(world)
+        .find(|(_, p)| p.body == kart)
+        .unwrap()
+        .0;
+    let mut wheels = [Entity::PLACEHOLDER; 4];
+    for (entity, wheel, child_of) in world
+        .query::<(Entity, &crate::kart::WheelVisual, &ChildOf)>()
+        .iter(world)
+    {
+        if child_of.parent() == pivot {
+            wheels[wheel.index] = entity;
+        }
+    }
+    assert!(wheels.iter().all(|w| *w != Entity::PLACEHOLDER));
+    let root = world.get::<ChildOf>(pivot).unwrap().parent();
+    (root, wheels)
+}
+
+/// Issue #176: a wheel's turn rate (rad/s), its radius, its rotation on the kart.
+fn wheel(app: &App, entity: Entity) -> (f32, f32, Quat, crate::kart::WheelVisual) {
+    let world = app.world();
+    let visual = *world.get::<crate::kart::WheelVisual>(entity).unwrap();
+    let rotation = world.get::<Transform>(entity).unwrap().rotation;
+    (visual.roll_rate, visual.radius, rotation, visual)
+}
+
+/// Issue #176 acceptance: on the keyboard, the wheels roll at the kart's speed, the right way (the
+/// top of each wheel goes forward), shown at most `max_spin` fast; setting off, the back tyres spin
+/// faster than the kart goes; the front wheels steer with the stick, the back ones never.
+#[test]
+fn the_wheels_turn_with_the_kart_and_steer() {
+    let mut app = vfx_app(TrackChoice::TestGround, 0);
+    let kart = player(&mut app);
+    let (_, wheels) = wheels_of(&mut app, kart);
+    run(&mut app, 60);
+    for w in wheels {
+        assert!(wheel(&app, w).0.abs() < 0.5, "still");
+    }
+    let tuning = app.world().resource::<VfxTuning>().wheels.clone();
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    let mut spun = false;
+    let mut followed = 0;
+    for frame in 0..150 {
+        let before: Vec<f32> = wheels.iter().map(|w| wheel(&app, *w).3.roll).collect();
+        app.update();
+        let speed = app.world().get::<KartVfx>(kart).unwrap().forward_speed;
+        for (i, w) in wheels.iter().enumerate() {
+            let (rate, radius, rotation, visual) = wheel(&app, *w);
+            // The rotation shown is the wheel rolled (and steered: straight ahead here).
+            let expected = wheel_rotation(
+                visual.rest,
+                if i % 2 == 0 { -1.0 } else { 1.0 },
+                0.0,
+                0.0,
+                visual.roll,
+            );
+            assert!(
+                rotation.dot(expected).abs() > 1.0 - 1e-5,
+                "wheel {i}: {rotation} {expected} {visual:?} {}",
+                app.world().get::<KartVfx>(kart).unwrap().steer_shown
+            );
+            // It turned by its rate over the frame.
+            let turned = (visual.roll - before[i] - rate * DT).rem_euclid(std::f32::consts::TAU);
+            assert!(
+                turned < 1e-3 || turned > std::f32::consts::TAU - 1e-3,
+                "{turned}"
+            );
+            if i < 2 {
+                // The front wheels roll at the kart's speed (or at most `max_spin`).
+                let roll = (-speed / radius).clamp(-tuning.max_spin, tuning.max_spin);
+                assert!((rate - roll).abs() < 1e-3, "front {i}: {rate} {roll}");
+                if speed > 3.0 && rate > -tuning.max_spin + 0.1 {
+                    followed += 1;
+                }
+            } else if frame < 20 && speed > 0.2 {
+                // Setting off, the back tyres spin faster than the kart goes.
+                spun |= -rate * radius > speed + 1.0;
+            }
+            if speed > 1.0 {
+                assert!(rate < 0.0, "forward: the top of the wheel goes forward");
+                assert!(rate.abs() <= tuning.max_spin + 1e-3);
+            }
+        }
+    }
+    assert!(spun, "the back tyres spin setting off");
+    assert!(followed > 20, "{followed}");
+    let speed = app.world().get::<KartVfx>(kart).unwrap().forward_speed;
+    assert!(speed > 15.0, "{speed}");
+    // At speed, the band never turns more than half a turn in a frame.
+    for w in wheels {
+        assert!(wheel(&app, w).0.abs() * DT < std::f32::consts::PI);
+    }
+    // The stick to the left: the front wheels turn to the left, the back ones stay straight.
+    hold_keys(&mut app, &[KeyCode::ArrowUp, KeyCode::ArrowLeft]);
+    run(&mut app, 20);
+    for (i, w) in wheels.iter().enumerate() {
+        let (_, _, rotation, visual) = wheel(&app, *w);
+        let rolled = wheel_rotation(visual.rest, 1.0, 0.0, 0.0, visual.roll);
+        // Its axle (the rolled wheel's X), turned toward the left at the front.
+        let axle = rotation * (rolled.inverse() * Vec3::X);
+        if i < 2 {
+            assert!(axle.z < -0.3, "front {i} steers left: {axle}");
+        } else {
+            assert!(axle.z.abs() < 1e-3, "back {i}: {axle}");
+        }
+    }
+    let steer = app.world().get::<KartVfx>(kart).unwrap().steer_shown;
+    assert!((steer - tuning.steer_angle).abs() < 0.05, "{steer}");
+}
+
+/// Issue #176: what a start throws, frame by frame, from the first frame of the race (the grid):
+/// the smoke of the tyres spinning on the spot during the countdown, the frames the kart's visual
+/// shook, the back wheels' fastest turn, and the cloud at GO (the big puffs of its first frames).
+#[derive(Debug, Default)]
+struct StartLog {
+    grid_smoke: usize,
+    shaken: usize,
+    back_spin: f32,
+    front_spin: f32,
+    go_cloud: usize,
+    soot: usize,
+}
+
+/// Prairie Pompon alone, the countdown played: the accelerator pressed when the countdown shows
+/// `press_at` (`Some(3)`: before the « 2 », the engine stalls; `Some(2)`: on it, a rocket start;
+/// `Some(1)`, 20 ticks after the « 1 »: a normal start; `None`: never), held up to GO and after.
+fn a_start(press_at: Option<u32>) -> StartLog {
+    let mut app = vfx_app(TrackChoice::default(), 0);
+    for _ in 0..600 {
+        if app.world().get_resource::<Race>().is_some() {
+            break;
+        }
+        app.update();
+    }
+    let kart = player(&mut app);
+    let (root, wheels) = wheels_of(&mut app, kart);
+    // The cloud's puffs (at least 70 % of `go_size`), not the tyres' smoke (at most 120 % of
+    // `smoke_size`).
+    let look = app.world().resource::<VfxTuning>().wheels.clone();
+    let big = look.go_size * 0.69;
+    assert!(look.smoke_size * 1.2 < big);
+    let mut log = StartLog::default();
+    let mut since_one = 0;
+    for _ in 0..1200 {
+        let (number, ticks) = {
+            let race = app.world().resource::<Race>();
+            (race.flow.countdown_number(&race.timings), race.race_ticks())
+        };
+        if number == Some(1) {
+            since_one += 1;
+        }
+        let press = match press_at {
+            Some(1) => since_one > 20,
+            Some(at) => number.is_some_and(|n| n <= at) || ticks > 0,
+            None => false,
+        };
+        if press {
+            hold_keys(&mut app, &[KeyCode::ArrowUp]);
+        }
+        app.update();
+        let ticks = app.world().resource::<Race>().race_ticks();
+        let new = new_particles(&app);
+        let smoke = new
+            .iter()
+            .filter(|p| p.shape == Shape::Haze && p.paint == Paint::Smoke);
+        if ticks == 0 {
+            log.grid_smoke += smoke.count();
+            // The visual where the kart is (still on the grid), but for its shakes.
+            let world = app.world();
+            let shown = world.get::<Transform>(root).unwrap().translation;
+            let body = world.get::<Transform>(kart).unwrap().translation;
+            if shown.distance(body) > 2e-3 {
+                log.shaken += 1;
+            }
+            for (i, w) in wheels.iter().enumerate() {
+                let spin = wheel(&app, *w).0.abs();
+                if i < 2 {
+                    log.front_spin = log.front_spin.max(spin);
+                } else {
+                    log.back_spin = log.back_spin.max(spin);
+                }
+            }
+        } else if ticks <= 3 {
+            log.go_cloud += smoke.filter(|p| p.size > big).count();
+            log.soot += new.iter().filter(|p| p.paint == Paint::Soot).count();
+        } else {
+            break;
+        }
+    }
+    log
+}
+
+/// Issue #176 acceptance (GD § 4): during the countdown, the accelerator down spins the back
+/// tyres on the spot (the front wheels stay still): they smoke and the kart shakes a little;
+/// nothing without it. At GO, a cloud by the start's quality: the biggest for a rocket start, a
+/// smaller one for a normal start, a splutter for a stall (with its soot), none without the
+/// accelerator.
+#[test]
+fn the_tyres_spin_on_the_grid_and_the_start_has_its_cloud() {
+    let tuning = WheelVfx::default();
+    let rocket = a_start(Some(2));
+    let normal = a_start(Some(1));
+    let stall = a_start(Some(3));
+    let none = a_start(None);
+    println!("rocket {rocket:?}\nnormal {normal:?}\nstall {stall:?}\nnone {none:?}");
+    // On the grid: two seconds of the accelerator down (from the « 2 »).
+    for log in [&rocket, &stall] {
+        assert!(log.grid_smoke > 40, "{log:?}");
+        assert!(log.shaken > 60, "{log:?}");
+        assert!(log.back_spin > 25.0, "{log:?}");
+        assert!(log.front_spin < 1.0, "{log:?}");
+    }
+    assert!(stall.grid_smoke > rocket.grid_smoke, "pressed longer");
+    assert!(normal.grid_smoke > 0 && normal.grid_smoke < rocket.grid_smoke);
+    assert_eq!((none.grid_smoke, none.shaken), (0, 0), "{none:?}");
+    assert!(none.back_spin < 1.0, "{none:?}");
+    // At GO, by the start's quality.
+    assert!(
+        rocket.go_cloud >= tuning.go_rocket_puffs as usize,
+        "{rocket:?}"
+    );
+    assert!(
+        normal.go_cloud >= tuning.go_normal_puffs as usize && normal.go_cloud < rocket.go_cloud,
+        "{normal:?}"
+    );
+    assert!(
+        stall.go_cloud >= tuning.go_stall_puffs as usize && stall.go_cloud < normal.go_cloud,
+        "{stall:?}"
+    );
+    assert!(stall.soot > 0, "{stall:?}");
+    assert_eq!(none.go_cloud, 0, "{none:?}");
+}
+
+/// Issue #176: setting off again from a full stop, the tyres spin and smoke too, more discreetly
+/// than on the grid (a smaller puff, a short spin), then nothing once the kart is going.
+#[test]
+fn setting_off_from_a_stop_smokes_more_discreetly() {
+    let mut app = vfx_app(TrackChoice::TestGround, 0);
+    let kart = player(&mut app);
+    run(&mut app, 60);
+    let smoke = |app: &App| {
+        new_particles(app)
+            .iter()
+            .filter(|p| p.shape == Shape::Haze && p.paint == Paint::Smoke)
+            .count()
+    };
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    let mut first = 0;
+    for _ in 0..60 {
+        app.update();
+        first += smoke(&app);
+    }
+    let mut later = 0;
+    for _ in 0..60 {
+        app.update();
+        later += smoke(&app);
+    }
+    let speed = app.world().get::<KartVfx>(kart).unwrap().forward_speed;
+    let grid = a_start(Some(2));
+    println!(
+        "setting off: {first} puffs in its first second, {later} in the next; the grid's: {grid:?}"
+    );
+    let tuning = WheelVfx::default();
+    assert!(first >= tuning.launch_puffs as usize, "{first}");
+    // The grid's smoke in a second (two seconds from the « 2 »), and its cloud at GO.
+    assert!(
+        first < grid.grid_smoke / 2 + grid.go_cloud,
+        "{first} {grid:?}"
+    );
+    assert_eq!(later, 0, "going: no more smoke ({speed} m/s)");
+}

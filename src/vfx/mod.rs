@@ -23,6 +23,11 @@
 //!   sparks, the glider's wind off its wing tips.
 //! - **The water** (GD § 10, issue #130): a splash going in and out of a lake (a crown of drops, a
 //!   ring and puffs of foam on the water), the wake of foam of a kart at its surface.
+//! - **The wheels and the standing start** (GD § 4 and 14, issue #176, `wheels.rs`): every wheel
+//!   rolls at its kart's speed (its band shows the turn: `kart::parts::paint_band`), the front
+//!   ones steer; the back tyres spin on the spot on the grid with the accelerator down (smoke,
+//!   dust, little shakes, the engine revs: `audio`), setting off and with a rocket start; at GO a
+//!   cloud by the start's quality; a smaller one when a kart sets off again from a full stop.
 //!
 //! **Fluidity first**: a fixed pool of [`ParticlePool::SLOTS`] slots (`pool.rs`), each with its
 //! entity made once at startup, sharing 4 meshes and 24 materials (issue #174: what glows and
@@ -43,6 +48,7 @@ mod emit;
 mod pool;
 mod systems;
 mod tuning;
+mod wheels;
 
 #[cfg(test)]
 mod alloc_tests;
@@ -62,7 +68,11 @@ pub use systems::{
     VfxQueue, WorldBurst, star_mesh,
 };
 pub use tuning::{
-    BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WorldVfx, ground_dust, road_dust,
+    BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WheelVfx, WorldVfx, ground_dust, road_dust,
+};
+pub use wheels::{
+    Standstill, Start, WheelDrive, go_puffs, roll_rate, spin_share, steer_angle, steer_from_yaw,
+    target_slip, wheel_rotation,
 };
 
 use bevy::prelude::*;
@@ -94,6 +104,13 @@ impl Plugin for VfxPlugin {
             .init_resource::<VfxQueue>()
             .init_resource::<FovKick>()
             .add_systems(Startup, systems::create_vfx)
+            // Issue #176: what the drivers press, before the race holds the karts on the grid.
+            .add_systems(
+                FixedUpdate,
+                systems::watch_the_drivers
+                    .after(crate::kart::KartSystems::Input)
+                    .before(crate::race::RaceSystems::Gate),
+            )
             .add_systems(
                 FixedPostUpdate,
                 (
@@ -115,6 +132,8 @@ impl Plugin for VfxPlugin {
                     systems::show_particles,
                     systems::show_dizzy_stars,
                     systems::tint_flames,
+                    // Issue #176: the wheels, on top of where the kart's visual puts them.
+                    systems::spin_wheels.after(crate::kart::place_wheels),
                 )
                     .chain()
                     .in_set(VfxSystems::Show)

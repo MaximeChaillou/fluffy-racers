@@ -347,6 +347,15 @@ pub const LINKS: &[Link] = &[
     link(Effects, "VfxTuning.world.splash_drops", 0.2, 1.6),
     link(Effects, "VfxTuning.world.splash_foam", 0.2, 1.6),
     link(Effects, "VfxTuning.world.wake_rate", 0.2, 1.6),
+    // Issue #176: the tyres spinning at a standing start, the cloud at GO, the puff setting off
+    // again from a stop, the kart's little shakes on the grid.
+    link(Effects, "VfxTuning.wheels.smoke_rate", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.dust_rate", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.go_rocket_puffs", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.go_normal_puffs", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.go_stall_puffs", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.launch_puffs", 0.2, 1.6),
+    link(Effects, "VfxTuning.wheels.shake", 0.0, 2.0),
     link(Effects, "VfxTuning.impact.shake_bump", 0.0, 2.0),
     link(Effects, "VfxTuning.impact.shake_wall", 0.0, 2.0),
     link(Effects, "VfxTuning.impact.shake_hit", 0.0, 2.0),

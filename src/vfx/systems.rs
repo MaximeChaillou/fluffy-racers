@@ -36,6 +36,10 @@ use super::cues::{
 use super::emit::{self, KartFrame, take};
 use super::pool::{Batch, Paint, ParticlePool, Shape};
 use super::tuning::{VfxColors, VfxTuning, ground_dust, road_dust};
+use super::wheels::{
+    Standstill, WheelDrive, follow, go_puffs, roll_rate, spin_share, steer_angle, steer_from_yaw,
+    target_slip, wheel_rotation,
+};
 use crate::camera::{CameraShake, ChaseCamera, FixedView};
 use crate::croquettes::{CroquettePickedUp, CroquettesLost};
 use crate::interactions::Paw;
@@ -43,9 +47,9 @@ use crate::interpolation::InterpolatedFrom;
 use crate::items::{Blast, BoxBroken, ItemSlots, Slot};
 use crate::kart::{
     Boost, BoostFlame, DeflatedScale, DriftMotion, DriftSpark, DriverVisual, ItemEffects, Kart,
-    KartAssists, KartBodyPivot, KartBump, KartEnvironment, KartState, KartTuning, KartWheels,
-    MiniTurbo, PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity, flame_size,
-    slip_pose,
+    KartAssists, KartBodyPivot, KartBump, KartEnvironment, KartInput, KartState, KartTuning,
+    KartWheels, MiniTurbo, PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity,
+    WHEEL_ANCHORS, WheelVisual, flame_size, slip_pose,
 };
 use crate::level::LoadLevel;
 use crate::menu::MainMenu;
@@ -66,7 +70,10 @@ const WAKE: usize = 10;
 /// Issue #174: the drift's flames and embers, at each rear wheel.
 const FLAMES: usize = 11;
 const DRIFT_EMBERS: usize = 13;
-const EMITTERS: usize = 15;
+/// Issue #176: the smoke and the dust of the back wheels spinning.
+const SPIN_SMOKE: usize = 15;
+const SPIN_DUST: usize = 17;
+const EMITTERS: usize = 19;
 /// The most stars over a head (`ImpactVfx::dizzy_stars`).
 pub const MAX_DIZZY_STARS: usize = 5;
 /// A kart's visual that moves farther than this in a frame jumped (a pelican, a restart): its
@@ -200,6 +207,22 @@ pub struct KartVfx {
     /// pop), and how high it jumps.
     hop: f32,
     hop_height: f32,
+    /// Issue #176: its driver's accelerator and stick as pressed, before the race holds the karts
+    /// on the grid (`watch_the_drivers`, each tick; none for a kart driven elsewhere), and whether
+    /// it is held there (before GO).
+    pub throttle: f32,
+    pub steer: f32,
+    driven: bool,
+    pub held: bool,
+    /// Issue #176: its speed along its heading (m/s, measured on its visual), how fast its back
+    /// tyres spin on top of it (m/s), its front wheels' angle (rad, to the left), how it was
+    /// turned on the last frame (its yaw rate, for a kart driven elsewhere), and how long it has
+    /// stood still.
+    pub forward_speed: f32,
+    pub slip: f32,
+    pub steer_shown: f32,
+    turned: Option<Quat>,
+    standstill: Standstill,
 }
 
 /// The field of view's extra of the camera's kart (degrees): while it boosts, and the punch of a
@@ -629,6 +652,22 @@ pub(super) fn remember_karts(
     }
 }
 
+/// Issue #176, each tick, between the drivers and the race's gate (which holds the karts still
+/// before GO): what each driver presses, so that a kart revs and spins its wheels on the grid.
+pub(super) fn watch_the_drivers(
+    race: Option<Res<Race>>,
+    mut karts: Query<(&KartInput, &mut KartVfx)>,
+) {
+    let held = race.is_some_and(|race| !race.started());
+    for (input, mut vfx) in &mut karts {
+        let vfx = vfx.bypass_change_detection();
+        vfx.throttle = input.throttle;
+        vfx.steer = input.steer;
+        vfx.driven = true;
+        vfx.held = held;
+    }
+}
+
 type KartView = (
     Entity,
     &'static mut KartVfx,
@@ -725,6 +764,8 @@ fn snapshot(
         impact_dir,
         struck: paw.map_or(0, |p| p.struck_count),
         underwater: environment.underwater,
+        // Issue #176: its driver's, from its memory (`watch_karts`).
+        throttle: 0.0,
     }
 }
 
@@ -755,7 +796,8 @@ pub(super) fn watch_karts(
     }
     let go = race.as_ref().is_some_and(|race| race.race_ticks() == 1);
     for (kart, mut memory, rules, items, physics) in &mut karts {
-        let now = snapshot(&kart_tuning, rules, items, physics);
+        let mut now = snapshot(&kart_tuning, rules, items, physics);
+        now.throttle = memory.throttle;
         let last = std::mem::replace(&mut memory.last, now);
         if !std::mem::replace(&mut memory.seen, true) {
             continue;
@@ -1020,6 +1062,7 @@ type KartLook = (
         &'static KartWheels,
         &'static KartEnvironment,
         &'static ItemEffects,
+        &'static Stall,
     ),
     (
         Option<&'static StatEffects>,
@@ -1060,7 +1103,7 @@ pub(super) fn emit_karts(
             continue;
         };
         let vfx = &mut *vfx;
-        let (state, motion, kart_boost, wheels, environment, effects) = rules;
+        let (state, motion, kart_boost, wheels, environment, effects, stall) = rules;
         // Its velocity, measured on its visual.
         if dt > 0.0 {
             vfx.velocity = match vfx.shown_at {
@@ -1072,6 +1115,16 @@ pub(super) fn emit_karts(
             vfx.shown_at = Some(root.translation);
         }
         let bursts = std::mem::take(&mut vfx.pending);
+        // Issue #176: its wheels (rolled and steered by `spin_wheels`), its tyres spinning, and
+        // whether it sets off from a full stop; for every kart, near or far.
+        let on_ground = wheels.ticks_without_ground == 0;
+        let set_off = follow_the_wheels(
+            vfx,
+            &tuning,
+            root.rotation,
+            dt,
+            (state, kart_boost, stall, bursts.start.is_some(), on_ground),
+        );
         // The player's camera shakes on a shock.
         if player && tuning.enabled {
             let shake = if bursts.hit.is_some() {
@@ -1136,7 +1189,6 @@ pub(super) fn emit_karts(
             velocity: vfx.velocity,
             scale: effects.deflated_scale(small),
         };
-        let on_ground = wheels.ticks_without_ground == 0;
         let speed = vfx.velocity.length();
         let speed_ratio = speed / kart_tuning.max_speed.max(1.0);
         // The drift: its sparks by tier, its smoke.
@@ -1205,6 +1257,59 @@ pub(super) fn emit_karts(
             let rate = if smoking { drift.smoke_rate * lod } else { 0.0 };
             let n = take(&mut carry[SMOKE + k], rate, dt, max);
             emit::drift_smoke(pool, &frame, side, smoke_ground, drift, n, dt);
+        }
+        // Issue #176: the back tyres spinning (on the spot on the grid, setting off): their
+        // smoke, their dust (the ground's off the road), the kart's little shakes.
+        let spin = if on_ground && !smoking {
+            spin_share(&tuning.wheels, vfx.slip)
+        } else {
+            0.0
+        };
+        // Off the road, the dust of its ground; on it, white puffs of the tyres' smoke.
+        let spin_dust = if wheels.offroad_ratio > 0.5 {
+            smoke_ground
+        } else {
+            Paint::Smoke
+        };
+        for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
+            let n = take(
+                &mut carry[SPIN_SMOKE + k],
+                tuning.wheels.smoke_rate * spin * lod,
+                dt,
+                max,
+            );
+            emit::spin_smoke(pool, &frame, side, smoke_ground, &tuning.wheels, n, dt);
+            let n = take(
+                &mut carry[SPIN_DUST + k],
+                tuning.wheels.dust_rate * spin * lod,
+                dt,
+                max,
+            );
+            emit::dust(pool, &frame, side, spin_dust, world, n, dt);
+        }
+        // Issue #176: at GO, the cloud of its start (GD § 4); setting off again from a full stop,
+        // a smaller one.
+        let w = &tuning.wheels;
+        if let Some(start) = bursts.start {
+            // What is small on screen throws less (its cloud too).
+            let n = go_puffs(w, start, kart_tuning.rocket_start_max_duration) as f32 * lod;
+            let n = n.round() as u32;
+            let push = match start {
+                super::wheels::Start::Rocket(_) => w.go_push * 1.3,
+                super::wheels::Start::Normal => w.go_push,
+                super::wheels::Start::Stall => w.go_push * 0.35,
+            };
+            let look = (n, w.go_size, w.go_life, push);
+            emit::start_cloud(pool, &frame, smoke_ground, look, w);
+        }
+        if set_off && on_ground {
+            let look = (
+                w.launch_puffs,
+                w.launch_size,
+                w.go_life * 0.7,
+                w.go_push * 0.5,
+            );
+            emit::start_cloud(pool, &frame, smoke_ground, look, w);
         }
         // The boost: embers that follow the flames, a mini-turbo's trail.
         let flame = flame_size(&kart_tuning, kart_boost);
@@ -1294,6 +1399,99 @@ pub(super) fn emit_karts(
         );
         if hop > 0.0 {
             root.translation += frame.up() * hop;
+        }
+        // Issue #176: spinning on the spot, the kart shakes a little (shown only, as its jump).
+        if spin > 0.0 && w.shake > 0.0 {
+            let phase = (body.to_bits() % 64) as f32;
+            let beat = now * w.shake_speed + phase;
+            let shake = w.shake * spin.min(1.0);
+            root.translation += frame.up() * (shake * beat.sin())
+                + frame.axis(Vec3::X) * (0.6 * shake * (beat * 1.37).cos());
+        }
+    }
+}
+
+/// Issue #176: a kart's wheels on this frame (where it is shown turned `rotation`): its speed
+/// along its heading, the angle of its front wheels (its driver's stick, or its yaw rate when it
+/// is driven elsewhere), how fast its back tyres spin (on the spot on the grid with the
+/// accelerator down, setting off, with a rocket start's boost; never stalled, hit or carried by
+/// the pelican); whether it sets off again from a full stop (forgotten at GO: `started`, the
+/// start has its own cloud).
+fn follow_the_wheels(
+    vfx: &mut KartVfx,
+    tuning: &VfxTuning,
+    rotation: Quat,
+    dt: f32,
+    (state, boost, stall, started, on_ground): (&KartState, &Boost, &Stall, bool, bool),
+) -> bool {
+    let w = &tuning.wheels;
+    let forward = rotation * Vec3::NEG_Z;
+    let up = rotation * Vec3::Y;
+    vfx.forward_speed = vfx.velocity.dot(forward);
+    let yaw_rate = match vfx.turned {
+        Some(before) if dt > 0.0 => {
+            let was = before * Vec3::NEG_Z;
+            was.cross(forward).dot(up).atan2(was.dot(forward)) / dt
+        }
+        _ => 0.0,
+    };
+    vfx.turned = Some(rotation);
+    let stick = if vfx.driven {
+        vfx.steer
+    } else {
+        steer_from_yaw(w, yaw_rate)
+    };
+    vfx.steer_shown = follow(vfx.steer_shown, steer_angle(w, stick), w.steer_response, dt);
+    let drive = WheelDrive {
+        speed: vfx.forward_speed,
+        throttle: if vfx.driven { vfx.throttle } else { 0.0 },
+        held: vfx.held,
+        rocket: vfx.source == Some(BoostSource::RocketStart) && boost.is_active(),
+        idle: stall.is_active() || state.is_hit() || *state == KartState::Respawning,
+    };
+    vfx.slip = follow(vfx.slip, target_slip(w, &drive), w.slip_response, dt);
+    if started {
+        vfx.standstill.forget();
+    }
+    if !on_ground || *state == KartState::Respawning {
+        vfx.standstill.forget();
+        return false;
+    }
+    vfx.standstill.step(w, vfx.forward_speed, dt)
+}
+
+/// Issue #176: each wheel of a kart rolls at its speed (a back wheel's spin on top), its front
+/// ones steered (`follow_the_wheels`), on top of where `kart::place_wheels` puts it (its rest,
+/// pivoted flat in anti-gravity).
+pub(super) fn spin_wheels(
+    time: Res<Time>,
+    tuning: Res<VfxTuning>,
+    pivots: Query<&KartBodyPivot>,
+    karts: Query<&KartVfx>,
+    mut wheels: Query<(&mut WheelVisual, &ChildOf, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    let w = &tuning.wheels;
+    for (mut wheel, child_of, mut transform) in &mut wheels {
+        let Ok(pivot) = pivots.get(child_of.parent()) else {
+            continue;
+        };
+        let Ok(vfx) = karts.get(pivot.body) else {
+            continue;
+        };
+        let index = wheel.index.min(WHEEL_ANCHORS.len() - 1);
+        let back = index >= 2;
+        let surface = vfx.forward_speed + if back { vfx.slip } else { 0.0 };
+        let rate = roll_rate(w, surface, wheel.radius);
+        let roll = (wheel.roll + rate * dt).rem_euclid(TAU);
+        let steer = if back { 0.0 } else { vfx.steer_shown };
+        let rotation = wheel_rotation(wheel.rest, WHEEL_ANCHORS[index].x, wheel.pivot, steer, roll);
+        if wheel.roll != roll || wheel.roll_rate != rate {
+            wheel.roll = roll;
+            wheel.roll_rate = rate;
+        }
+        if transform.rotation != rotation {
+            transform.rotation = rotation;
         }
     }
 }

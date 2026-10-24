@@ -283,12 +283,24 @@ fn every_part_has_its_look_from_the_files() {
     assert_eq!(soap_box.paint, kart.paint);
     assert_eq!(soap_box.trim, kart.trim);
     assert_eq!((soap_box.hubs, soap_box.seat), (kart.hubs, kart.seat));
+    // Issue #176: each set with its band painted across it (`paint_band`), nothing else changed.
+    use crate::kart::parts::{WHEEL_BANDS, paint_band};
+    let banded = |mut mesh: crate::track::mesh::MeshData, look: WheelLook| {
+        paint_band(&mut mesh, WHEEL_BANDS[look.index()]);
+        mesh
+    };
     let marshmallow = parts.wheels(WheelLook::Marshmallow);
-    assert_eq!(marshmallow.mesh, kart.wheel);
+    assert_eq!(
+        marshmallow.mesh,
+        banded(kart.wheel.clone(), WheelLook::Marshmallow)
+    );
+    assert_ne!(marshmallow.mesh, kart.wheel, "its band");
     assert_eq!(marshmallow.radii, [kart.wheel_radius; 2]);
     // The tractor tyres, from their file.
     let tractor = parts.wheels(WheelLook::Tractor);
-    assert_eq!(Some(tractor), tractor_wheels(tractor_file).as_ref());
+    let from_file = tractor_wheels(tractor_file).unwrap();
+    assert_eq!(tractor.radii, from_file.radii);
+    assert_eq!(tractor.mesh, banded(from_file.mesh, WheelLook::Tractor));
     let (lo, hi) = tractor
         .mesh
         .positions
@@ -1489,4 +1501,79 @@ fn dump_kart_parts() {
     json.push('}');
     std::fs::write(&out, json).unwrap();
     println!("{} karts written to {out}", entries.len());
+}
+
+/// Issue #176: every set of wheels shows its turn: its band (`kart::parts::WHEEL_BANDS`) painted
+/// on the baked meshes (the Car Kit's marshmallow tyres, the tractor tyre's file, the spools),
+/// around one angle of the wheel only, on a part of it.
+#[test]
+fn every_set_of_wheels_wears_its_band() {
+    use crate::kart::{KartVisualAssets, WheelLook};
+    let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::TestGround, 0);
+    load_gltf_headless(&mut app);
+    for _ in 0..3000 {
+        app.update();
+        if app
+            .world()
+            .get_resource::<KartVisualAssets>()
+            .is_some_and(|v| v.model().is_some())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let model = app
+        .world()
+        .resource::<KartVisualAssets>()
+        .model()
+        .expect("the kart model and its parts")
+        .clone();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    for look in WheelLook::ALL {
+        let band = crate::kart::parts::WHEEL_BANDS[look.index()];
+        let (handle, radius, _) = model.wheel(look, 2);
+        let mesh = meshes.get(handle).expect("its mesh");
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("{look:?}: its colors");
+        };
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("{look:?}: its positions");
+        };
+        let banded: Vec<Vec3> = positions
+            .iter()
+            .zip(colors)
+            .filter(|(_, c)| **c == band)
+            .map(|(p, _)| Vec3::from(*p))
+            .collect();
+        assert!(
+            banded.len() >= 6 && banded.len() * 4 < positions.len(),
+            "{look:?}: {} of {} corners",
+            banded.len(),
+            positions.len()
+        );
+        println!(
+            "{look:?}: {} corners of its band, of {}",
+            banded.len(),
+            positions.len()
+        );
+        // Around one angle, from near the hub out to the tread.
+        let far: Vec<f32> = banded
+            .iter()
+            .filter(|p| p.yz().length() > radius * 0.5)
+            .map(|p| p.z.atan2(p.y))
+            .collect();
+        assert!(!far.is_empty(), "{look:?}: out to the rim");
+        assert!(
+            far.iter().all(|a| a.abs() < 1.2),
+            "{look:?}: around one angle: {far:?}"
+        );
+        assert!(
+            banded.iter().any(|p| p.yz().length() > radius * 0.9),
+            "{look:?}: on the tread"
+        );
+    }
 }

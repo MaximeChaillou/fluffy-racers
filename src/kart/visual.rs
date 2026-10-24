@@ -235,6 +235,10 @@ pub struct WheelVisual {
     pub rest: Quat,
     /// Issue #78: how far it has pivoted flat (0: upright, 1: flat, in anti-gravity), shown only.
     pub pivot: f32,
+    /// Issue #176: how far it has rolled (rad around the kart's X, 0 to 2π) and how fast it turns
+    /// (rad/s), shown only: with a renderer, `vfx` turns it (headless, it stays at rest).
+    pub roll: f32,
+    pub roll_rate: f32,
 }
 
 /// Issue #78 (GD § 10: « les roues pivotent »): the rotation of a wheel `pivot` of the way (0 to 1)
@@ -403,7 +407,7 @@ impl KartVisualAssets {
             eye: meshes.add(Sphere::new(EYE_RADIUS)),
             long_ear: meshes.add(Capsule3d::new(0.08, 0.32)),
             pointy_ear: meshes.add(Cone::new(0.14, 0.3)),
-            wheel: meshes.add(Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH)),
+            wheel: meshes.add(primitive_wheel()),
             // A unit cube scaled per frame; unlit so the sparks glow in the shade too.
             spark: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
             driver_material: materials.add(Color::srgb(0.98, 0.92, 0.80)),
@@ -412,7 +416,8 @@ impl KartVisualAssets {
                 perceptual_roughness: 0.25,
                 ..default()
             }),
-            wheel_material: materials.add(Color::srgb(0.15, 0.15, 0.18)),
+            // Issue #176: the wheel's colors are its mesh's (its band).
+            wheel_material: materials.add(Color::WHITE),
             spark_materials: SPARK_COLORS.map(|color| {
                 materials.add(StandardMaterial {
                     base_color: color,
@@ -585,6 +590,36 @@ fn dress_kart_visuals(
     }
 }
 
+/// The wheel in primitives (until the model is baked, headless, or without its file): a dark
+/// cylinder along its local Y (turned on its side on the kart), and issue #176 its band (the
+/// marshmallow tyres' color, `parts::WHEEL_BANDS`) across it, so that its turn shows.
+fn primitive_wheel() -> Mesh {
+    let mut mesh = Cylinder::new(WHEEL_RADIUS, WHEEL_WIDTH)
+        .mesh()
+        .resolution(24)
+        .build();
+    let tyre = Color::srgb(0.15, 0.15, 0.18).to_linear().to_f32_array();
+    let band = super::parts::WHEEL_BANDS[WheelLook::Marshmallow.index()];
+    let colors: Vec<[f32; 4]> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) => positions
+            .iter()
+            .map(|&[x, _, z]| {
+                let on_axle = x * x + z * z < 1e-6;
+                if !on_axle && z.atan2(x).abs() < 0.3 {
+                    band
+                } else {
+                    tyre
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    if !colors.is_empty() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    }
+    mesh
+}
+
 fn create_kart_visual_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -723,6 +758,8 @@ pub fn spawn_kart_visual_with_driver(
                             radius: WHEEL_RADIUS,
                             rest,
                             pivot: 0.0,
+                            roll: 0.0,
+                            roll_rate: 0.0,
                         },
                         Mesh3d(assets.wheel.clone()),
                         MeshMaterial3d(assets.wheel_material.clone()),
@@ -788,8 +825,9 @@ fn repaint_bodies(
 
 /// Puts each wheel where its suspension ray touches the ground (fully extended in the air).
 /// Issue #78: in anti-gravity, the wheels pivot flat (shown only), in
-/// `EnvironmentTuning::wheel_pivot_seconds`, and back out of it; upright, they are never turned.
-fn place_wheels(
+/// `EnvironmentTuning::wheel_pivot_seconds`, and back out of it; upright, they are never turned
+/// (issue #176: with a renderer, `vfx` rolls and steers them after this).
+pub(crate) fn place_wheels(
     time: Res<Time>,
     tuning: Res<KartTuning>,
     karts: Query<(&KartWheels, Option<&KartEnvironment>)>,

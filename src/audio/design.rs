@@ -77,6 +77,7 @@ use crate::options::{OptionsAction, OptionsMenu, PlayerOptions};
 use crate::race::{Course, Race, RaceMode, RaceProgress, Tow};
 use crate::salon::{PlayerWalker, SalonAction, SalonMenu, Walker, WalkerLook};
 use crate::track::{Breakable, TrackChoice};
+use crate::vfx::KartVfx;
 
 /// A sound asked for by the game, with its [`SoundEffect`]: whose it is (`kart`), where (`at`),
 /// the player's own or a screen's (`foreground`: in front, not spatialized), its playback speed
@@ -1354,7 +1355,9 @@ type LoopKart = (
     &'static KartEnvironment,
     Option<&'static Velocity>,
     Option<&'static Remote>,
-    Option<&'static KartInput>,
+    // Issue #176: what its driver presses on the grid (the race holds its input at zero before
+    // GO; with a renderer, the particles saw it before: the engine revs there).
+    (Option<&'static KartInput>, Option<&'static KartVfx>),
     Option<&'static MaxSpeedScale>,
     Has<PlayerKart>,
 );
@@ -1502,7 +1505,9 @@ fn drive_loops(
             .or(remote.map(|r| r.now_velocity))
             .unwrap_or(Vec3::ZERO);
         let speed = velocity.dot(*transform.forward());
+        let (input, pressed) = input;
         let throttle = match input {
+            Some(_) if pressed.is_some_and(|p| p.held) => pressed.map_or(0.0, |p| p.throttle),
             Some(input) => input.throttle,
             None if speed.abs() > 1.0 => 0.7,
             None => 0.0,
