@@ -101,6 +101,7 @@ fn the_pool_and_the_emitters_allocate_nothing() {
     let mut glow = Quads::new(300 + MAX_HALOS);
     let mut haze = Quads::new(300);
     let colors = QuadColors::default();
+    let light = super::batch::SmokeLight::default();
     let mut frame = KartFrame {
         velocity: Vec3::new(0.0, 0.0, -25.0),
         ..default()
@@ -152,6 +153,8 @@ fn the_pool_and_the_emitters_allocate_nothing() {
             emit::release(pool, frame, k % 3, drift);
             emit::rocket_smoke(pool, frame, boost);
             emit::stall_puffs(pool, frame, boost);
+            // Issue #185: the soot of an engine that stays stalled.
+            emit::stall_smoke(pool, frame, boost, 2);
             emit::shock(pool, frame.position, Vec3::X, frame.velocity, 6, 6, impact);
             emit::confetti(pool, frame.position, 4.0, impact);
             // Issue #106: a gift box taken.
@@ -189,7 +192,8 @@ fn the_pool_and_the_emitters_allocate_nothing() {
                 Some(Batch::Haze) => &mut haze,
                 _ => &mut glow,
             };
-            super::batch::particle_quad(particle, camera, frame.position, &colors, quads);
+            let looks = (&colors, &light);
+            super::batch::particle_quad(particle, camera, frame.position, looks, quads);
         }
         let halo = GroundHalo {
             center: frame.position,

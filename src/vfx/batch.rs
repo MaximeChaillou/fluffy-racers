@@ -11,13 +11,24 @@
 //! atlas's white core clamps to white: `atlas.rs`). The halos under the karts are quads of the
 //! glow mesh too, given by the systems each frame (`GroundHalo`).
 //!
+//! Issue #185: **the smoke** (every smoke, dust and foam) is a soft sprite of `smoke.rs`'s
+//! drawings, alpha premultiplied (its color already times its opacity: no dark nor light fringe,
+//! the puffs overlap without a hard edge), sorted back to front. Its opacity comes in fast and goes
+//! slowly; it is lit simply, per corner (lighter toward the sun and up, darker away from it and
+//! below, the shade taking the biome's sky and ground: [`SmokeLight`]), fogged as the scene; a
+//! puff near the camera's eye fades out (it never fills the screen), and its corners under the
+//! ground fade too (no hard line where the ground cuts it). WebGL2 has no simple soft particles
+//! (the depth is not read back in a material): those two fades stand for them.
+//!
 //! The buffers are made once, at their most (the pool's slots and the halos): nothing is
 //! allocated while racing.
 
 use bevy::prelude::*;
 
 use super::atlas::Cell;
-use super::pool::{Batch, Paint, Particle, Shape};
+use super::pool::{Batch, Facing, Paint, Particle, Shape};
+use super::smoke;
+use super::tuning::SmokeVfx;
 
 /// The most halos in a frame (a halo per kart: 12 on the grid, the online players' too).
 pub const MAX_HALOS: usize = 32;
@@ -98,10 +109,15 @@ impl Quads {
     /// edge, `v` from the first two corners to the last two), each corner's color. Ignored when
     /// full (never grows), or when a corner is not a number.
     pub fn push(&mut self, corners: [Vec3; 4], cell: Cell, colors: [Vec4; 4]) {
+        self.push_uv(corners, cell.uv(), colors);
+    }
+
+    /// The same, the drawing between `uv` (u0, v0, u1, v1) of its texture.
+    pub fn push_uv(&mut self, corners: [Vec3; 4], uv: [f32; 4], colors: [Vec4; 4]) {
         if self.len() >= self.cap || !corners.iter().all(|c| c.is_finite()) {
             return;
         }
-        let [u0, v0, u1, v1] = cell.uv();
+        let [u0, v0, u1, v1] = uv;
         self.positions.extend(corners.map(|c| c.to_array()));
         self.uvs.extend([[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
         self.colors.extend(colors.map(|c| c.to_array()));
@@ -131,17 +147,163 @@ fn brightness(particle: &Particle, t: f32) -> f32 {
     particle.glow * (1.0 - t * t)
 }
 
-/// The cell of a batched particle's shape.
+/// The cell of a batched glowing particle's shape (the smoke's are `smoke.rs`'s).
 pub fn cell(particle: &Particle) -> Cell {
     match particle.shape {
         Shape::Glint => Cell::Streak,
         Shape::Tongue if particle.variant % 2 == 1 => Cell::FlameB,
         Shape::Tongue => Cell::FlameA,
         Shape::Shock => Cell::Ring,
-        Shape::Haze if particle.variant % 2 == 1 => Cell::PuffB,
-        Shape::Haze => Cell::PuffA,
         _ => Cell::Soft,
     }
+}
+
+/// Issue #185: how the smoke is lit and seen this frame (`VfxTuning::smoke`, the sun, the
+/// biome's sky and ground, the camera's fog).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SmokeLight {
+    /// Toward the sun (unit, world).
+    pub sun: Vec3,
+    /// The sun's side's tone and the shade's (linear multipliers of a puff's color).
+    pub lit: Vec3,
+    pub shade: Vec3,
+    /// The fog (its linear color, from `start` to `end` m: linear), if any.
+    pub fog: Option<(Vec3, f32, f32)>,
+    pub near: [f32; 2],
+    pub max_opacity: f32,
+    pub attack: f32,
+    pub fade: f32,
+    pub spread: f32,
+    pub ground_fade: f32,
+}
+
+impl Default for SmokeLight {
+    fn default() -> Self {
+        Self::new(
+            &SmokeVfx::default(),
+            Vec3::new(8.0, 16.0, 8.0),
+            ([0.55, 0.8, 0.95], [0.4, 0.7, 0.32]),
+            None,
+        )
+    }
+}
+
+impl SmokeLight {
+    /// From the tuning, `sun` (toward it), the biome's sky and ground (sRGB) and the fog.
+    pub fn new(
+        smoke: &SmokeVfx,
+        sun: Vec3,
+        (sky, ground): ([f32; 3], [f32; 3]),
+        fog: Option<(Vec3, f32, f32)>,
+    ) -> Self {
+        // A color's hue at full brightness (what the shade takes of it).
+        let hue = |color: [f32; 3]| {
+            let c = linear(color);
+            c / c.max_element().max(1e-3)
+        };
+        let shade = Vec3::splat(smoke.shade.clamp(0.0, 1.0))
+            * Vec3::ONE.lerp(hue(sky), smoke.sky_tint.clamp(0.0, 1.0))
+            * Vec3::ONE.lerp(hue(ground), smoke.ground_tint.clamp(0.0, 1.0));
+        Self {
+            sun: sun.normalize_or(Vec3::Y),
+            lit: linear(smoke.lit),
+            shade,
+            fog,
+            near: smoke.near_fade,
+            max_opacity: smoke.max_opacity.clamp(0.0, 1.0),
+            attack: smoke.attack,
+            fade: smoke.fade,
+            spread: smoke.spread,
+            ground_fade: smoke.ground_fade,
+        }
+    }
+
+    /// How opaque a puff still is at `t` (0 to 1 of its life), of its own opacity: in fast, out
+    /// slowly.
+    pub fn opacity(&self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        smoothstep(0.0, self.attack.max(1e-3), t) * (1.0 - t).powf(self.fade.max(0.1))
+    }
+
+    /// How much of the fog's color a puff `distance` m away takes.
+    fn fogged(&self, distance: f32) -> Option<(Vec3, f32)> {
+        let (color, start, end) = self.fog?;
+        Some((
+            color,
+            ((distance - start) / (end - start).max(1e-3)).clamp(0.0, 1.0),
+        ))
+    }
+}
+
+fn smoothstep(from: f32, to: f32, x: f32) -> f32 {
+    let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Issue #185: a puff of smoke (`Shape::Haze`) at `at` (around the meshes' origin), seen from
+/// `eye`, its color `base` (linear), into `quads` (premultiplied: the color times its opacity).
+fn haze_quad(
+    particle: &Particle,
+    (at, eye): (Vec3, Vec3),
+    base: Vec3,
+    light: &SmokeLight,
+    quads: &mut Quads,
+) {
+    let t = particle.progress();
+    let size = particle.current_size().max(0.0);
+    let near = smoothstep(light.near[0], light.near[1], at.distance(eye));
+    let opacity = particle.glow.clamp(0.0, light.max_opacity) * light.opacity(t) * near;
+    if opacity < 1.0 / 512.0 || size <= 0.0 {
+        return;
+    }
+    let flat = particle.facing == Facing::Flat;
+    let (right, up) = if flat {
+        // Lying across its axis (foam on the water), turned by its angle.
+        let (a, b) = particle.axis.normalize_or(Vec3::Y).any_orthonormal_pair();
+        let (s, c) = particle.angle.sin_cos();
+        (a * c + b * s, b * c - a * s)
+    } else {
+        facing(at, eye, particle.angle)
+    };
+    let (right, up) = (right * size * 0.5 * particle.stretch, up * size * 0.5);
+    let mut offsets = [-right - up, right - up, right + up, -right + up];
+    // Lit: toward the sun and up, seen from the camera (in the quad's plane).
+    let toward = if flat {
+        Vec3::ZERO
+    } else {
+        // It spreads out flat as it ages (wider along the view's horizontal).
+        let across = facing(at, eye, 0.0).0;
+        let wider = light.spread.max(0.0) * t;
+        for o in &mut offsets {
+            *o += across * o.dot(across) * wider;
+        }
+        let view = (eye - at).normalize_or(Vec3::Z);
+        let sun = light.sun - view * light.sun.dot(view);
+        let up = Vec3::Y - view * view.y;
+        (sun.normalize_or_zero() + up.normalize_or_zero()).normalize_or_zero()
+    };
+    let fog = light.fogged(at.distance(eye));
+    let floor = particle.floor;
+    let ground = (light.ground_fade * size).max(1e-3);
+    let colors = offsets.map(|o| {
+        let key = if flat {
+            0.85
+        } else {
+            0.5 + 0.5 * o.normalize_or_zero().dot(toward)
+        };
+        let mut color = base * light.shade.lerp(light.lit, key);
+        if let Some((fog, share)) = fog {
+            color = color.lerp(fog, share);
+        }
+        let touch = if floor.is_finite() && !flat {
+            ((particle.position.y + o.y - floor) / ground).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let alpha = opacity * touch;
+        (color * alpha).extend(alpha)
+    });
+    quads.push_uv(offsets.map(|o| at + o), smoke::uv(particle.variant), colors);
 }
 
 /// A side of a streak along `along` at `at`, turned toward `camera` (half of `width`).
@@ -169,7 +331,7 @@ pub fn particle_quad(
     particle: &Particle,
     camera: Vec3,
     origin: Vec3,
-    colors: &QuadColors,
+    (colors, light): (&QuadColors, &SmokeLight),
     quads: &mut Quads,
 ) {
     let Some(batch) = particle.shape.batched() else {
@@ -190,21 +352,7 @@ pub fn particle_quad(
     let deep = colors.deep[particle.paint.index()];
     let cooled = |k: f32| base.lerp(deep, (particle.cool * k).clamp(0.0, 1.0));
     if batch == Batch::Haze {
-        // The smoke: it shows in, then thins out as it spreads.
-        let alpha = particle.glow * (t * 8.0).min(1.0) * (1.0 - t).powf(1.3);
-        let (right, up) = facing(at, eye, particle.angle);
-        let (right, up) = (right * size * 0.5 * particle.stretch, up * size * 0.5);
-        let color = base.extend(alpha.clamp(0.0, 1.0));
-        quads.push(
-            [
-                at - right - up,
-                at + right - up,
-                at + right + up,
-                at - right + up,
-            ],
-            cell(particle),
-            [color; 4],
-        );
+        haze_quad(particle, (at, eye), base, light, quads);
         return;
     }
     let bright = brightness(particle, t);
@@ -297,7 +445,14 @@ mod tests {
 
     fn quad(particle: &Particle, camera: Vec3) -> Quads {
         let mut quads = Quads::new(4);
-        particle_quad(particle, camera, Vec3::ZERO, &colors(), &mut quads);
+        let light = SmokeLight::default();
+        particle_quad(
+            particle,
+            camera,
+            Vec3::ZERO,
+            (&colors(), &light),
+            &mut quads,
+        );
         quads
     }
 
@@ -375,6 +530,7 @@ mod tests {
         let c = corners(&quad(&ring, camera));
         assert!(c.iter().all(|p| p.y.abs() < 1e-5), "flat: {c:?}");
         let mut puff = Particle::new(Shape::Haze, Paint::Smoke, Vec3::ZERO, 1.0, 0.4);
+        puff.facing = Facing::Camera;
         puff.glow = 0.5;
         puff.age = 0.2;
         let early = Vec4::from(quad(&puff, camera).colors[0]).w;
@@ -388,7 +544,8 @@ mod tests {
         assert!(quad(&over, camera).is_empty());
         let mut quads = Quads::new(2);
         for _ in 0..5 {
-            particle_quad(&glow, camera, Vec3::ZERO, &colors(), &mut quads);
+            let light = SmokeLight::default();
+            particle_quad(&glow, camera, Vec3::ZERO, (&colors(), &light), &mut quads);
         }
         assert_eq!(quads.len(), 2);
         assert_eq!(quads.positions.capacity(), 8, "never grown");
@@ -405,6 +562,101 @@ mod tests {
             c.iter()
                 .all(|p| p.y.abs() < 1e-6 && (p.x - 2.0).abs() <= std::f32::consts::SQRT_2 + 1e-5)
         );
+    }
+
+    /// Issue #185: a puff of smoke is a soft sprite facing the camera, premultiplied (its color
+    /// never brighter than its opacity), lit (its corners toward the sun and up lighter than those
+    /// below), its opacity in fast and out slowly, never more than the cap; it fades near the
+    /// camera's eye, its corners under the ground fade out, it spreads out flat as it ages; foam
+    /// lies on the water; it takes the fog with distance.
+    #[test]
+    fn a_puff_of_smoke_is_soft_lit_and_seen_through() {
+        let camera = Vec3::new(0.0, 2.0, 10.0);
+        let mut puff = Particle::new(
+            Shape::Haze,
+            Paint::Smoke,
+            Vec3::new(0.0, 1.0, 0.0),
+            1.0,
+            1.0,
+        );
+        puff.curve = Curve::Billow;
+        puff.facing = Facing::Camera;
+        puff.glow = 0.9;
+        puff.stretch = 1.0;
+        let light = SmokeLight::default();
+        let at = |p: &Particle, eye: Vec3| {
+            let mut quads = Quads::new(1);
+            particle_quad(p, eye, Vec3::ZERO, (&colors(), &light), &mut quads);
+            quads
+        };
+        let alpha_at = |age: f32| {
+            let mut p = puff;
+            p.age = age;
+            at(&p, camera).colors.first().map_or(0.0, |c| c[3])
+        };
+        // In fast, out slowly; never above the cap.
+        let curve: Vec<f32> = (0..20).map(|k| alpha_at(k as f32 / 20.0 + 0.01)).collect();
+        let peak = curve.iter().cloned().fold(0.0, f32::max);
+        let top = curve.iter().position(|a| *a == peak).unwrap();
+        assert!(top <= 2, "in fast: {curve:?}");
+        assert!(
+            curve[10] > peak * 0.25 && curve[19] < peak * 0.1,
+            "{curve:?}"
+        );
+        assert!(peak <= light.max_opacity + 1e-6, "{peak}");
+        let mut young = puff;
+        young.age = 0.1;
+        let q = at(&young, camera);
+        let c: [Vec4; 4] = std::array::from_fn(|i| Vec4::from(q.colors[i]));
+        for corner in c {
+            assert!(corner.x <= corner.w + 1e-6, "premultiplied: {corner}");
+        }
+        // Its top corners (2, 3) lighter than its bottom ones (0, 1), the same opacity.
+        let shade = |v: Vec4| v.truncate().length() / v.w;
+        assert!(
+            shade(c[2]) + shade(c[3]) > (shade(c[0]) + shade(c[1])) * 1.2,
+            "{c:?}"
+        );
+        assert!((c[0].w - c[2].w).abs() < 1e-6);
+        // Facing the camera, from its drawing of the smoke texture.
+        let p: [Vec3; 4] = std::array::from_fn(|i| Vec3::from_array(q.positions[i]));
+        let normal = (p[1] - p[0]).cross(p[3] - p[0]).normalize();
+        assert!(normal.dot((camera - young.position).normalize()).abs() > 0.99);
+        assert_eq!(q.uvs[0], [smoke::uv(0)[0], smoke::uv(0)[1]]);
+        // Near the camera's eye, nothing; a little farther, faded.
+        assert!(at(&young, young.position + Vec3::Z * 0.5).is_empty());
+        let close = at(&young, young.position + Vec3::Z * 2.0).colors[0][3];
+        assert!(close < c[0].w * 0.6, "{close}");
+        // Touching the ground: its bottom corners fade out, its top ones stay.
+        let mut low = young;
+        low.floor = young.position.y - 0.1;
+        let q = at(&low, camera);
+        assert!(q.colors[0][3] < c[0].w * 0.05 && (q.colors[2][3] - c[2].w).abs() < 1e-6);
+        // Spreading out flat as it ages: wider than tall.
+        let mut old = puff;
+        old.age = 0.9;
+        let q = at(&old, camera);
+        let p: [Vec3; 4] = std::array::from_fn(|i| Vec3::from_array(q.positions[i]));
+        assert!((p[1] - p[0]).length() > (p[3] - p[0]).length() * 1.2);
+        // Foam lies on the water.
+        let mut foam = young;
+        foam.facing = Facing::Flat;
+        foam.axis = Vec3::Y;
+        let q = at(&foam, camera);
+        assert!(q.positions.iter().all(|p| (p[1] - 1.0).abs() < 1e-5));
+        // Far in the fog, it takes the fog's color.
+        let fog = Vec3::new(0.2, 0.4, 0.9);
+        let foggy = SmokeLight {
+            fog: Some((fog, 5.0, 50.0)),
+            ..light
+        };
+        let mut far = young;
+        far.position = Vec3::new(0.0, 1.0, -40.0);
+        let mut quads = Quads::new(1);
+        particle_quad(&far, camera, Vec3::ZERO, (&colors(), &foggy), &mut quads);
+        let color = Vec4::from(quads.colors[0]);
+        let color = color.truncate() / color.w;
+        assert!(color.z > color.x * 1.5, "{color}");
     }
 
     /// The indices: two triangles per quad, as many as asked (at most the capacity), never grown.

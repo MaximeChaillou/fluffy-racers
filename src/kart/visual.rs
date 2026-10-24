@@ -1068,8 +1068,9 @@ fn show_boost_flames(
     }
 }
 
-/// Grey puffs popping at the exhaust while the engine stalls.
-fn show_stall_smoke(
+/// Grey puffs popping at the exhaust while the engine stalls (issue #185: with a renderer, the
+/// particles hide them and throw soft puffs of soot instead: `vfx`).
+pub(crate) fn show_stall_smoke(
     time: Res<Time>,
     karts: Query<&Stall>,
     pivots: Query<&KartBodyPivot>,

@@ -21,13 +21,15 @@ use bevy::camera::visibility::NoFrustumCulling;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_rapier3d::prelude::Velocity;
 
 use super::atlas::{self, Cell};
 use super::batch::{
-    GroundHalo, MAX_HALOS, QuadColors, Quads, halo_quad, linear, particle_quad, quad_indices,
+    GroundHalo, MAX_HALOS, QuadColors, Quads, SmokeLight, halo_quad, linear, particle_quad,
+    quad_indices,
 };
 use super::cues::{
     BoostSource, Bursts, TickEvents, VfxSnapshot, ember_paint, fov_punch, kart_bursts, spark_style,
@@ -35,6 +37,7 @@ use super::cues::{
 };
 use super::emit::{self, KartFrame, take};
 use super::pool::{Batch, Paint, ParticlePool, Shape};
+use super::smoke;
 use super::tuning::{VfxColors, VfxTuning, ground_dust, road_dust};
 use super::wheels::{
     Standstill, WheelDrive, follow, go_puffs, roll_rate, spin_share, steer_angle, steer_from_yaw,
@@ -44,12 +47,12 @@ use crate::camera::{CameraShake, ChaseCamera, FixedView};
 use crate::croquettes::{CroquettePickedUp, CroquettesLost};
 use crate::interactions::Paw;
 use crate::interpolation::InterpolatedFrom;
-use crate::items::{Blast, BoxBroken, ItemSlots, Slot};
+use crate::items::{Blast, BlastLook, BoxBroken, ItemSlots, ItemVisualAssets, Slot};
 use crate::kart::{
     Boost, BoostFlame, DeflatedScale, DriftMotion, DriftSpark, DriverVisual, ItemEffects, Kart,
     KartAssists, KartBodyPivot, KartBump, KartEnvironment, KartInput, KartState, KartTuning,
-    KartWheels, MiniTurbo, PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity,
-    WHEEL_ANCHORS, WheelVisual, flame_size, slip_pose,
+    KartWheels, MiniTurbo, PlayerKart, Remote, Slipstream, Stall, StallSmoke, StatEffects,
+    StepVelocity, WHEEL_ANCHORS, WheelVisual, flame_size, slip_pose,
 };
 use crate::level::LoadLevel;
 use crate::menu::MainMenu;
@@ -73,7 +76,9 @@ const DRIFT_EMBERS: usize = 13;
 /// Issue #176: the smoke and the dust of the back wheels spinning.
 const SPIN_SMOKE: usize = 15;
 const SPIN_DUST: usize = 17;
-const EMITTERS: usize = 19;
+/// Issue #185: the soot of a stalled engine, all along.
+const STALL: usize = 19;
+const EMITTERS: usize = 20;
 /// The most stars over a head (`ImpactVfx::dizzy_stars`).
 pub const MAX_DIZZY_STARS: usize = 5;
 /// A kart's visual that moves farther than this in a frame jumped (a pelican, a restart): its
@@ -92,6 +97,11 @@ pub struct VfxAssets {
     pub ground: Option<[[f32; 3]; 2]>,
     /// Issue #174: ...and its road's (`Paint::Road`: the tint of the tyres' smoke on it).
     pub road: Option<[f32; 3]>,
+    /// Issue #185: ...and its biome's sky (sRGB: the hue of the smoke's shade). None off a
+    /// circuit.
+    pub sky: Option<[f32; 3]>,
+    /// Issue #185: the drawings of the smoke (`smoke.rs`: premultiplied, with their mipmaps).
+    pub smoke: Handle<Image>,
     /// Issue #174: the linear colors of the batched quads (`batch.rs`), from the ones above.
     pub quads: QuadColors,
     /// Issue #174: the drawings of the glows and the smoke (`atlas.rs`), the exhausts' glowing
@@ -312,6 +322,7 @@ pub(super) fn create_vfx(
 ) {
     let tuning = tuning.map(|t| t.clone()).unwrap_or_default();
     let atlas = images.add(atlas_image());
+    let smoke_texture = images.add(smoke_image());
     let glowing = |alpha_mode: AlphaMode| StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(atlas.clone()),
@@ -343,6 +354,8 @@ pub(super) fn create_vfx(
         colors: tuning.colors.clone(),
         ground: None,
         road: None,
+        sky: None,
+        smoke: smoke_texture.clone(),
         quads: QuadColors::default(),
         flame_mesh: meshes.add(flame_mesh()),
         flames: Paint::ALL
@@ -358,10 +371,15 @@ pub(super) fn create_vfx(
     // Issue #174: the two shared meshes of the batched particles, at their most (every slot,
     // and the halos), and their entities.
     let most = ParticlePool::SLOTS + MAX_HALOS;
-    for (batch, alpha_mode) in [
-        (Batch::Glow, AlphaMode::Add),
-        (Batch::Haze, AlphaMode::Blend),
-    ] {
+    // Issue #185: the smoke premultiplied, its own drawings; its fog is its corners' (`batch.rs`:
+    // the shader's would add the fog's color where the puff is clear).
+    let haze = StandardMaterial {
+        base_color_texture: Some(smoke_texture),
+        alpha_mode: AlphaMode::Premultiplied,
+        fog_enabled: false,
+        ..glowing(AlphaMode::Premultiplied)
+    };
+    for (batch, material) in [(Batch::Glow, glowing(AlphaMode::Add)), (Batch::Haze, haze)] {
         commands.spawn((
             Name::new(match batch {
                 Batch::Glow => "Lueurs",
@@ -369,7 +387,7 @@ pub(super) fn create_vfx(
             }),
             VfxBatch(batch),
             Mesh3d(meshes.add(batch_mesh(most))),
-            MeshMaterial3d(materials.add(glowing(alpha_mode))),
+            MeshMaterial3d(materials.add(material)),
             Transform::default(),
             Visibility::default(),
             NotShadowCaster,
@@ -421,6 +439,32 @@ fn atlas_image() -> Image {
     );
     image.data = Some(atlas::atlas_pixels());
     image.texture_descriptor.mip_level_count = Cell::MIPS;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
+}
+
+/// Issue #185: the drawings of the smoke (`smoke.rs`), with their mipmaps, filtered.
+fn smoke_image() -> Image {
+    let (width, height) = smoke::smoke_size();
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(smoke::smoke_pixels());
+    image.texture_descriptor.mip_level_count = smoke::MIPS;
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::ClampToEdge,
         address_mode_v: ImageAddressMode::ClampToEdge,
@@ -1024,6 +1068,14 @@ pub(super) fn follow_the_ground(
     let ground = palette.map(|palette| ground_dust(&palette, tuning.world.ground_lighten));
     // Issue #174: the road's too (the tint of the tyres' smoke on it).
     let road = palette.map(|palette| road_dust(&palette, tuning.world.ground_lighten));
+    // Issue #185: the sky's hue in the smoke's shade.
+    let sky = palette.map(|palette| {
+        let (r, g, b) = palette.sky;
+        [r, g, b]
+    });
+    if sky != assets.sky {
+        assets.sky = sky;
+    }
     if ground != assets.ground || road != assets.road {
         let before = Paint::ALL.map(|paint| assets.color(paint));
         assets.ground = ground;
@@ -1348,6 +1400,19 @@ pub(super) fn emit_karts(
             );
             emit::dust(pool, &frame, side, ground, world, n, dt);
         }
+        // Issue #185: a stalled engine coughs soot all along (soft puffs: the grey cubes of
+        // `kart::visual` are hidden, `hide_stall_cubes`).
+        let n = take(
+            &mut carry[STALL],
+            if stall.is_active() {
+                boost.stall_rate * 2.0 * lod
+            } else {
+                0.0
+            },
+            dt,
+            max,
+        );
+        emit::stall_smoke(pool, &frame, boost, n);
         // Issue #130: the wake of a kart at the surface of the water.
         let water = layout.and_then(|layout| {
             water_depth(&layout.lakes, root.translation)
@@ -1760,12 +1825,26 @@ pub(super) fn kick_the_camera(
 /// smoke are quads of the two shared meshes instead (their entity hidden): written here, around
 /// a point ahead of the camera (the meshes' entities are put there: they sort among the other
 /// transparent things from there), the smoke back to front, with the halos of this frame.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show_particles(
     time: Res<Time>,
+    tuning: Res<VfxTuning>,
     assets: Res<VfxAssets>,
     mut particles: ResMut<Particles>,
     mut meshes: ResMut<Assets<Mesh>>,
-    cameras: Query<&Transform, (With<ChaseCamera>, Without<VfxParticle>, Without<VfxBatch>)>,
+    cameras: Query<
+        (&Transform, Option<&DistanceFog>),
+        (With<ChaseCamera>, Without<VfxParticle>, Without<VfxBatch>),
+    >,
+    suns: Query<
+        &Transform,
+        (
+            With<DirectionalLight>,
+            Without<ChaseCamera>,
+            Without<VfxParticle>,
+            Without<VfxBatch>,
+        ),
+    >,
     mut slots: Query<
         (
             &mut Transform,
@@ -1777,11 +1856,28 @@ pub(super) fn show_particles(
     >,
     mut batches: Query<(&VfxBatch, &Mesh3d, &mut Transform), Without<VfxParticle>>,
 ) {
-    let (camera, ahead) = cameras
+    let (camera, ahead, fog) = cameras
         .iter()
         .next()
-        .map_or((Vec3::ZERO, Vec3::NEG_Z), |t| (t.translation, *t.forward()));
+        .map_or((Vec3::ZERO, Vec3::NEG_Z, None), |(t, fog)| {
+            (t.translation, *t.forward(), fog)
+        });
     let origin = camera + ahead * 8.0;
+    // Issue #185: how the smoke is lit (the sun, the biome's sky and ground) and fogged.
+    let sun = suns
+        .iter()
+        .next()
+        .map_or(Vec3::new(8.0, 16.0, 8.0), |t| -*t.forward());
+    let fog = fog.and_then(|fog| match fog.falloff {
+        FogFalloff::Linear { start, end } => {
+            let c = fog.color.to_linear();
+            Some((Vec3::new(c.red, c.green, c.blue), start, end))
+        }
+        _ => None,
+    });
+    let sky = assets.sky.unwrap_or([0.55, 0.8, 0.95]);
+    let ground = assets.color(Paint::Ground);
+    let light = SmokeLight::new(&tuning.smoke, sun, (sky, ground), fog);
     let Particles {
         pool,
         entities,
@@ -1809,7 +1905,9 @@ pub(super) fn show_particles(
             None
         };
         match batched {
-            Some(Batch::Glow) => particle_quad(particle, camera, origin, &assets.quads, glow),
+            Some(Batch::Glow) => {
+                particle_quad(particle, camera, origin, (&assets.quads, &light), glow)
+            }
             Some(Batch::Haze) => {
                 order.push((particle.position.distance_squared(camera), slot as u16));
             }
@@ -1852,7 +1950,7 @@ pub(super) fn show_particles(
             &pool.slots()[usize::from(*slot)],
             camera,
             origin,
-            &assets.quads,
+            (&assets.quads, &light),
             haze,
         );
     }
@@ -1965,6 +2063,37 @@ pub(super) fn show_dizzy_stars(
                     Quat::from_rotation_arc(Vec3::Z, facing) * Quat::from_rotation_z(angle * 1.5),
                 )
                 .with_scale(Vec3::splat(size * twinkle.max(0.0)));
+        }
+    }
+}
+
+/// Issue #185: the grey cubes of a stalled engine (`kart::visual`) are never shown with the
+/// particles: its soot is soft puffs (`emit_karts`).
+pub(super) fn hide_stall_cubes(mut cubes: Query<&mut Visibility, With<StallSmoke>>) {
+    for mut visibility in &mut cubes {
+        visibility.set_if_neq(Visibility::Hidden);
+    }
+}
+
+/// Issue #185: an explosion's pale sphere (`items::visual`, out to its reach) is never shown
+/// with the particles: their explosion has its flash, its ring at its reach and its cloud
+/// (`emit::confetti`).
+pub(super) fn hide_blast_balls(
+    items: Option<Res<ItemVisualAssets>>,
+    blasts: Query<&Children, With<BlastLook>>,
+    mut parts: Query<(&MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
+) {
+    let Some(items) = items else {
+        return;
+    };
+    let flash = items.flash_material().id();
+    for children in &blasts {
+        for child in children.iter() {
+            if let Ok((material, mut visibility)) = parts.get_mut(child)
+                && material.0.id() == flash
+            {
+                visibility.set_if_neq(Visibility::Hidden);
+            }
         }
     }
 }

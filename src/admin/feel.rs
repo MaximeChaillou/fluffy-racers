@@ -330,6 +330,8 @@ pub const LINKS: &[Link] = &[
     link(Effects, "VfxTuning.boost.pad_sparks", 0.2, 1.6),
     link(Effects, "VfxTuning.boost.piment_sparks", 0.2, 1.6),
     link(Effects, "VfxTuning.boost.stall_puffs", 0.2, 1.6),
+    // Issue #185: the soot of an engine that stays stalled.
+    link(Effects, "VfxTuning.boost.stall_rate", 0.2, 1.6),
     link(Effects, "VfxTuning.impact.pof_puffs", 0.2, 1.6),
     link(Effects, "VfxTuning.impact.wall_stars", 0.2, 1.6),
     link(Effects, "VfxTuning.impact.wall_puffs", 0.2, 1.6),
