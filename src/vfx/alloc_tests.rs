@@ -128,6 +128,18 @@ fn the_pool_and_the_emitters_allocate_nothing() {
         }
         // Issue #130: the wake on the water.
         emit::wake(pool, frame, frame.position.y - 0.3, world, 1, dt);
+        // Issue #176: the tyres spinning, the cloud of a start.
+        let wheels = &tuning.wheels;
+        emit::spin_smoke(pool, frame, 1.0, Paint::Road, wheels, 1, dt);
+        if k.is_multiple_of(30) {
+            let look = (
+                wheels.go_rocket_puffs,
+                wheels.go_size,
+                wheels.go_life,
+                wheels.go_push,
+            );
+            emit::start_cloud(pool, frame, Paint::Ground, look, wheels);
+        }
         let n = take(&mut carry[2], boost.ember_rate * 2.0, dt, 6);
         emit::embers(pool, frame, Paint::Flame, 1.0, boost, n, dt);
         emit::trail(pool, frame, Paint::Orange, (0.3, 0.13), 1, dt);
@@ -213,9 +225,16 @@ struct Counted;
 /// systems in a schedule of their own (the game's copies switched off): run it after each frame
 /// of the game to count or time them alone. Every kart throws, wherever it is; the stars over a
 /// head are made once per kart, the camera's shake is a component put on the player's kart: both
-/// left out (a kart's first hit makes them, not a frame). Issue #130: the acting of the karts'
+/// left out (a kart's first hit makes them, not a frame). Issue #176: what the drivers press is
+/// read by the game's own copy (`systems::watch_the_drivers`, before the race's gate: after the
+/// frame, the karts' input on the grid is held at zero). Issue #130: the acting of the karts'
 /// bodies and their drivers (`characters::ActingPlugin`) is counted with them.
 fn counted_race() -> (App, Schedule) {
+    counted_race_from(true)
+}
+
+/// The same, from GO (`skip_countdown`) or (issue #176) from the grid, the countdown played.
+fn counted_race_from(skip_countdown: bool) -> (App, Schedule) {
     let mut app = game_app_unloaded(TrackChoice::default(), 11);
     app.add_plugins(VfxPlugin);
     app.configure_sets(FixedPostUpdate, VfxSystems::Watch.run_if(|| false));
@@ -249,7 +268,9 @@ fn counted_race() -> (App, Schedule) {
         tuning.emit_range = 10_000.0;
         tuning.impact.dizzy_stars = 0;
     }
-    assert!(skip_countdown_now(app.world_mut()));
+    if skip_countdown {
+        assert!(skip_countdown_now(app.world_mut()));
+    }
     let mut counted = Schedule::new(Counted);
     counted.set_executor(SingleThreadedExecutor::new());
     counted.add_systems(
@@ -269,6 +290,8 @@ fn counted_race() -> (App, Schedule) {
                 systems::show_particles,
                 systems::show_dizzy_stars,
                 systems::tint_flames,
+                // Issue #176: the wheels rolled and steered.
+                systems::spin_wheels,
                 crate::characters::act,
             )
                 .chain(),
@@ -324,6 +347,55 @@ fn the_particles_systems_allocate_nothing_per_frame() {
     );
 }
 
+/// Issue #176: the countdown played (12 karts revving on the grid: their tyres smoke, they
+/// shake), GO (each start its cloud), then the first seconds of the race: nothing allocated by
+/// the particles' systems, the wheels' included.
+#[test]
+fn the_standing_start_allocates_nothing() {
+    let (mut app, mut counted) = counted_race_from(false);
+    // The first frames: every kart gets its memory (a new kind of entity), the buffers their
+    // size.
+    for _ in 0..30 {
+        app.update();
+        counted.run(app.world_mut());
+    }
+    assert!(
+        !app.world().resource::<Race>().started(),
+        "still on the grid"
+    );
+    let spawned = app.world().resource::<Particles>().pool.spawned;
+    let (mut total, mut learning, mut grid) = (0, 0, 0u64);
+    let mut first = String::new();
+    loop {
+        let archetypes = app.world().archetypes().len();
+        app.update();
+        let race = app.world().resource::<Race>();
+        let (started, ticks) = (race.started(), race.race_ticks());
+        if app.world().archetypes().len() != archetypes {
+            counted.run(app.world_mut());
+            learning += 1;
+            continue;
+        }
+        let n = allocations(|| counted.run(app.world_mut()));
+        if n > 0 && first.is_empty() {
+            first = traces();
+        }
+        total += n;
+        if !started {
+            grid = app.world().resource::<Particles>().pool.spawned - spawned;
+        }
+        if ticks > 3 * 60 {
+            break;
+        }
+    }
+    println!(
+        "the countdown and 3 s of race: {grid} particles thrown on the grid, {total} allocations ({learning} frames with a new kind of entity)"
+    );
+    assert!(learning < 30, "{learning}");
+    assert!(grid > 200, "the karts revving on the grid: {grid}");
+    assert_eq!(total, 0, "allocations; the first:\n{first}");
+}
+
 /// Load measurement, run by hand (numbers go in STATUS.md):
 /// `cargo test --lib measure_the_particles -- --ignored --nocapture` (add `--release` for the
 /// game's optimizations). The CPU time of the particles' systems per frame in a race of 12
@@ -332,17 +404,18 @@ fn the_particles_systems_allocate_nothing_per_frame() {
 /// most, the pool topped up before each frame: the most the particles can ever cost), then
 /// (issue #174) with the 12 karts drifting in the purple tier all at once, all along (each
 /// kart's state set so before each frame of the particles: the race itself is no longer
-/// measured then).
+/// measured then), then (issue #176) a standing start: the countdown played (the 12 karts
+/// revving on the grid), GO and the first 3 s of the race.
 #[test]
 #[ignore]
 fn measure_the_particles_with_twelve_karts() {
-    for mode in 0..3 {
-        let (full, drifting) = (mode == 1, mode == 2);
-        let (mut app, mut counted) = counted_race();
+    for mode in 0..4 {
+        let (full, drifting, grid) = (mode == 1, mode == 2, mode == 3);
+        let (mut app, mut counted) = counted_race_from(!grid);
         if full {
             app.world_mut().resource_mut::<VfxTuning>().max_particles = ParticlePool::SLOTS;
         }
-        for _ in 0..(5 * 60) {
+        for _ in 0..(if grid { 10 } else { 5 * 60 }) {
             app.update();
             counted.run(app.world_mut());
         }
@@ -350,6 +423,9 @@ fn measure_the_particles_with_twelve_karts() {
         let mut vfx = Vec::with_capacity(3600);
         let mut live = 0usize;
         for _ in 0..(40 * 60) {
+            if grid && app.world().resource::<Race>().race_ticks() > 3 * 60 {
+                break;
+            }
             let start = std::time::Instant::now();
             app.update();
             let middle = std::time::Instant::now();
@@ -404,6 +480,8 @@ fn measure_the_particles_with_twelve_karts() {
             "{}: {:.0} particles alive on average; particles' systems {}; the game's frame {}",
             if full {
                 "every slot alive (1 536)"
+            } else if grid {
+                "a standing start (the countdown, GO, 3 s)"
             } else if drifting {
                 "12 karts drifting purple"
             } else {

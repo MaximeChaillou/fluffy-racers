@@ -1594,3 +1594,41 @@ fn listening_plays_a_sound_at_once_even_out_of_a_race() {
     // The race's loops stay silent meanwhile (paused).
     assert_eq!(loudness(&mut app, LoopKind::Engine), 0.0);
 }
+
+/// Issue #176: on the grid, the accelerator down revs the player's engine (the race holds the
+/// karts' input at zero until GO; with a renderer, the particles saw what the driver pressed).
+#[test]
+fn the_engine_revs_on_the_grid() {
+    let mut app = game_app_unloaded(TrackChoice::default(), 0);
+    app.add_plugins((
+        crate::ui::RoulettePlugin,
+        SoundDesignPlugin,
+        MusicPlugin,
+        crate::vfx::VfxPlugin,
+    ))
+    .init_resource::<Asked>()
+    .add_systems(PostUpdate, record.before(mix));
+    wait_for_the_player(&mut app);
+    for _ in 0..600 {
+        let world = app.world();
+        let counting = world
+            .get_resource::<Race>()
+            .is_some_and(|race| race.flow.countdown_number(&race.timings) == Some(3));
+        if counting {
+            break;
+        }
+        app.update();
+    }
+    run(&mut app, 20);
+    let idle = front_loop(&mut app, LoopKind::Engine);
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    run(&mut app, 50);
+    assert!(
+        !app.world().resource::<Race>().started(),
+        "still on the grid"
+    );
+    let revving = front_loop(&mut app, LoopKind::Engine);
+    println!("{idle:?} {revving:?}");
+    assert!(revving.pitch > idle.pitch + 0.05, "{idle:?} {revving:?}");
+    assert!(revving.volume > idle.volume, "{idle:?} {revving:?}");
+}

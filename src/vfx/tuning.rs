@@ -31,6 +31,8 @@ pub struct VfxTuning {
     pub boost: BoostVfx,
     pub impact: ImpactVfx,
     pub world: WorldVfx,
+    /// Issue #176: the wheels that turn, the tyres that spin and smoke at a standing start.
+    pub wheels: WheelVfx,
     pub colors: VfxColors,
 }
 
@@ -47,6 +49,7 @@ impl Default for VfxTuning {
             boost: BoostVfx::default(),
             impact: ImpactVfx::default(),
             world: WorldVfx::default(),
+            wheels: WheelVfx::default(),
             colors: VfxColors::default(),
         }
     }
@@ -478,6 +481,111 @@ impl Default for WorldVfx {
             wake_min_speed: 3.0,
             wake_size: 0.42,
             wake_life: 0.9,
+        }
+    }
+}
+
+/// Issue #176 (GD § 4 and 14): the wheels on screen (they turn with the kart, steer, spin at a
+/// standing start) and what a standing start throws: the smoke and the dust of the tyres spinning
+/// on the spot, the kart's little shakes, the cloud at GO by the start's quality, the puff of a
+/// kart setting off again from a full stop. Purely visual: the race knows nothing of it.
+#[derive(Reflect, Clone, Debug, PartialEq)]
+pub struct WheelVfx {
+    /// The wheels roll at the kart's speed (rad/s: m/s over their radius), shown at most this fast
+    /// (rad/s): their band (`kart::parts::paint_band`) then never turns more than half a turn in
+    /// a frame down to 15 frames per second, so it never seems to turn backward.
+    pub max_spin: f32,
+    /// **Spinning on the spot**: the accelerator down while the karts are held on the grid (before
+    /// GO), the back wheels' tyres go this fast (m/s) on top of the kart's speed...
+    pub grid_slip: f32,
+    /// ...and setting off in the race (the accelerator down, slow), this much (m/s), less and less
+    /// as the kart gets going, none from `slip_fade_speed` (m/s).
+    pub launch_slip: f32,
+    pub slip_fade_speed: f32,
+    /// A rocket start's boost (GD § 4) spins them this much more (m/s), none from this speed
+    /// (m/s).
+    pub rocket_slip: f32,
+    pub rocket_fade_speed: f32,
+    /// How fast the spin follows (1/s).
+    pub slip_response: f32,
+    /// **Steering**: the front wheels turn this far at full lock (rad), this fast (1/s); a kart
+    /// without its driver's stick here (another player's, online) shows its turn: full lock at
+    /// this yaw rate (rad/s).
+    pub steer_angle: f32,
+    pub steer_response: f32,
+    pub steer_yaw_rate: f32,
+    /// **The tyres' smoke** while they spin: puffs per back wheel per second at `grid_slip`
+    /// (in proportion to the spin), their size, their life, how fast they rise and roll back; they
+    /// take this much of the color of the ground (as the drift's: `DriftVfx::smoke_tint`) and are
+    /// this opaque at first.
+    pub smoke_rate: f32,
+    pub smoke_size: f32,
+    pub smoke_life: f32,
+    pub smoke_rise: f32,
+    pub smoke_push: f32,
+    pub smoke_tint: f32,
+    pub smoke_opacity: f32,
+    /// ...and puffs thrown back off the tyres (per back wheel per second at `grid_slip`; their
+    /// look is the dust's: `WorldVfx::dust_size`, `dust_life`): white smoke on the road, the dust
+    /// of the ground off it.
+    pub dust_rate: f32,
+    /// **Little shakes** of the kart spinning on the spot (shown only: its visual), this much (m)
+    /// at `grid_slip`, this fast (rad/s).
+    pub shake: f32,
+    pub shake_speed: f32,
+    /// **At GO**, a cloud by the start's quality (GD § 4), out of the back wheels: this many puffs
+    /// for a perfect rocket start (fewer for a later one: down to `go_rocket_least` of them for the
+    /// shortest boost), for a normal start with the accelerator down, for a stall (it splutters);
+    /// their size, their life, how fast they are blown back (m/s).
+    pub go_rocket_puffs: u32,
+    pub go_rocket_least: f32,
+    pub go_normal_puffs: u32,
+    pub go_stall_puffs: u32,
+    pub go_size: f32,
+    pub go_life: f32,
+    pub go_push: f32,
+    /// **Setting off again from a full stop** (after a tumble, a wall...): still (slower than
+    /// `stop_speed`, m/s) for `stop_time` s, then off: a smaller puff, this many, `launch_size` big.
+    pub stop_speed: f32,
+    pub stop_time: f32,
+    pub launch_puffs: u32,
+    pub launch_size: f32,
+}
+
+impl Default for WheelVfx {
+    fn default() -> Self {
+        Self {
+            max_spin: 45.0,
+            grid_slip: 9.0,
+            launch_slip: 4.0,
+            slip_fade_speed: 9.0,
+            rocket_slip: 14.0,
+            rocket_fade_speed: 18.0,
+            slip_response: 8.0,
+            steer_angle: 0.42,
+            steer_response: 14.0,
+            steer_yaw_rate: 2.2,
+            smoke_rate: 16.0,
+            smoke_size: 0.42,
+            smoke_life: 0.65,
+            smoke_rise: 0.9,
+            smoke_push: 2.2,
+            smoke_tint: 0.2,
+            smoke_opacity: 0.8,
+            dust_rate: 6.0,
+            shake: 0.022,
+            shake_speed: 48.0,
+            go_rocket_puffs: 26,
+            go_rocket_least: 0.4,
+            go_normal_puffs: 12,
+            go_stall_puffs: 4,
+            go_size: 0.75,
+            go_life: 0.95,
+            go_push: 4.5,
+            stop_speed: 1.0,
+            stop_time: 0.5,
+            launch_puffs: 6,
+            launch_size: 0.5,
         }
     }
 }

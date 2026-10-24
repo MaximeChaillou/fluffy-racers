@@ -10,10 +10,11 @@
 use bevy::prelude::*;
 
 use crate::items::ItemKind;
-use crate::kart::{HitReaction, KartState, MiniTurbo};
+use crate::kart::{HitReaction, KartState, MiniTurbo, THROTTLE_PRESSED};
 
 use super::pool::Paint;
 use super::tuning::{DriftVfx, VfxTuning};
+use super::wheels::Start;
 
 /// What the particles see of a kart on one tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -46,6 +47,9 @@ pub struct VfxSnapshot {
     pub struck: u32,
     /// Issue #130: under the water of a lake.
     pub underwater: bool,
+    /// Issue #176: its driver's accelerator as pressed (before the race holds the karts on the
+    /// grid: `systems::watch_the_drivers`).
+    pub throttle: f32,
 }
 
 /// What else happened to the kart on this tick (messages of the rules).
@@ -120,6 +124,9 @@ pub struct Bursts {
     pub dizzy: f32,
     /// Issue #130: it went into the water (true) or came out of it (false): a splash.
     pub splash: Option<bool>,
+    /// Issue #176: the race's GO, and how it started (its cloud). None: it did not press the
+    /// accelerator (it sets off later: `wheels::Standstill`).
+    pub start: Option<Start>,
 }
 
 impl Bursts {
@@ -140,6 +147,7 @@ impl Bursts {
         self.struck |= other.struck;
         self.dizzy = self.dizzy.max(other.dizzy);
         self.splash = other.splash.or(self.splash);
+        self.start = other.start.or(self.start);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -239,6 +247,19 @@ pub fn kart_bursts(
     }
     if now.underwater != prev.underwater {
         bursts.splash = Some(now.underwater);
+    }
+    // Issue #176: at GO, the start's cloud: a rocket start (its boost), a stall, or a normal start
+    // with the accelerator down.
+    if events.go {
+        bursts.start = if now.stalled {
+            Some(Start::Stall)
+        } else if boost_started(prev, now, dt) {
+            Some(Start::Rocket(now.boost))
+        } else if now.throttle > THROTTLE_PRESSED {
+            Some(Start::Normal)
+        } else {
+            None
+        };
     }
     bursts
 }
@@ -589,6 +610,41 @@ mod tests {
         let mut merged = bursts(rest, trick);
         merged.merge(bursts(rest, wall));
         assert!(merged.trick && merged.wall == 9.0);
+    }
+
+    /// Issue #176: at GO, each kart's start: a rocket start (its boost's length), a stall, a
+    /// normal start with the accelerator down; nothing without it, nor out of GO.
+    #[test]
+    fn at_go_each_kart_shows_its_start() {
+        let tuning = VfxTuning::default();
+        let rest = VfxSnapshot::default();
+        let go = TickEvents {
+            go: true,
+            ..Default::default()
+        };
+        let start = |now: VfxSnapshot, events| kart_bursts(&rest, &now, events, &tuning, DT).start;
+        let rocket = VfxSnapshot {
+            boost: 2.5,
+            throttle: 1.0,
+            ..rest
+        };
+        assert_eq!(start(rocket, go), Some(Start::Rocket(2.5)));
+        let stalled = VfxSnapshot {
+            stalled: true,
+            throttle: 1.0,
+            ..rest
+        };
+        assert_eq!(start(stalled, go), Some(Start::Stall));
+        let pressed = VfxSnapshot {
+            throttle: 1.0,
+            ..rest
+        };
+        assert_eq!(start(pressed, go), Some(Start::Normal));
+        assert_eq!(start(rest, go), None, "the accelerator up");
+        assert_eq!(start(pressed, TickEvents::default()), None, "not GO");
+        let mut frame = kart_bursts(&rest, &rocket, go, &tuning, DT);
+        frame.merge(bursts(rocket, rocket));
+        assert_eq!(frame.start, Some(Start::Rocket(2.5)), "kept in its frame");
     }
 
     /// Issue #130: going into the water splashes, coming out of it too (each once); a tick

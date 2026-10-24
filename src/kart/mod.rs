@@ -76,6 +76,7 @@ pub use stats::{
 };
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
+pub(crate) use visual::place_wheels;
 pub use visual::{
     BodyPaint, BoostFlame, DRIVER_SEAT, DeflatedScale, DriftSpark, DriverEars, DriverLook,
     DriverPrimitive, DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets,
