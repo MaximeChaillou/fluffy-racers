@@ -22,6 +22,11 @@ pub struct VfxTuning {
     /// An emitter throws at most this many particles in a frame (a long frame does not throw a
     /// wave of them).
     pub max_per_frame: u32,
+    /// Issue #174: a kart farther than this from the camera (m) throws only `lod_share` of its
+    /// drift's sparks, flames, embers and smoke (what is small on screen costs less; its flashes
+    /// and its halo stay whole).
+    pub lod_range: f32,
+    pub lod_share: f32,
     pub drift: DriftVfx,
     pub boost: BoostVfx,
     pub impact: ImpactVfx,
@@ -36,6 +41,8 @@ impl Default for VfxTuning {
             max_particles: 900,
             emit_range: 80.0,
             max_per_frame: 6,
+            lod_range: 30.0,
+            lod_share: 0.5,
             drift: DriftVfx::default(),
             boost: BoostVfx::default(),
             impact: ImpactVfx::default(),
@@ -66,6 +73,45 @@ pub struct DriftVfx {
     /// fall with this gravity.
     pub spark_spread: f32,
     pub spark_gravity: f32,
+    /// Issue #174: how high the sparks are thrown, by tier (the up of their spray, against 1
+    /// backward): the purple ones leap high.
+    pub spark_rise: [f32; 3],
+    /// Issue #174: how bright they glow, by tier (above 1, their core burns white: the color is
+    /// at its edge).
+    pub spark_glow: [f32; 3],
+    /// Issue #174: a spark's streak is longer the faster it flies: this many seconds of its
+    /// flight (m per m/s), on top of its length.
+    pub spark_smear: f32,
+    /// Issue #174: they bounce on the road (this much of their fall back up, the rest of their
+    /// speed rubbed off), then lie there and die out.
+    pub spark_bounce: f32,
+    /// Issue #174: they cool as they die (white, then their tier's color, then its deep color:
+    /// `VfxColors::deep`), this much of the way by their end.
+    pub spark_cool: f32,
+    /// Issue #174, **the flames licking the rear wheels**: tongues per wheel per second by tier
+    /// (blue: none, its sparks only), their height (m) at the start of the tier (`flame_grow`
+    /// times more as the charge nears the next tier), how long each one licks (s), how fast it
+    /// rises (m/s), how bright it is.
+    pub flame_rate: [f32; 3],
+    pub flame_size: [f32; 3],
+    pub flame_grow: f32,
+    pub flame_life: f32,
+    pub flame_rise: f32,
+    pub flame_glow: [f32; 3],
+    /// Issue #174, **the embers** floating up from the wheels (purple: real fire): per wheel per
+    /// second by tier, their size, their life, how fast they float up.
+    pub ember_rate: [f32; 3],
+    pub ember_size: f32,
+    pub ember_life: f32,
+    pub ember_rise: f32,
+    /// Issue #174, **the halo** on the ground under the kart (a false light: a glowing disc, the
+    /// one sun stays the only light), by tier: how wide (m), how bright; it pulses this much
+    /// (share of its size), this fast (rad/s). After the release, it stays while the mini-turbo
+    /// lasts, fading with it.
+    pub halo_size: [f32; 3],
+    pub halo_glow: [f32; 3],
+    pub halo_pulse: f32,
+    pub halo_pulse_speed: f32,
     /// A tier reached: a burst of this many sparks of its color at each rear wheel...
     pub flash_sparks: [u32; 3],
     /// ...a white flash this big at each wheel, and a ring of its color this wide around the
@@ -73,19 +119,33 @@ pub struct DriftVfx {
     pub flash_size: [f32; 3],
     pub flash_ring: [f32; 3],
     pub flash_time: f32,
+    /// Issue #174: ...and the kart gives a little jump (shown only: its visual), this high (m)
+    /// for `hop_time` s.
+    pub hop_height: [f32; 3],
+    pub hop_time: f32,
     /// The tyres' smoke while drifting: puffs per rear wheel per second, their size, their life,
     /// how fast they rise.
     pub smoke_rate: f32,
     pub smoke_size: f32,
     pub smoke_life: f32,
     pub smoke_rise: f32,
+    /// Issue #174: the smoke takes this much of the color of the ground under the wheels (the
+    /// road's, its sand's, the shoulders' off the road: issue #130), and is this opaque at first
+    /// (it thins out as it spreads).
+    pub smoke_tint: f32,
+    pub smoke_opacity: f32,
     /// The release (« fwoosh »): a burst of this many sparks out of the exhaust, by tier...
     pub release_sparks: [u32; 3],
     pub release_speed: f32,
+    /// Issue #174: ...a blast of this many tongues of flame out of the exhausts, in its color...
+    pub release_flames: [u32; 3],
     /// ...a ring this wide behind the kart...
     pub release_ring: [f32; 3],
-    /// ...and while its mini-turbo lasts, a trail of its color out of the exhaust (per second).
+    /// ...and while its mini-turbo lasts, a trail of its color out of the exhaust (per second;
+    /// issue #174: a glowing streak, this long-lived, this wide).
     pub trail_rate: f32,
+    pub trail_life: f32,
+    pub trail_size: f32,
 }
 
 impl Default for DriftVfx {
@@ -99,18 +159,44 @@ impl Default for DriftVfx {
             spark_life: [0.22, 0.26, 0.3],
             spark_spread: 0.55,
             spark_gravity: 9.0,
+            spark_rise: [0.45, 0.6, 1.05],
+            spark_glow: [2.6, 3.0, 3.4],
+            spark_smear: 0.03,
+            spark_bounce: 0.4,
+            spark_cool: 0.85,
+            flame_rate: [0.0, 34.0, 56.0],
+            flame_size: [0.0, 0.18, 0.26],
+            flame_grow: 1.5,
+            flame_life: 0.17,
+            flame_rise: 1.8,
+            flame_glow: [1.6, 1.9, 2.2],
+            ember_rate: [0.0, 0.0, 12.0],
+            ember_size: 0.07,
+            ember_life: 0.8,
+            ember_rise: 1.3,
+            halo_size: [2.2, 2.8, 3.6],
+            halo_glow: [0.6, 0.9, 1.25],
+            halo_pulse: 0.1,
+            halo_pulse_speed: 15.0,
             flash_sparks: [12, 18, 26],
             flash_size: [0.45, 0.6, 0.75],
             flash_ring: [1.2, 1.35, 1.5],
             flash_time: 0.22,
+            hop_height: [0.05, 0.07, 0.1],
+            hop_time: 0.2,
             smoke_rate: 10.0,
-            smoke_size: 0.22,
-            smoke_life: 0.4,
-            smoke_rise: 1.4,
+            smoke_size: 0.3,
+            smoke_life: 0.55,
+            smoke_rise: 1.2,
+            smoke_tint: 0.35,
+            smoke_opacity: 0.55,
             release_sparks: [12, 20, 30],
             release_speed: 8.0,
+            release_flames: [8, 14, 22],
             release_ring: [0.55, 0.7, 0.85],
-            trail_rate: 30.0,
+            trail_rate: 120.0,
+            trail_life: 0.3,
+            trail_size: 0.13,
         }
     }
 }
@@ -126,6 +212,9 @@ pub struct BoostVfx {
     pub ember_life: f32,
     pub ember_speed: f32,
     pub ember_spread: f32,
+    /// Issue #174: how bright the exhaust's flames burn (their color times this: their core
+    /// white).
+    pub flame_glow: f32,
     /// **Speed lines** around the camera's kart while it boosts: per second at a boost of 0.3
     /// (+30 %), their length, their width, their life, how fast they rush past...
     pub speed_line_rate: f32,
@@ -171,6 +260,7 @@ impl Default for BoostVfx {
             ember_life: 0.22,
             ember_speed: 3.0,
             ember_spread: 0.35,
+            flame_glow: 2.4,
             speed_line_rate: 55.0,
             speed_line_length: 2.2,
             speed_line_width: 0.035,
@@ -397,6 +487,9 @@ impl Default for WorldVfx {
 pub struct VfxColors {
     /// The drift's tiers (GD § 3.4): blue, orange, purple.
     pub tiers: [[f32; 3]; 3],
+    /// Issue #174: their deep colors: what their sparks cool to, the tips of their flames, their
+    /// embers (blue to indigo, orange to red, purple to pink).
+    pub deep: [[f32; 3]; 3],
     pub hot: [f32; 3],
     pub flame: [f32; 3],
     pub piment: [f32; 3],
@@ -418,6 +511,7 @@ impl Default for VfxColors {
     fn default() -> Self {
         Self {
             tiers: [[0.3, 0.68, 1.0], [1.0, 0.58, 0.12], [0.8, 0.36, 1.0]],
+            deep: [[0.22, 0.25, 1.0], [1.0, 0.18, 0.04], [1.0, 0.25, 0.7]],
             hot: [1.0, 0.97, 0.85],
             flame: [1.0, 0.65, 0.15],
             piment: [1.0, 0.22, 0.12],
@@ -467,7 +561,7 @@ impl VfxColors {
             Paint::Soot => self.soot,
             Paint::Cream => self.cream,
             // Issue #130: the biome's ground on a circuit (`VfxAssets`), the dust's elsewhere.
-            Paint::Ground | Paint::Sand => self.dust,
+            Paint::Ground | Paint::Sand | Paint::Road => self.dust,
             Paint::Water => self.water,
             Paint::Foam => self.foam,
         }
@@ -484,4 +578,16 @@ pub fn ground_dust(palette: &crate::track::biome::Palette, lighten: f32) -> [[f3
     };
     let light = |(r, g, b): (f32, f32, f32)| [r, g, b].map(|c| c + (1.0 - c) * t);
     [light(palette.shoulder), light(palette.sand)]
+}
+
+/// Issue #174: the color of the road's dust on a circuit of `palette`'s biome (its asphalt,
+/// `lighten` of the way to white, as `ground_dust`): the tint of the tyres' smoke on it.
+pub fn road_dust(palette: &crate::track::biome::Palette, lighten: f32) -> [f32; 3] {
+    let t = if lighten.is_finite() {
+        lighten.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (r, g, b) = palette.asphalt;
+    [r, g, b].map(|c| c + (1.0 - c) * t)
 }

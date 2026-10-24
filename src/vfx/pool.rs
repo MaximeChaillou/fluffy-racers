@@ -8,6 +8,12 @@
 //! is left behind by the kart. It grows and shrinks along its [`Curve`], and turns as its
 //! [`Facing`] says. Its looks are a [`Shape`] (a mesh) and a [`Paint`] (a material), shared by
 //! every particle.
+//!
+//! Issue #174: the glowing shapes ([`Shape::Glint`], [`Shape::Glow`], [`Shape::Tongue`],
+//! [`Shape::Shock`]) and the smoke ([`Shape::Haze`]) have no mesh of their own: each frame, every
+//! one of them is a textured quad of one shared mesh (`batch.rs`: one draw for all the glows,
+//! additive, one for the smoke), its color its own (its paint, how bright it still is, how far it
+//! cooled), so they fade out instead of only shrinking.
 
 use std::f32::consts::{PI, TAU};
 
@@ -25,14 +31,46 @@ pub enum Shape {
     Star,
     /// A flat ring: the shockwave of a mini-turbo or a tier.
     Ring,
+    /// Issue #174, glowing (additive, batched): a spark, a thin streak with a white-hot core and
+    /// an edge of its color, stretched along its flight (its head ahead, its tail behind).
+    Glint,
+    /// ...a soft round glow facing the camera: a flash, an ember, a fireball.
+    Glow,
+    /// ...a tongue of flame, from its base (where it is) up along its flight.
+    Tongue,
+    /// ...a glowing ring lying across its axis: the shockwave of a tier or of a release.
+    Shock,
+    /// Issue #174, the smoke (blended, batched): a soft puff facing the camera, which spreads,
+    /// turns and thins out.
+    Haze,
 }
 
 impl Shape {
+    /// The shapes with a mesh of their own (each slot's entity shows them).
     pub const ALL: [Self; 4] = [Shape::Cube, Shape::Ball, Shape::Star, Shape::Ring];
 
     pub fn index(self) -> usize {
         self as usize
     }
+
+    /// Issue #174: drawn in the shared quads of `batch.rs` (no entity of its own): additive
+    /// glows, or the smoke.
+    pub fn batched(self) -> Option<Batch> {
+        match self {
+            Shape::Glint | Shape::Glow | Shape::Tongue | Shape::Shock => Some(Batch::Glow),
+            Shape::Haze => Some(Batch::Haze),
+            Shape::Cube | Shape::Ball | Shape::Star | Shape::Ring => None,
+        }
+    }
+}
+
+/// Issue #174: the two shared meshes of the batched particles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Batch {
+    /// Additive: what glows (sparks, flames, flashes, rings, halos).
+    Glow,
+    /// Blended, drawn back to front: the smoke.
+    Haze,
 }
 
 /// The materials of the particles (one each, shared; their colors are `VfxTuning`'s).
@@ -79,10 +117,12 @@ pub enum Paint {
     Water,
     /// Issue #130, lit: the foam on the water (a splash's, the wake).
     Foam,
+    /// Issue #174: the road's dust (its asphalt, lighter): the tint of the tyres' smoke on it.
+    Road,
 }
 
 impl Paint {
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 24;
     pub const ALL: [Self; Self::COUNT] = [
         Paint::Blue,
         Paint::Orange,
@@ -107,6 +147,7 @@ impl Paint {
         Paint::Sand,
         Paint::Water,
         Paint::Foam,
+        Paint::Road,
     ];
     pub const CONFETTI: [Self; 5] = [
         Paint::Confetti0,
@@ -136,6 +177,7 @@ impl Paint {
                 | Paint::Ground
                 | Paint::Sand
                 | Paint::Foam
+                | Paint::Road
         )
     }
 }
@@ -152,6 +194,12 @@ pub enum Curve {
     Pop,
     /// Out and back in (a half sine): flashes, shockwaves.
     Flash,
+    /// Issue #174: a wave blown out: from a quarter of its size, fast, then slower to its full
+    /// size (it dies out as it goes: `batch.rs`).
+    Wave,
+    /// Issue #174: full size most of its life, then shrinks away fast: a trail that stays a
+    /// ribbon.
+    Linger,
 }
 
 impl Curve {
@@ -176,6 +224,8 @@ impl Curve {
                 pop * out
             }
             Curve::Flash => (PI * t).sin(),
+            Curve::Wave => 0.25 + 0.75 * (1.0 - (1.0 - t).powi(3)),
+            Curve::Linger => 1.0 - t * t * t,
         }
     }
 }
@@ -223,6 +273,21 @@ pub struct Particle {
     pub spin: f32,
     /// It does not fall below this height (world Y: the ground under a blast).
     pub floor: f32,
+    /// Issue #174: landing on its floor, it bounces this much of its fall back up (the rest of
+    /// its speed rubbed off by the ground); 0: it lies there.
+    pub bounce: f32,
+    /// Issue #174, the batched ones (`Shape::batched`): how bright it glows (its color times
+    /// this: above 1, its core burns white) or, for the smoke, how opaque it is at first...
+    pub glow: f32,
+    /// ...how far it cools to its paint's deep color by its end (0: not at all)...
+    pub cool: f32,
+    /// ...how much longer its streak gets with its speed (m per m/s)...
+    pub smear: f32,
+    /// ...how much of `tint`'s color it takes (the smoke: the ground's)...
+    pub tint: f32,
+    pub tint_paint: Paint,
+    /// ...and which drawing of its shape (two flames, two puffs).
+    pub variant: u8,
 }
 
 impl Particle {
@@ -238,8 +303,14 @@ impl Particle {
             stretch: 1.0,
             axis: Vec3::Y,
             floor: f32::NEG_INFINITY,
+            glow: 1.0,
             ..default()
         }
+    }
+
+    /// Issue #174: how far through its life it is (0 to 1).
+    pub fn progress(&self) -> f32 {
+        (self.age / self.life.max(1e-6)).clamp(0.0, 1.0)
     }
 
     pub fn alive(&self) -> bool {
@@ -263,11 +334,19 @@ impl Particle {
         self.carrier *= keep;
         self.position += (self.velocity + self.carrier) * dt;
         if self.position.y < self.floor {
-            // Landed: it lies there until it is over.
             self.position.y = self.floor;
-            self.velocity = Vec3::ZERO;
-            self.carrier = Vec3::ZERO;
-            self.spin = 0.0;
+            let falling = -(self.velocity.y + self.carrier.y);
+            if self.bounce > 0.0 && falling > 0.8 {
+                // Issue #174: it bounces (a spark on the road), the ground rubbing its speed.
+                let along = (self.velocity + self.carrier).with_y(0.0) * 0.55;
+                self.carrier = Vec3::ZERO;
+                self.velocity = along + Vec3::Y * falling * self.bounce;
+            } else {
+                // Landed: it lies there until it is over.
+                self.velocity = Vec3::ZERO;
+                self.carrier = Vec3::ZERO;
+                self.spin = 0.0;
+            }
         }
         self.angle = (self.angle + self.spin * dt).rem_euclid(TAU);
         true
@@ -590,6 +669,38 @@ mod tests {
         assert_eq!(confetti.spin, 0.0);
     }
 
+    /// Issue #174: a spark that bounces comes back up off the road, slower, a few times, then
+    /// lies there; it never goes under its floor.
+    #[test]
+    fn a_spark_bounces_on_the_road_then_lies_there() {
+        let mut spark = spark(1.5);
+        spark.position = Vec3::new(0.0, 0.5, 0.0);
+        spark.velocity = Vec3::new(0.0, 2.0, 3.0);
+        spark.carrier = Vec3::new(0.0, 0.0, -20.0);
+        spark.gravity = 9.0;
+        spark.floor = 0.0;
+        spark.bounce = 0.45;
+        let (mut bounces, mut falling, mut tops) = (0, false, Vec::new());
+        let mut top = 0.0f32;
+        while spark.step(1.0 / 60.0) {
+            assert!(spark.position.y >= 0.0);
+            let rising = spark.velocity.y > 0.0;
+            if falling && rising {
+                bounces += 1;
+                tops.push(top);
+                top = 0.0;
+            }
+            top = top.max(spark.position.y);
+            falling = spark.velocity.y < 0.0;
+        }
+        assert!(bounces >= 2, "{bounces}");
+        assert!(
+            tops.windows(2).all(|w| w[1] < w[0]),
+            "lower each time: {tops:?}"
+        );
+        assert_eq!(spark.velocity, Vec3::ZERO, "lying on the road at the end");
+    }
+
     /// Each curve starts, peaks and ends where it should.
     #[test]
     fn the_curves_grow_and_shrink() {
@@ -604,6 +715,8 @@ mod tests {
         assert!(Curve::Pop.factor(1.0).abs() < 1e-6);
         assert!(Curve::Flash.factor(0.0).abs() < 1e-6);
         assert!((Curve::Flash.factor(0.5) - 1.0).abs() < 1e-6);
+        assert_eq!(Curve::Wave.factor(0.0), 0.25);
+        assert!(Curve::Wave.factor(0.3) > 0.7 && Curve::Wave.factor(1.0) == 1.0);
     }
 
     /// A streak lies along its velocity, as long as its stretch; a star faces the camera.

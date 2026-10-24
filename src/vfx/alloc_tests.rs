@@ -92,17 +92,22 @@ fn the_counter_counts() {
 }
 
 /// Every effect thrown into the pool, the pool moving on and every particle's transform, frame
-/// after frame: nothing allocated, even with the pool full.
+/// after frame: nothing allocated, even with the pool full. Issue #174: the drift's flames and
+/// embers too, and the quads of the batched particles and of a halo written every frame.
 #[test]
 fn the_pool_and_the_emitters_allocate_nothing() {
     let tuning = VfxTuning::default();
     let mut pool = ParticlePool::new(300);
+    let mut glow = Quads::new(300 + MAX_HALOS);
+    let mut haze = Quads::new(300);
+    let colors = QuadColors::default();
     let mut frame = KartFrame {
         velocity: Vec3::new(0.0, 0.0, -25.0),
         ..default()
     };
     let mut carry = [0.0f32; 4];
     let mut sum = Vec3::ZERO;
+    let mut smoky = 0;
     let mut one_frame = |pool: &mut ParticlePool, frame: &mut KartFrame, k: usize| {
         let dt = 1.0 / 60.0;
         frame.position += frame.velocity * dt;
@@ -113,15 +118,19 @@ fn the_pool_and_the_emitters_allocate_nothing() {
         for side in [-1.0, 1.0] {
             let n = take(&mut carry[0], style.rate, dt, 6);
             emit::drift_sparks(pool, frame, side, &style, drift, n, dt);
+            // Issue #174: the flames and the embers of the purple tier.
+            let purple = spark_style(drift, MiniTurbo::Purple, 0.5);
+            emit::drift_flames(pool, frame, side, &purple, drift, 2, dt);
+            emit::drift_embers(pool, frame, side, Paint::Purple, drift, 1, dt);
             let n = take(&mut carry[1], drift.smoke_rate, dt, 6);
-            emit::drift_smoke(pool, frame, side, drift, n, dt);
+            emit::drift_smoke(pool, frame, side, Paint::Road, drift, n, dt);
             emit::dust(pool, frame, side, Paint::Ground, world, 1, dt);
         }
         // Issue #130: the wake on the water.
         emit::wake(pool, frame, frame.position.y - 0.3, world, 1, dt);
         let n = take(&mut carry[2], boost.ember_rate * 2.0, dt, 6);
         emit::embers(pool, frame, Paint::Flame, 1.0, boost, n, dt);
-        emit::trail(pool, frame, Paint::Orange, 1, dt);
+        emit::trail(pool, frame, Paint::Orange, (0.3, 0.13), 1, dt);
         emit::anti_gravity_sparks(pool, frame, 1, dt);
         emit::glide_wind(pool, frame, 1, dt);
         let n = take(&mut carry[3], boost.speed_line_rate, dt, 12);
@@ -159,9 +168,26 @@ fn the_pool_and_the_emitters_allocate_nothing() {
             );
         }
         pool.step(dt);
+        glow.clear();
+        haze.clear();
+        let camera = frame.position + Vec3::new(0.0, 3.0, 8.0);
         for particle in pool.slots().iter().filter(|p| p.alive()) {
             sum += particle.transform(Vec3::new(0.0, 3.0, 8.0)).translation;
+            let quads = match particle.shape.batched() {
+                Some(Batch::Haze) => &mut haze,
+                _ => &mut glow,
+            };
+            super::batch::particle_quad(particle, camera, frame.position, &colors, quads);
         }
+        let halo = GroundHalo {
+            center: frame.position,
+            up: Vec3::Y,
+            size: 2.0,
+            color: Vec3::ONE,
+        };
+        super::batch::halo_quad(&halo, frame.position, &mut glow);
+        assert!(!glow.is_empty());
+        smoky += usize::from(!haze.is_empty());
     };
     // Warm up, then count: the pool fills up and stays full.
     for k in 0..120 {
@@ -173,6 +199,7 @@ fn the_pool_and_the_emitters_allocate_nothing() {
         }
     });
     assert!(sum.is_finite());
+    assert!(smoky > 600, "the smoke drawn: {smoky} frames");
     // Full all along: the new particles took the slots of live ones.
     assert!(pool.live() <= 300);
     assert!(pool.replaced > 1000, "{}", pool.replaced);
@@ -302,11 +329,15 @@ fn the_particles_systems_allocate_nothing_per_frame() {
 /// game's optimizations). The CPU time of the particles' systems per frame in a race of 12
 /// karts, next to the game's own frame (headless: its simulation and visuals, no rendering):
 /// with the default tuning, then with every slot of the pool alive all along (the cap at its
-/// most, the pool topped up before each frame: the most the particles can ever cost).
+/// most, the pool topped up before each frame: the most the particles can ever cost), then
+/// (issue #174) with the 12 karts drifting in the purple tier all at once, all along (each
+/// kart's state set so before each frame of the particles: the race itself is no longer
+/// measured then).
 #[test]
 #[ignore]
 fn measure_the_particles_with_twelve_karts() {
-    for full in [false, true] {
+    for mode in 0..3 {
+        let (full, drifting) = (mode == 1, mode == 2);
         let (mut app, mut counted) = counted_race();
         if full {
             app.world_mut().resource_mut::<VfxTuning>().max_particles = ParticlePool::SLOTS;
@@ -342,6 +373,15 @@ fn measure_the_particles_with_twelve_karts() {
                     pool.spawn(spark);
                 }
             }
+            if drifting {
+                let world = app.world_mut();
+                for mut state in world.query::<&mut crate::kart::KartState>().iter_mut(world) {
+                    *state = crate::kart::KartState::Drifting {
+                        side: crate::kart::DriftSide::Left,
+                        charge: 2000.0,
+                    };
+                }
+            }
             let topped = std::time::Instant::now();
             counted.run(app.world_mut());
             let end = std::time::Instant::now();
@@ -364,6 +404,8 @@ fn measure_the_particles_with_twelve_karts() {
             "{}: {:.0} particles alive on average; particles' systems {}; the game's frame {}",
             if full {
                 "every slot alive (1 536)"
+            } else if drifting {
+                "12 karts drifting purple"
             } else {
                 "default tuning"
             },
