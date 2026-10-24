@@ -538,13 +538,12 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 
 « Améliorer les animations et en rajouter pour rendre le jeu plus agréable et plus qualitatif. Par exemple autour du dérapage avec les étincelles qui augmentent, le boost et tout » (Max). Des **particules** en formes simples : des bâtonnets (les étincelles, les traits), des boules (la fumée, la poussière, les braises, la crème), des étoiles et des anneaux. Elles brillent, sauf la fumée, la poussière et la crème, que le soleil éclaire. Toutes les valeurs sont « à régler » (`VfxTuning`, panneau d'admin).
 
-- **Le dérapage** (§ 3) : les étincelles jaillissent des deux roues arrière, vers l'arrière, le haut et l'extérieur, puis retombent et restent derrière le kart. Elles **montent en puissance** :
-  - à chaque palier, elles sont plus nombreuses (26, 42 puis 66 par roue et par seconde), plus grosses, plus longues, plus rapides et durent plus longtemps ;
+- **Le dérapage** (§ 3) : refait par #174 (ci-dessous, « L'effet du dérapage (#174) »). Ce qui reste de #105 :
+  - à chaque palier, les étincelles sont plus nombreuses (26, 42 puis 66 par roue et par seconde), plus grosses, plus longues, plus rapides et durent plus longtemps ;
   - dans un palier, leur nombre augmente à mesure que la charge approche du palier suivant (de 65 à 100 %) ;
   - **leur couleur change net à chaque palier** : bleu, orange, violet ; il n'y en a aucune avant le bleu ;
-  - **le passage d'un palier** : une gerbe d'étincelles de sa couleur à chaque roue, un éclair blanc à chaque roue et un anneau de sa couleur autour de l'arrière du kart ;
   - les pneus **fument** pendant tout le drift ;
-  - **le relâchement** (le « fwoosh ») : une gerbe d'étincelles du palier sort de l'échappement, avec un éclair et un anneau soufflé derrière le kart ; tant que dure le mini-turbo, une **traînée** de sa couleur sort des pots, et **les flammes prennent sa couleur**.
+  - tant que dure le mini-turbo, **les flammes des pots prennent sa couleur**.
 - **Les boosts** (§ 2) : des **braises** sortent des pots d'échappement avec les flammes. Leur nombre et leur taille suivent celle des flammes, qui suit déjà l'intensité du boost et sa durée restante (#13). **Chaque source a son effet et la couleur de ses flammes** :
   - le mini-turbo : son palier (ci-dessus) ;
   - le piment : rouge, avec une gerbe d'étincelles rouges ;
@@ -574,11 +573,39 @@ C'est une grande partie de ce qui fait le plaisir de MK8DX. Chaque mécanique a 
 - **Le sol** (§ 10) : de la **poussière** derrière les roues en hors-piste (selon la vitesse et la part des roues dehors ; depuis #130, de la couleur du sol du biome), un nuage de poussière à l'atterrissage (après 0,35 s en l'air), des **étincelles cyan** sous les roues en anti-gravité et des **traits de vent** au bout des ailes du planeur.
 - **La fluidité d'abord** :
   - **un plafond de 900 particules** (1 536 au plus), jamais dépassé : quand tout est plein, une nouvelle particule prend la place de la plus ancienne ;
-  - les particules et leurs entités sont faites une fois, au lancement, avec 4 maillages et 19 matériaux partagés (23 depuis #130 : l'eau, l'écume, la poussière de deux sols) ; **rien n'est alloué en course** (un test le compte) ;
+  - les particules et leurs entités sont faites une fois, au lancement, avec 4 maillages et 19 matériaux partagés (23 depuis #130 : l'eau, l'écume, la poussière de deux sols ; 24 depuis #174 : la poussière de la route) ; depuis #174, ce qui brille et la fumée sont dessinés en **deux maillages partagés** (ci-dessous) ; **rien n'est alloué en course** (un test le compte) ;
   - aucune particule ne projette d'ombre, et un kart à plus de 80 m de la caméra n'en lance aucune ;
   - aucune n'a besoin d'un compute shader : tout reste en WebGL2.
 - **Purement visuel** : rien ne change dans la course. Les courses de bots n'ont rien de ces effets. En ligne, chaque pair les voit d'après l'état des karts des autres, qu'il a déjà : rien n'est envoyé.
 - **Fait depuis** (#130, ci-dessous) : les animations des personnages, les éclaboussures dans l'eau, la poussière à la couleur du sol. **Pas encore fait** : la vibration de la manette.
+
+### L'effet du dérapage (#174)
+
+« Bosse vraiment l'animation de dérapage car ici elle est vraiment basique, je veux un truc plus travaillé, plus impressionnant. Un peu comme des étincelles / petites flammes » (Max). L'idée des mini-turbos des grands jeux de kart, jamais leurs visuels. Toutes les valeurs sont « à régler » (`VfxTuning::drift`, `VfxColors::deep`, panneau d'admin) ; le curseur **« Effets »** du panneau Ressenti (#155) règle aussi le nombre de flammes et de braises, et l'éclat du halo.
+
+- **Des étincelles qui brillent** : chaque étincelle est une **traînée fine et lumineuse** (additive : elle s'ajoute à la lumière de la scène), au **cœur blanc chaud** et au **bord de la couleur du palier**, d'autant plus longue qu'elle file vite. Elles jaillissent en gerbe de là où le pneu frotte la route, vers l'arrière, le haut et l'extérieur du virage, **rebondissent sur la route** (40 % de leur chute, le reste de leur vitesse frotté), s'y couchent et **s'éteignent en refroidissant** : blanches, puis de la couleur du palier, puis de sa couleur profonde (indigo pour le bleu, rouge pour l'orange, rose pour le violet).
+- **Trois paliers vraiment différents**, pas seulement plus de la même chose :
+  - **bleu** : de fines étincelles bleues, discrètes, et un halo léger ;
+  - **orange** : des étincelles plus denses, plus longues, lancées plus haut, et **de petites flammes orange à pointe rouge** (30 par roue et par seconde, 20 cm, jusqu'à 1,6 fois plus hautes quand la charge approche du violet) ;
+  - **violet** : de **vraies flammes violettes à pointe rose** (52 par roue et par seconde, 32 cm et plus), des étincelles qui **jaillissent haut**, un halo plus large et plus vif, et des **braises qui flottent** (12 par roue et par seconde, 0,8 s).
+- **Les flammes lèchent les roues arrière** : chaque langue monte du contact du pneu, le long de son dos et un peu vers l'extérieur, avec sa hauteur, son inclinaison et son dessin à elle (deux dessins), grandit puis se rétracte en 0,17 s environ ; elles suivent le kart et restent un peu en arrière. Elles dansent : aucune forme fixe.
+- **Le halo** : sous le kart, un disque lumineux posé au sol, de la couleur du palier, qui pulse un peu (un **« faux » éclairage** : le soleil reste la seule lumière) ; 1,5 m en bleu, 2 m en orange, 2,7 m en violet, plus vif à chaque palier et avec la charge. Après le relâchement, il reste tant que dure le mini-turbo et s'éteint avec lui. Pas en l'air.
+- **Le passage d'un palier** : un éclat franc (une gerbe d'étincelles qui jaillit haut à chaque roue, un éclair blanc à chaque roue, une onde de sa couleur soufflée au sol autour de l'arrière, une lueur au-dessus), le halo qui enfle un instant, et **un petit sursaut du kart** (5, 7 puis 10 cm en 0,2 s, à l'écran seulement : la course n'en sait rien).
+- **Le relâchement** (le mini-turbo) : **une explosion de flammes** de la couleur du palier jaillit des pots (8, 14 ou 22 langues), avec une gerbe d'étincelles, un éclair blanc, une boule de feu et une onde de sa couleur ; puis, tant que dure le boost, **une traînée lumineuse** de sa couleur derrière chaque pot (90 traits par seconde : un ruban continu qui refroidit), et les flammes des pots, lumineuses elles aussi.
+- **La fumée** : des volutes douces qui gonflent, tournent, se déforment et **se dissipent** (elles deviennent transparentes au lieu de rétrécir), teintées à 35 % par le sol sous les roues (#130 : l'asphalte du biome éclairci, son sable, ou ses bas-côtés hors-piste).
+- **Les flammes de boost** (#13) brillent aussi : deux plans croisés au dessin de flamme et une lueur à leur base (la caméra, derrière, les voit de face), de la couleur de la source (§ 14 ci-dessus) ; les braises de tous les boosts sont des lueurs. Les cubes lumineux des roues (#4) sont devenus un cœur lumineux de la couleur du palier.
+- **Les bots** ont le même effet, à la même échelle. Un kart à plus de 30 m de la caméra lance moitié moins d'étincelles, de flammes, de braises et de fumée (`lod_range`, `lod_share`) ; rien au-delà de 80 m ; le plafond de 900 particules tient.
+![Avant et après #174 : l'orange, le violet, le relâchement (de près, au même moment de la même course)](img/derapage-avant-apres.jpg)
+
+![Les trois paliers, de près](img/derapage-paliers.jpg)
+
+![Le passage d'un palier : orange, puis violet](img/derapage-passage.jpg)
+
+![Le relâchement, puis la traînée du mini-turbo](img/derapage-relachement.jpg)
+
+![Vu de la caméra de course : orange, violet atteint, violet](img/derapage-course.jpg)
+
+- **Comment c'est fait** (WebGL2, aucun compute shader, aucune crate, aucun shader à nous) : les particules restent celles du pool de #105. Celles qui brillent et la fumée sont des quads de **deux maillages partagés**, réécrits à chaque image : **deux appels de dessin pour toutes** au lieu d'une entité chacune. Chacune a sa couleur (elle s'éteint au lieu de seulement rétrécir). Leurs dessins (la traînée, la lueur, deux flammes, l'onde, deux volutes, le halo) sont faits par le jeu au lancement, dans une seule texture avec ses mipmaps. Le matériau standard de Bevy suffit : additif pour ce qui brille (sans ordre à trier), mélangé et trié de l'arrière vers l'avant pour la fumée.
 
 ### Les animations des personnages (#130)
 

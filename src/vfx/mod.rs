@@ -1,7 +1,9 @@
 //! Visual effects (GD § 14 « juice », issue #105): CPU particles, pooled, **only with a
 //! renderer**.
 //!
-//! - **The drift** (GD § 3): sparks out of the rear wheels that grow with the charge (more of
+//! - **The drift** (GD § 3; redone by issue #174: glowing sparks that bounce and cool, flames
+//!   licking the rear wheels from orange on, embers in purple, a halo on the ground, a little
+//!   jump at each tier, a blast of flames at the release): sparks out of the rear wheels that grow with the charge (more of
 //!   them, bigger, longer, faster at each tier, in its color: blue, orange, purple), a flash at
 //!   each tier (a burst of sparks, a white flash at each wheel, a ring of its color), the tyres'
 //!   smoke; the « fwoosh » of the release (a burst out of the exhaust, a flash, a ring blown out
@@ -23,7 +25,8 @@
 //!   ring and puffs of foam on the water), the wake of foam of a kart at its surface.
 //!
 //! **Fluidity first**: a fixed pool of [`ParticlePool::SLOTS`] slots (`pool.rs`), each with its
-//! entity made once at startup, sharing 4 meshes and 23 materials; a global cap that the pool
+//! entity made once at startup, sharing 4 meshes and 24 materials (issue #174: what glows and
+//! the smoke are quads of two shared meshes instead, `batch.rs`: two draws for all of them); a global cap that the pool
 //! never exceeds ([`VfxTuning::max_particles`], the oldest particle gives its slot up); nothing
 //! thrown by a kart farther than `emit_range` from the camera; no shadow cast; nothing allocated
 //! while racing (`alloc_tests.rs` counts it). No compute shader: the particles are plain meshes
@@ -33,6 +36,8 @@
 //! view, its shake); it is added by `GamePlugin` only with a renderer (the tests add it by hand):
 //! the bot races' world has none of it, and stays the one they were measured with.
 
+mod atlas;
+mod batch;
 mod cues;
 mod emit;
 mod pool;
@@ -44,17 +49,21 @@ mod alloc_tests;
 #[cfg(test)]
 mod scenario_tests;
 
+pub use atlas::Cell;
+pub use batch::{GroundHalo, MAX_HALOS, QuadColors, Quads};
 pub use cues::{
     BoostSource, Bursts, SparkStyle, TickEvents, VfxSnapshot, boost_source, ember_paint, fov_punch,
     kart_bursts, spark_style, tier_progress,
 };
 pub use emit::{KartFrame, take};
-pub use pool::{Curve, Facing, Paint, Particle, ParticlePool, Shape, Sparkle};
+pub use pool::{Batch, Curve, Facing, Paint, Particle, ParticlePool, Shape, Sparkle};
 pub use systems::{
-    DizzyStar, FovKick, KartVfx, MAX_DIZZY_STARS, Particles, VfxAssets, VfxParticle, VfxQueue,
-    WorldBurst, star_mesh,
+    DizzyStar, FovKick, KartVfx, MAX_DIZZY_STARS, Particles, VfxAssets, VfxBatch, VfxParticle,
+    VfxQueue, WorldBurst, star_mesh,
 };
-pub use tuning::{BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WorldVfx, ground_dust};
+pub use tuning::{
+    BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WorldVfx, ground_dust, road_dust,
+};
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -76,6 +85,11 @@ pub struct VfxPlugin;
 
 impl Plugin for VfxPlugin {
     fn build(&self, app: &mut App) {
+        // Issue #174: the atlas of the glows is an image (the headless tests have no renderer's
+        // storage of images: made here).
+        if !app.world().contains_resource::<Assets<Image>>() {
+            app.init_asset::<Image>();
+        }
         app.init_resource::<VfxTuning>()
             .init_resource::<VfxQueue>()
             .init_resource::<FovKick>()

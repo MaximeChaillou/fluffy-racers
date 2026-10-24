@@ -253,21 +253,40 @@ pub struct SparkStyle {
     pub speed: f32,
     pub life: f32,
     pub paint: Paint,
+    /// Issue #174: how high they are thrown (against 1 backward), how bright they glow.
+    pub rise: f32,
+    pub glow: f32,
+    /// Issue #174: the flames licking the wheel (tongues per second, their height, how bright),
+    /// and the embers floating up (per second).
+    pub flame_rate: f32,
+    pub flame_size: f32,
+    pub flame_glow: f32,
+    pub ember_rate: f32,
 }
 
 /// The sparks of a drift at `tier`, `progress` of the way (0 to 1) from its threshold to the next
 /// tier's: more of them as the charge grows, and more, bigger, longer, faster and longer-lived
-/// at each tier, in its color.
+/// at each tier, in its color. Issue #174: thrown higher and brighter at each tier; its flames
+/// (none in blue) more and taller as the charge grows; its embers (purple).
 pub fn spark_style(drift: &DriftVfx, tier: MiniTurbo, progress: f32) -> SparkStyle {
     let i = tier.index();
     let ramp = drift.spark_ramp.clamp(0.0, 1.0);
+    let progress = progress.clamp(0.0, 1.0);
+    let growing = 1.0 - ramp + ramp * progress;
     SparkStyle {
-        rate: drift.spark_rate[i].max(0.0) * (1.0 - ramp + ramp * progress.clamp(0.0, 1.0)),
+        rate: drift.spark_rate[i].max(0.0) * growing,
         size: drift.spark_size[i],
         length: drift.spark_length[i],
         speed: drift.spark_speed[i],
         life: drift.spark_life[i],
         paint: Paint::tier(i),
+        rise: drift.spark_rise[i],
+        glow: drift.spark_glow[i],
+        flame_rate: drift.flame_rate[i].max(0.0) * growing,
+        flame_size: drift.flame_size[i].max(0.0)
+            * (1.0 + (drift.flame_grow.max(0.0) - 1.0) * progress),
+        flame_glow: drift.flame_glow[i],
+        ember_rate: drift.ember_rate[i].max(0.0),
     }
 }
 
@@ -360,6 +379,21 @@ mod tests {
             last = Some(end);
         }
         assert_eq!(paints, [Paint::Blue, Paint::Orange, Paint::Purple]);
+        // Issue #174: three tiers really apart, not only more of the same: blue only sparks,
+        // orange its flames, purple bigger flames, its embers, its sparks thrown higher; within a
+        // tier, the flames grow with the charge.
+        let [blue, orange, purple] = MiniTurbo::ALL.map(|tier| spark_style(&drift, tier, 0.5));
+        assert_eq!((blue.flame_rate, blue.ember_rate), (0.0, 0.0));
+        assert!(orange.flame_rate > 0.0 && orange.ember_rate == 0.0);
+        assert!(purple.flame_rate > orange.flame_rate && purple.flame_size > orange.flame_size);
+        assert!(purple.ember_rate > 0.0);
+        assert!(blue.rise < orange.rise && orange.rise < purple.rise);
+        assert!(blue.glow < orange.glow && orange.glow < purple.glow);
+        let (start, end) = (
+            spark_style(&drift, MiniTurbo::Orange, 0.0),
+            spark_style(&drift, MiniTurbo::Orange, 1.0),
+        );
+        assert!(end.flame_rate > start.flame_rate && end.flame_size > start.flame_size);
         // The progress toward the next tier (GD § 3.4: 270, 570, 870).
         let thresholds = [270.0, 570.0, 870.0];
         assert_eq!(tier_progress(thresholds, 100.0, None), 0.0);

@@ -8,33 +8,44 @@
 //!   road, the anti-gravity's sparks, the glider's wind) and its bursts of the ticks gone by;
 //!   the bursts of the world; the speed lines and the field of view of the camera's kart.
 //! - **Showing**: the pool moves on (`pool::ParticlePool::step`) and each of its slots' entity
-//!   (made once, at startup) shows its particle; the stars over the head of a kart that sees them;
-//!   the color of each kart's flames by its boost's source.
+//!   (made once, at startup) shows its particle; issue #174: the glowing ones and the smoke are
+//!   quads of two shared meshes instead (`batch.rs`), with the halos on the ground under the
+//!   drifting karts; the stars over the head of a kart that sees them; the color of each kart's
+//!   flames by its boost's source (issue #174: glowing flames, and a glowing core at each rear
+//!   wheel instead of the drift's cubes of #4).
 
 use std::f32::consts::{PI, TAU};
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoFrustumCulling;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_rapier3d::prelude::Velocity;
 
+use super::atlas::{self, Cell};
+use super::batch::{
+    GroundHalo, MAX_HALOS, QuadColors, Quads, halo_quad, linear, particle_quad, quad_indices,
+};
 use super::cues::{
     BoostSource, Bursts, TickEvents, VfxSnapshot, ember_paint, fov_punch, kart_bursts, spark_style,
     tier_progress,
 };
 use super::emit::{self, KartFrame, take};
-use super::pool::{Paint, ParticlePool, Shape};
-use super::tuning::{VfxColors, VfxTuning, ground_dust};
+use super::pool::{Batch, Paint, ParticlePool, Shape};
+use super::tuning::{VfxColors, VfxTuning, ground_dust, road_dust};
 use crate::camera::{CameraShake, ChaseCamera, FixedView};
 use crate::croquettes::{CroquettePickedUp, CroquettesLost};
 use crate::interactions::Paw;
 use crate::interpolation::InterpolatedFrom;
 use crate::items::{Blast, BoxBroken, ItemSlots, Slot};
 use crate::kart::{
-    Boost, BoostFlame, DeflatedScale, DriftMotion, DriverVisual, ItemEffects, Kart, KartAssists,
-    KartBodyPivot, KartBump, KartEnvironment, KartState, KartTuning, KartWheels, MiniTurbo,
-    PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity, flame_size, slip_pose,
+    Boost, BoostFlame, DeflatedScale, DriftMotion, DriftSpark, DriverVisual, ItemEffects, Kart,
+    KartAssists, KartBodyPivot, KartBump, KartEnvironment, KartState, KartTuning, KartWheels,
+    MiniTurbo, PlayerKart, Remote, Slipstream, Stall, StatEffects, StepVelocity, flame_size,
+    slip_pose,
 };
 use crate::level::LoadLevel;
 use crate::menu::MainMenu;
@@ -52,7 +63,10 @@ const ANTI_GRAVITY: usize = 8;
 const GLIDE: usize = 9;
 /// Issue #130: the wake on the water.
 const WAKE: usize = 10;
-const EMITTERS: usize = 11;
+/// Issue #174: the drift's flames and embers, at each rear wheel.
+const FLAMES: usize = 11;
+const DRIFT_EMBERS: usize = 13;
+const EMITTERS: usize = 15;
 /// The most stars over a head (`ImpactVfx::dizzy_stars`).
 pub const MAX_DIZZY_STARS: usize = 5;
 /// A kart's visual that moves farther than this in a frame jumped (a pelican, a restart): its
@@ -69,24 +83,61 @@ pub struct VfxAssets {
     /// ...but the dust off the road on a circuit (issue #130): its biome's shoulders' and sand's
     /// (`Paint::Ground`, `Paint::Sand`; `tuning::ground_dust`). None off a circuit.
     pub ground: Option<[[f32; 3]; 2]>,
+    /// Issue #174: ...and its road's (`Paint::Road`: the tint of the tyres' smoke on it).
+    pub road: Option<[f32; 3]>,
+    /// Issue #174: the linear colors of the batched quads (`batch.rs`), from the ones above.
+    pub quads: QuadColors,
+    /// Issue #174: the drawings of the glows and the smoke (`atlas.rs`), the exhausts' glowing
+    /// flames (two crossed quads and a glowing disc at their base, seen from behind) and their
+    /// materials by paint (additive, their color times `BoostVfx::flame_glow`), the glowing
+    /// cores at the rear wheels in a drift (a cube with a glow on each face) and their materials
+    /// by tier.
+    pub atlas: Handle<Image>,
+    pub flame_mesh: Handle<Mesh>,
+    pub flames: Vec<Handle<StandardMaterial>>,
+    pub core_mesh: Handle<Mesh>,
+    pub cores: [Handle<StandardMaterial>; 3],
 }
 
 impl VfxAssets {
     /// The color the material of `paint` shows.
     pub fn color(&self, paint: Paint) -> [f32; 3] {
-        match (paint, self.ground) {
-            (Paint::Ground, Some([shoulder, _])) => shoulder,
-            (Paint::Sand, Some([_, sand])) => sand,
+        match (paint, self.ground, self.road) {
+            (Paint::Ground, Some([shoulder, _]), _) => shoulder,
+            (Paint::Sand, Some([_, sand]), _) => sand,
+            (Paint::Road, _, Some(road)) => road,
             _ => self.colors.of(paint),
         }
     }
 
     pub fn mesh(&self, shape: Shape) -> &Handle<Mesh> {
-        &self.meshes[shape.index()]
+        // The batched shapes have no mesh of their own (`batch.rs`).
+        &self.meshes[shape.index().min(Shape::ALL.len() - 1)]
     }
 
     pub fn material(&self, paint: Paint) -> &Handle<StandardMaterial> {
         &self.materials[paint.index()]
+    }
+
+    /// Issue #174: the material of the exhausts' flames of `paint`.
+    pub fn flame(&self, paint: Paint) -> &Handle<StandardMaterial> {
+        &self.flames[paint.index()]
+    }
+
+    /// Issue #174: the linear colors of the quads, from the colors shown now.
+    fn refresh_quads(&mut self) {
+        let paint = Paint::ALL.map(|paint| linear(self.color(paint)));
+        let deep = Paint::ALL.map(|p| match p {
+            Paint::Blue | Paint::Orange | Paint::Purple => {
+                linear(self.colors.deep[p.index() - Paint::Blue.index()])
+            }
+            Paint::Hot => linear(self.colors.flame),
+            Paint::Flame | Paint::Gold => linear(self.colors.piment),
+            Paint::Piment => paint[p.index()] * 0.35,
+            Paint::Cyan => linear(self.colors.deep[0]),
+            _ => paint[p.index()] * 0.5,
+        });
+        self.quads = QuadColors { paint, deep };
     }
 }
 
@@ -96,11 +147,22 @@ pub struct Particles {
     pub pool: ParticlePool,
     pub entities: Vec<Entity>,
     shown: Vec<Option<(Shape, Paint)>>,
+    /// Issue #174: the quads of the glows and of the smoke this frame (`batch.rs`), the halos
+    /// asked for by the karts this frame, the smoke's order (back to front). Made once, at their
+    /// most.
+    pub glow: Quads,
+    pub haze: Quads,
+    pub halos: Vec<GroundHalo>,
+    order: Vec<(f32, u16)>,
 }
 
 /// On each slot's entity.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VfxParticle(pub usize);
+
+/// Issue #174: on the entity of each shared mesh of the batched particles (`batch.rs`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VfxBatch(pub Batch);
 
 /// A star over the head of a kart that sees them (« sonné »), under its visual.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +196,10 @@ pub struct KartVfx {
     /// Issue #171: ticks left of its last contact with another kart (any bump), so that a
     /// contact that goes on is not a new shock.
     contact_left: u32,
+    /// Issue #174: how long ago its drift reached its last tier (s; its little jump, its halo's
+    /// pop), and how high it jumps.
+    hop: f32,
+    hop_height: f32,
 }
 
 /// The field of view's extra of the camera's kart (degrees): while it boosts, and the punch of a
@@ -219,9 +285,22 @@ pub(super) fn create_vfx(
     tuning: Option<Res<VfxTuning>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let tuning = tuning.map(|t| t.clone()).unwrap_or_default();
-    let assets = VfxAssets {
+    let atlas = images.add(atlas_image());
+    let glowing = |alpha_mode: AlphaMode| StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(atlas.clone()),
+        unlit: true,
+        alpha_mode,
+        double_sided: true,
+        cull_mode: None,
+        // What glows is not dimmed by the fog (it would add the fog's color).
+        fog_enabled: alpha_mode != AlphaMode::Add,
+        ..default()
+    };
+    let mut assets = VfxAssets {
         meshes: [
             meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
             meshes.add(Sphere::new(0.5).mesh().uv(14, 8)),
@@ -240,7 +319,42 @@ pub(super) fn create_vfx(
             .collect(),
         colors: tuning.colors.clone(),
         ground: None,
+        road: None,
+        quads: QuadColors::default(),
+        flame_mesh: meshes.add(flame_mesh()),
+        flames: Paint::ALL
+            .iter()
+            .map(|_| materials.add(glowing(AlphaMode::Add)))
+            .collect(),
+        core_mesh: meshes.add(core_mesh()),
+        cores: std::array::from_fn(|_| materials.add(glowing(AlphaMode::Add))),
+        atlas: atlas.clone(),
     };
+    assets.refresh_quads();
+    repaint_glows(&assets, &tuning, &mut materials);
+    // Issue #174: the two shared meshes of the batched particles, at their most (every slot,
+    // and the halos), and their entities.
+    let most = ParticlePool::SLOTS + MAX_HALOS;
+    for (batch, alpha_mode) in [
+        (Batch::Glow, AlphaMode::Add),
+        (Batch::Haze, AlphaMode::Blend),
+    ] {
+        commands.spawn((
+            Name::new(match batch {
+                Batch::Glow => "Lueurs",
+                Batch::Haze => "Fumée",
+            }),
+            VfxBatch(batch),
+            Mesh3d(meshes.add(batch_mesh(most))),
+            MeshMaterial3d(materials.add(glowing(alpha_mode))),
+            Transform::default(),
+            Visibility::default(),
+            NotShadowCaster,
+            NotShadowReceiver,
+            // Its quads are all over the place: never culled as a whole.
+            NoFrustumCulling,
+        ));
+    }
     let entities: Vec<Entity> = (0..ParticlePool::SLOTS)
         .map(|slot| {
             commands
@@ -261,8 +375,187 @@ pub(super) fn create_vfx(
         pool: ParticlePool::new(tuning.max_particles),
         shown: vec![None; entities.len()],
         entities,
+        glow: Quads::new(most),
+        haze: Quads::new(ParticlePool::SLOTS),
+        halos: Vec::with_capacity(MAX_HALOS),
+        order: Vec::with_capacity(ParticlePool::SLOTS),
     });
     commands.insert_resource(assets);
+}
+
+/// Issue #174: the atlas of the glows and the smoke (`atlas.rs`), with its mipmaps, filtered.
+fn atlas_image() -> Image {
+    let (width, height) = atlas::atlas_size();
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(atlas::atlas_pixels());
+    image.texture_descriptor.mip_level_count = Cell::MIPS;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
+}
+
+/// Issue #174: a shared mesh of batched quads, room for `quads` of them (one empty to begin
+/// with); its corners written each frame (`show_particles`).
+fn batch_mesh(quads: usize) -> Mesh {
+    let mut nothing = Quads::new(1);
+    nothing.push_nothing();
+    let mut positions = Vec::with_capacity(quads * 4);
+    positions.extend_from_slice(&nothing.positions);
+    let mut uvs = Vec::with_capacity(quads * 4);
+    uvs.extend_from_slice(&nothing.uvs);
+    let mut colors = Vec::with_capacity(quads * 4);
+    colors.extend_from_slice(&nothing.colors);
+    let mut indices = Vec::with_capacity(quads * 6);
+    quad_indices(&mut indices, 1);
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_indices(Indices::U16(indices))
+}
+
+/// Issue #174: `quads` into `mesh` (within the room it was made with: nothing allocated).
+fn write_quads(mesh: &mut Mesh, quads: &Quads) {
+    if let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    {
+        positions.clear();
+        positions.extend_from_slice(&quads.positions);
+    }
+    if let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0) {
+        uvs.clear();
+        uvs.extend_from_slice(&quads.uvs);
+    }
+    if let Some(VertexAttributeValues::Float32x4(colors)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
+    {
+        colors.clear();
+        colors.extend_from_slice(&quads.colors);
+    }
+    if let Some(Indices::U16(indices)) = mesh.indices_mut() {
+        quad_indices(indices, quads.len());
+    }
+}
+
+/// Issue #174: the exhausts' flames: two crossed quads along Z (their base at −0.5, their tip at
+/// 0.5, as the cube of `kart::visual` was), the flame's drawing on them, and a glowing disc
+/// across them near their base (from behind, the chase camera sees the flame end on).
+fn flame_mesh() -> Mesh {
+    let [f0, g0, f1, g1] = Cell::FlameA.uv();
+    let [s0, t0, s1, t1] = Cell::Soft.uv();
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(12);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(12);
+    for across in [Vec3::X, Vec3::Y] {
+        let h = across * 0.5;
+        for (p, uv) in [
+            (-h - Vec3::Z * 0.5, [f0, g0]),
+            (h - Vec3::Z * 0.5, [f1, g0]),
+            (h + Vec3::Z * 0.5, [f1, g1]),
+            (-h + Vec3::Z * 0.5, [f0, g1]),
+        ] {
+            positions.push(p.to_array());
+            uvs.push(uv);
+        }
+    }
+    let z = -0.3;
+    for (x, y, uv) in [
+        (-0.9, -0.9, [s0, t0]),
+        (0.9, -0.9, [s1, t0]),
+        (0.9, 0.9, [s1, t1]),
+        (-0.9, 0.9, [s0, t1]),
+    ] {
+        positions.push([x, y, z]);
+        uvs.push(uv);
+    }
+    let mut indices = Vec::with_capacity(18);
+    quad_indices(&mut indices, 3);
+    let normals = vec![[0.0f32, 0.0, 1.0]; positions.len()];
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U16(indices))
+}
+
+/// Issue #174: the glowing core at a rear wheel in a drift (`kart::DriftSpark`, sized as a unit
+/// cube): three crossed quads through its middle, a soft glow on each, a glowing ball from any
+/// side.
+fn core_mesh() -> Mesh {
+    let [u0, v0, u1, v1] = Cell::Soft.uv();
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(12);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(12);
+    for (a, b) in [(Vec3::X, Vec3::Y), (Vec3::X, Vec3::Z), (Vec3::Y, Vec3::Z)] {
+        let (a, b) = (a * 0.8, b * 0.8);
+        for (p, uv) in [
+            (-a - b, [u0, v0]),
+            (a - b, [u1, v0]),
+            (a + b, [u1, v1]),
+            (-a + b, [u0, v1]),
+        ] {
+            positions.push(p.to_array());
+            uvs.push(uv);
+        }
+    }
+    let mut indices = Vec::with_capacity(18);
+    quad_indices(&mut indices, 3);
+    let normals = vec![[0.0f32, 1.0, 0.0]; positions.len()];
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U16(indices))
+}
+
+/// Issue #174: the colors of the exhausts' flames and of the wheels' cores (their paint's, times
+/// how bright they burn).
+fn repaint_glows(assets: &VfxAssets, tuning: &VfxTuning, materials: &mut Assets<StandardMaterial>) {
+    let bright = |color: [f32; 3], glow: f32| {
+        let c = linear(color) * glow;
+        Color::linear_rgb(c.x, c.y, c.z)
+    };
+    for paint in Paint::ALL {
+        let color = bright(assets.color(paint), tuning.boost.flame_glow);
+        if let Some(mut material) = materials.get_mut(assets.flame(paint))
+            && material.base_color != color
+        {
+            material.base_color = color;
+        }
+    }
+    for (tier, core) in assets.cores.iter().enumerate() {
+        let color = bright(
+            assets.color(Paint::tier(tier)),
+            tuning.drift.spark_glow[tier] * 0.8,
+        );
+        if let Some(mut material) = materials.get_mut(core)
+            && material.base_color != color
+        {
+            material.base_color = color;
+        }
+    }
 }
 
 /// A particle's material: glowing (unlit) but the puffs and the cream, lit by the sun.
@@ -642,7 +935,10 @@ pub(super) fn follow_tuning(
         let before = Paint::ALL.map(|paint| assets.color(paint));
         assets.colors = tuning.colors.clone();
         repaint(&before, &assets, &mut materials);
+        assets.refresh_quads();
     }
+    // Issue #174: how bright the flames and the cores burn.
+    repaint_glows(&assets, &tuning, &mut materials);
 }
 
 /// The materials whose color changed from `before` (by `Paint::index`) take the one of `assets`.
@@ -684,10 +980,15 @@ pub(super) fn follow_the_ground(
         .and_then(|(handle, tracks)| tracks.get(&handle.0)?.biome())
         .map(|biome| biome.palette);
     let ground = palette.map(|palette| ground_dust(&palette, tuning.world.ground_lighten));
-    if ground != assets.ground {
+    // Issue #174: the road's too (the tint of the tyres' smoke on it).
+    let road = palette.map(|palette| road_dust(&palette, tuning.world.ground_lighten));
+    if ground != assets.ground || road != assets.road {
         let before = Paint::ALL.map(|paint| assets.color(paint));
         assets.ground = ground;
+        assets.road = road;
         repaint(&before, &assets, &mut materials);
+        assets.refresh_quads();
+        repaint_glows(&assets, &tuning, &mut materials);
     }
 }
 
@@ -739,7 +1040,7 @@ pub(super) fn emit_karts(
     layout: Option<Res<TrackLayout>>,
     mut particles: ResMut<Particles>,
     cameras: Query<&Transform, (With<ChaseCamera>, Without<InterpolatedFrom>)>,
-    roots: Query<(&InterpolatedFrom, &Transform)>,
+    mut roots: Query<(&InterpolatedFrom, &mut Transform)>,
     mut karts: Query<KartLook>,
 ) {
     let layout = layout.as_deref();
@@ -748,11 +1049,12 @@ pub(super) fn emit_karts(
     let alpha = fixed.overstep_fraction();
     let small = deflated.map_or(1.0, |s| s.0);
     let camera = cameras.iter().next().map(|t| t.translation);
-    let pool = &mut particles.pool;
+    let Particles { pool, halos, .. } = &mut *particles;
+    halos.clear();
     let max = tuning.max_per_frame;
     let (drift, boost, impact, world) =
         (&tuning.drift, &tuning.boost, &tuning.impact, &tuning.world);
-    for (InterpolatedFrom(body), root) in &roots {
+    for (InterpolatedFrom(body), mut root) in &mut roots {
         let Ok((mut vfx, rules, (stats, assists, player, race_progress))) = karts.get_mut(*body)
         else {
             continue;
@@ -790,7 +1092,26 @@ pub(super) fn emit_karts(
         if let Some(source) = bursts.boost {
             vfx.punch = vfx.punch.max(fov_punch(&tuning, source));
         }
-        let far = camera.is_some_and(|c| c.distance(root.translation) > tuning.emit_range);
+        // Issue #174: a tier reached, the kart jumps a little (shown only, its visual: put back
+        // where the interpolation puts it at the next frame).
+        if let Some(tier) = bursts.tier {
+            vfx.hop = 0.0;
+            vfx.hop_height = drift.hop_height[tier.index()];
+        }
+        let hop_time = drift.hop_time.max(1e-3);
+        let hop = if vfx.hop < hop_time && tuning.enabled {
+            vfx.hop_height * (PI * vfx.hop / hop_time).sin()
+        } else {
+            0.0
+        };
+        let popping = if vfx.hop_height > 0.0 {
+            (1.0 - vfx.hop / hop_time).max(0.0)
+        } else {
+            0.0
+        };
+        vfx.hop += dt;
+        let distance = camera.map_or(0.0, |c| c.distance(root.translation));
+        let far = distance > tuning.emit_range;
         if !tuning.enabled
             || far
             || effects.hidden()
@@ -800,6 +1121,12 @@ pub(super) fn emit_karts(
             vfx.carry = [0.0; EMITTERS];
             continue;
         }
+        // Issue #174: what is small on screen throws less.
+        let lod = if distance > tuning.lod_range {
+            tuning.lod_share.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
         let (slip, slip_offset) = slip_pose(motion.interpolated_slip(alpha));
         let frame = KartFrame {
             position: root.translation,
@@ -820,17 +1147,64 @@ pub(super) fn emit_karts(
             Some(tier) => {
                 let style = spark_style(drift, tier, progress);
                 for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-                    let n = take(&mut carry[SPARKS + k], style.rate, dt, max);
+                    let n = take(&mut carry[SPARKS + k], style.rate * lod, dt, max);
                     emit::drift_sparks(pool, &frame, side, &style, drift, n, dt);
+                    // Issue #174: its flames (orange, purple) and its embers (purple).
+                    let n = take(&mut carry[FLAMES + k], style.flame_rate * lod, dt, max);
+                    emit::drift_flames(pool, &frame, side, &style, drift, n, dt);
+                    let n = take(
+                        &mut carry[DRIFT_EMBERS + k],
+                        style.ember_rate * lod,
+                        dt,
+                        max,
+                    );
+                    emit::drift_embers(pool, &frame, side, style.paint, drift, n, dt);
                 }
             }
-            None => carry[SPARKS..SPARKS + 2].fill(0.0),
+            None => {
+                carry[SPARKS..SPARKS + 2].fill(0.0);
+                carry[FLAMES..FLAMES + 2].fill(0.0);
+                carry[DRIFT_EMBERS..DRIFT_EMBERS + 2].fill(0.0);
+            }
+        }
+        // Issue #174: the halo on the ground under the kart: its drift's tier, then its
+        // mini-turbo's while it lasts (fading with it); it pops when a tier is reached.
+        let glowing = match (tier, vfx.source) {
+            (Some(tier), _) => Some((tier.index(), 0.75 + 0.25 * progress)),
+            (None, Some(BoostSource::MiniTurbo(tier))) if kart_boost.is_active() => {
+                let full = kart_tuning.mini_turbo_durations[tier.index()].max(0.1);
+                Some((tier.index(), (kart_boost.remaining / full).clamp(0.0, 1.0)))
+            }
+            _ => None,
+        };
+        if let Some((tier, strength)) = glowing.filter(|_| on_ground)
+            && halos.len() < MAX_HALOS
+        {
+            let phase = (body.to_bits() % 64) as f32;
+            let pulse = drift.halo_pulse * (now * drift.halo_pulse_speed + phase).sin();
+            let size = drift.halo_size[tier] * frame.scale * (1.0 + pulse + 0.35 * popping);
+            let color = linear(tuning.colors.of(Paint::tier(tier)))
+                * drift.halo_glow[tier]
+                * strength
+                * (1.0 + popping);
+            halos.push(GroundHalo {
+                center: frame.position + frame.rotation * Vec3::new(0.0, -0.38, 0.5) * frame.scale,
+                up: frame.up(),
+                size,
+                color,
+            });
         }
         let smoking = matches!(state, KartState::Drifting { .. }) && on_ground;
+        // Issue #174: the smoke the color of the ground under the wheels.
+        let smoke_ground = if wheels.offroad_ratio > 0.5 {
+            ground_paint(layout, race_progress.map(|p| p.distance), root.translation)
+        } else {
+            Paint::Road
+        };
         for (k, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-            let rate = if smoking { drift.smoke_rate } else { 0.0 };
+            let rate = if smoking { drift.smoke_rate * lod } else { 0.0 };
             let n = take(&mut carry[SMOKE + k], rate, dt, max);
-            emit::drift_smoke(pool, &frame, side, drift, n, dt);
+            emit::drift_smoke(pool, &frame, side, smoke_ground, drift, n, dt);
         }
         // The boost: embers that follow the flames, a mini-turbo's trail.
         let flame = flame_size(&kart_tuning, kart_boost);
@@ -847,7 +1221,8 @@ pub(super) fn emit_karts(
         };
         let n = take(&mut carry[TRAIL], rate, dt, max);
         if let Some(tier) = trail {
-            emit::trail(pool, &frame, Paint::tier(tier.index()), n, dt);
+            let look = (drift.trail_life, drift.trail_size);
+            emit::trail(pool, &frame, Paint::tier(tier.index()), look, n, dt);
         }
         // The ground: dust off the road (issue #130: the color of the ground it comes from), the
         // anti-gravity's sparks, the glider's wind.
@@ -917,6 +1292,9 @@ pub(super) fn emit_karts(
             &tuning,
             (environment.anti_gravity, landing, surface),
         );
+        if hop > 0.0 {
+            root.translation += frame.up() * hop;
+        }
     }
 }
 
@@ -1180,12 +1558,16 @@ pub(super) fn kick_the_camera(
 }
 
 /// The pool moves on, and each slot's entity shows its particle (its mesh and material swapped
-/// only when its look changes; hidden when it is over).
+/// only when its look changes; hidden when it is over). Issue #174: the glowing particles and the
+/// smoke are quads of the two shared meshes instead (their entity hidden): written here, around
+/// a point ahead of the camera (the meshes' entities are put there: they sort among the other
+/// transparent things from there), the smoke back to front, with the halos of this frame.
 pub(super) fn show_particles(
     time: Res<Time>,
     assets: Res<VfxAssets>,
     mut particles: ResMut<Particles>,
-    cameras: Query<&Transform, (With<ChaseCamera>, Without<VfxParticle>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    cameras: Query<&Transform, (With<ChaseCamera>, Without<VfxParticle>, Without<VfxBatch>)>,
     mut slots: Query<
         (
             &mut Transform,
@@ -1193,31 +1575,57 @@ pub(super) fn show_particles(
             &mut Mesh3d,
             &mut MeshMaterial3d<StandardMaterial>,
         ),
-        With<VfxParticle>,
+        (With<VfxParticle>, Without<VfxBatch>),
     >,
+    mut batches: Query<(&VfxBatch, &Mesh3d, &mut Transform), Without<VfxParticle>>,
 ) {
-    let camera = cameras.iter().next().map_or(Vec3::ZERO, |t| t.translation);
+    let (camera, ahead) = cameras
+        .iter()
+        .next()
+        .map_or((Vec3::ZERO, Vec3::NEG_Z), |t| (t.translation, *t.forward()));
+    let origin = camera + ahead * 8.0;
     let Particles {
         pool,
         entities,
         shown,
+        glow,
+        haze,
+        halos,
+        order,
     } = &mut *particles;
     pool.step(time.delta_secs());
-    for ((particle, entity), shown) in pool
+    glow.clear();
+    haze.clear();
+    order.clear();
+    for (slot, ((particle, entity), shown)) in pool
         .slots()
         .iter()
         .zip(entities.iter())
         .zip(shown.iter_mut())
+        .enumerate()
     {
         let alive = particle.alive();
-        if !alive && shown.is_none() {
+        let batched = if alive {
+            particle.shape.batched()
+        } else {
+            None
+        };
+        match batched {
+            Some(Batch::Glow) => particle_quad(particle, camera, origin, &assets.quads, glow),
+            Some(Batch::Haze) => {
+                order.push((particle.position.distance_squared(camera), slot as u16));
+            }
+            None => {}
+        }
+        let solid = alive && batched.is_none();
+        if !solid && shown.is_none() {
             continue;
         }
         let Ok((mut transform, mut visibility, mut mesh, mut material)) = slots.get_mut(*entity)
         else {
             continue;
         };
-        if !alive {
+        if !solid {
             *visibility = Visibility::Hidden;
             *shown = None;
             continue;
@@ -1238,6 +1646,33 @@ pub(super) fn show_particles(
             *shown = Some(look);
         }
         *transform = particle.transform(camera);
+    }
+    // The smoke, back to front; the halos.
+    order.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+    for (_, slot) in order.iter() {
+        particle_quad(
+            &pool.slots()[usize::from(*slot)],
+            camera,
+            origin,
+            &assets.quads,
+            haze,
+        );
+    }
+    for halo in halos.iter() {
+        halo_quad(halo, origin, glow);
+    }
+    for (batch, mesh, mut transform) in &mut batches {
+        let quads = match batch.0 {
+            Batch::Glow => &mut *glow,
+            Batch::Haze => &mut *haze,
+        };
+        if quads.is_empty() {
+            quads.push_nothing();
+        }
+        transform.translation = origin;
+        if let Some(mut mesh) = meshes.get_mut(&mesh.0) {
+            write_quads(&mut mesh, quads);
+        }
     }
 }
 
@@ -1337,22 +1772,46 @@ pub(super) fn show_dizzy_stars(
 }
 
 /// Each kart's flames take the color of their boost's source (GD § 14: a blue, orange or purple
-/// mini-turbo, a red piment...): the shared materials of the particles, swapped only when it
-/// changes.
+/// mini-turbo, a red piment...), swapped only when it changes. Issue #174: glowing flames (their
+/// mesh and their materials, `VfxAssets::flame`), and the glowing cores at the rear wheels in a
+/// drift (the cubes of #4 that `kart::visual` shows and sizes by tier).
 pub(super) fn tint_flames(
     assets: Res<VfxAssets>,
     pivots: Query<&KartBodyPivot>,
     karts: Query<&KartVfx>,
-    mut flames: Query<(&ChildOf, &mut MeshMaterial3d<StandardMaterial>), With<BoostFlame>>,
+    mut flames: Query<
+        (&ChildOf, &mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>),
+        (With<BoostFlame>, Without<DriftSpark>),
+    >,
+    mut cores: Query<
+        (
+            &DriftSpark,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        Without<BoostFlame>,
+    >,
 ) {
-    for (child_of, mut material) in &mut flames {
+    for (child_of, mut mesh, mut material) in &mut flames {
         let Ok(pivot) = pivots.get(child_of.parent()) else {
             continue;
         };
         let Ok(vfx) = karts.get(pivot.body) else {
             continue;
         };
-        let want = assets.material(ember_paint(vfx.source));
+        if mesh.0.id() != assets.flame_mesh.id() {
+            mesh.0 = assets.flame_mesh.clone();
+        }
+        let want = assets.flame(ember_paint(vfx.source));
+        if material.0.id() != want.id() {
+            material.0 = want.clone();
+        }
+    }
+    for (spark, mut mesh, mut material) in &mut cores {
+        if mesh.0.id() != assets.core_mesh.id() {
+            mesh.0 = assets.core_mesh.clone();
+        }
+        let want = &assets.cores[spark.tier.index()];
         if material.0.id() != want.id() {
             material.0 = want.clone();
         }

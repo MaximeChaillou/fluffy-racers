@@ -111,6 +111,14 @@ struct TierLog {
     size: f32,
     rings: usize,
     other_tiers: usize,
+    /// Issue #174: its flames licking the wheels, its embers, the frames with its halo on the
+    /// ground (of its color), the frames whose glows were drawn in the shared mesh, the frame
+    /// the kart jumped.
+    flames: usize,
+    embers: usize,
+    halos: usize,
+    drawn: usize,
+    hop: f32,
 }
 
 /// Issue #105 acceptance (GD § 3.4 and 14), on the keyboard: a long drift on the test ground. Its
@@ -118,6 +126,11 @@ struct TierLog {
 /// bigger, each tier only in its color, a flash (a ring of its color) when it is reached; the
 /// tyres smoke all along. The release fires the « fwoosh » of the purple tier (its ring), its
 /// trail, and the flames turn purple.
+///
+/// Issue #174 (three tiers really apart): the sparks are glowing streaks (drawn in the shared
+/// mesh of the glows); blue has no flame, orange its flames, purple more of them and its embers;
+/// each tier its halo of its color on the ground; the kart jumps a little at each tier; the
+/// release blasts flames of its color out of the exhausts, the halo stays while the boost lasts.
 #[test]
 fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
     let mut app = vfx_app(TrackChoice::TestGround, 0);
@@ -140,17 +153,48 @@ fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
         let thrown = new_particles(&app);
         smoke += thrown.iter().filter(|p| p.paint == Paint::Smoke).count();
         let sparks = thrown.iter().filter(|p| {
-            p.shape == Shape::Cube && matches!(p.paint, Paint::Blue | Paint::Orange | Paint::Purple)
+            p.shape == Shape::Glint
+                && matches!(p.paint, Paint::Blue | Paint::Orange | Paint::Purple)
         });
         match tier {
             None => before_blue += sparks.count(),
             Some(tier) => {
                 let paint = Paint::tier(tier.index());
                 let log = &mut logs[tier.index()];
-                for p in thrown.iter().filter(|p| p.shape == Shape::Ring) {
+                for p in thrown.iter().filter(|p| p.shape == Shape::Shock) {
                     assert_eq!(p.paint, paint, "the flash of {tier:?}");
                     log.rings += 1;
                 }
+                // Issue #174: its flames, its embers, its halo, the glows drawn, the jump.
+                for p in &thrown {
+                    if p.paint == paint && p.shape == Shape::Tongue {
+                        log.flames += 1;
+                    }
+                    if p.paint == paint && p.shape == Shape::Glow && p.cool == 1.0 {
+                        log.embers += 1;
+                    }
+                    assert!(
+                        p.shape != Shape::Tongue || p.paint == paint,
+                        "{tier:?}: only flames of its color"
+                    );
+                }
+                let particles = app.world().resource::<Particles>();
+                let color = batch_color(&app, paint);
+                if particles.halos.len() == 1
+                    && (particles.halos[0].color.normalize() - color).length() < 1e-3
+                {
+                    log.halos += 1;
+                }
+                // Every glowing particle alive, and the halo, is a quad of the shared mesh.
+                let glowing = particles
+                    .pool
+                    .alive()
+                    .filter(|p| p.shape.batched() == Some(Batch::Glow))
+                    .count();
+                if glowing > 0 && particles.glow.len() == glowing + particles.halos.len() {
+                    log.drawn += 1;
+                }
+                log.hop = log.hop.max(hop(&mut app, kart));
                 // The frame of the flash has its burst: the rate is measured on the others.
                 if last_tier == Some(tier) {
                     log.frames += 1;
@@ -178,6 +222,20 @@ fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
         "still drifting"
     );
     assert_eq!(before_blue, 0, "no spark before the blue tier");
+    println!("issue #174, by tier: {logs:?}");
+    let drift_vfx = app.world().resource::<VfxTuning>().drift.clone();
+    assert_eq!(logs[0].flames, 0, "blue: sparks only");
+    assert!(logs[1].flames > 20 && logs[2].flames > logs[1].flames);
+    assert_eq!(logs[0].embers + logs[1].embers, 0);
+    assert!(logs[2].embers > 5, "purple: its embers");
+    for (i, log) in logs.iter().enumerate() {
+        assert!(log.halos + 2 >= log.frames, "tier {i}: its halo: {log:?}");
+        assert!(log.drawn + 2 >= log.frames, "tier {i}: drawn: {log:?}");
+        assert!(
+            log.hop > drift_vfx.hop_height[i] * 0.5 && log.hop <= drift_vfx.hop_height[i] + 1e-3,
+            "tier {i}: its jump: {log:?}"
+        );
+    }
     assert!(smoke > 20, "the tyres smoke: {smoke}");
     let rate = |log: &TierLog| log.sparks as f32 / (log.frames as f32 * DT);
     let size = |log: &TierLog| log.size / log.sparks.max(1) as f32;
@@ -216,7 +274,7 @@ fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
     assert_eq!(
         thrown
             .iter()
-            .filter(|p| p.shape == Shape::Ring && p.paint == Paint::Purple)
+            .filter(|p| p.shape == Shape::Shock && p.paint == Paint::Purple)
             .count(),
         1,
         "the fwoosh's ring"
@@ -224,9 +282,17 @@ fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
     assert!(
         thrown
             .iter()
-            .filter(|p| p.shape == Shape::Cube && p.paint == Paint::Purple)
+            .filter(|p| p.shape == Shape::Glint && p.paint == Paint::Purple)
             .count() as u32
             >= drift.release_sparks[2]
+    );
+    // Issue #174: the blast of purple flames out of the exhausts.
+    assert_eq!(
+        thrown
+            .iter()
+            .filter(|p| p.shape == Shape::Tongue && p.paint == Paint::Purple)
+            .count() as u32,
+        drift.release_flames[2]
     );
     let mut trail = 0;
     for _ in 0..30 {
@@ -237,18 +303,47 @@ fn the_drift_sparks_grow_with_their_tier_and_take_its_color() {
             .count();
     }
     assert!(trail >= 10, "the trail: {trail}");
+    // Issue #174: the halo stays while the mini-turbo lasts.
+    let halos = &app.world().resource::<Particles>().halos;
+    assert_eq!(halos.len(), 1, "the boost's halo");
+    let full = batch_color(&app, Paint::Purple);
+    assert!((halos[0].color.normalize() - full).length() < 1e-3);
     assert_eq!(
         app.world().get::<KartVfx>(kart).unwrap().source,
         Some(BoostSource::MiniTurbo(MiniTurbo::Purple))
     );
-    let purple = app
-        .world()
-        .resource::<VfxAssets>()
-        .material(Paint::Purple)
-        .clone();
+    // Issue #174: the glowing flames' material of purple, on their mesh.
+    let assets = app.world().resource::<VfxAssets>().clone();
+    let purple = assets.flame(Paint::Purple).clone();
+    let world = app.world_mut();
+    let mut meshes = world.query_filtered::<&Mesh3d, With<BoostFlame>>();
+    assert!(meshes.iter(world).all(|m| m.0 == assets.flame_mesh));
     let world = app.world_mut();
     let mut flames = world.query_filtered::<&MeshMaterial3d<StandardMaterial>, With<BoostFlame>>();
     assert!(flames.iter(world).all(|m| m.0 == purple));
+}
+
+/// Issue #174: the direction of `paint`'s linear color, as the quads take it.
+fn batch_color(app: &App, paint: Paint) -> Vec3 {
+    app.world().resource::<VfxAssets>().quads.paint[paint.index()].normalize()
+}
+
+/// Issue #174: how far the kart's visual is above where the interpolation put it (its jump).
+fn hop(app: &mut App, kart: Entity) -> f32 {
+    use crate::interpolation::{InterpolatedFrom, PhysicsPose};
+    let alpha = app.world().resource::<Time<Fixed>>().overstep_fraction();
+    let pose = app
+        .world()
+        .get::<PhysicsPose>(kart)
+        .unwrap()
+        .interpolate(alpha);
+    let world = app.world_mut();
+    let mut roots = world.query::<(&InterpolatedFrom, &Transform)>();
+    roots
+        .iter(world)
+        .filter(|(from, _)| from.0 == kart)
+        .map(|(_, t)| (t.translation - pose.translation).dot(pose.up().as_vec3()))
+        .fold(0.0, f32::max)
 }
 
 /// Issue #105 acceptance (GD § 4 and 14): the flames' size follows the boost's strength (and its
@@ -270,7 +365,7 @@ fn the_flames_and_their_embers_follow_the_boost() {
         for _ in 0..60 {
             app.update();
             for p in new_particles(&app) {
-                if p.shape == Shape::Ball && p.paint == Paint::Flame {
+                if p.shape == Shape::Glow && p.paint == Paint::Flame {
                     embers += 1;
                     size += p.size;
                 }

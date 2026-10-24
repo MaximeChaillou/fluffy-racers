@@ -314,6 +314,13 @@ pub const LINKS: &[Link] = &[
     link(Effects, "VfxTuning.drift.smoke_rate", 0.2, 1.6),
     link(Effects, "VfxTuning.drift.release_sparks", 0.2, 1.6),
     link(Effects, "VfxTuning.drift.trail_rate", 0.2, 1.6),
+    // Issue #174: the drift's flames (orange, purple: blue has none), embers (purple) and halo,
+    // the release's blast of flames.
+    link(Effects, "VfxTuning.drift.flame_rate[1]", 0.2, 1.6),
+    link(Effects, "VfxTuning.drift.flame_rate[2]", 0.2, 1.6),
+    link(Effects, "VfxTuning.drift.ember_rate[2]", 0.2, 1.6),
+    link(Effects, "VfxTuning.drift.halo_glow", 0.2, 1.6),
+    link(Effects, "VfxTuning.drift.release_flames", 0.2, 1.6),
     link(Effects, "VfxTuning.boost.ember_rate", 0.2, 1.6),
     link(Effects, "VfxTuning.boost.speed_line_rate", 0.2, 1.6),
     link(Effects, "VfxTuning.boost.rocket_smoke", 0.2, 1.6),

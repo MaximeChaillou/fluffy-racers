@@ -101,8 +101,43 @@ fn along(at: Vec3, travel: Vec3, i: u32, n: u32) -> Vec3 {
     at - travel * (1.0 - (i as f32 + 0.5) / n.max(1) as f32)
 }
 
-/// A drift's sparks out of a rear wheel (`side`: −1 left, 1 right): back, up and out of the
-/// wheel, in a cone; streaks of their tier's color, falling, left behind by the kart.
+/// Issue #174: the road under `at` for the sparks to bounce on (the world's height there: a kart
+/// on its wheels; tilted on a wall or in a loop, none).
+fn road_under(frame: &KartFrame, at: Vec3) -> f32 {
+    if frame.up().y > 0.85 {
+        at.y - 0.03
+    } else {
+        f32::NEG_INFINITY
+    }
+}
+
+/// A spark (issue #174: a glowing streak, its core white-hot, its edge `paint`'s color, which
+/// bounces on `floor` and cools as it dies) thrown from `at` along `direction` at `speed`.
+fn glint(
+    pool: &mut ParticlePool,
+    at: Vec3,
+    (direction, speed): (Vec3, f32),
+    (paint, size, length, life, glow): (Paint, f32, f32, f32, f32),
+    floor: f32,
+    drift: &DriftVfx,
+) -> Particle {
+    let mut spark = Particle::new(Shape::Glint, paint, at, life, size);
+    spark.velocity = direction * speed;
+    spark.gravity = drift.spark_gravity;
+    spark.drag = 3.0;
+    spark.stretch = length / size.max(1e-3);
+    spark.axis = direction;
+    spark.floor = floor;
+    spark.bounce = drift.spark_bounce;
+    spark.glow = glow * pool.rng.range(0.8, 1.2);
+    spark.cool = drift.spark_cool;
+    spark.smear = drift.spark_smear;
+    spark
+}
+
+/// A drift's sparks out of a rear wheel (`side`: −1 left, 1 right): back, up (higher at each
+/// tier) and out of the wheel, in a cone, from where the tyre rubs the road; glowing streaks of
+/// their tier's color (issue #174), falling, bouncing on the road, left behind by the kart.
 pub fn drift_sparks(
     pool: &mut ParticlePool,
     frame: &KartFrame,
@@ -113,83 +148,181 @@ pub fn drift_sparks(
     dt: f32,
 ) {
     let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0));
-    let out = frame.direction(Vec3::new(side * 0.45, 0.55, 1.0));
+    let out = frame.direction(Vec3::new(side * 0.45, style.rise, 1.0));
+    let floor = road_under(frame, at);
     for i in 0..count {
         let direction = pool.rng.cone(out, drift.spark_spread);
-        let speed = style.speed * pool.rng.range(0.7, 1.15);
-        let life = style.life * pool.rng.range(0.75, 1.1);
-        let mut spark = Particle::new(
-            Shape::Cube,
-            style.paint,
+        let speed = style.speed * pool.rng.range(0.7, 1.25);
+        let life = style.life * pool.rng.range(0.75, 1.2);
+        let size = style.size * pool.rng.range(0.85, 1.15);
+        let mut spark = glint(
+            pool,
             along(at, frame.velocity * dt, i, count),
-            life,
-            style.size,
+            (direction, speed),
+            (style.paint, size, style.length, life, style.glow),
+            floor,
+            drift,
         );
-        spark.velocity = direction * speed;
         spark.carrier = frame.velocity * 0.85;
-        spark.gravity = drift.spark_gravity;
-        spark.drag = 3.0;
-        spark.stretch = style.length / style.size.max(1e-3);
-        spark.axis = direction;
         pool.spawn(spark);
     }
 }
 
-/// A tier reached (GD § 3.4): a burst of sparks of its color at each rear wheel, a white flash
-/// at each, and a ring of its color around the back of the kart.
+/// Issue #174: the flames licking a rear wheel (`side`) in a drift (orange and purple): tongues
+/// of its tier's color rising from where the tyre rubs the road, up its back and a little out,
+/// each its own height and lean (they dance), carried with the kart and left a little behind it
+/// (they lick backward); their tips the tier's deep color (pink for purple, red for orange).
+pub fn drift_flames(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    side: f32,
+    style: &SparkStyle,
+    drift: &DriftVfx,
+    count: u32,
+    dt: f32,
+) {
+    let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.03, -0.06));
+    let up = frame.direction(Vec3::new(side * 0.25, 1.0, 0.45));
+    for i in 0..count {
+        let direction = pool.rng.cone(up, 0.4);
+        let mut flame = Particle::new(
+            Shape::Tongue,
+            style.paint,
+            along(at, frame.velocity * dt, i, count) + pool.rng.direction() * 0.05,
+            drift.flame_life * pool.rng.range(0.7, 1.3),
+            style.flame_size * pool.rng.range(0.7, 1.25),
+        );
+        flame.curve = Curve::Flash;
+        flame.velocity = direction * drift.flame_rise * pool.rng.range(0.7, 1.3);
+        flame.carrier = frame.velocity;
+        flame.drag = 0.6;
+        flame.gravity = -2.0;
+        flame.stretch = pool.rng.range(2.2, 3.2);
+        flame.axis = direction;
+        flame.glow = style.flame_glow * pool.rng.range(0.85, 1.15);
+        flame.variant = (pool.rng.next_u32() & 1) as u8;
+        pool.spawn(flame);
+    }
+}
+
+/// Issue #174: the embers of a drift's real fire (purple): small glowing dots floating up and
+/// away from a rear wheel (`side`), cooling to the tier's deep color.
+pub fn drift_embers(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    side: f32,
+    paint: Paint,
+    drift: &DriftVfx,
+    count: u32,
+    dt: f32,
+) {
+    let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.2, 0.0));
+    let up = frame.up();
+    let back = frame.direction(Vec3::new(side * 0.4, 0.0, 1.0));
+    for i in 0..count {
+        let mut ember = Particle::new(
+            Shape::Glow,
+            paint,
+            along(at, frame.velocity * dt, i, count) + pool.rng.direction() * 0.18,
+            drift.ember_life * pool.rng.range(0.7, 1.25),
+            drift.ember_size * pool.rng.range(0.6, 1.3),
+        );
+        ember.facing = Facing::Camera;
+        ember.velocity = up * drift.ember_rise * pool.rng.range(0.5, 1.2)
+            + back * pool.rng.range(0.3, 1.2)
+            + pool.rng.direction() * 0.6;
+        ember.carrier = frame.velocity * 0.6;
+        ember.drag = 1.4;
+        ember.gravity = -0.6;
+        ember.glow = 2.6 * pool.rng.range(0.7, 1.2);
+        ember.cool = 1.0;
+        pool.spawn(ember);
+    }
+}
+
+/// Issue #174: a glow facing the camera at `at` (a flash, a fireball), flashing out and back in
+/// over `life`, carried along by `carrier`.
+fn flash(at: Vec3, carrier: Vec3, (paint, size, life, glow): (Paint, f32, f32, f32)) -> Particle {
+    let mut flash = Particle::new(Shape::Glow, paint, at, life, size);
+    flash.curve = Curve::Flash;
+    flash.facing = Facing::Camera;
+    flash.carrier = carrier;
+    flash.glow = glow;
+    flash
+}
+
+/// Issue #174: a shockwave of `paint`, lying across `axis` at `at`, blown out to `size` over
+/// `life` and dying out as it goes.
+fn shockwave(
+    at: Vec3,
+    axis: Vec3,
+    carrier: Vec3,
+    (paint, size, life): (Paint, f32, f32),
+) -> Particle {
+    let mut ring = Particle::new(Shape::Shock, paint, at, life, size);
+    ring.curve = Curve::Wave;
+    ring.facing = Facing::Flat;
+    ring.axis = axis;
+    ring.carrier = carrier;
+    ring.glow = 2.2;
+    ring
+}
+
+/// A tier reached (GD § 3.4): a burst of sparks of its color at each rear wheel, thrown high, a
+/// white flash at each, and (issue #174) a ring of its color blown out on the ground around the
+/// back of the kart, and a glow of its color over it.
 pub fn tier_flash(pool: &mut ParticlePool, frame: &KartFrame, tier: usize, drift: &DriftVfx) {
     let tier = tier.min(2);
     let paint = Paint::tier(tier);
     for side in [-1.0f32, 1.0] {
         let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0));
-        let out = frame.direction(Vec3::new(side * 0.6, 0.8, 0.6));
+        let out = frame.direction(Vec3::new(side * 0.6, 0.8 + drift.spark_rise[tier], 0.6));
+        let floor = road_under(frame, at);
         for _ in 0..drift.flash_sparks[tier] {
-            let direction = pool.rng.cone(out, 1.1);
-            let mut spark = Particle::new(
-                Shape::Cube,
-                paint,
+            let direction = pool.rng.cone(out, 1.0);
+            let speed = drift.spark_speed[tier] * pool.rng.range(1.3, 2.1);
+            let life = drift.spark_life[tier] * pool.rng.range(1.0, 1.6);
+            let size = drift.spark_size[tier] * 1.2;
+            let glow = drift.spark_glow[tier] * 1.2;
+            let mut spark = glint(
+                pool,
                 at,
-                drift.spark_life[tier] * pool.rng.range(1.0, 1.5),
-                drift.spark_size[tier] * 1.2,
+                (direction, speed),
+                (paint, size, drift.spark_length[tier], life, glow),
+                floor,
+                drift,
             );
-            spark.velocity = direction * drift.spark_speed[tier] * pool.rng.range(1.2, 1.9);
             spark.carrier = frame.velocity * 0.9;
-            spark.gravity = drift.spark_gravity;
             spark.drag = 2.5;
-            spark.stretch = drift.spark_length[tier] / drift.spark_size[tier].max(1e-3);
             pool.spawn(spark);
         }
-        let mut flash = Particle::new(
-            Shape::Ball,
-            Paint::Hot,
-            at,
-            drift.flash_time,
-            drift.flash_size[tier],
-        );
-        flash.curve = Curve::Flash;
-        flash.facing = Facing::Camera;
-        flash.carrier = frame.velocity;
-        pool.spawn(flash);
+        let hot = (Paint::Hot, drift.flash_size[tier], drift.flash_time, 2.2);
+        pool.spawn(flash(at, frame.velocity, hot));
     }
-    let mut ring = Particle::new(
-        Shape::Ring,
+    let back = frame.point(Vec3::new(0.0, -0.3, 0.6));
+    pool.spawn(shockwave(
+        back,
+        frame.up(),
+        frame.velocity,
+        (paint, drift.flash_ring[tier], drift.flash_time * 1.6),
+    ));
+    let glow = (
         paint,
-        frame.point(Vec3::new(0.0, -0.3, 0.7)),
-        drift.flash_time * 1.4,
-        drift.flash_ring[tier],
+        drift.flash_ring[tier] * 1.1,
+        drift.flash_time * 1.2,
+        0.9,
     );
-    ring.curve = Curve::Flash;
-    ring.facing = Facing::Flat;
-    ring.axis = frame.up();
-    ring.carrier = frame.velocity;
-    pool.spawn(ring);
+    pool.spawn(flash(back + frame.up() * 0.3, frame.velocity, glow));
 }
 
 /// The tyres' smoke while drifting, out of a rear wheel: puffs that rise and stay behind.
+/// Issue #174: soft puffs that spread, turn and thin out, the color of the ground under the
+/// wheel (`ground`: the road's, its sand's, the shoulders'), each a little out of round.
 pub fn drift_smoke(
     pool: &mut ParticlePool,
     frame: &KartFrame,
     side: f32,
+    ground: Paint,
     drift: &DriftVfx,
     count: u32,
     dt: f32,
@@ -198,76 +331,118 @@ pub fn drift_smoke(
     let up = frame.up();
     for i in 0..count {
         let mut puff = Particle::new(
-            Shape::Ball,
+            Shape::Haze,
             Paint::Smoke,
             along(at, frame.velocity * dt, i, count),
-            drift.smoke_life * pool.rng.range(0.8, 1.2),
-            drift.smoke_size * pool.rng.range(0.75, 1.25),
+            drift.smoke_life * pool.rng.range(0.8, 1.25),
+            drift.smoke_size * pool.rng.range(0.75, 1.3),
         );
         puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
-        puff.velocity = up * drift.smoke_rise
+        puff.facing = Facing::Camera;
+        puff.velocity = up * drift.smoke_rise * pool.rng.range(0.7, 1.2)
             + frame.direction(Vec3::new(side * 0.6, 0.0, 0.5)) * pool.rng.range(0.3, 1.0);
         puff.carrier = frame.velocity * 0.25;
         puff.drag = 1.5;
-        puff.axis = pool.rng.direction();
-        puff.spin = pool.rng.signed() * 2.0;
+        puff.angle = pool.rng.unit() * TAU;
+        puff.spin = pool.rng.signed() * 1.5;
+        puff.stretch = pool.rng.range(1.0, 1.5);
+        puff.glow = drift.smoke_opacity * pool.rng.range(0.8, 1.1);
+        puff.tint = drift.smoke_tint;
+        puff.tint_paint = ground;
+        puff.variant = (pool.rng.next_u32() & 1) as u8;
         pool.spawn(puff);
     }
 }
 
 /// The release of a mini-turbo (« fwoosh », GD § 3.5): a burst of sparks of its tier out of the
-/// exhaust, a white flash and a ring of its color blown out behind the kart.
+/// exhaust, a white flash and a ring of its color blown out behind the kart. Issue #174: a blast
+/// of flames of its color out of the exhausts, and a fireball of its color behind them.
 pub fn release(pool: &mut ParticlePool, frame: &KartFrame, tier: usize, drift: &DriftVfx) {
     let tier = tier.min(2);
     let paint = Paint::tier(tier);
     let at = frame.point(Vec3::new(0.0, EXHAUST.y, EXHAUST.z));
     let back = frame.direction(Vec3::new(0.0, 0.25, 1.0));
+    let floor = road_under(frame, frame.point(UNDER));
     for _ in 0..drift.release_sparks[tier] {
         let direction = pool.rng.cone(back, 0.6);
-        let mut spark = Particle::new(
-            Shape::Cube,
-            paint,
-            at + pool.rng.direction() * 0.2,
-            drift.spark_life[tier] * pool.rng.range(1.0, 1.6),
-            drift.spark_size[tier] * 1.3,
+        let speed = drift.release_speed * pool.rng.range(0.6, 1.2);
+        let life = drift.spark_life[tier] * pool.rng.range(1.0, 1.6);
+        let size = drift.spark_size[tier] * 1.3;
+        let length = drift.spark_length[tier] * 1.6;
+        let glow = drift.spark_glow[tier] * 1.2;
+        let start = at + pool.rng.direction() * 0.2;
+        let mut spark = glint(
+            pool,
+            start,
+            (direction, speed),
+            (paint, size, length, life, glow),
+            floor,
+            drift,
         );
-        spark.velocity = direction * drift.release_speed * pool.rng.range(0.6, 1.2);
         spark.carrier = frame.velocity * 0.6;
         spark.gravity = drift.spark_gravity * 0.5;
         spark.drag = 2.0;
-        spark.stretch = drift.spark_length[tier] * 1.6 / drift.spark_size[tier].max(1e-3);
         pool.spawn(spark);
     }
-    let mut flash = Particle::new(
-        Shape::Ball,
+    // The blast of flames: out of both exhausts, back and a little up, big and short-lived.
+    let size = drift.flame_size[2].max(0.2) * (0.8 + 0.25 * tier as f32);
+    for k in 0..drift.release_flames[tier] {
+        let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+        let direction = pool.rng.cone(back, 0.45);
+        let mut flame = Particle::new(
+            Shape::Tongue,
+            paint,
+            frame.point(EXHAUST * Vec3::new(side, 1.0, 1.0)),
+            pool.rng.range(0.2, 0.32),
+            size * pool.rng.range(0.8, 1.3),
+        );
+        flame.curve = Curve::Flash;
+        flame.velocity = direction * drift.release_speed * pool.rng.range(0.4, 0.9);
+        flame.carrier = frame.velocity * 0.75;
+        flame.drag = 2.5;
+        flame.stretch = pool.rng.range(2.2, 3.2);
+        flame.axis = direction;
+        flame.glow = drift.flame_glow[tier] * 1.25;
+        flame.variant = (k % 2) as u8;
+        pool.spawn(flame);
+    }
+    let hot = (
         Paint::Hot,
-        at,
+        drift.flash_size[tier] * 1.6,
         drift.flash_time,
-        drift.flash_size[tier] * 1.4,
+        2.4,
     );
-    flash.curve = Curve::Flash;
-    flash.carrier = frame.velocity * 0.8;
-    pool.spawn(flash);
-    let mut ring = Particle::new(
-        Shape::Ring,
+    pool.spawn(flash(at, frame.velocity * 0.8, hot));
+    let ball = (
         paint,
-        at + back * 0.3,
-        drift.flash_time * 1.2,
-        drift.release_ring[tier],
+        drift.release_ring[tier] * 2.2,
+        drift.flash_time * 1.5,
+        1.4,
     );
+    let mut fireball = flash(at + back * 0.4, frame.velocity * 0.8, ball);
+    fireball.velocity = back * 1.5;
+    pool.spawn(fireball);
     // It stays at the exhaust (blown out around it), never left behind across the screen.
-    ring.curve = Curve::Flash;
-    ring.facing = Facing::Flat;
-    ring.axis = frame.forward();
+    let ring = (
+        paint,
+        drift.release_ring[tier] * 1.3,
+        drift.flash_time * 1.4,
+    );
+    let mut ring = shockwave(at + back * 0.3, frame.forward(), frame.velocity, ring);
     ring.velocity = back * 0.5;
-    ring.carrier = frame.velocity;
     pool.spawn(ring);
 }
 
-/// A boost's trail out of the exhausts (a mini-turbo's: its tier's color): short streaks left
-/// behind.
-pub fn trail(pool: &mut ParticlePool, frame: &KartFrame, paint: Paint, count: u32, dt: f32) {
+/// A boost's trail out of the exhausts (a mini-turbo's: its tier's color). Issue #174: a glowing
+/// streak left in the air behind each exhaust, which cools and dies out (`life`, `size`).
+pub fn trail(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    paint: Paint,
+    (life, size): (f32, f32),
+    count: u32,
+    dt: f32,
+) {
     for i in 0..count {
         let side = if (pool.spawned + u64::from(i)).is_multiple_of(2) {
             1.0
@@ -275,18 +450,22 @@ pub fn trail(pool: &mut ParticlePool, frame: &KartFrame, paint: Paint, count: u3
             -1.0
         };
         let at = frame.point(EXHAUST * Vec3::new(side, 1.0, 1.0));
-        let direction = pool.rng.cone(frame.direction(Vec3::Z), 0.25);
+        let direction = pool.rng.cone(frame.direction(Vec3::Z), 0.15);
         let mut streak = Particle::new(
-            Shape::Cube,
+            Shape::Glint,
             paint,
             along(at, frame.velocity * dt, i, count),
-            pool.rng.range(0.15, 0.25),
-            0.07,
+            life * pool.rng.range(0.8, 1.2),
+            size * pool.rng.range(0.85, 1.15),
         );
-        streak.velocity = direction * pool.rng.range(2.0, 4.0);
-        streak.carrier = frame.velocity * 0.7;
+        streak.velocity = direction * pool.rng.range(1.0, 2.0);
+        streak.carrier = frame.velocity * 0.1;
         streak.drag = 2.0;
-        streak.stretch = 5.0;
+        streak.stretch = 7.0;
+        streak.curve = Curve::Linger;
+        streak.axis = direction;
+        streak.glow = 2.0 * pool.rng.range(0.85, 1.15);
+        streak.cool = 0.6;
         pool.spawn(streak);
     }
 }
@@ -313,8 +492,9 @@ pub fn embers(
             frame.direction(Vec3::new(0.0, 0.3, 1.0)),
             boost.ember_spread,
         );
+        // Issue #174: a glow, burning white in the middle, cooling as it goes.
         let mut ember = Particle::new(
-            Shape::Ball,
+            Shape::Glow,
             paint,
             along(at, frame.velocity * dt, i, count),
             boost.ember_life * pool.rng.range(0.7, 1.2),
@@ -324,7 +504,9 @@ pub fn embers(
         ember.carrier = frame.velocity * 0.75;
         ember.drag = 2.0;
         ember.gravity = -1.0;
-        ember.facing = Facing::Tumble;
+        ember.facing = Facing::Camera;
+        ember.glow = 2.2;
+        ember.cool = 0.5;
         pool.spawn(ember);
     }
 }
@@ -982,14 +1164,24 @@ mod tests {
         let tuning = VfxTuning::default();
         let mut pool = ParticlePool::new(ParticlePool::SLOTS);
         let f = frame();
+        // Issue #174: its sparks and flash at each wheel, its ring and its glow.
         tier_flash(&mut pool, &f, 2, &tuning.drift);
         assert_eq!(
             pool.live() as u32,
-            2 * (tuning.drift.flash_sparks[2] + 1) + 1
+            2 * (tuning.drift.flash_sparks[2] + 1) + 2
         );
+        assert_eq!(pool.alive().filter(|p| p.shape == Shape::Shock).count(), 1);
         pool.clear();
+        // Issue #174: its sparks, its flames, its flash, its fireball and its ring.
         release(&mut pool, &f, 0, &tuning.drift);
-        assert_eq!(pool.live() as u32, tuning.drift.release_sparks[0] + 2);
+        assert_eq!(
+            pool.live() as u32,
+            tuning.drift.release_sparks[0] + tuning.drift.release_flames[0] + 3
+        );
+        assert_eq!(
+            pool.alive().filter(|p| p.shape == Shape::Tongue).count() as u32,
+            tuning.drift.release_flames[0]
+        );
         pool.clear();
         confetti(&mut pool, Vec3::ZERO, 4.0, &tuning.impact);
         assert_eq!(
