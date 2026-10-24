@@ -57,6 +57,7 @@ pub mod solo;
 mod solo_screen;
 pub mod style;
 pub mod trailer;
+pub mod vignette;
 
 #[cfg(test)]
 pub(crate) mod end_tests;
@@ -93,7 +94,7 @@ pub use screen::{MainMenuRoot, MenuAssets, MenuButton, MenuNode, TitleWord};
 pub use showcase::{HomeTuning, SHOWCASE_LAPS, Showcase, ShowcaseKart, ShowcasePhase, pack_scale};
 pub use solo_screen::{
     RaceCard, SoloArrow, SoloButton, SoloColumn, SoloHeader, SoloHelp, SoloLine, SoloMoreRaces,
-    SoloRoot, SoloShape, SoloUi, SoloValue, Vignette,
+    SoloRoot, SoloShape, SoloUi, SoloValue, Vignette, VignetteKey, VignetteRoad,
 };
 pub use style::{ButtonLook, ButtonState, UI_FILES, button_look};
 

@@ -22,6 +22,8 @@ use crate::track::{TrackChoice, TrackLayout};
 /// The game on Prairie Pompon with the menu (and so the « Jouer solo » screen), 3 bots, ready.
 fn solo_app() -> App {
     let mut app = game_app_unloaded(TrackChoice::default(), 3);
+    // Issue #181: the vignettes' pictures need a renderer's storage of images (made here).
+    app.init_asset::<Image>();
     app.add_plugins(MainMenuPlugin { at_launch: false });
     wait_for_the_player(&mut app);
     app
@@ -168,22 +170,29 @@ fn wait_for_the_vignettes(app: &mut App) {
     panic!("the vignettes' circuits never loaded: {states:?}");
 }
 
-/// The dots of the road in each vignette (by its circuit).
-fn vignette_dots(app: &mut App) -> Vec<(usize, usize)> {
+/// Issue #181: the road of each vignette (by its circuit): its picture, its size, and how many
+/// of its pixels the line covers (opaque).
+fn vignette_roads(app: &mut App) -> Vec<(usize, Handle<Image>, (u32, u32), usize)> {
     let world = app.world_mut();
     let vignettes: Vec<(Entity, usize)> = world
         .query::<(Entity, &Vignette)>()
         .iter(world)
         .map(|(entity, vignette)| (entity, vignette.circuit))
         .collect();
-    vignettes
-        .into_iter()
-        .map(|(entity, circuit)| {
-            let road = world.get::<Children>(entity).unwrap()[0];
-            let dots = world.get::<Children>(road).map_or(0, |c| c.len());
-            (circuit, dots)
-        })
-        .collect()
+    let mut roads = Vec::new();
+    for (entity, circuit) in vignettes {
+        let children = world.get::<Children>(entity).unwrap();
+        assert_eq!(children.len(), 1, "one picture");
+        let road = children[0];
+        assert!(world.get::<VignetteRoad>(road).is_some());
+        let handle = world.get::<ImageNode>(road).unwrap().image.clone();
+        let image = world.resource::<Assets<Image>>().get(&handle).unwrap();
+        let size = (image.width(), image.height());
+        let data = image.data.as_ref().unwrap();
+        let opaque = data.chunks(4).filter(|p| p[3] > 128).count();
+        roads.push((circuit, handle, size, opaque));
+    }
+    roads
 }
 
 /// Issue #99 acceptance: « Jouer solo » opens its screen (N in a race; from the home screen and
@@ -226,8 +235,16 @@ fn jouer_solo_opens_its_screen_and_leaves_nothing_once_closed() {
     assert_eq!(count::<With<SoloArrow>>(&mut app), 2 * 5);
     // The vignette, big, with its road once its file is loaded.
     wait_for_the_vignettes(&mut app);
-    let dots = vignette_dots(&mut app);
-    assert_eq!(dots, [(0, 150)], "the circuit's road, from above");
+    // Issue #181: a picture of its line, at twice its size.
+    let roads = vignette_roads(&mut app);
+    assert_eq!(roads.len(), 1);
+    let (circuit, plain, size, opaque) = roads[0].clone();
+    assert_eq!(
+        (circuit, size),
+        (0, (800, 452)),
+        "the circuit's road, from above"
+    );
+    assert!(opaque > 10_000, "{opaque} pixels of line");
     // A key changes a value in place (the same tree); Échap closes it.
     let root = find::<SoloRoot>(&mut app, |_| true);
     tap(&mut app, KeyCode::ArrowDown);
@@ -236,6 +253,18 @@ fn jouer_solo_opens_its_screen_and_leaves_nothing_once_closed() {
     assert!(race_menu(&app).setup.mirror);
     let mirrored = find::<SoloRoot>(&mut app, |_| true);
     assert_ne!(mirrored, root, "the vignette mirrored: another tree");
+    // Another picture (each drawn once: back to « Non », the first one again).
+    let (_, flipped, size, _) = vignette_roads(&mut app)[0].clone();
+    assert!(flipped != plain && size == (800, 452));
+    {
+        let images = app.world().resource::<Assets<Image>>();
+        let (a, b) = (images.get(&plain).unwrap(), images.get(&flipped).unwrap());
+        assert_ne!(a.data, b.data);
+    }
+    tap(&mut app, KeyCode::ArrowLeft);
+    assert_eq!(vignette_roads(&mut app)[0].1, plain, "drawn once");
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(app.world().resource::<SoloUi>().vignettes.len(), 2);
     let mut mirror = texts_of::<SoloLine>(&mut app, |line| line.row == Mirror);
     mirror.sort();
     assert_eq!(mirror, ["<", ">", "Miroir", "Oui"]);
@@ -292,6 +321,24 @@ fn the_screen_shows_the_cup_and_the_custom_races() {
     assert!(names.contains(&circuits[2].name) && names.contains(&"3".to_string()));
     assert_eq!(count::<(With<RaceCard>, With<SoloLine>)>(&mut app), 0);
     assert_eq!(count::<With<Vignette>>(&mut app), 4);
+    // Issue #181: each its picture, small.
+    let mut roads: Vec<(usize, (u32, u32))> = vignette_roads(&mut app)
+        .into_iter()
+        .map(|(circuit, _, size, opaque)| {
+            assert!(opaque > 300, "{circuit}: {opaque}");
+            (circuit, size)
+        })
+        .collect();
+    roads.sort_unstable();
+    assert_eq!(
+        roads,
+        [
+            (0, (128, 76)),
+            (1, (128, 76)),
+            (2, (128, 76)),
+            (3, (128, 76))
+        ]
+    );
 
     // A custom one, its circuits chosen: a line per race on the right.
     tap(&mut app, KeyCode::ArrowDown);

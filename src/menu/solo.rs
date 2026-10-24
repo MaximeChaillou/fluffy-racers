@@ -1,12 +1,9 @@
 //! The « Jouer solo » screen (issue #99), pure: its texts (the title, the header of its races, the
-//! keys), the place of its lines (on the left the settings, on the right the races), and the
-//! vignette of a circuit (its outline seen from above, in the box of the vignette). The choice
-//! itself is `modes::setup` (`RaceSetup`, headless); its tree is `solo_screen.rs`.
-
-use bevy::math::Vec2;
+//! keys), the place of its lines (on the left the settings, on the right the races). The vignette
+//! of a circuit (issue #181: its line seen from above) is `vignette.rs`. The choice itself is
+//! `modes::setup` (`RaceSetup`, headless); its tree is `solo_screen.rs`.
 
 use crate::modes::{Catalog, Formula, GameMode, MenuRow, Pick, RaceSetup};
-use crate::track::TrackData;
 
 /// The screen's title.
 pub const TITLE: &str = "Jouer solo";
@@ -77,92 +74,6 @@ pub fn record_line(record: Option<&str>) -> String {
     }
 }
 
-/// Points of a circuit's outline for a vignette: its centerline seen from above (x right, z
-/// down the vignette; mirrored, x the other way), every `step` meters at most along its control
-/// points' polyline, in the unit box `[0, 1]²`, centered and keeping its proportions in a box of
-/// `aspect` (width / height). `count` points, evenly spaced along it.
-pub fn outline(data: &TrackData, mirror: bool, aspect: f32, count: usize) -> Vec<Vec2> {
-    let points: Vec<Vec2> = data
-        .points
-        .iter()
-        .map(|point| {
-            let x = if mirror { -point.pos.0 } else { point.pos.0 };
-            Vec2::new(x, point.pos.2)
-        })
-        .collect();
-    spread(&smooth(&points), aspect, count)
-}
-
-/// A closed Catmull-Rom curve through `points` (the circuit's centerline is one), 8 points per
-/// segment.
-fn smooth(points: &[Vec2]) -> Vec<Vec2> {
-    let n = points.len();
-    if n < 3 {
-        return points.to_vec();
-    }
-    let at = |i: usize| points[i % n];
-    let mut curve = Vec::with_capacity(n * 8);
-    for i in 0..n {
-        let (p0, p1, p2, p3) = (at(i + n - 1), at(i), at(i + 1), at(i + 2));
-        for k in 0..8 {
-            let t = k as f32 / 8.0;
-            let (t2, t3) = (t * t, t * t * t);
-            curve.push(
-                0.5 * ((2.0 * p1)
-                    + (p2 - p0) * t
-                    + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-                    + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3),
-            );
-        }
-    }
-    curve
-}
-
-/// `count` points evenly spaced along the closed polyline `points`, fitted in the unit box (see
-/// [`outline`]).
-fn spread(points: &[Vec2], aspect: f32, count: usize) -> Vec<Vec2> {
-    if points.len() < 2 || count == 0 {
-        return Vec::new();
-    }
-    let n = points.len();
-    let lengths: Vec<f32> = (0..n)
-        .map(|i| points[i].distance(points[(i + 1) % n]))
-        .collect();
-    let total: f32 = lengths.iter().sum();
-    if total <= f32::EPSILON {
-        return Vec::new();
-    }
-    let mut spaced = Vec::with_capacity(count);
-    let (mut segment, mut walked) = (0usize, 0.0f32);
-    for k in 0..count {
-        let wanted = total * k as f32 / count as f32;
-        while walked + lengths[segment] < wanted && segment + 1 < n {
-            walked += lengths[segment];
-            segment += 1;
-        }
-        let t = ((wanted - walked) / lengths[segment].max(f32::EPSILON)).clamp(0.0, 1.0);
-        spaced.push(points[segment].lerp(points[(segment + 1) % n], t));
-    }
-    // Into the unit box: the same scale on both axes in a box `aspect` times wider than high
-    // (the box of the whole curve: the same for any count).
-    let (min, max) = points.iter().fold(
-        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-        |(min, max), p| (min.min(*p), max.max(*p)),
-    );
-    let size = (max - min).max(Vec2::splat(1e-3));
-    let aspect = aspect.max(1e-3);
-    // Box units: x in [0, aspect], y in [0, 1].
-    let scale = (aspect / size.x).min(1.0 / size.y);
-    let offset = (Vec2::new(aspect, 1.0) - size * scale) / 2.0;
-    spaced
-        .iter()
-        .map(|p| {
-            let q = (*p - min) * scale + offset;
-            Vec2::new(q.x / aspect, q.y)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,52 +99,6 @@ mod tests {
         assert_eq!(hidden_races(0, 2).unwrap(), "+ 2 courses plus bas");
         assert_eq!(hidden_races(1, 0).unwrap(), "+ 1 course plus haut");
         assert_eq!(hidden_races(3, 5).unwrap(), "+ 3 plus haut, + 5 plus bas");
-    }
-
-    fn prairie() -> TrackData {
-        TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap()
-    }
-
-    /// The vignette's outline: `count` points in the unit box, touching two of its opposite sides
-    /// (centered on the other axis), evenly spaced; mirrored, the same outline flipped left to
-    /// right; the first point is the start line.
-    #[test]
-    fn the_outline_fits_its_vignette() {
-        let data = prairie();
-        for aspect in [1.0, 1.8, 0.5] {
-            let points = outline(&data, false, aspect, 60);
-            assert_eq!(points.len(), 60);
-            let (min, max) = points.iter().fold(
-                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-                |(min, max), p| (min.min(*p), max.max(*p)),
-            );
-            assert!(min.x >= -1e-4 && min.y >= -1e-4, "{min}");
-            assert!(max.x <= 1.0 + 1e-4 && max.y <= 1.0 + 1e-4, "{max}");
-            // It fills the box on one axis (to the spacing of its points), centered on both.
-            let touches_x = min.x < 0.03 && max.x > 0.97;
-            let touches_y = min.y < 0.03 && max.y > 0.97;
-            assert!(touches_x || touches_y, "{aspect}: {min} {max}");
-            assert!(((min.x + max.x) / 2.0 - 0.5).abs() < 0.03, "{aspect}");
-            assert!(((min.y + max.y) / 2.0 - 0.5).abs() < 0.03, "{aspect}");
-            // Evenly spaced, in the vignette's own units.
-            let gaps: Vec<f32> = points
-                .windows(2)
-                .map(|w| ((w[1] - w[0]) * Vec2::new(aspect, 1.0)).length())
-                .collect();
-            let mean = gaps.iter().sum::<f32>() / gaps.len() as f32;
-            assert!(
-                gaps.iter().all(|g| (g - mean).abs() < 0.35 * mean),
-                "{gaps:?}"
-            );
-            let mirrored = outline(&data, true, aspect, 60);
-            for (a, b) in points.iter().zip(&mirrored) {
-                assert!((a.x - (1.0 - b.x)).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3);
-            }
-        }
-        // The start line first, whatever the count.
-        let first = outline(&data, false, 1.0, 10)[0];
-        assert!(outline(&data, false, 1.0, 400)[0].distance(first) < 1e-5);
-        assert!(outline(&data, false, 1.0, 0).is_empty());
     }
 
     /// The header and the keys.

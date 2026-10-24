@@ -181,9 +181,13 @@ pub mod size {
     pub const BIG_VIGNETTE_HEIGHT: f32 = 226.0;
     pub const VIGNETTE_RADIUS: f32 = 10.0;
     pub const BIG_VIGNETTE_RADIUS: f32 = 24.0;
-    /// The road's dots in a vignette (and in a big one).
-    pub const VIGNETTE_DOT: f32 = 3.0;
-    pub const BIG_VIGNETTE_DOT: f32 = 8.0;
+    /// Issue #181: the road's line in a vignette (and in a big one): half the thickness of its
+    /// color and its white edge around it (px of the reference window; the picture is drawn at
+    /// twice this size, `menu::vignette`).
+    pub const VIGNETTE_LINE: f32 = 1.25;
+    pub const VIGNETTE_EDGE: f32 = 0.6;
+    pub const BIG_VIGNETTE_LINE: f32 = 3.25;
+    pub const BIG_VIGNETTE_EDGE: f32 = 1.4;
     /// A cup's icon on its badge, on its line.
     pub const CUP_BADGE: f32 = 30.0;
     pub const CUP_ICON: f32 = 24.0;

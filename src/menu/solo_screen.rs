@@ -15,6 +15,8 @@
 //! **Closed, nothing is left**: the tree and its observers go when it closes; its systems only run
 //! while it is open (or its tree is still there). Nothing of it exists before it first opens.
 
+use std::collections::HashMap;
+
 use bevy::picking::Pickable;
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::prelude::*;
@@ -29,6 +31,7 @@ use super::options_screen::{
 use super::screen::{MenuAssets, MenuNode};
 use super::solo;
 use super::style::{self, ButtonState, font, palette, size, u};
+use super::vignette;
 use crate::modes::{
     Catalog, GameMode, MenuRow, RaceMenu, RaceMenuAction, TimeTrialState, TrialKey,
 };
@@ -119,6 +122,11 @@ pub struct Vignette {
     pub circuit: usize,
 }
 
+/// Issue #181: the road of a vignette, its picture (`vignette::draw`).
+#[derive(Component, Clone, Copy, Debug, Default)]
+#[require(MenuNode)]
+pub struct VignetteRoad;
+
 /// « C'est parti ! » (`start`) or « Retour ».
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[require(MenuNode)]
@@ -140,6 +148,70 @@ pub struct SoloUi {
     pub catalog: Catalog,
     /// The circuits' files, for their vignettes (in the manifest's order).
     pub tracks: Vec<Handle<TrackData>>,
+    /// Issue #181: the pictures of the vignettes drawn so far (`vignette::draw`), each drawn once.
+    pub vignettes: HashMap<VignetteKey, Handle<Image>>,
+}
+
+/// Issue #181: a vignette's picture: its circuit (and the fingerprint of its file: a file changed,
+/// another picture), mirrored or not, big or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VignetteKey {
+    pub circuit: usize,
+    pub fingerprint: u64,
+    pub mirror: bool,
+    pub big: bool,
+}
+
+impl SoloUi {
+    /// The key of the vignette of `circuit`, once its file is loaded.
+    fn vignette_key(
+        &self,
+        tracks: &Assets<TrackData>,
+        circuit: usize,
+        mirror: bool,
+        big: bool,
+    ) -> Option<VignetteKey> {
+        let data = tracks.get(self.tracks.get(circuit)?)?;
+        Some(VignetteKey {
+            circuit,
+            fingerprint: data.fingerprint,
+            mirror,
+            big,
+        })
+    }
+
+    /// Issue #181: draws the pictures of the vignettes `shape` shows that are not drawn yet (their
+    /// files loaded), once each.
+    fn draw_vignettes(
+        &mut self,
+        shape: &SoloShape,
+        tracks: &Assets<TrackData>,
+        images: &mut Assets<Image>,
+        circuit: usize,
+    ) {
+        let wanted: Vec<(usize, bool)> = if shape.mode.picks_a_circuit() {
+            vec![(circuit, true)]
+        } else {
+            shape.program[shape.shown.clone()]
+                .iter()
+                .map(|circuit| (*circuit, false))
+                .collect()
+        };
+        for (circuit, big) in wanted {
+            let Some(key) = self.vignette_key(tracks, circuit, shape.mirror, big) else {
+                continue;
+            };
+            if self.vignettes.contains_key(&key) {
+                continue;
+            }
+            let Some(data) = tracks.get(&self.tracks[circuit]) else {
+                continue;
+            };
+            let picture = vignette::draw(data, shape.mirror, big);
+            self.vignettes
+                .insert(key, images.add(vignette::to_image(&picture)));
+        }
+    }
 }
 
 /// The real time (s).
@@ -223,7 +295,7 @@ pub(super) fn sync_solo_tree(
     roots: Query<(Entity, &SoloRoot)>,
     (assets, grid, gp_tuning): (Option<Res<MenuAssets>>, Res<RaceGrid>, Res<GrandPrixTuning>),
     (server, tracks): (Option<Res<AssetServer>>, Option<Res<Assets<TrackData>>>),
-    trial: Option<Res<TimeTrialState>>,
+    (trial, mut images): (Option<Res<TimeTrialState>>, Option<ResMut<Assets<Image>>>),
     cameras: Query<(), With<Camera>>,
     mut options_screen: OptionsSync,
 ) {
@@ -257,6 +329,7 @@ pub(super) fn sync_solo_tree(
             hovered: None,
             catalog,
             tracks,
+            vignettes: HashMap::new(),
         });
         return;
     };
@@ -306,6 +379,9 @@ pub(super) fn sync_solo_tree(
             time
         })
     });
+    if let Some(images) = images.as_deref_mut() {
+        ui.draw_vignettes(&shape, tracks, images, menu.setup.circuit);
+    }
     let assets = assets.map(|assets| assets.clone()).unwrap_or_default();
     let program = shape.program.clone();
     let shown = shape.shown.clone();
@@ -850,43 +926,28 @@ fn spawn_card(
 }
 
 /// The vignette of `circuit` (big: a race alone's, a time trial's): the sky and the ground of its
-/// biome, and its road seen from above (dots of the asphalt's color, the start line's white),
-/// mirrored in the mirror mode, once its file is loaded.
+/// biome, and issue #181 its road seen from above (a picture drawn once, `vignette::draw`: its
+/// line, its start, its special stretches, its bridges), mirrored in the mirror mode, once its
+/// file is loaded.
 fn spawn_vignette(parent: &mut ChildSpawnerCommands, tree: &Tree, circuit: usize, big: bool) {
     let colors = palette_of(tree.ui, tree.tracks, circuit);
-    let (width, height, radius, dot, count) = if big {
+    let (width, height, radius) = if big {
         (
             size::BIG_VIGNETTE_WIDTH,
             size::BIG_VIGNETTE_HEIGHT,
             size::BIG_VIGNETTE_RADIUS,
-            size::BIG_VIGNETTE_DOT,
-            150,
         )
     } else {
         (
             size::VIGNETTE_WIDTH,
             size::VIGNETTE_HEIGHT,
             size::VIGNETTE_RADIUS,
-            size::VIGNETTE_DOT,
-            48,
         )
     };
-    // The road in the middle 84 % × 76 % of the vignette.
-    let (inner_w, inner_h) = (0.84, 0.76);
-    let outline = tree
+    let picture = tree
         .ui
-        .tracks
-        .get(circuit)
-        .and_then(|handle| tree.tracks.get(handle))
-        .map(|data| {
-            solo::outline(
-                data,
-                tree.menu.setup.mirror,
-                (width * inner_w) / (height * inner_h),
-                count,
-            )
-        })
-        .unwrap_or_default();
+        .vignette_key(tree.tracks, circuit, tree.menu.setup.mirror, big)
+        .and_then(|key| tree.ui.vignettes.get(&key));
     let ground = rgb(colors.ground);
     parent
         .spawn((
@@ -907,48 +968,20 @@ fn spawn_vignette(parent: &mut ChildSpawnerCommands, tree: &Tree, circuit: usize
             Pickable::IGNORE,
         ))
         .with_children(|vignette| {
-            vignette
-                .spawn((
+            if let Some(picture) = picture {
+                vignette.spawn((
                     MenuNode,
+                    VignetteRoad,
+                    ImageNode::new(picture.clone()),
                     Node {
                         position_type: PositionType::Absolute,
-                        left: percent(100.0 * (1.0 - inner_w) / 2.0),
-                        top: percent(100.0 * (1.0 - inner_h) / 2.0 + 4.0),
-                        width: percent(100.0 * inner_w),
-                        height: percent(100.0 * inner_h),
+                        width: percent(100),
+                        height: percent(100),
                         ..default()
                     },
                     Pickable::IGNORE,
-                ))
-                .with_children(|road| {
-                    let asphalt = rgb(colors.asphalt);
-                    for (k, point) in outline.iter().enumerate() {
-                        let (size, color) = if k == 0 {
-                            (dot * 1.6, palette::NEIGE)
-                        } else {
-                            (dot, asphalt)
-                        };
-                        road.spawn((
-                            MenuNode,
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: percent(100.0 * point.x),
-                                top: percent(100.0 * point.y),
-                                width: u(size),
-                                height: u(size),
-                                margin: UiRect {
-                                    left: u(-size / 2.0),
-                                    top: u(-size / 2.0),
-                                    ..default()
-                                },
-                                border_radius: BorderRadius::MAX,
-                                ..default()
-                            },
-                            BackgroundColor(color),
-                            Pickable::IGNORE,
-                        ));
-                    }
-                });
+                ));
+            }
         });
 }
 
