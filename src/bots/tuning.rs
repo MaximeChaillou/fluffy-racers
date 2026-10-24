@@ -66,6 +66,10 @@ pub struct BotSkill {
     pub min_drift_angle: f32,
     /// Chance to drift a turn long enough for it (decided once per turn).
     pub drift_chance: f32,
+    /// Issue #171: added to `BotTuning::drift_turn_margin` for this level (the share of the
+    /// drift's tightest turn rate it counts on): 0.1 for the Hard bots (they count on 90 % of it,
+    /// as before #170), 0 for the others.
+    pub drift_turn_extra: f32,
 
     // --- Driving techniques (GD § 4 and 5, issue #13) -------------------------------------------
     /// It accelerates this long after the "2" of the countdown, drawn in this range at each
@@ -154,7 +158,9 @@ pub struct BotTuning {
     /// 0.8 since #170 (0.9 before): Max's drift is wider (its tightest turn rate 18 % lower) and
     /// sets in more slowly; counting on 90 % of it, the bots came into the turns too fast, could
     /// not turn enough and let go of the drift before their orange (the guide's oranges per lap
-    /// fell under 2 on three circuits).
+    /// fell under 2 on three circuits). Issue #171: the Hard bots count on 90 % again
+    /// (`BotSkill::drift_turn_extra`): with the grass at 40 %, their grass shortcut no longer
+    /// paid on Prairie Pompon, and their laps there went over their window (44 s for 43.9).
     pub drift_turn_margin: f32,
 
     // --- Avoidance ----------------------------------------------------------------------------
@@ -224,9 +230,11 @@ pub struct BotTuning {
     /// A bot decides whether it takes a shortcut this far before it (m), and moves to its lane.
     pub shortcut_lookahead: f32,
     /// It takes a grass shortcut only with a boost that lasts the way to it and at least this
-    /// share of its path, at its speed of the moment. 0.35: on the Corniche Cannelle, an orange
-    /// mini-turbo fired 20 m before the grass bridge (about 1 s gained), not a boost pad's 1 s
-    /// fired 9 m before it (about nothing gained).
+    /// share of its path, at its speed of the moment. Issue #171: 0.75 (0.35 before, when the
+    /// grass was 55 % of the top speed): on the grass bridges (72 m), a purple mini-turbo fired
+    /// 20 m before it (0.6 to 0.75 s gained), not an orange one nor a 2 s boost (0.1 to 0.2 s
+    /// lost now); on the shorter paths of Prairie Pompon and the Col des Moufles (63 m), a 2 s
+    /// boost still pays (0.5 to 0.6 s).
     pub grass_boost_share: f32,
     /// Issue #156: a shortcut closed by a panel (it breaks only under a kart with a boost), only
     /// with a boost that lasts, at its speed of the moment, up to the panel and this much further
@@ -283,6 +291,7 @@ impl Default for BotTuning {
                     purple_when_possible: false,
                     min_drift_angle: 130f32.to_radians(),
                     drift_chance: 0.5,
+                    drift_turn_extra: 0.0,
                     start_delay_min: 0.2,
                     start_delay_max: 1.3,
                     trick_chance: 0.4,
@@ -314,6 +323,7 @@ impl Default for BotTuning {
                     purple_when_possible: false,
                     min_drift_angle: 120f32.to_radians(),
                     drift_chance: 0.85,
+                    drift_turn_extra: 0.0,
                     start_delay_min: 0.05,
                     start_delay_max: 0.7,
                     trick_chance: 0.8,
@@ -345,6 +355,7 @@ impl Default for BotTuning {
                     purple_when_possible: true,
                     min_drift_angle: 115f32.to_radians(),
                     drift_chance: 1.0,
+                    drift_turn_extra: 0.05,
                     start_delay_min: 0.0,
                     start_delay_max: 0.22,
                     trick_chance: 1.0,
@@ -407,7 +418,7 @@ impl Default for BotTuning {
             grab_min_speed_gain: 2.0,
 
             shortcut_lookahead: 45.0,
-            grass_boost_share: 0.35,
+            grass_boost_share: 0.75,
             panel_boost_margin: 6.0,
             narrow_path_aim: 8.0,
             jump_speed_share: 0.9,

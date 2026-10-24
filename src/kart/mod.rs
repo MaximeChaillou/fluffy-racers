@@ -91,7 +91,7 @@ use crate::interpolation::PhysicsPose;
 use crate::track::{AntiGravity, BoostPad, GlideRamp, Surface, TrackLayout, TrickRamp, bend_at};
 use drift::{StateContext, mini_turbo_boost, step_state};
 use physics::{
-    approach_yaw_rate, next_forward_speed, next_lateral_speed, next_state, next_yaw_rate,
+    approach_yaw_rate, next_forward_speed_on, next_lateral_speed, next_state, next_yaw_rate,
     righting_angular_velocity, suspension_accel,
 };
 
@@ -905,7 +905,7 @@ fn drive_karts(
         let mut offroad = 0;
         let mut on_trick_ramp = false;
         let mut on_glide_ramp = false;
-        let mut on_zone = false;
+        let mut on_zone = 0;
         for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
             let origin = transform.transform_point(*anchor);
             let hit = context.cast_ray_and_get_normal(
@@ -943,7 +943,7 @@ fn drive_karts(
             }
             on_trick_ramp |= ramps.contains(hit_entity);
             on_glide_ramp |= glide_ramps.contains(hit_entity);
-            on_zone |= zones.contains(hit_entity);
+            on_zone += usize::from(zones.contains(hit_entity));
             wheels.compression[i] = compression;
             wheels.on_ground[i] = true;
         }
@@ -1112,7 +1112,20 @@ fn drive_karts(
         if rocket {
             // The fusée's autopilot (issue #18): toward its point of the racing line, at its
             // speed, on the ground and in the air alike; no slide, no push, no tether. It hugs
-            // the track: never thrown upward off a bump or a ramp.
+            // the track: never thrown upward off a bump or a ramp. Issue #171: in the air (off a
+            // bump, over the void of a risky jump), it flies level (the world's up, not the
+            // ramp's it left: that one threw it up and away along the stale slope) toward its
+            // point's height, never steeper down than a dive: it never falls into a void
+            // (gravity off meanwhile). Gliding too, with the glider's descent (below). Not in
+            // anti-gravity (its up is the road's).
+            let airborne = grounded == 0 && !anti_gravity;
+            let flying = airborne && !gliding;
+            let (normal, ahead) = if airborne {
+                let level = Vec3::new(forward.x, 0.0, forward.z).normalize_or(ahead);
+                (Vec3::Y, level)
+            } else {
+                (normal, ahead)
+            };
             let forward_speed = linvel.dot(ahead);
             let new_forward = approach(
                 forward_speed,
@@ -1131,6 +1144,13 @@ fn drive_karts(
             if grounded == 0 {
                 up_speed = up_speed.min(0.0);
             }
+            if flying {
+                let sink = environment_tuning.glide_dive_slope * autopilot.speed.max(0.0);
+                up_speed = ((autopilot.target.y - transform.translation.y) * 4.0).clamp(-sink, 4.0);
+                if gravity.0 != 0.0 {
+                    gravity.0 = 0.0;
+                }
+            }
             if gliding {
                 // Over a gap (issue #20), it flies along its line: toward the height of its
                 // point, never steeper down than a dive.
@@ -1139,7 +1159,13 @@ fn drive_karts(
             }
             velocity.linear = travel * new_forward + normal * up_speed;
             let tilt = angvel - normal * angvel.dot(normal);
-            velocity.angular = normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp();
+            velocity.angular = if airborne {
+                // Level and upright for its landing.
+                let righting = righting_angular_velocity(up, Vec3::Y, tuning.righting_rate);
+                normal * new_yaw + righting
+            } else {
+                normal * new_yaw + tilt * (-tuning.tilt_damping * dt).exp()
+            };
             shove.set_if_neq(Shove::default());
             continue;
         }
@@ -1191,12 +1217,14 @@ fn drive_karts(
             // Hit by an item: it slows down hard, boost or not (GD § 8).
             let new_forward = match hit {
                 Some(reaction) => hit_forward_speed(tuning, forward_speed, reaction, dt),
-                None => next_forward_speed(
+                // Issue #171: on the grass, it brakes down to its top speed at once.
+                None => next_forward_speed_on(
                     tuning,
                     forward_speed,
                     input,
                     top_speed,
                     boost.is_active(),
+                    wheels.offroad_ratio,
                     dt,
                 ),
             };

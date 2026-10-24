@@ -118,6 +118,13 @@ pub struct Autopilot {
     pub max_turn_rate: f32,
     /// The racing line's sample found last tick (where to look next).
     pub sample: Option<usize>,
+    /// Issue #171: the shortcut it follows (`RacingLine::branches`), from where the kart was on
+    /// it to its end: never back across the void to the racing line.
+    pub branch: Option<usize>,
+    /// Issue #171: it follows a risky jump: over its void it flies toward `target`'s height (the
+    /// path's, as everywhere in the air), and the fusée lasts until the kart is back on the
+    /// ground: the kart never falls during a fusée.
+    pub fly: bool,
 }
 
 /// The yaw rate (rad/s, around `up`, positive to the left as Bevy's rotations) that turns a kart

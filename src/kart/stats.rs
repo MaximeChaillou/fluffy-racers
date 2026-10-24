@@ -425,8 +425,8 @@ pub struct StatsTuning {
     pub handling_drift_radius: StatRange,
 
     // --- Traction -------------------------------------------------------------------------------
-    /// Multiplier of the off-road top speed (`offroad_speed_factor`, GD § 2: 55 %): 0.85 to 1.15,
-    /// 47 % to 63 %. No slippery surface yet (ice, water: phase 3).
+    /// Multiplier of the off-road top speed (`offroad_speed_factor`, GD § 2: 40 % since #171):
+    /// 0.85 to 1.15, 34 % to 46 %. No slippery surface yet (ice, water: phase 3).
     pub traction_offroad: StatRange,
 
     // --- Mini-turbo -----------------------------------------------------------------------------
@@ -880,7 +880,7 @@ mod tests {
         assert!(nimble.hop_steer_response > base.hop_steer_response);
 
         let grippy = with(Stat::Traction, 20).apply(&base);
-        assert!((grippy.offroad_speed_factor - 0.55 * 1.15).abs() < 1e-6);
+        assert!((grippy.offroad_speed_factor - base.offroad_speed_factor * 1.15).abs() < 1e-6);
 
         let turbo = with(Stat::MiniTurbo, 20).apply(&base);
         for i in 0..3 {

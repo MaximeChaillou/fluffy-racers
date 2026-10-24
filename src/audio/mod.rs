@@ -124,10 +124,14 @@ pub fn pop_pitch(count: u8) -> f32 {
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct RouletteSounds;
 
-/// Plays a sound of the roulette: [`SoundEffect::RouletteTick`] or [`SoundEffect::RouletteStop`]
-/// (the others are not the roulette's: nothing). The player's own: in front.
+/// Plays a sound of the roulette: [`SoundEffect::RouletteTick`] or [`SoundEffect::RouletteStop`],
+/// or (issue #171) an item lost from the slots: [`SoundEffect::CroquettesLost`] (the others are
+/// not the slots': nothing). The player's own: in front.
 pub fn play_roulette(commands: &mut Commands, _sounds: &RouletteSounds, sound: SoundEffect) {
-    if matches!(sound, SoundEffect::RouletteTick | SoundEffect::RouletteStop) {
+    if matches!(
+        sound,
+        SoundEffect::RouletteTick | SoundEffect::RouletteStop | SoundEffect::CroquettesLost
+    ) {
         commands.spawn((sound, Cue::front(None)));
     }
 }

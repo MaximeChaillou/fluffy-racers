@@ -36,8 +36,13 @@ pub struct KartTuning {
     pub reverse_max_speed: f32,
     /// Acceleration in reverse.
     pub reverse_accel: f32,
-    /// Max speed multiplier on off-road surfaces (GD § 2: about 55 %). Ignored while boosting.
+    /// Max speed multiplier on off-road surfaces (GD § 2: about 40 % since #171, 55 % before).
+    /// Ignored while boosting.
     pub offroad_speed_factor: f32,
+    /// Issue #171: how hard a kart faster than the off-road's top speed brakes down to it, all
+    /// its wheels on it (m/s², less with fewer: `physics::overspeed_decel`); never softer than
+    /// `overspeed_decel`. Entering the grass at full speed: down to its top speed in 0.6 s.
+    pub offroad_decel: f32,
 
     // --- Boost --------------------------------------------------------------------------------
     /// Forward acceleration while a boost is active and the kart is below the boosted top speed
@@ -277,7 +282,8 @@ impl Default for KartTuning {
             reverse_threshold: 0.5,
             reverse_max_speed: 8.0,
             reverse_accel: 10.0,
-            offroad_speed_factor: 0.55,
+            offroad_speed_factor: 0.4,
+            offroad_decel: 30.0,
 
             boost_accel: 40.0,
 

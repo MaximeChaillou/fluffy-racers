@@ -32,9 +32,9 @@ use super::*;
 use crate::TICK_HZ;
 use crate::croquettes::Croquettes;
 use crate::interactions::{InteractionTuning, Paw, PawStats};
-use crate::items::{ItemStats, ItemTuning};
+use crate::items::{ItemLoss, ItemSlots, ItemStats, ItemTuning};
 use crate::kart::{
-    KartBodyPivot, KartInput, KartState, KartTuning, MiniTurbo, PlayerKart, StatEffects,
+    KartBodyPivot, KartInput, KartState, KartTuning, KartWheels, MiniTurbo, PlayerKart, StatEffects,
 };
 use crate::race::{
     Course, DrivesOnAfterFinish, Race, RaceGrid, RacePhase, RaceProgress, RaceTuning, Racer, Tow,
@@ -218,6 +218,18 @@ struct KartLog {
     /// Issue #144: knocked over (spun out or tumbling from a tick to the next): in the races
     /// without items nor interactions, only by a hazard of the circuit.
     knocks: u32,
+    /// Issue #171: the items it held last tick (`ItemSlots::units`), its items used and lost
+    /// then (`ItemStats`), its piment doré's window; and the items gone from its slots without a
+    /// use, a loss counted with its cause, or the end of a piment doré's window.
+    item_units: u32,
+    items_used: u32,
+    items_lost: u32,
+    golden: u32,
+    unexplained_losses: u32,
+    /// Issue #171: the time it drove off the road without a boost (the share of its wheels on
+    /// the ground there, summed: s), and where along the lap (per 10 m).
+    offroad: f32,
+    offroad_at: std::collections::BTreeMap<u32, f32>,
 }
 
 impl KartLog {
@@ -415,6 +427,27 @@ impl RaceLog {
                 });
             }
             log.previous = Some(state);
+            let wheels = world.get::<KartWheels>(*entity).unwrap();
+            let boosted = world.get::<Boost>(*entity).is_some_and(|b| b.is_active());
+            if wheels.ticks_without_ground == 0 && wheels.offroad_ratio > 0.0 && !boosted {
+                let share = wheels.offroad_ratio / 60.0;
+                log.offroad += share;
+                let at = (course.center.wrap(progress.distance) / 10.0) as u32 * 10;
+                *log.offroad_at.entry(at).or_default() += share;
+            }
+            // Issue #171: no item gone without a cause.
+            if let (Some(slots), Some(stats)) = (
+                world.get::<ItemSlots>(*entity),
+                world.get::<ItemStats>(*entity),
+            ) {
+                let units = slots.units();
+                let explained = (stats.used - log.items_used)
+                    + (stats.lost_items - log.items_lost)
+                    + u32::from(log.golden > 0 && slots.golden == 0);
+                log.unexplained_losses += log.item_units.saturating_sub(units + explained);
+                (log.item_units, log.items_used, log.items_lost, log.golden) =
+                    (units, stats.used, stats.lost_items, slots.golden);
+            }
             let held = world.get::<Croquettes>(*entity).map_or(0, |c| c.count);
             if held > log.croquettes_held {
                 log.croquettes_picked += (held - log.croquettes_held) as u32;
@@ -460,7 +493,7 @@ impl RaceLog {
                 out,
                 "slot {:2} {:?}: finish {:?} s, laps {:?}, mini-turbos blue/orange/purple {:?}, \
                  drifts without boost {}, broken {}, croquettes picked {} lost {} (at most {}, \
-                 {} at the end), {:.1} s touching other karts",
+                 {} at the end), {:.1} s touching other karts, {:.1} s off the road without a boost{}, shortcuts road/grass/jump {:?}",
                 log.slot,
                 log.difficulty,
                 progress.finish.map(ticks_to_seconds),
@@ -473,6 +506,18 @@ impl RaceLog {
                 log.croquettes_most,
                 log.croquettes_held,
                 ticks_to_seconds(log.contact_ticks),
+                log.offroad,
+                {
+                    let mut spots: Vec<(u32, f32)> =
+                        log.offroad_at.iter().map(|(at, t)| (*at, *t)).collect();
+                    spots.sort_by(|a, b| b.1.total_cmp(&a.1));
+                    spots
+                        .iter()
+                        .take(3)
+                        .map(|(at, t)| format!(" {at} m: {t:.1} s"))
+                        .collect::<String>()
+                },
+                log.shortcuts,
             );
             if let Some(paws) = app
                 .world()
@@ -1797,6 +1842,45 @@ fn bots_race_with_items() {
     checks.at_most(
         "tows in free driving",
         &per_race(&runs, |r| r.race.tows_of(TowCause::FreeDriving) as f32),
+        Some(0.0),
+        None,
+    );
+    // Issue #171 (« les objets perdus »): the items lost, by cause, in each race (printed), and
+    // never an item gone from a kart's slots without a use or a cause.
+    let lost = |r: &Run, cause: ItemLoss| {
+        items(r).iter().map(|i| i.lost[cause.index()]).sum::<u32>() as f32
+    };
+    println!("items lost, by cause (per race, seeds {seeds:?}):");
+    for cause in ItemLoss::ALL {
+        let per = per_race(&runs, |r| lost(r, cause));
+        println!(
+            "  {cause:?}: {per:?}, mean {:.1} a race, {:.2} a kart",
+            mean(&per),
+            mean(&per) / 12.0
+        );
+    }
+    let losses = per_race(&runs, |r| sum(r, |i| i.losses()));
+    let used = per_race(&runs, |r| sum(r, |i| i.used));
+    println!(
+        "  every cause: {losses:?}, mean {:.1} a race, for {:.1} items used",
+        mean(&losses),
+        mean(&used)
+    );
+    checks.at_most(
+        "items gone without a cause",
+        &per_race(&runs, |r| {
+            r.race
+                .karts
+                .iter()
+                .map(|k| k.log.unexplained_losses)
+                .sum::<u32>() as f32
+        }),
+        Some(0.0),
+        None,
+    );
+    checks.at_most(
+        "boxes refused (online only)",
+        &per_race(&runs, |r| lost(r, ItemLoss::Refused)),
         Some(0.0),
         None,
     );

@@ -171,6 +171,8 @@ impl SlotView {
 /// The two item slots (issue #102: bigger, for the reel to be read as it scrolls): the hand's and
 /// the reserve's sides (px), and the scale of their icons (`icon_shape`'s sizes).
 pub const SLOT_SIZES: [f32; 2] = [92.0, 60.0];
+/// The gap between the two slots (px).
+pub const SLOT_GAP: f32 = 10.0;
 pub const ICON_SCALES: [f32; 2] = [1.2, 0.75];
 /// A slot's border (px).
 const SLOT_BORDER_WIDTH: f32 = 4.0;
@@ -491,7 +493,7 @@ fn spawn_hud(mut commands: Commands, mut shown: ResMut<HudShown>, assets: Option
                 position_type: PositionType::Absolute,
                 left: px(24),
                 top: px(SLOTS_TOP),
-                column_gap: px(10),
+                column_gap: px(SLOT_GAP),
                 align_items: AlignItems::FlexStart,
                 ..default()
             })

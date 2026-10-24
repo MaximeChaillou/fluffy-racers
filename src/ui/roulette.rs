@@ -27,7 +27,7 @@
 //! item in the middle of the window; the reel itself, its ding and its sounds are drawn only with
 //! a renderer (`ui::reel`).
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
@@ -320,10 +320,66 @@ pub fn flash(t: f32) -> f32 {
     1.0 - t / FLASH_TIME
 }
 
+/// Issue #171: an item lost (`items::ItemLoss`) is shown this long (s): the hand's slot shakes
+/// and flashes in Fraise, its short text pops out under the slots and fades away.
+pub const LOSS_TIME: f32 = 1.2;
+/// The shake: this far (px), this many times a second, over this long (s).
+const LOSS_SHAKE: f32 = 7.0;
+const LOSS_SHAKE_HZ: f32 = 11.0;
+const LOSS_SHAKE_TIME: f32 = 0.45;
+/// The flash fades out in this long (s).
+const LOSS_FLASH_TIME: f32 = 0.5;
+
+/// Issue #171: how far the hand's slot is shaken sideways `t` s after an item was lost (px).
+pub fn loss_shake(t: f32) -> f32 {
+    if !(0.0..LOSS_SHAKE_TIME).contains(&t) {
+        return 0.0;
+    }
+    let fade = 1.0 - t / LOSS_SHAKE_TIME;
+    LOSS_SHAKE * fade * (TAU * LOSS_SHAKE_HZ * t).sin()
+}
+
+/// Issue #171: how strong the slot's Fraise flash is `t` s after the loss (0 to 1).
+pub fn loss_flash(t: f32) -> f32 {
+    if !(0.0..LOSS_FLASH_TIME).contains(&t) {
+        return 0.0;
+    }
+    1.0 - t / LOSS_FLASH_TIME
+}
+
+/// Issue #171: the loss's text `t` s after it: its scale (it pops in past its size, then
+/// settles) and opacity (it fades out in its last third); `None` once gone.
+pub fn loss_label(t: f32) -> Option<(f32, f32)> {
+    if !(0.0..LOSS_TIME).contains(&t) {
+        return None;
+    }
+    let pop = anim::spring(t, 0.4, 1.0, DING_HZ, DING_DAMPING);
+    let fade = ((LOSS_TIME - t) / (LOSS_TIME / 3.0)).min(1.0);
+    Some((pop.max(0.0), fade))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::icon_shape;
+
+    /// Issue #171: a lost item shakes the slot and flashes it at once, both gone in half a
+    /// second; its text pops in, stays, and is gone after `LOSS_TIME`.
+    #[test]
+    fn a_lost_item_shakes_the_slot_and_pops_its_text() {
+        let most = (0..30)
+            .map(|i| loss_shake(i as f32 / 100.0).abs())
+            .fold(0.0, f32::max);
+        assert!(most > 3.0, "{most}");
+        assert_eq!(loss_shake(0.6), 0.0);
+        assert!(loss_flash(0.0) > 0.99 && loss_flash(0.6) == 0.0);
+        let (scale, alpha) = loss_label(0.05).unwrap();
+        assert!(scale < 1.0 && alpha == 1.0, "it pops in");
+        let (scale, alpha) = loss_label(0.6).unwrap();
+        assert!((scale - 1.0).abs() < 0.1 && alpha == 1.0, "{scale}");
+        assert!(loss_label(LOSS_TIME - 0.1).unwrap().1 < 0.5, "it fades out");
+        assert!(loss_label(LOSS_TIME).is_none() && loss_label(-0.1).is_none());
+    }
 
     fn plan() -> ReelPlan {
         ReelPlan::of(&ItemTuning::default())
