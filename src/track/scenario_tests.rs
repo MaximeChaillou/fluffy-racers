@@ -422,11 +422,12 @@ fn race_app(track: TrackChoice, bots: usize) -> (App, Entity) {
 }
 
 /// The circuit's walls as the karts meet them: the one trimesh collider with `Surface::Wall`
-/// (issue #144: a fixed obstacle is a wall to the karts too, a simple shape).
+/// (issue #144: a fixed obstacle is a wall to the karts too, a simple shape; issue #180: the faces
+/// of the drops too, a collider of their own).
 fn wall_collider(app: &mut App) -> Collider {
     let world = app.world_mut();
     let walls: Vec<Collider> = world
-        .query::<(&Collider, &Surface)>()
+        .query_filtered::<(&Collider, &Surface), Without<super::circuit::DropFace>>()
         .iter(world)
         .filter(|(collider, surface)| **surface == Surface::Wall && collider.as_trimesh().is_some())
         .map(|(collider, _)| collider.clone())
@@ -443,7 +444,7 @@ fn mm(p: Vec3) -> [i64; 3] {
 /// Issue #47 acceptance: in the game as built, on the circuits of `circuits()`, the walls are
 /// solid exactly as high as they are drawn. Every vertex of their collider is a vertex of the circuit's drawn mesh
 /// (nothing solid that is not drawn); the top edge of every wall is drawn [`WALL_HEIGHT`] above
-/// the road; and a ray down onto the middle of every wall meets its collider there, all around
+/// the road (issue #180: plus `mesh::wall_lift` along the back of a bump and below a drop); and a ray down onto the middle of every wall meets its collider there, all around
 /// the lap. Before #47, the walls were drawn 0.8 m high under a collider of 1.2 m: none of the
 /// collider's top vertices was drawn, and the rays met it 0.4 m above the drawn top.
 #[test]
@@ -494,16 +495,27 @@ fn the_walls_are_solid_exactly_as_high_as_they_are_drawn() {
                 {
                     continue;
                 }
-                let top = s.point(side * wall_offset(s), WALL_HEIGHT);
+                // Issue #180: nor right at the step of a drop (the walls end and start there,
+                // between two samples).
+                if layout
+                    .center
+                    .cliffs()
+                    .iter()
+                    .any(|c| (layout.center.wrap(s.distance - c.at + 1.5)) < 3.0)
+                {
+                    continue;
+                }
+                // Issue #180: higher along the back of a bump and below a drop (`wall_lift`).
+                let height =
+                    WALL_HEIGHT + crate::track::mesh::wall_lift(&layout.center, s.distance);
+                let top = s.point(side * wall_offset(s), height);
                 if !drawn.contains(&mm(top)) {
                     missed.push(format!("not drawn at {top} ({:.0} m)", s.distance));
                 }
                 // 1 m above the middle of the wall's top, straight down onto it (1 cm past the
                 // sample: a ray exactly along the edge between two triangles can slip through).
-                let above = s.point(
-                    side * (wall_offset(s) + WALL_THICKNESS / 2.0),
-                    1.0 + WALL_HEIGHT,
-                ) + s.forward * 0.01;
+                let above = s.point(side * (wall_offset(s) + WALL_THICKNESS / 2.0), 1.0 + height)
+                    + s.forward * 0.01;
                 let toi = collider.cast_ray(Vec3::ZERO, Quat::IDENTITY, above, -s.up, 3.0, false);
                 if toi.is_none_or(|toi| (toi - 1.0).abs() > 0.01) {
                     missed.push(format!(

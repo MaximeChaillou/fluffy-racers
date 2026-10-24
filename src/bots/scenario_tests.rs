@@ -218,6 +218,9 @@ struct KartLog {
     /// Issue #144: knocked over (spun out or tumbling from a tick to the next): in the races
     /// without items nor interactions, only by a hazard of the circuit.
     knocks: u32,
+    /// Issue #180: tricks started off a bump or a drop (at most 30 m after one of their trick
+    /// stretches).
+    relief_tricks: u32,
     /// Issue #171: the items it held last tick (`ItemSlots::units`), its items used and lost
     /// then (`ItemStats`), its piment doré's window; and the items gone from its slots without a
     /// use, a loss counted with its cause, or the end of a piment doré's window.
@@ -360,6 +363,18 @@ impl RaceLog {
             }
             let input = *world.get::<KartInput>(*entity).unwrap();
             let progress = world.get::<RaceProgress>(*entity).unwrap();
+            // Issue #180: a trick off a bump or a drop.
+            if state == KartState::Trick && log.previous != Some(KartState::Trick) {
+                let at = progress.distance;
+                if course
+                    .center
+                    .trick_stretches()
+                    .iter()
+                    .any(|(start, length)| course.center.wrap(at - start) < length + 30.0)
+                {
+                    log.relief_tricks += 1;
+                }
+            }
             let drifting = matches!(state, KartState::Drifting { .. });
             if drifting && !matches!(log.previous, Some(KartState::Drifting { .. })) {
                 log.drift_from = Some(course.center.wrap(progress.distance));
@@ -1069,6 +1084,11 @@ impl RaceResult {
 
     fn mini_turbos_per_lap(&self, tier: MiniTurbo) -> f32 {
         mean(&self.per_kart_lap(|log| log.mini_turbos[tier.index()..].iter().sum()))
+    }
+
+    /// Issue #180: tricks off the bumps and the drops, per kart and per lap, on average.
+    fn relief_tricks_per_lap(&self) -> f32 {
+        mean(&self.per_kart_lap(|log| log.relief_tricks))
     }
 
     fn per_kart_lap(&self, count: impl Fn(&KartLog) -> u32) -> Vec<f32> {
@@ -2289,6 +2309,21 @@ fn measure_tick_cost_with_twelve_karts() {
 
 // --- Issue #19: every circuit, its mirror image ----------------------------------------------------
 
+/// Issue #180: runs the races of every circuit ([`bots_race_every_circuit_and_its_mirror`],
+/// [`hard_bots_lap_the_guide_circuits_in_the_guide_s_time`]) only on the circuits whose file's
+/// path holds one of these words (`FLUFFY_RACE_CIRCUITS=prairie,col`): to measure one circuit
+/// without racing them all. Unset: every circuit, as always (the CI never sets it).
+const CIRCUITS_VARIABLE: &str = "FLUFFY_RACE_CIRCUITS";
+
+/// Whether the races of every circuit run on the circuit file `path` ([`CIRCUITS_VARIABLE`]).
+fn circuit_wanted(path: &str) -> bool {
+    std::env::var(CIRCUITS_VARIABLE).map_or(true, |words| {
+        words
+            .split(',')
+            .any(|word| !word.trim().is_empty() && path.contains(word.trim()))
+    })
+}
+
 /// Seeds of the races of issue #19 (every circuit and its mirror): the first four of
 /// [`RACE_SEEDS`], a race per seed and per configuration (or those of [`SEEDS_VARIABLE`]).
 fn circuit_seeds() -> Vec<u64> {
@@ -2325,6 +2360,8 @@ struct CircuitRun {
     open: bool,
     /// Issue #144: the circuit has obstacles or passers-by in the way.
     hazards: bool,
+    /// Issue #180: the circuit has bumps or drops.
+    relief: bool,
 }
 
 impl CircuitRun {
@@ -2382,6 +2419,7 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
         lap_lengths,
         open: open.is_some(),
         hazards: layout.hazards.iter().any(|h| h.kind.in_the_way()),
+        relief: !layout.center.trick_stretches().is_empty(),
     }
 }
 
@@ -2401,6 +2439,86 @@ pub(crate) const GUIDE_CIRCUITS: [&str; 8] = [
     "Coteau Citrouille",
     "Périple Polochon",
 ];
+
+/// Issue #180 (GD § 16, rule 3, Max: « des bosses régulières », « des décrochages »): every circuit
+/// of the guide has at least this many bumps a lap (a section, on a long race)...
+const GUIDE_BUMPS: usize = 2;
+
+/// ...and a drop at least, unless its relief does not lend itself to one: the circuit, and why.
+const NO_DROP: [(&str, &str); 0] = [];
+
+/// Issue #180: the circuits of the guide that do not have their bumps and drops yet, and the
+/// issue that gives them theirs (Prairie Pompon, the demonstration circuit, has them). Each one
+/// leaves this list with its issue: the test refuses a circuit still listed that has some.
+const RELIEF_PENDING: [(&str, u32); 7] = [
+    ("Col des Moufles", 162),
+    ("Corniche Cannelle", 164),
+    ("Échappée Pissenlit", 184),
+    ("Forêt Frimousse", 184),
+    ("Falaises Flanelle", 184),
+    ("Coteau Citrouille", 184),
+    ("Périple Polochon", 184),
+];
+
+/// Issue #180 acceptance (GD § 16, rule 3): every circuit of the guide ([`GUIDE_CIRCUITS`]) and
+/// its mirror has [`GUIDE_BUMPS`] bumps at least on each lap (on a long race, in each section)
+/// and a drop at least (or its reason in [`NO_DROP`]), but those still waiting for theirs
+/// ([`RELIEF_PENDING`], with their issue), which have none yet.
+#[test]
+fn the_guide_circuits_have_bumps_and_drops() {
+    let entries: Vec<_> = crate::admin::tracks::circuits()
+        .into_iter()
+        .filter(|e| GUIDE_CIRCUITS.contains(&e.name.as_str()))
+        .collect();
+    assert_eq!(entries.len(), GUIDE_CIRCUITS.len());
+    let mut checked = 0;
+    for entry in entries {
+        let text = std::fs::read_to_string(format!(
+            "{}/assets/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            entry.asset_path()
+        ))
+        .unwrap();
+        let file = TrackData::from_ron(&text).unwrap();
+        file.validate().unwrap();
+        let name = file.name.clone();
+        if let Some((_, issue)) = RELIEF_PENDING.iter().find(|(n, _)| *n == name) {
+            assert!(
+                file.bumps.is_empty() && file.drops.is_empty(),
+                "{name} has its bumps or drops: take it out of RELIEF_PENDING (#{issue})"
+            );
+            continue;
+        }
+        for data in [file.clone(), file.mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            // Each lap, or each section of a long race: (start, end) along the centerline.
+            let stretches: Vec<(f32, f32)> = match center.open() {
+                Some(open) => (0..open.section_count())
+                    .map(|k| (open.sections[k], open.section_end(k)))
+                    .collect(),
+                None => vec![(0.0, center.length())],
+            };
+            for (from, to) in stretches {
+                let bumps = center
+                    .bumps()
+                    .iter()
+                    .filter(|b| b.from >= from && b.from < to)
+                    .count();
+                assert!(
+                    bumps >= GUIDE_BUMPS,
+                    "{name}: {bumps} bumps from {from:.0} to {to:.0} m ({GUIDE_BUMPS} at least)"
+                );
+            }
+            assert!(
+                !center.cliffs().is_empty() || NO_DROP.iter().any(|(n, _)| *n == name),
+                "{name}: no drop, and no reason in NO_DROP"
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked >= 1, "Prairie Pompon at least");
+}
 
 /// Issue #119 (GD § 1, « Les courses longues »): a long race lasts about 3 min (Max, #146: measured
 /// with Hard bots, an order of magnitude; the issue: from 2 min 30 to 3 min 30 for a Normal bot):
@@ -2444,6 +2562,23 @@ fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
     );
 }
 
+/// Issue #180: tricks off the bumps and the drops per kart and per lap (the karts' mean), at
+/// worst and on average over the seeds, for Normal bots (`BotSkill::trick_chance` 0.8) and Hard
+/// ones (1): a bot takes off from a bump at speed and from every drop, and tricks with its level.
+const RELIEF_TRICKS_NORMAL: (f32, f32) = (1.0, 1.5);
+const RELIEF_TRICKS_HARD: (f32, f32) = (1.5, 2.0);
+
+/// Issue #180: the bots trick off the bumps and the drops ([`RELIEF_TRICKS_NORMAL`],
+/// [`RELIEF_TRICKS_HARD`]).
+fn relief_checks(checks: &mut Checks, runs: &[&CircuitRun], (worst, mean): (f32, f32)) {
+    checks.at_least(
+        "tricks off the bumps and the drops per lap (karts' mean)",
+        &per_race(runs, |r| r.race.relief_tricks_per_lap()),
+        Some(worst),
+        Some(mean),
+    );
+}
+
 /// Issue #146 (GD § 16, rule 1, Max's decision): the guide's lap, for a race of **Hard** bots
 /// (until #146, of Normal bots, from 30 s to a minute, its slowest lap too): their fastest lap
 /// within [`GUIDE_FASTEST_LAP`].
@@ -2480,6 +2615,9 @@ fn bots_race_every_circuit_and_its_mirror() {
     let mut failures = Vec::new();
     for entry in crate::admin::tracks::circuits() {
         let path = entry.asset_path();
+        if !circuit_wanted(&path) {
+            continue;
+        }
         let runs: Vec<(bool, u64)> = [false, true]
             .into_iter()
             .flat_map(|mirror| seeds.iter().map(move |seed| (mirror, *seed)))
@@ -2580,6 +2718,11 @@ fn bots_race_every_circuit_and_its_mirror() {
                     Some(HAZARD_KNOCKS),
                 );
             }
+            // Issue #180: the bots take the bumps and the drops, and trick off them with their
+            // level (never towed: above). Checked on the circuits that have some.
+            if mine[0].relief {
+                relief_checks(&mut checks, &mine, RELIEF_TRICKS_NORMAL);
+            }
             println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
             failures.append(&mut checks.failures);
         }
@@ -2669,6 +2812,9 @@ fn hard_bots_lap_the_guide_circuits_in_the_guide_s_time() {
     assert_eq!(entries.len(), GUIDE_CIRCUITS.len() - 1);
     for entry in entries {
         let path = entry.asset_path();
+        if !circuit_wanted(&path) {
+            continue;
+        }
         for mirror in [false, true] {
             let runs = for_each_seed(&seeds, |seed| {
                 run_on_circuit_as(&path, mirror, seed, BotDifficulty::Hard)
@@ -2692,6 +2838,14 @@ fn hard_bots_lap_the_guide_circuits_in_the_guide_s_time() {
             );
             let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
             guide_lap_checks(&mut checks, &races);
+            // Issue #180: Hard bots trick off the bumps and the drops more than Normal ones.
+            if runs[0].relief {
+                relief_checks(
+                    &mut checks,
+                    &runs.iter().collect::<Vec<_>>(),
+                    RELIEF_TRICKS_HARD,
+                );
+            }
             // Issue #119: a long race in about 3 min, measured with Hard bots (Max, #146).
             if runs[0].open {
                 checks.at_least(

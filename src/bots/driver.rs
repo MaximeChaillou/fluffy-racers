@@ -90,6 +90,10 @@ const DRIFT_COOLDOWN_TICKS: u32 = 12;
 const HOP_TIMEOUT_TICKS: u32 = 45;
 /// No drift when a kart is closer than this ahead, in its lane (m).
 const DRIFT_TRAFFIC_DISTANCE: f32 = 6.0;
+/// Issue #180: on a circuit with bumps or drops, no trick off one when a turn to drift (as big as
+/// the bot drifts) starts within this many seconds at the kart's speed: the flight and the trick's
+/// boost (0.65 s) would bring it there too fast to drift.
+const TRICK_CLEARANCE_SECONDS: f32 = 2.0;
 /// Coasts between the target speed and this much above it, brakes beyond (m/s).
 const BRAKE_BAND: f32 = 1.5;
 /// Brakes when steering at full lock this close to the outside edge of its lane (m)...
@@ -925,7 +929,11 @@ pub fn drive(
             if turn_done && stretch {
                 brain.stretch_ticks += 1;
             }
+            // Issue #180: about to fly off a bump or a drop (longer than a drift lasts in the
+            // air), with a mini-turbo charged: fire it on the ground rather than lose it.
+            let takeoff = line.has_air() && tier.is_some() && line.air_ahead(here.index, 3) > 0.0;
             let release = reached
+                || takeoff
                 || (turn_done && !stretch)
                 || brain.over_ticks >= LONG_OVER_ROTATION_TICKS
                 || (inside_room < INSIDE_ROOM && t < 0.4)
@@ -1013,8 +1021,17 @@ pub fn drive(
         brain.slow_ticks = 0;
     }
 
-    // --- Trick (GD § 5): one press right after leaving a trick ramp, when not drifting.
-    trick(brain, skill, senses, &mut jump);
+    // --- Trick (GD § 5): one press right after leaving a trick ramp, when not drifting. Issue
+    // #180: on a circuit with bumps or drops, not while slowing down for a turn ahead, nor with a
+    // big turn coming up within `TRICK_CLEARANCE_SECONDS` (its boost would push the kart into it
+    // too fast as it lands).
+    let slowing = line.has_air()
+        && senses.trick_window
+        && (target_speed < speed - BRAKE_BAND || {
+            let horizon = (speed.max(0.0) * TRICK_CLEARANCE_SECONDS / line.step()).ceil() as usize;
+            line.big_turn_within(here.index, horizon, skill.min_drift_angle)
+        });
+    trick(brain, skill, senses, slowing, &mut jump);
 
     brain.last_jump = jump;
     // The item button is the bot's item brain's (`items.rs`).
@@ -1030,14 +1047,14 @@ pub fn drive(
 }
 
 /// Trick (GD § 5): one press of jump/drift right after leaving a trick ramp, when not drifting
-/// (drawn once per jump, with its skill).
-fn trick(brain: &mut BotBrain, skill: &BotSkill, senses: &Senses, jump: &mut bool) {
+/// (drawn once per jump, with its skill), nor `slowing` down (issue #180).
+fn trick(brain: &mut BotBrain, skill: &BotSkill, senses: &Senses, slowing: bool, jump: &mut bool) {
     if senses.trick_window {
         if brain.trick_roll.is_none() {
             brain.trick_roll = Some(brain.technique_rng.chance(skill.trick_chance));
         }
         let free = matches!(brain.drift, DriftPlan::Idle | DriftPlan::Cooldown { .. });
-        if brain.trick_roll == Some(true) && free && !*jump && !brain.last_jump {
+        if brain.trick_roll == Some(true) && free && !slowing && !*jump && !brain.last_jump {
             *jump = true;
             brain.trick_roll = Some(false);
         }
@@ -1232,7 +1249,7 @@ fn follow_branch(
         };
     }
     let mut jump = false;
-    trick(brain, skill, senses, &mut jump);
+    trick(brain, skill, senses, false, &mut jump);
     brain.last_jump = jump;
     KartInput {
         throttle,
@@ -1287,6 +1304,8 @@ fn glide(
 /// (`coast_decel`), it does not count on braking in a drift (issue #30: the wider drift needs
 /// the right speed at the tightest point of the hairpin, so the bot slows down before hopping).
 /// A boost still pushes the kart for `boost_run` meters: no slowing down in the drift before.
+/// Issue #180: the way flown off a bump or a drop does not count (no braking in the air): a bot
+/// slows down before it for a turn just after its landing.
 fn planned_speed(
     line: &RacingLine,
     kart: &KartTuning,
@@ -1313,7 +1332,8 @@ fn planned_speed(
         let j = (index + k) % line.sample_count();
         let curvature = line.curvature(j, skill.line_fidelity);
         let drifting = drifting_turn.is_some() && line.turn_at(j).map(|(t, _)| t) == drifting_turn;
-        let distance = k as f32 * line.step();
+        // Issue #180: no braking in the air, off a bump or a drop on the way there.
+        let distance = k as f32 * line.step() - line.air_ahead(index, k);
         if drifting && drift_from.is_none() {
             drift_from = Some(distance);
         }

@@ -1130,3 +1130,41 @@ fn show_wind_lines(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #180 (Max: a bump « fait au moins la hauteur du kart + perso »): the tallest kart and
+    /// driver of the roster stand lower than the lowest bump a circuit may have
+    /// (`track::data::MIN_BUMP_HEIGHT`). Its top: the road to the kart's body center
+    /// (`GRID_HEIGHT`), up to its seat, then its driver at its size: its ball (or its Cube Pet,
+    /// 1.58 m high at scale 1, times `DriverTuning::model_scale`), its ears over it (a round one:
+    /// a ball of 0.16 m at 0.85 m; a long one: a capsule 0.32 m long and 0.08 m round at 1 m; a
+    /// pointed one: a cone 0.3 m high at 0.9 m; at size 1, as `spawn_kart_visual_with_driver`
+    /// puts them).
+    #[test]
+    fn the_lowest_bump_is_higher_than_the_tallest_kart_and_driver() {
+        let roster = crate::characters::Roster::embedded();
+        let model = 1.58 * crate::characters::DriverTuning::default().model_scale;
+        let tallest = roster
+            .characters
+            .iter()
+            .map(|character| {
+                let ears = match character.ears {
+                    DriverEars::Round => 0.85 + 0.16,
+                    DriverEars::Long => 1.0 + 0.16 + 0.08,
+                    DriverEars::Pointy => 0.9 + 0.15,
+                    DriverEars::None => 0.0,
+                };
+                let driver = (2.0 * DRIVER_RADIUS).max(ears).max(model);
+                crate::track::GRID_HEIGHT + DRIVER_SEAT.y + character.size * driver
+            })
+            .fold(0.0, f32::max);
+        assert!((1.8..2.1).contains(&tallest), "{tallest}");
+        assert!(
+            crate::track::data::MIN_BUMP_HEIGHT >= tallest + 0.15,
+            "{tallest}"
+        );
+    }
+}

@@ -207,6 +207,15 @@ pub struct TrackMeshes {
     /// (`Surface::Offroad`). Empty on a circuit without one.
     pub shortcut_road: MeshData,
     pub shortcut_grass: MeshData,
+    /// Issue #180: the road and the shoulders of the trick stretches of the bumps and the drops
+    /// (`CenterLine::trick_stretches`: `Surface::Road` and `Offroad`, and `TrickRamp`), apart from
+    /// the rest: a kart that leaves them starts a trick on a press (GD § 5). Empty on a circuit
+    /// without bump nor drop.
+    pub trick_road: MeshData,
+    pub trick_offroad: MeshData,
+    /// Issue #180: the faces of the drops (`Surface::Wall`, drawn and solid, apart from the low
+    /// walls: not a wall a kart sees the road over). Empty on a circuit without a drop.
+    pub cliffs: MeshData,
 }
 
 impl TrackMeshes {
@@ -221,6 +230,9 @@ impl TrackMeshes {
         all.append(&self.anti_gravity_offroad);
         all.append(&self.shortcut_road);
         all.append(&self.shortcut_grass);
+        all.append(&self.trick_road);
+        all.append(&self.trick_offroad);
+        all.append(&self.cliffs);
         all
     }
 }
@@ -249,6 +261,39 @@ pub const FACING_UP_TOLERANCE: f32 = 0.01;
 /// Lateral distance from the centerline to the inner face of the wall.
 pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
+}
+
+/// Issue #180: the road is cut this far (m) each way around the step of a drop: the upper road
+/// ends just before it, the lower one starts just after it.
+pub const CLIFF_CUT: f32 = 0.01;
+
+/// Issue #180: the walls stand higher than [`WALL_HEIGHT`] along the back of a bump and below a
+/// drop, coming back down to it over this many meters after the bump's end or the drop's step: a
+/// kart flying off it at an angle (steered, pushed) meets them instead of passing over them.
+pub const PARAPET_RUN: f32 = 18.0;
+
+/// Issue #180: how much higher than [`WALL_HEIGHT`] the walls stand at `distance` along the
+/// centerline: from the crest of a bump on, as high as at its crest (the road falls away, the top of
+/// the walls does not), then down to their own height over [`PARAPET_RUN`] meters after its end;
+/// below a drop, as high as the upper road's walls at its step, then down the same way. 0 anywhere
+/// else (and on a circuit without bump nor drop).
+pub fn wall_lift(center: &CenterLine, distance: f32) -> f32 {
+    let bumps = center.bumps().iter().map(|b| {
+        let x = center.wrap(distance - b.from);
+        if x < b.length / 2.0 {
+            0.0
+        } else if x <= b.length {
+            let wave = (std::f32::consts::TAU * x / b.length).cos();
+            b.height * (1.0 + wave) / 2.0
+        } else {
+            b.height * (1.0 - (x - b.length) / PARAPET_RUN).max(0.0)
+        }
+    });
+    let drops = center.cliffs().iter().map(|c| {
+        let x = center.wrap(distance - c.at);
+        c.height * (1.0 - x / PARAPET_RUN).max(0.0)
+    });
+    bumps.chain(drops).fold(0.0, f32::max)
 }
 
 /// Issue #107: a shortcut's road or grass is built this much above its path, so that where it
@@ -295,7 +340,14 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         let middle = s0.distance + center.wrap(s1.distance - s0.distance) / 2.0;
         anti_gravity_at(&zones, center, middle).is_some()
     };
-    let unzoned = |s0: &TrackSample, s1: &TrackSample| !zoned(s0, s1);
+    // Issue #180: whether the quad between two samples is on a trick stretch of a bump or a drop
+    // (its middle; never in a zone: the file is refused).
+    let stretches = center.trick_stretches();
+    let tricky = |s0: &TrackSample, s1: &TrackSample| {
+        let middle = s0.distance + center.wrap(s1.distance - s0.distance) / 2.0;
+        center.on_a_trick_stretch(&stretches, middle)
+    };
+    let unzoned = |s0: &TrackSample, s1: &TrackSample| !zoned(s0, s1) && !tricky(s0, s1);
     // Issue #94: whether the road between two samples faces up (banked to 90° at most).
     let faces_up = |s0: &TrackSample, s1: &TrackSample| {
         s0.up.y >= -FACING_UP_TOLERANCE && s1.up.y >= -FACING_UP_TOLERANCE
@@ -314,7 +366,18 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
 
     let blue_curbs = [rgba(ANTI_GRAVITY_CURBS.0), rgba(ANTI_GRAVITY_CURBS.1)];
     let blue_stripe = |i: usize| blue_curbs[(i / CURB_STRIPE) % 2];
-    for (samples, closed) in runs(center, &gaps) {
+    // Issue #180: the road stops at the top of each drop and goes on below it: a cut of no length
+    // there (`CLIFF_CUT` each way), like a gap (its face: below).
+    let cuts: Vec<Gap> = gaps
+        .iter()
+        .copied()
+        .chain(center.cliffs().iter().map(|c| Gap {
+            from: c.at - CLIFF_CUT,
+            to: c.at + CLIFF_CUT,
+            low: GROUND_HEIGHT,
+        }))
+        .collect();
+    for (samples, closed) in runs(center, &cuts) {
         let (samples, closed) = (&samples[..], closed);
         // Road and curbs; in the anti-gravity zones (issue #78), in their own mesh, the curbs
         // blue and white.
@@ -325,6 +388,7 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
                 &stripe as &dyn Fn(usize) -> [f32; 4],
             ),
             (&mut meshes.anti_gravity_road, &zoned, &blue_stripe),
+            (&mut meshes.trick_road, &tricky, &stripe),
         ] {
             road.strip_where(
                 samples,
@@ -360,6 +424,7 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
                 &unzoned as &dyn Fn(&TrackSample, &TrackSample) -> bool,
             ),
             (&mut meshes.anti_gravity_offroad, &zoned),
+            (&mut meshes.trick_offroad, &tricky),
         ] {
             offroad.strip_where(
                 samples,
@@ -417,7 +482,14 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
 
         // Low walls: inner face, top, outer face on each side (issue #107: not along the
         // stretches without wall).
-        wall_strips(&mut meshes.walls, samples, closed, palette, &walled_side);
+        wall_strips(
+            &mut meshes.walls,
+            samples,
+            closed,
+            palette,
+            &walled_side,
+            &|s: &TrackSample| WALL_HEIGHT + wall_lift(center, s.distance),
+        );
 
         // Skirts from the wall bottoms down to the ground (or the floor of a lake), so raised
         // parts do not float. Issue #94: only under a road that faces up (to the wall, 90°, at
@@ -575,6 +647,54 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         }
     }
 
+    // Issue #180: the face of each drop, from the edge of its upper road down to the ground, in
+    // the skirts' color, solid (its own mesh, a wall to the karts: one backing into it bumps into
+    // it), and the ends of the upper road's walls.
+    for cliff in center.cliffs() {
+        let s = center.at(cliff.at - CLIFF_CUT);
+        let o = outer(&s);
+        meshes.cliffs.quad(
+            [
+                s.point(o, 0.0),
+                ground(s.point(o, 0.0)),
+                ground(s.point(-o, 0.0)),
+                s.point(-o, 0.0),
+            ],
+            skirt,
+        );
+        for side in [-1.0f32, 1.0] {
+            if !walled(&edges, center, cliff.at, side) {
+                continue;
+            }
+            let (a, b) = (side * wall_offset(&s), side * o);
+            let (a, b) = if side > 0.0 { (b, a) } else { (a, b) };
+            meshes.walls.quad(
+                [
+                    s.point(a, WALL_HEIGHT),
+                    s.point(a, 0.0),
+                    s.point(b, 0.0),
+                    s.point(b, WALL_HEIGHT),
+                ],
+                panels[0],
+            );
+            // The start of the lower road's walls (as high as the upper ones' top: `wall_lift`),
+            // facing up the road.
+            let below = center.at(cliff.at + CLIFF_CUT);
+            let tall = WALL_HEIGHT + wall_lift(center, below.distance);
+            let (a, b) = (side * wall_offset(&below), side * o);
+            let (a, b) = if side > 0.0 { (a, b) } else { (b, a) };
+            meshes.walls.quad(
+                [
+                    below.point(a, tall),
+                    below.point(a, 0.0),
+                    below.point(b, 0.0),
+                    below.point(b, tall),
+                ],
+                panels[0],
+            );
+        }
+    }
+
     // Issue #119: a barrier across the road at both ends of an open circuit, between its walls:
     // the run-out's end (facing the karts that coast down it) and the lead-in's start (behind
     // the grid).
@@ -639,12 +759,16 @@ fn runs(center: &CenterLine, gaps: &[Gap]) -> Vec<(Vec<TrackSample>, bool)> {
         }
         let mut run = vec![center.at(start)];
         let first = (start / step).floor() as usize + 1;
+        let mut last = 0.0;
         for k in 0.. {
             let s = samples[(first + k) % samples.len()];
             let along = center.wrap(s.distance - start);
-            if along >= length - 0.25 * step {
+            // Issue #180: or past the end, round the loop (a cut shorter than a sample step: the
+            // step of a drop).
+            if along >= length - 0.25 * step || along < last {
                 break;
             }
+            last = along;
             if along > 0.25 * step {
                 run.push(s);
             }
@@ -659,14 +783,16 @@ fn runs(center: &CenterLine, gaps: &[Gap]) -> Vec<(Vec<TrackSample>, bool)> {
 /// alternate the palette's two wall colors in panels (the barriers' look, issue #11). Issue #107:
 /// a side's wall only between two samples where `walled` says it stands (`walled(sign, s0, s1)`,
 /// sign -1 for the left, 1 for the right); everywhere on a circuit without a stretch without wall.
+/// Issue #180: `tall(s)`, their height at each sample ([`WALL_HEIGHT`], higher along a bump's back
+/// and below a drop: [`wall_lift`]).
 fn wall_strips(
     mesh: &mut MeshData,
     samples: &[TrackSample],
     closed: bool,
     palette: &Palette,
     walled: &dyn Fn(f32, &TrackSample, &TrackSample) -> bool,
+    tall: &dyn Fn(&TrackSample) -> f32,
 ) {
-    let height = WALL_HEIGHT;
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
     let panel = |i: usize| panels[(i / WALL_PANEL) % 2];
@@ -677,22 +803,22 @@ fn wall_strips(
         samples,
         closed,
         |s| s.point(wall_offset(s), 0.0),
-        |s| s.point(wall_offset(s), height),
+        |s| s.point(wall_offset(s), tall(s)),
         panel,
         right,
     );
     mesh.strip_where(
         samples,
         closed,
-        |s| s.point(wall_offset(s), height),
-        |s| s.point(outer(s), height),
+        |s| s.point(wall_offset(s), tall(s)),
+        |s| s.point(outer(s), tall(s)),
         |_| top,
         right,
     );
     mesh.strip_where(
         samples,
         closed,
-        |s| s.point(outer(s), height),
+        |s| s.point(outer(s), tall(s)),
         |s| s.point(outer(s), 0.0),
         panel,
         right,
@@ -700,7 +826,7 @@ fn wall_strips(
     mesh.strip_where(
         samples,
         closed,
-        |s| s.point(-wall_offset(s), height),
+        |s| s.point(-wall_offset(s), tall(s)),
         |s| s.point(-wall_offset(s), 0.0),
         panel,
         left,
@@ -708,8 +834,8 @@ fn wall_strips(
     mesh.strip_where(
         samples,
         closed,
-        |s| s.point(-outer(s), height),
-        |s| s.point(-wall_offset(s), height),
+        |s| s.point(-outer(s), tall(s)),
+        |s| s.point(-wall_offset(s), tall(s)),
         |_| top,
         left,
     );
@@ -717,7 +843,7 @@ fn wall_strips(
         samples,
         closed,
         |s| s.point(-outer(s), 0.0),
-        |s| s.point(-outer(s), height),
+        |s| s.point(-outer(s), tall(s)),
         panel,
         left,
     );
@@ -747,7 +873,7 @@ fn offroad_patch(mesh: &mut MeshData, center: &CenterLine, zone: &OffroadZone, s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::data::TrackData;
+    use crate::track::data::{MAX_BUMP_SLOPE, TrackData};
     use std::collections::HashMap;
 
     /// Edges used by exactly one triangle, keyed by welded vertex positions.
@@ -1406,5 +1532,116 @@ mod tests {
         let s = &center.samples()[10];
         let right_inner = Vec3::from_array(meshes.walls.normals[10 * 4]);
         assert!(right_inner.dot(s.right) < -0.9, "{right_inner}");
+    }
+
+    /// Issue #180, on Prairie Pompon and its mirror: the road, its shoulders, its walls and its
+    /// skirts follow its bumps (each vertex on the frame of its sample: the walls `WALL_HEIGHT`
+    /// above the road there up to the crest, as high as over the crest from there to the bump's
+    /// end, the parapet, then back down; the skirts hanging from its edge); nothing joins the two levels of
+    /// its drop (no floor quad climbs more than a bump's slope between its samples), a face closes
+    /// the upper road's end from its edge down to the ground (its own mesh, solid); the trick
+    /// stretches have their own road and shoulders, and nothing else does. A circuit without
+    /// relief has no trick stretch.
+    #[test]
+    fn the_track_follows_the_bumps_and_stops_at_the_drop() {
+        let text = include_str!("../../assets/tracks/prairie.track.ron");
+        let prairie = TrackData::from_ron(text).unwrap();
+        for data in [prairie.clone(), prairie.mirrored()] {
+            let center = CenterLine::of(&data);
+            let meshes = generate(&center, &data, &Palette::default());
+            let step = center.length() / center.samples().len() as f32;
+            let stretches = center.trick_stretches();
+            // Where a vertex stands along the track, and across it.
+            let locate = |p: Vec3| {
+                let s = center.samples()[center.nearest_index(p)];
+                let along = s.distance + (p - s.position).dot(s.forward);
+                (center.at(along), along)
+            };
+            for (name, mesh, tricky) in [
+                ("road", &meshes.road, false),
+                ("offroad", &meshes.offroad, false),
+                ("trick road", &meshes.trick_road, true),
+                ("trick offroad", &meshes.trick_offroad, true),
+            ] {
+                assert!(!mesh.indices.is_empty(), "{name}");
+                for quad in mesh.positions.as_chunks::<4>().0 {
+                    let corners = quad.map(Vec3::from_array);
+                    let (low, high) = corners
+                        .iter()
+                        .fold((f32::MAX, f32::MIN), |(l, h), c| (l.min(c.y), h.max(c.y)));
+                    // A sand patch is one quad per sample too, and the bank tilts a quad: a
+                    // bump's slope at most, plus the banking across.
+                    let across = (corners[0] - corners[1]).length() * 0.2;
+                    assert!(
+                        high - low <= step * (MAX_BUMP_SLOPE + 0.05) + across,
+                        "{name}: a quad from {low} to {high}: {corners:?}"
+                    );
+                    let middle = corners.iter().sum::<Vec3>() / 4.0;
+                    let (_, along) = locate(middle);
+                    // (Its middle a hair off its samples' middle: not right on a boundary.)
+                    let boundary = stretches.iter().any(|(start, length)| {
+                        [*start, start + length]
+                            .iter()
+                            .any(|b| center.wrap(along - b + 0.3) < 0.6)
+                    });
+                    if boundary {
+                        continue;
+                    }
+                    assert_eq!(
+                        center.on_a_trick_stretch(&stretches, along),
+                        tricky,
+                        "{name} at {along}"
+                    );
+                }
+            }
+            for bump in center.bumps() {
+                let crest = center.at(bump.from + bump.length / 2.0);
+                for side in [-1.0f32, 1.0] {
+                    // The wall's top over the crest, and the skirt hanging from its edge.
+                    let top = crest.point(side * wall_offset(&crest), WALL_HEIGHT);
+                    let edge = crest.point(side * (wall_offset(&crest) + WALL_THICKNESS), 0.0);
+                    let near = |mesh: &MeshData, p: Vec3| {
+                        mesh.positions
+                            .iter()
+                            .any(|q| Vec3::from_array(*q).distance(p) < step * 0.6)
+                    };
+                    assert!(near(&meshes.walls, top), "the wall over {crest:?}");
+                    // At its end, the walls as high as over its crest (the parapet), back to
+                    // their own height `PARAPET_RUN` meters further.
+                    let end = center.at(bump.from + bump.length);
+                    let parapet = end.point(side * wall_offset(&end), WALL_HEIGHT + bump.height);
+                    assert!(near(&meshes.walls, parapet), "the parapet at {end:?}");
+                    let after = center.at(bump.from + bump.length + PARAPET_RUN + 1.0);
+                    let low = after.point(side * wall_offset(&after), WALL_HEIGHT);
+                    assert!(near(&meshes.walls, low), "the wall after {after:?}");
+                    assert!(near(&meshes.decor, edge), "the skirt at {crest:?}");
+                    let skirt_foot = Vec3::new(edge.x, GROUND_HEIGHT, edge.z);
+                    assert!(near(&meshes.decor, skirt_foot), "{crest:?}");
+                }
+            }
+            let cliff = center.cliffs()[0];
+            let lip = center.at(cliff.at - CLIFF_CUT);
+            let o = wall_offset(&lip) + WALL_THICKNESS;
+            let face = [lip.point(o, 0.0), lip.point(-o, 0.0)];
+            let feet = face.map(|p| Vec3::new(p.x, GROUND_HEIGHT, p.z));
+            assert!(
+                meshes
+                    .cliffs
+                    .positions
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|quad| {
+                        let quad = quad.map(Vec3::from_array);
+                        face.iter()
+                            .chain(&feet)
+                            .all(|p| quad.iter().any(|q| q.distance(*p) < 1e-3))
+                    }),
+                "the face of the drop"
+            );
+        }
+        let plain = test_track();
+        let meshes = generate(&CenterLine::of(&plain), &plain, &Palette::default());
+        assert!(meshes.trick_road.indices.is_empty() && meshes.trick_offroad.indices.is_empty());
     }
 }

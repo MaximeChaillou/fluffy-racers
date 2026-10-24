@@ -111,15 +111,22 @@ fn the_landing_after_the_ramp_squashes_the_driver_and_the_physics_does_not_chang
         // Off, the driver sits still.
         assert!(wobble(still, still_driver).at_rest(0.0001));
     };
-    // To the ramp.
+    // To the ramp (issue #180: not a takeoff from one of the circuit's bumps or its drop).
+    let center = soft.world().resource::<TrackLayout>().center.clone();
+    let stretches = center.trick_stretches();
+    let off_the_ramp = |app: &App| {
+        let world = app.world();
+        let position = world.get::<Transform>(kart).unwrap().translation;
+        let at = center.samples()[center.nearest_index(position)].distance;
+        world
+            .get::<TrickTracker>(kart)
+            .unwrap()
+            .ticks_since_takeoff()
+            == Some(1)
+            && !center.on_a_trick_stretch(&stretches, at - 3.0)
+    };
     let mut ticks = 0;
-    while soft
-        .world()
-        .get::<TrickTracker>(kart)
-        .unwrap()
-        .ticks_since_takeoff()
-        != Some(1)
-    {
+    while !off_the_ramp(&soft) {
         ticks += 1;
         // Issue #108: the trick ramp of Prairie Pompon redrawn, 1.2 km along the lap.
         assert!(ticks < 60 * 60, "never took off from the ramp");

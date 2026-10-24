@@ -40,7 +40,8 @@ pub use dressing::CircuitDecor;
 pub use hazard::{Capsule, Hazard, HazardKind, kart_capsule};
 pub use hazards::{Breakable, HazardBody, HazardSystems, HazardVisualPlugin, Panel};
 pub use layout::{
-    CenterLine, Checkpoint, GRID_HEIGHT, GRID_SLOTS, OpenEnds, TrackLayout, TrackSample,
+    BumpSpan, CenterLine, Checkpoint, Cliff, GRID_HEIGHT, GRID_SLOTS, OpenEnds, TrackLayout,
+    TrackSample,
 };
 pub use shortcut::{Cover, OpenEdge, Shortcut};
 pub use start_line::StartLine;
@@ -274,3 +275,6 @@ mod scenario_tests;
 
 #[cfg(test)]
 mod hazard_tests;
+
+#[cfg(test)]
+mod relief_tests;
