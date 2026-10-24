@@ -186,6 +186,12 @@ pub struct ItemVisualAssets {
 }
 
 impl ItemVisualAssets {
+    /// Issue #185: the material of an explosion's flash (a pale sphere out to its reach), which
+    /// the particles hide and replace with their own (`vfx`), when there is a renderer.
+    pub fn flash_material(&self) -> &Handle<StandardMaterial> {
+        &self.flash_material
+    }
+
     pub fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
         let translucent = |color: Color| StandardMaterial {
             base_color: color,

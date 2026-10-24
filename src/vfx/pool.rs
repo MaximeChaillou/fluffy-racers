@@ -25,7 +25,8 @@ pub enum Shape {
     /// A unit cube: sparks, streaks, speed lines, confetti.
     #[default]
     Cube,
-    /// A low-poly ball: puffs of smoke and dust, embers, flashes, cream.
+    /// A low-poly ball: the drops of a splash, the cream (issue #185: never a puff of smoke or
+    /// dust any more: `Haze`).
     Ball,
     /// A five-pointed star: the stars of a shock, the sparkles of a trick or a croquette.
     Star,
@@ -41,7 +42,8 @@ pub enum Shape {
     /// ...a glowing ring lying across its axis: the shockwave of a tier or of a release.
     Shock,
     /// Issue #174, the smoke (blended, batched): a soft puff facing the camera, which spreads,
-    /// turns and thins out.
+    /// turns and thins out. Issue #185: **every** smoke, dust and foam of the game (a puff lying
+    /// on the water: `Facing::Flat`), drawn from `smoke.rs`, alpha premultiplied.
     Haze,
 }
 
@@ -200,6 +202,9 @@ pub enum Curve {
     /// Issue #174: full size most of its life, then shrinks away fast: a trail that stays a
     /// ribbon.
     Linger,
+    /// Issue #185: a puff of smoke: from 40 % of its size, fast, then slower and slower to its
+    /// full size at its end (it never shrinks: it thins out, `batch.rs`).
+    Billow,
 }
 
 impl Curve {
@@ -226,6 +231,7 @@ impl Curve {
             Curve::Flash => (PI * t).sin(),
             Curve::Wave => 0.25 + 0.75 * (1.0 - (1.0 - t).powi(3)),
             Curve::Linger => 1.0 - t * t * t,
+            Curve::Billow => 0.4 + 0.6 * (1.0 - (1.0 - t).powf(2.5)),
         }
     }
 }
@@ -442,6 +448,29 @@ impl Sparkle {
     }
 }
 
+/// Issue #185: how the puffs of smoke move (`VfxTuning::smoke`), kept by the pool for the
+/// emitters (`emit.rs`): their turn (rad/s at most) and how much they rise (m/s²).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SmokeMotion {
+    pub spin: f32,
+    pub rise: f32,
+}
+
+impl Default for SmokeMotion {
+    fn default() -> Self {
+        Self::from(&super::tuning::SmokeVfx::default())
+    }
+}
+
+impl From<&super::tuning::SmokeVfx> for SmokeMotion {
+    fn from(smoke: &super::tuning::SmokeVfx) -> Self {
+        Self {
+            spin: smoke.spin,
+            rise: smoke.rise,
+        }
+    }
+}
+
 /// The pool: [`ParticlePool::SLOTS`] slots at most, `cap` of them in use (the global cap of the
 /// particles, `VfxTuning::max_particles`). A new particle takes the next free slot of the ring
 /// (within [`ParticlePool::PROBE`] slots): never more than `cap` alive, the oldest giving its slot
@@ -456,6 +485,8 @@ pub struct ParticlePool {
     pub spawned: u64,
     pub replaced: u64,
     pub rng: Sparkle,
+    /// Issue #185: how its puffs of smoke move.
+    pub smoke: SmokeMotion,
 }
 
 impl Default for ParticlePool {
@@ -481,6 +512,7 @@ impl ParticlePool {
             spawned: 0,
             replaced: 0,
             rng: Sparkle::default(),
+            smoke: SmokeMotion::default(),
         }
     }
 
@@ -717,6 +749,14 @@ mod tests {
         assert!((Curve::Flash.factor(0.5) - 1.0).abs() < 1e-6);
         assert_eq!(Curve::Wave.factor(0.0), 0.25);
         assert!(Curve::Wave.factor(0.3) > 0.7 && Curve::Wave.factor(1.0) == 1.0);
+        // Issue #185: a puff grows all its life, fast at first.
+        assert!((Curve::Billow.factor(0.0) - 0.4).abs() < 1e-6);
+        assert!(Curve::Billow.factor(0.3) > 0.7);
+        assert!((Curve::Billow.factor(1.0) - 1.0).abs() < 1e-6);
+        for k in 0..20 {
+            let t = k as f32 / 20.0;
+            assert!(Curve::Billow.factor(t + 0.05) > Curve::Billow.factor(t));
+        }
     }
 
     /// A streak lies along its velocity, as long as its stretch; a star faces the camera.

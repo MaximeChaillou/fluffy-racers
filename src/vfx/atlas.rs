@@ -1,11 +1,11 @@
-//! Issue #174: the drawings of the glowing particles and of the smoke, made by the game at
-//! startup (pure, unit-tested: no file, no crate), in one texture of 4 × 2 cells (`Cell`), with
-//! its mipmaps (a spark far away stays a soft spark, not a flickering pixel).
+//! Issue #174: the drawings of the glowing particles, made by the game at startup (pure,
+//! unit-tested: no file, no crate), in one texture of 4 × 2 cells (`Cell`), with its mipmaps (a
+//! spark far away stays a soft spark, not a flickering pixel).
 //!
 //! The glows are drawn in grey on a transparent ground, their brightness in all four channels:
 //! the particle's color (above 1 where it burns) times it, so a core at full brightness clamps to
-//! white and its edge shows the color (`batch.rs`). The puffs of smoke are a lumpy blob, a little
-//! lighter on top (the sun), their opacity in alpha.
+//! white and its edge shows the color (`batch.rs`). Issue #185: the smoke's drawings (two lumpy
+//! blobs here before) are a texture of their own (`smoke.rs`).
 
 /// The cells of the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -20,22 +20,17 @@ pub enum Cell {
     FlameB,
     /// A glowing ring (a shockwave).
     Ring,
-    /// Two puffs of smoke.
-    PuffA,
-    PuffB,
     /// A wide soft disc: the halo on the ground under a kart.
     Halo,
 }
 
 impl Cell {
-    pub const ALL: [Cell; 8] = [
+    pub const ALL: [Cell; 6] = [
         Cell::Streak,
         Cell::Soft,
         Cell::FlameA,
         Cell::FlameB,
         Cell::Ring,
-        Cell::PuffA,
-        Cell::PuffB,
         Cell::Halo,
     ];
     pub const COLUMNS: u32 = 4;
@@ -108,33 +103,6 @@ impl Cell {
             Cell::Ring => glow(
                 (gauss(r - 0.78, 0.07) + 0.2 * gauss(r - 0.62, 0.22)) * smoothstep(1.0, 0.9, r),
             ),
-            Cell::PuffA | Cell::PuffB => {
-                let blobs: &[(f32, f32, f32)] = if self == Cell::PuffA {
-                    &[
-                        (0.0, 0.05, 0.5),
-                        (-0.3, -0.15, 0.36),
-                        (0.32, -0.1, 0.34),
-                        (0.1, -0.35, 0.3),
-                        (-0.15, 0.32, 0.3),
-                    ]
-                } else {
-                    &[
-                        (0.05, 0.0, 0.48),
-                        (-0.32, 0.12, 0.34),
-                        (0.28, 0.25, 0.32),
-                        (-0.05, -0.36, 0.33),
-                        (0.35, -0.22, 0.26),
-                    ]
-                };
-                let density: f32 = blobs
-                    .iter()
-                    .map(|(cx, cy, s)| gauss(((x - cx).powi(2) + (y - cy).powi(2)).sqrt(), *s))
-                    .sum();
-                let alpha = smoothstep(0.15, 0.95, density) * smoothstep(1.0, 0.8, r);
-                // Lighter on top (v 0 is the top of the cell), a little at the left.
-                let shade = 0.8 + 0.2 * (1.0 - v * 1.2 - x * 0.2).clamp(0.0, 1.0);
-                (shade, alpha)
-            }
             Cell::Halo => glow((1.0 - r * r).max(0.0).powf(1.2) * 0.8 + 0.2 * gauss(r, 0.3)),
         }
     }
@@ -222,7 +190,7 @@ mod tests {
             let [u0, v0, u1, v1] = cell.uv();
             assert!(u0 >= 0.0 && v0 >= 0.0 && u1 <= 1.0 && v1 <= 1.0 && u0 < u1 && v0 < v1);
         }
-        for cell in [Cell::Soft, Cell::Halo, Cell::PuffA, Cell::PuffB] {
+        for cell in [Cell::Soft, Cell::Halo] {
             let (_, middle) = cell.texel(0.5, 0.5);
             let (_, aside) = cell.texel(0.8, 0.5);
             assert!(middle > 0.8 && middle > aside, "{cell:?}: {middle} {aside}");
@@ -242,8 +210,6 @@ mod tests {
         let (ring, _) = Cell::Ring.texel(0.5 + 0.39, 0.5);
         let (inside, _) = Cell::Ring.texel(0.5, 0.5);
         assert!(ring > 0.9 && inside < 0.2, "{ring} {inside}");
-        // The smoke is lighter on top.
-        assert!(Cell::PuffA.texel(0.5, 0.3).0 > Cell::PuffA.texel(0.5, 0.7).0);
     }
 
     /// The atlas and its mipmaps: as many bytes as the GPU expects, the smallest level still

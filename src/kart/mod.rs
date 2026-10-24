@@ -76,13 +76,13 @@ pub use stats::{
 };
 pub use trick::TrickTracker;
 pub use tuning::KartTuning;
-pub(crate) use visual::place_wheels;
 pub use visual::{
     BodyPaint, BoostFlame, DRIVER_SEAT, DeflatedScale, DriftSpark, DriverEars, DriverLook,
     DriverPrimitive, DriverVisual, KartBodyPivot, KartDressed, KartModel, KartVisualAssets,
     KartVisualPlugin, StallSmoke, WheelVisual, WindLine, flame_size, hit_pose, pivoted_wheel,
     shown_while_invincible, shown_with_effects, spawn_kart_visual, spawn_kart_visual_with_driver,
 };
+pub(crate) use visual::{place_wheels, show_stall_smoke};
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;

@@ -772,6 +772,12 @@ fn the_dust_off_the_road_is_the_color_of_the_biomes_ground() {
                 "{paint:?}: {shown:?} for {expected:?}"
             );
         }
+        // Issue #185: the dust is a soft puff of the smoke's mesh: the quads take that color.
+        let quads = app.world().resource::<VfxAssets>().quads.paint[paint.index()];
+        assert!(
+            quads.distance(super::batch::linear(expected)) < 1e-4,
+            "{paint:?}: {quads}"
+        );
     }
     // Lighter than the ground, the same hue: the meadow's grass is green dust.
     assert!(shoulder[1] > shoulder[0] && shoulder[1] > palette.shoulder.1);
@@ -800,6 +806,8 @@ fn the_dust_off_the_road_is_the_color_of_the_biomes_ground() {
             app.update();
             for p in new_particles(&app) {
                 if p.paint == paint {
+                    // Issue #185: a soft puff, never a ball.
+                    assert_eq!(p.shape, Shape::Haze);
                     thrown.0 += 1;
                 } else if matches!(p.paint, Paint::Ground | Paint::Sand | Paint::Dust) {
                     thrown.1 += 1;
@@ -887,8 +895,10 @@ fn the_lagoon_splashes_and_leaves_a_wake() {
         let depth = lake.depth(transform.translation);
         for p in thrown
             .iter()
-            .filter(|p| p.paint == Paint::Foam && p.shape == Shape::Ball)
+            .filter(|p| p.paint == Paint::Foam && p.shape != Shape::Ring)
         {
+            // Issue #185: a soft patch lying on the water, never a ball.
+            assert_eq!((p.shape, p.facing), (Shape::Haze, Facing::Flat));
             assert!(
                 (p.position.y - (lake.level + 0.03)).abs() < 0.05,
                 "foam on the water: {}",

@@ -33,6 +33,9 @@ pub struct VfxTuning {
     pub world: WorldVfx,
     /// Issue #176: the wheels that turn, the tyres that spin and smoke at a standing start.
     pub wheels: WheelVfx,
+    /// Issue #185: how every smoke, dust and foam looks and moves (soft sprites: `smoke.rs`,
+    /// `batch.rs`).
+    pub smoke: SmokeVfx,
     pub colors: VfxColors,
 }
 
@@ -50,6 +53,7 @@ impl Default for VfxTuning {
             impact: ImpactVfx::default(),
             world: WorldVfx::default(),
             wheels: WheelVfx::default(),
+            smoke: SmokeVfx::default(),
             colors: VfxColors::default(),
         }
     }
@@ -188,11 +192,11 @@ impl Default for DriftVfx {
             hop_height: [0.05, 0.07, 0.1],
             hop_time: 0.2,
             smoke_rate: 10.0,
-            smoke_size: 0.3,
+            smoke_size: 0.55,
             smoke_life: 0.55,
             smoke_rise: 1.2,
             smoke_tint: 0.35,
-            smoke_opacity: 0.55,
+            smoke_opacity: 0.6,
             release_sparks: [12, 20, 30],
             release_speed: 8.0,
             release_flames: [8, 14, 22],
@@ -238,10 +242,12 @@ pub struct BoostVfx {
     pub fov_tier: [f32; 3],
     /// How fast the extra field of view follows (1/s).
     pub fov_response: f32,
-    /// The rocket start: a cloud of this many puffs of smoke, this big, this long.
+    /// The rocket start: a cloud of this many puffs of smoke, this big, this long (issue #185:
+    /// this opaque at most).
     pub rocket_smoke: u32,
     pub rocket_smoke_size: f32,
     pub rocket_smoke_life: f32,
+    pub rocket_smoke_opacity: f32,
     /// A trick: a burst of gold sparkles when it starts, and when its boost starts on landing.
     pub trick_sparkles: u32,
     /// The slipstream's boost: a burst of wind streaks around the kart.
@@ -251,8 +257,12 @@ pub struct BoostVfx {
     /// A boost pad, a piment: a burst of sparks of its color out of the exhaust.
     pub pad_sparks: u32,
     pub piment_sparks: u32,
-    /// The stalled engine (GD § 4): puffs of soot when it chokes.
+    /// The stalled engine (GD § 4): puffs of soot when it chokes...
     pub stall_puffs: u32,
+    /// ...issue #185: and while it stays stalled, puffs of soot out of each exhaust per second
+    /// (instead of the grey cubes of `kart::visual`), this opaque.
+    pub stall_rate: f32,
+    pub stall_opacity: f32,
 }
 
 impl Default for BoostVfx {
@@ -277,14 +287,17 @@ impl Default for BoostVfx {
             fov_tier: [0.6, 0.8, 1.0],
             fov_response: 6.0,
             rocket_smoke: 18,
-            rocket_smoke_size: 0.7,
+            rocket_smoke_size: 0.8,
             rocket_smoke_life: 0.9,
+            rocket_smoke_opacity: 0.28,
             trick_sparkles: 12,
             slipstream_streaks: 14,
             spin_sparks: 18,
             pad_sparks: 10,
             piment_sparks: 14,
             stall_puffs: 6,
+            stall_rate: 7.0,
+            stall_opacity: 0.45,
         }
     }
 }
@@ -300,10 +313,11 @@ pub struct ImpactVfx {
     pub star_speed: f32,
     pub star_life: f32,
     pub star_gravity: f32,
-    /// ...and this many white puffs (the « pof »), this big, this long.
+    /// ...and this many white puffs (the « pof »), this big, this long (issue #185: this opaque).
     pub pof_puffs: u32,
     pub pof_size: f32,
     pub pof_life: f32,
+    pub pof_opacity: f32,
     /// A wall: from this loss of speed in a tick (m/s), across the kart's up; this many stars and
     /// puffs.
     pub wall_speed: f32,
@@ -317,7 +331,13 @@ pub struct ImpactVfx {
     pub confetti_speed: f32,
     pub confetti_life: f32,
     pub confetti_size: f32,
+    /// Issue #185: the explosion's cloud, this opaque; its flash (instead of the pale sphere of
+    /// `items::visual`): a glowing fireball this bright, for this long (s), and a ring blown out
+    /// on the ground to its reach.
     pub blast_puffs: u32,
+    pub blast_opacity: f32,
+    pub blast_glow: f32,
+    pub blast_flash_time: f32,
     /// Issue #106: a gift box taken bursts into this many confetti (those of an explosion, a
     /// little shorter-lived), thrown out this fast, and carried along by the kart that took it
     /// (this share of its speed).
@@ -371,6 +391,7 @@ impl Default for ImpactVfx {
             pof_puffs: 6,
             pof_size: 0.5,
             pof_life: 0.35,
+            pof_opacity: 0.6,
             wall_speed: 6.0,
             wall_stars: 4,
             wall_puffs: 4,
@@ -380,6 +401,9 @@ impl Default for ImpactVfx {
             confetti_life: 1.6,
             confetti_size: 0.16,
             blast_puffs: 10,
+            blast_opacity: 0.7,
+            blast_glow: 1.6,
+            blast_flash_time: 0.3,
             gift_confetti: 28,
             gift_speed: 6.0,
             gift_carry: 0.5,
@@ -422,6 +446,8 @@ pub struct WorldVfx {
     pub dust_min_speed: f32,
     pub dust_size: f32,
     pub dust_life: f32,
+    /// Issue #185: the dust is this opaque at most (off the road, on a landing, out of the tyres).
+    pub dust_opacity: f32,
     /// A landing after this long in the air (s): this many puffs of dust around the kart.
     pub landing_air_time: f32,
     pub landing_puffs: u32,
@@ -451,6 +477,8 @@ pub struct WorldVfx {
     pub wake_min_speed: f32,
     pub wake_size: f32,
     pub wake_life: f32,
+    /// Issue #185: the foam (a splash's, the wake) is this opaque at most.
+    pub foam_opacity: f32,
 }
 
 impl Default for WorldVfx {
@@ -464,6 +492,7 @@ impl Default for WorldVfx {
             dust_min_speed: 4.0,
             dust_size: 0.32,
             dust_life: 0.45,
+            dust_opacity: 0.6,
             landing_air_time: 0.35,
             landing_puffs: 8,
             anti_gravity_rate: 10.0,
@@ -481,6 +510,7 @@ impl Default for WorldVfx {
             wake_min_speed: 3.0,
             wake_size: 0.42,
             wake_life: 0.9,
+            foam_opacity: 0.75,
         }
     }
 }
@@ -544,6 +574,12 @@ pub struct WheelVfx {
     pub go_size: f32,
     pub go_life: f32,
     pub go_push: f32,
+    /// Issue #185: the cloud is this opaque at most (thin: it dresses the grid, it never hides
+    /// it), its puffs this much wider than tall (flat on the road), and it rises this fast (m/s,
+    /// from-to: it stays low).
+    pub go_opacity: f32,
+    pub go_width: f32,
+    pub go_rise: [f32; 2],
     /// **Setting off again from a full stop** (after a tumble, a wall...): still (slower than
     /// `stop_speed`, m/s) for `stop_time` s, then off: a smaller puff, this many, `launch_size` big.
     pub stop_speed: f32,
@@ -566,12 +602,12 @@ impl Default for WheelVfx {
             steer_response: 14.0,
             steer_yaw_rate: 2.2,
             smoke_rate: 16.0,
-            smoke_size: 0.42,
+            smoke_size: 0.55,
             smoke_life: 0.65,
             smoke_rise: 0.9,
             smoke_push: 2.2,
             smoke_tint: 0.2,
-            smoke_opacity: 0.8,
+            smoke_opacity: 0.5,
             dust_rate: 6.0,
             shake: 0.022,
             shake_speed: 48.0,
@@ -579,13 +615,72 @@ impl Default for WheelVfx {
             go_rocket_least: 0.4,
             go_normal_puffs: 12,
             go_stall_puffs: 4,
-            go_size: 0.75,
+            go_size: 1.1,
             go_life: 0.95,
             go_push: 4.5,
+            go_opacity: 0.38,
+            go_width: 1.6,
+            go_rise: [0.15, 0.6],
             stop_speed: 1.0,
             stop_time: 0.5,
             launch_puffs: 6,
             launch_size: 0.5,
+        }
+    }
+}
+
+/// Issue #185 (GD § 14): **the smoke**, every puff of smoke, dust or foam of the game: a soft
+/// sprite facing the camera (`smoke.rs`: a drawing of fractal noise, four of them), which grows,
+/// turns slowly, rises or spreads with the wind of the kart that threw it, then thins out; lit
+/// simply (lighter on the sun's side, darker below, its shade taking the biome's sky and its
+/// ground); never in front of the camera's eye, its edge fading where it touches the ground.
+#[derive(Reflect, Clone, Debug, PartialEq)]
+pub struct SmokeVfx {
+    /// A puff is never more opaque than this (each effect's own opacity under it): smoke is seen
+    /// through.
+    pub max_opacity: f32,
+    /// Its opacity comes in over this share of its life (fast)...
+    pub attack: f32,
+    /// ...then goes slowly, as (1 − its age's share) to this power.
+    pub fade: f32,
+    /// It turns at most this fast (rad/s, either way), and rises this much (m/s², against
+    /// gravity: hot air).
+    pub spin: f32,
+    pub rise: f32,
+    /// It spreads out flat as it ages: this much wider than tall by its end (on top of its
+    /// shape).
+    pub spread: f32,
+    /// Not drawn nearer the camera than the first distance (m), whole from the second: a puff
+    /// thrown at the camera never fills the screen.
+    pub near_fade: [f32; 2],
+    /// Where it touches the ground, its corners fade out over this share of its size above it
+    /// (no hard line where the ground cuts it).
+    pub ground_fade: f32,
+    /// Its side toward the sun is this color (sRGB, a multiplier of its own)...
+    pub lit: [f32; 3],
+    /// ...its side away from it and below this dark (0 to 1)...
+    pub shade: f32,
+    /// ...that shade taking this much of the biome's sky's hue, and this much of its ground's
+    /// (the light it bounces).
+    pub sky_tint: f32,
+    pub ground_tint: f32,
+}
+
+impl Default for SmokeVfx {
+    fn default() -> Self {
+        Self {
+            max_opacity: 0.8,
+            attack: 0.08,
+            fade: 1.2,
+            spin: 0.7,
+            rise: 0.9,
+            spread: 0.35,
+            near_fade: [1.2, 3.5],
+            ground_fade: 0.45,
+            lit: [1.0, 0.98, 0.94],
+            shade: 0.8,
+            sky_tint: 0.25,
+            ground_tint: 0.12,
         }
     }
 }

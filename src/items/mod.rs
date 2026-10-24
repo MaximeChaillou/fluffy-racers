@@ -100,8 +100,8 @@ pub use table::{
 };
 pub use tuning::ItemTuning;
 pub use visual::{
-    EffectKind, EffectLook, ItemBoxLook, ItemModelPlugin, ItemShowcase, ItemVisualAssets,
-    ItemVisualPlugin,
+    BlastLook, EffectKind, EffectLook, ItemBoxLook, ItemModelPlugin, ItemShowcase,
+    ItemVisualAssets, ItemVisualPlugin,
 };
 
 use bevy::prelude::*;

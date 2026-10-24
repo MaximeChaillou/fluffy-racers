@@ -111,6 +111,28 @@ fn road_under(frame: &KartFrame, at: Vec3) -> f32 {
     }
 }
 
+/// Issue #185: a puff of smoke, dust or foam of `paint` at `at` (`Shape::Haze`: a soft sprite
+/// facing the camera, drawn from `smoke.rs`), living `life` s, `size` m big at its end (it grows
+/// all its life), `opacity` opaque at most: it turns slowly, rises (the pool's `SmokeMotion`),
+/// its drawing one of four, all at random (deterministic: the pool's own numbers).
+fn haze(
+    pool: &mut ParticlePool,
+    paint: Paint,
+    at: Vec3,
+    (life, size, opacity): (f32, f32, f32),
+) -> Particle {
+    let mut puff = Particle::new(Shape::Haze, paint, at, life, size);
+    puff.curve = Curve::Billow;
+    puff.facing = Facing::Camera;
+    puff.angle = pool.rng.unit() * TAU;
+    puff.spin = pool.rng.signed() * pool.smoke.spin;
+    puff.gravity = -pool.smoke.rise;
+    puff.stretch = pool.rng.range(1.0, 1.3);
+    puff.glow = opacity * pool.rng.range(0.85, 1.1);
+    puff.variant = (pool.rng.next_u32() % super::smoke::VARIANTS) as u8;
+    puff
+}
+
 /// A spark (issue #174: a glowing streak, its core white-hot, its edge `paint`'s color, which
 /// bounces on `floor` and cools as it dies) thrown from `at` along `direction` at `speed`.
 fn glint(
@@ -329,27 +351,24 @@ pub fn drift_smoke(
 ) {
     let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.1, 0.1));
     let up = frame.up();
+    let floor = road_under(frame, frame.point(REAR_WHEEL));
     for i in 0..count {
-        let mut puff = Particle::new(
-            Shape::Haze,
+        let life = drift.smoke_life * pool.rng.range(0.8, 1.25);
+        let size = drift.smoke_size * pool.rng.range(0.75, 1.3);
+        let look = (life, size, drift.smoke_opacity);
+        let mut puff = haze(
+            pool,
             Paint::Smoke,
             along(at, frame.velocity * dt, i, count),
-            drift.smoke_life * pool.rng.range(0.8, 1.25),
-            drift.smoke_size * pool.rng.range(0.75, 1.3),
+            look,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Camera;
         puff.velocity = up * drift.smoke_rise * pool.rng.range(0.7, 1.2)
             + frame.direction(Vec3::new(side * 0.6, 0.0, 0.5)) * pool.rng.range(0.3, 1.0);
         puff.carrier = frame.velocity * 0.25;
         puff.drag = 1.5;
-        puff.angle = pool.rng.unit() * TAU;
-        puff.spin = pool.rng.signed() * 1.5;
-        puff.stretch = pool.rng.range(1.0, 1.5);
-        puff.glow = drift.smoke_opacity * pool.rng.range(0.8, 1.1);
+        puff.floor = floor;
         puff.tint = drift.smoke_tint;
         puff.tint_paint = ground;
-        puff.variant = (pool.rng.next_u32() & 1) as u8;
         pool.spawn(puff);
     }
 }
@@ -369,29 +388,26 @@ pub fn spin_smoke(
 ) {
     let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.05, -0.05));
     let up = frame.up();
+    let floor = road_under(frame, frame.point(REAR_WHEEL));
     for i in 0..count {
-        let mut puff = Particle::new(
-            Shape::Haze,
+        let life = wheels.smoke_life * pool.rng.range(0.8, 1.25);
+        let size = wheels.smoke_size * pool.rng.range(0.7, 1.2);
+        let look = (life, size, wheels.smoke_opacity);
+        let mut puff = haze(
+            pool,
             Paint::Smoke,
             along(at, frame.velocity * dt, i, count),
-            wheels.smoke_life * pool.rng.range(0.8, 1.25),
-            wheels.smoke_size * pool.rng.range(0.7, 1.2),
+            look,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Camera;
         // Thrown back off the tyre, low, a little out of the wheel and up.
         let back = frame.direction(Vec3::new(side * 0.35, 0.0, 1.0));
         puff.velocity = back * wheels.smoke_push * pool.rng.range(0.6, 1.3)
             + up * wheels.smoke_rise * pool.rng.range(0.6, 1.3);
         puff.carrier = frame.velocity * 0.2;
         puff.drag = 2.2;
-        puff.angle = pool.rng.unit() * TAU;
-        puff.spin = pool.rng.signed() * 1.8;
-        puff.stretch = pool.rng.range(1.0, 1.4);
-        puff.glow = wheels.smoke_opacity * pool.rng.range(0.8, 1.1);
+        puff.floor = floor;
         puff.tint = wheels.smoke_tint;
         puff.tint_paint = ground;
-        puff.variant = (pool.rng.next_u32() & 1) as u8;
         pool.spawn(puff);
     }
 }
@@ -399,7 +415,8 @@ pub fn spin_smoke(
 /// Issue #176: the cloud of a standing start, out of both back wheels (`count` puffs, `size`
 /// big, living `life` s, blown back at `push` m/s and spreading out to the sides): at GO by the
 /// start's quality, smaller when a kart sets off again from a full stop. The color of the ground
-/// under the wheels (`ground`).
+/// under the wheels (`ground`). Issue #185: thin (`WheelVfx::go_opacity`) and low (it rises at
+/// `go_rise`, from just over the road): it dresses the grid, it never hides it.
 pub fn start_cloud(
     pool: &mut ParticlePool,
     frame: &KartFrame,
@@ -408,30 +425,29 @@ pub fn start_cloud(
     wheels: &WheelVfx,
 ) {
     let up = frame.up();
+    let floor = road_under(frame, frame.point(REAR_WHEEL));
     for k in 0..count {
         let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-        let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.1, 0.1));
+        let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0) + Vec3::new(0.0, 0.05, 0.1));
         let out = pool.rng.range(0.1, 1.0);
         let back = frame.direction(Vec3::new(side * out, 0.0, 1.0));
-        let mut puff = Particle::new(
-            Shape::Haze,
-            Paint::Smoke,
-            at + pool.rng.direction() * 0.2,
+        let start = at + pool.rng.direction() * 0.15;
+        let look = (
             life * pool.rng.range(0.75, 1.25),
             size * pool.rng.range(0.7, 1.3),
+            wheels.go_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Camera;
-        puff.velocity = back * push * pool.rng.range(0.4, 1.2) + up * pool.rng.range(0.4, 1.4);
+        let mut puff = haze(pool, Paint::Smoke, start, look);
+        let [low, high] = wheels.go_rise;
+        puff.velocity = back * push * pool.rng.range(0.4, 1.2) + up * pool.rng.range(low, high);
         puff.carrier = frame.velocity * 0.1;
         puff.drag = 2.5;
-        puff.angle = pool.rng.unit() * TAU;
-        puff.spin = pool.rng.signed() * 1.2;
-        puff.stretch = pool.rng.range(1.0, 1.5);
-        puff.glow = wheels.smoke_opacity * pool.rng.range(0.9, 1.2);
+        // Low: flat on the road, hardly rising (the cloud spreads along it).
+        puff.stretch *= wheels.go_width.max(0.1);
+        puff.gravity *= 0.3;
+        puff.floor = floor;
         puff.tint = wheels.smoke_tint;
         puff.tint_paint = ground;
-        puff.variant = (pool.rng.next_u32() & 1) as u8;
         pool.spawn(puff);
     }
 }
@@ -598,47 +614,55 @@ pub fn embers(
 pub fn rocket_smoke(pool: &mut ParticlePool, frame: &KartFrame, boost: &BoostVfx) {
     let at = frame.point(Vec3::new(0.0, -0.2, 1.1));
     let back = frame.axis(Vec3::new(0.0, 0.35, 1.0));
+    let floor = road_under(frame, frame.point(UNDER));
     for k in 0..boost.rocket_smoke {
         let direction = pool.rng.cone(back, 1.0);
-        let mut puff = Particle::new(
-            Shape::Ball,
-            if k % 4 == 0 {
-                Paint::Soot
-            } else {
-                Paint::Smoke
-            },
-            at + pool.rng.direction() * 0.3,
+        let paint = if k % 4 == 0 {
+            Paint::Soot
+        } else {
+            Paint::Smoke
+        };
+        let start = at + pool.rng.direction() * 0.3;
+        let look = (
             boost.rocket_smoke_life * pool.rng.range(0.7, 1.2),
             boost.rocket_smoke_size * pool.rng.range(0.6, 1.3),
+            boost.rocket_smoke_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
-        puff.velocity = direction * pool.rng.range(2.0, 5.0) + Vec3::Y * pool.rng.range(0.5, 1.5);
+        let mut puff = haze(pool, paint, start, look);
+        puff.velocity = direction * pool.rng.range(2.0, 5.0) + Vec3::Y * pool.rng.range(0.3, 1.0);
         puff.drag = 2.2;
-        puff.gravity = -1.0;
-        puff.axis = pool.rng.direction();
-        puff.spin = pool.rng.signed() * 1.5;
+        puff.floor = floor;
         pool.spawn(puff);
     }
 }
 
 /// Puffs of soot out of the exhaust: the stalled engine chokes (GD § 4).
 pub fn stall_puffs(pool: &mut ParticlePool, frame: &KartFrame, boost: &BoostVfx) {
-    for k in 0..boost.stall_puffs {
-        let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-        let mut puff = Particle::new(
-            Shape::Ball,
-            Paint::Soot,
-            frame.point(EXHAUST * Vec3::new(side, 1.0, 1.0)),
-            pool.rng.range(0.5, 0.8),
-            pool.rng.range(0.25, 0.4),
+    stall_smoke(pool, frame, boost, boost.stall_puffs);
+}
+
+/// Issue #185: `count` puffs of soot out of the exhausts (in turn), up and back: the stalled
+/// engine coughing (a burst when it chokes, then `BoostVfx::stall_rate` per second while it stays
+/// stalled).
+pub fn stall_smoke(pool: &mut ParticlePool, frame: &KartFrame, boost: &BoostVfx, count: u32) {
+    for k in 0..count {
+        let side = if (pool.spawned + u64::from(k)).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        let start = frame.point(EXHAUST * Vec3::new(side, 1.0, 1.0));
+        let look = (
+            pool.rng.range(0.6, 0.95),
+            pool.rng.range(0.45, 0.7),
+            boost.stall_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
+        let mut puff = haze(pool, Paint::Soot, start, look);
         puff.velocity = pool
             .rng
             .cone(frame.direction(Vec3::new(0.0, 1.0, 0.6)), 0.5)
             * pool.rng.range(1.0, 2.5);
+        puff.carrier = frame.velocity * 0.5;
         puff.drag = 1.5;
         pool.spawn(puff);
     }
@@ -752,15 +776,12 @@ pub fn shock(
     }
     for _ in 0..puffs {
         let direction = pool.rng.direction();
-        let mut puff = Particle::new(
-            Shape::Ball,
-            Paint::Smoke,
-            at + direction * 0.15,
+        let look = (
             impact.pof_life * pool.rng.range(0.8, 1.2),
-            impact.pof_size * pool.rng.range(0.7, 1.2),
+            impact.pof_size * pool.rng.range(0.9, 1.4),
+            impact.pof_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
+        let mut puff = haze(pool, Paint::Smoke, at + direction * 0.15, look);
         puff.velocity = direction * pool.rng.range(1.5, 3.0);
         puff.carrier = carrier * 0.8;
         puff.drag = 4.0;
@@ -793,22 +814,46 @@ pub fn confetti(pool: &mut ParticlePool, at: Vec3, radius: f32, impact: &ImpactV
         piece.floor = floor;
         pool.spawn(piece);
     }
-    for _ in 0..impact.blast_puffs {
+    for k in 0..impact.blast_puffs {
         let direction = pool.rng.cone(Vec3::Y, 1.4);
-        let mut puff = Particle::new(
-            Shape::Ball,
-            Paint::Smoke,
-            at + direction * radius * 0.25,
-            pool.rng.range(0.5, 0.9),
-            impact.pof_size * reach * pool.rng.range(1.0, 1.8),
+        // Issue #185: a third of it soot (the cloud has its darker parts).
+        let paint = if k % 3 == 0 {
+            Paint::Soot
+        } else {
+            Paint::Smoke
+        };
+        let look = (
+            pool.rng.range(0.7, 1.2),
+            impact.pof_size * reach * pool.rng.range(2.4, 3.6),
+            impact.blast_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
+        let mut puff = haze(pool, paint, at + direction * radius * 0.25, look);
         puff.velocity = direction * pool.rng.range(2.0, 5.0) * reach;
         puff.drag = 3.0;
         puff.floor = floor;
         pool.spawn(puff);
     }
+    // Issue #185: its flash (the pale sphere of `items::visual` is hidden): a white-hot core, a
+    // fireball, and a ring blown out on the ground to its reach.
+    let time = impact.blast_flash_time.max(0.05);
+    let glow = impact.blast_glow;
+    pool.spawn(flash(
+        at,
+        Vec3::ZERO,
+        (Paint::Hot, radius * 0.6, time * 0.7, glow * 1.4),
+    ));
+    pool.spawn(flash(
+        at + Vec3::Y * 0.3,
+        Vec3::ZERO,
+        (Paint::Flame, radius * 1.1, time, glow),
+    ));
+    let ring = (Paint::Flame, radius / 1.25, time * 1.6);
+    pool.spawn(shockwave(
+        Vec3::new(at.x, floor + 0.05, at.z),
+        Vec3::Y,
+        Vec3::ZERO,
+        ring,
+    ));
 }
 
 /// A gift box taken (issue #106): it bursts into confetti, carried along a little by `carrier`
@@ -921,22 +966,22 @@ pub fn dust(
 ) {
     let at = frame.point(REAR_WHEEL * Vec3::new(side, 1.0, 1.0));
     let up = frame.up();
+    let floor = road_under(frame, at);
     for i in 0..count {
-        let mut puff = Particle::new(
-            Shape::Ball,
-            paint,
-            along(at, frame.velocity * dt, i, count),
-            world.dust_life * pool.rng.range(0.7, 1.2),
-            world.dust_size * pool.rng.range(0.6, 1.2),
+        // Issue #185: a soft puff, a little bigger than the ball it was (it is seen through).
+        let look = (
+            world.dust_life * pool.rng.range(0.8, 1.3),
+            world.dust_size * pool.rng.range(1.0, 1.7),
+            world.dust_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
+        let mut puff = haze(pool, paint, along(at, frame.velocity * dt, i, count), look);
         puff.velocity = up * pool.rng.range(0.6, 1.4)
             + frame.direction(Vec3::new(side * 0.8, 0.0, 0.6)) * pool.rng.range(0.5, 1.5);
         puff.carrier = frame.velocity * 0.15;
         puff.drag = 2.0;
-        puff.axis = pool.rng.direction();
-        puff.spin = pool.rng.signed() * 2.0;
+        // Dust is heavier than smoke: it hardly rises.
+        puff.gravity *= 0.3;
+        puff.floor = floor;
         pool.spawn(puff);
     }
 }
@@ -945,21 +990,21 @@ pub fn dust(
 /// ground's off the road, the road's dust on it).
 pub fn landing(pool: &mut ParticlePool, frame: &KartFrame, paint: Paint, world: &WorldVfx) {
     let at = frame.point(UNDER);
+    let floor = road_under(frame, at);
     for k in 0..world.landing_puffs {
         let angle = (k as f32 + pool.rng.unit() * 0.5) / world.landing_puffs.max(1) as f32 * TAU;
         let out = frame.axis(Vec3::new(angle.cos(), 0.1, angle.sin()));
-        let mut puff = Particle::new(
-            Shape::Ball,
-            paint,
-            at + out * 0.7,
-            pool.rng.range(0.4, 0.6),
-            world.dust_size * pool.rng.range(0.7, 1.0),
+        let look = (
+            pool.rng.range(0.5, 0.8),
+            world.dust_size * pool.rng.range(1.3, 1.9),
+            world.dust_opacity,
         );
-        puff.curve = Curve::Puff;
-        puff.facing = Facing::Tumble;
+        let mut puff = haze(pool, paint, at + out * 0.7 + frame.up() * 0.15, look);
         puff.velocity = out * pool.rng.range(2.5, 4.0);
         puff.carrier = frame.velocity * 0.5;
         puff.drag = 4.0;
+        puff.gravity *= 0.3;
+        puff.floor = floor;
         pool.spawn(puff);
     }
 }
@@ -1018,21 +1063,28 @@ pub fn water_splash(
     for k in 0..world.splash_foam {
         let angle = (k as f32 + pool.rng.unit() * 0.6) / world.splash_foam.max(1) as f32 * TAU;
         let out = Vec3::new(angle.cos(), 0.0, angle.sin());
-        let mut foam = Particle::new(
-            Shape::Ball,
-            Paint::Foam,
-            surface + out * pool.rng.range(0.5, 1.1) + Vec3::Y * 0.03,
+        let start = surface + out * pool.rng.range(0.5, 1.1) + Vec3::Y * 0.03;
+        let look = (
             world.wake_life * pool.rng.range(0.7, 1.1),
-            world.wake_size * pool.rng.range(0.8, 1.3),
+            world.wake_size * pool.rng.range(1.2, 1.9),
+            world.foam_opacity,
         );
-        foam.curve = Curve::Puff;
-        foam.facing = Facing::Flat;
-        foam.axis = Vec3::Y;
+        let mut foam = foam_patch(pool, start, look);
         foam.velocity = out * pool.rng.range(1.0, 2.5);
         foam.carrier = carrier * 0.2;
         foam.drag = 2.5;
         pool.spawn(foam);
     }
+}
+
+/// Issue #185: a patch of foam lying on the water at `at` (a soft sprite of the smoke's, flat:
+/// it spreads and thins out, it neither rises nor turns over).
+fn foam_patch(pool: &mut ParticlePool, at: Vec3, look: (f32, f32, f32)) -> Particle {
+    let mut foam = haze(pool, Paint::Foam, at, look);
+    foam.facing = Facing::Flat;
+    foam.axis = Vec3::Y;
+    foam.gravity = 0.0;
+    foam
 }
 
 /// Issue #130 (GD § 10): the wake of a kart at the surface of the water (`level`: its height):
@@ -1055,16 +1107,12 @@ pub fn wake(
         let corner = frame.point(Vec3::new(side * 0.6, 0.0, 0.9));
         let at = along(corner, frame.velocity * dt, i, count).with_y(level + 0.03);
         let out = frame.axis(Vec3::new(side, 0.0, 0.35)).with_y(0.0);
-        let mut foam = Particle::new(
-            Shape::Ball,
-            Paint::Foam,
-            at,
+        let look = (
             world.wake_life * pool.rng.range(0.7, 1.2),
-            world.wake_size * pool.rng.range(0.7, 1.2),
+            world.wake_size * pool.rng.range(1.1, 1.8),
+            world.foam_opacity,
         );
-        foam.curve = Curve::Puff;
-        foam.facing = Facing::Flat;
-        foam.axis = Vec3::Y;
+        let mut foam = foam_patch(pool, at, look);
         foam.velocity = out.normalize_or_zero() * pool.rng.range(1.0, 2.2);
         foam.drag = 1.5;
         pool.spawn(foam);
@@ -1184,6 +1232,8 @@ pub fn speed_lines(
 /// The cap and the tuning's switch: the pool follows `VfxTuning::max_particles` (none when the
 /// particles are off).
 pub fn follow_the_cap(pool: &mut ParticlePool, tuning: &VfxTuning) {
+    // Issue #185: and how its puffs of smoke move.
+    pool.smoke = super::pool::SmokeMotion::from(&tuning.smoke);
     pool.set_cap(if tuning.enabled {
         tuning.max_particles
     } else {
@@ -1266,11 +1316,20 @@ mod tests {
         );
         pool.clear();
         confetti(&mut pool, Vec3::ZERO, 4.0, &tuning.impact);
+        // Issue #185: and its flash, its fireball, its ring on the ground (the pale sphere of
+        // `items::visual` is hidden).
         assert_eq!(
             pool.live() as u32,
-            tuning.impact.confetti + tuning.impact.blast_puffs
+            tuning.impact.confetti + tuning.impact.blast_puffs + 3
         );
-        assert!(pool.alive().all(|p| p.floor == -0.45));
+        assert!(
+            pool.alive()
+                .filter(|p| !matches!(p.shape, Shape::Glow | Shape::Shock))
+                .all(|p| p.floor == -0.45)
+        );
+        assert_eq!(pool.alive().filter(|p| p.shape == Shape::Glow).count(), 2);
+        let ring = pool.alive().find(|p| p.shape == Shape::Shock).unwrap();
+        assert!((ring.position.y + 0.4).abs() < 1e-5 && ring.size * 1.25 >= 4.0 - 1e-4);
         pool.clear();
         shock(
             &mut pool,

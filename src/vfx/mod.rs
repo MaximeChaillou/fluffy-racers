@@ -28,6 +28,14 @@
 //!   ones steer; the back tyres spin on the spot on the grid with the accelerator down (smoke,
 //!   dust, little shakes, the engine revs: `audio`), setting off and with a rocket start; at GO a
 //!   cloud by the start's quality; a smaller one when a kart sets off again from a full stop.
+//! - **The smoke** (GD § 14, issue #185, `smoke.rs`): every smoke, dust and foam of the game
+//!   (the drift's, the tyres', the clouds of a standing start and of a rocket start, the soot of a
+//!   stalled engine, the « pof » of a shock, an explosion's cloud, the dust off the road and of a
+//!   landing, the foam on the water) is a soft sprite facing the camera, drawn from a texture of
+//!   fractal noise made at startup (four drawings, premultiplied, with its mipmaps), never a 3D
+//!   shape: it grows, turns slowly, rises or spreads with the kart's wind and thins out, lit
+//!   simply (lighter toward the sun, darker below, its shade the biome's sky and ground), fogged,
+//!   faded near the camera's eye and where it touches the ground (`batch.rs`).
 //!
 //! **Fluidity first**: a fixed pool of [`ParticlePool::SLOTS`] slots (`pool.rs`), each with its
 //! entity made once at startup, sharing 4 meshes and 24 materials (issue #174: what glows and
@@ -46,6 +54,7 @@ mod batch;
 mod cues;
 mod emit;
 mod pool;
+mod smoke;
 mod systems;
 mod tuning;
 mod wheels;
@@ -54,21 +63,24 @@ mod wheels;
 mod alloc_tests;
 #[cfg(test)]
 mod scenario_tests;
+#[cfg(test)]
+mod smoke_tests;
 
 pub use atlas::Cell;
-pub use batch::{GroundHalo, MAX_HALOS, QuadColors, Quads};
+pub use batch::{GroundHalo, MAX_HALOS, QuadColors, Quads, SmokeLight};
 pub use cues::{
     BoostSource, Bursts, SparkStyle, TickEvents, VfxSnapshot, boost_source, ember_paint, fov_punch,
     kart_bursts, spark_style, tier_progress,
 };
 pub use emit::{KartFrame, take};
-pub use pool::{Batch, Curve, Facing, Paint, Particle, ParticlePool, Shape, Sparkle};
+pub use pool::{Batch, Curve, Facing, Paint, Particle, ParticlePool, Shape, SmokeMotion, Sparkle};
 pub use systems::{
     DizzyStar, FovKick, KartVfx, MAX_DIZZY_STARS, Particles, VfxAssets, VfxBatch, VfxParticle,
     VfxQueue, WorldBurst, star_mesh,
 };
 pub use tuning::{
-    BoostVfx, DriftVfx, ImpactVfx, VfxColors, VfxTuning, WheelVfx, WorldVfx, ground_dust, road_dust,
+    BoostVfx, DriftVfx, ImpactVfx, SmokeVfx, VfxColors, VfxTuning, WheelVfx, WorldVfx, ground_dust,
+    road_dust,
 };
 pub use wheels::{
     Standstill, Start, WheelDrive, go_puffs, roll_rate, spin_share, steer_angle, steer_from_yaw,
@@ -134,6 +146,10 @@ impl Plugin for VfxPlugin {
                     systems::tint_flames,
                     // Issue #176: the wheels, on top of where the kart's visual puts them.
                     systems::spin_wheels.after(crate::kart::place_wheels),
+                    // Issue #185: the stalled engine's grey cubes, hidden.
+                    systems::hide_stall_cubes.after(crate::kart::show_stall_smoke),
+                    // Issue #185: an explosion's pale sphere, hidden.
+                    systems::hide_blast_balls,
                 )
                     .chain()
                     .in_set(VfxSystems::Show)
