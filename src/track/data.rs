@@ -42,6 +42,16 @@ pub struct TrackData {
     /// line).
     #[serde(default)]
     pub gaps: Vec<GapData>,
+    /// Issue #180 (GD § 16, rule 3): bumps, a real rise and fall of the road (not a ramp), as
+    /// high as a kart and its driver at least ([`MIN_BUMP_HEIGHT`]): a fast kart takes off from
+    /// its crest (a trick works there, GD § 5), a slow one rolls over it.
+    #[serde(default)]
+    pub bumps: Vec<BumpData>,
+    /// Issue #180: drops, a clean step down in the road: it stops at the top and goes on lower
+    /// in the same line, nothing joining the two (a trick works off the edge). Not a fall: the
+    /// pelican does not come.
+    #[serde(default)]
+    pub drops: Vec<DropData>,
     /// Lakes (GD § 10, issue #20): a basin dug in the ground, full of water up to `level`. A kart
     /// whose center is under the water is under water (the stats « eau »). The road may dip
     /// below the ground into a lake only.
@@ -248,6 +258,57 @@ pub struct GapData {
     pub from: f32,
     pub to: f32,
 }
+
+/// Issue #180: a bump of the road, from `at` (a spline parameter, where it starts) over `length`
+/// meters along the centerline: the road rises `height` meters and falls back, a smooth hump
+/// (half a cosine wave up, half down), its walls, shoulders and skirts with it. Its middle half
+/// (around the crest, where a kart takes off) is a trick ramp.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BumpData {
+    pub at: f32,
+    pub height: f32,
+    pub length: f32,
+}
+
+/// Issue #180: a drop, a step down of `height` meters at `at` (a spline parameter): the segment
+/// of the centerline it is on (from point `floor(at)` to the next one) is level with its first
+/// point up to `at`, and with the next one after it. Those two points are `height` apart, the
+/// upper one first (the file is refused otherwise), and the road reaches and leaves them level. The
+/// last [`DROP_LIP`] meters of the upper road are a trick ramp.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DropData {
+    pub at: f32,
+    pub height: f32,
+}
+
+/// Issue #180 (Max: « ces bosses font au moins la hauteur du kart + perso »): a bump is this high
+/// at least (m). A kart and its tallest driver stand about 2 m high (the elephant, its ears; a
+/// test measures it).
+pub const MIN_BUMP_HEIGHT: f32 = 2.2;
+/// Issue #180: and this high at most (m).
+pub const MAX_BUMP_HEIGHT: f32 = 4.0;
+/// Issue #180: a bump is from this long to [`MAX_BUMP_LENGTH`] (m)...
+pub const MIN_BUMP_LENGTH: f32 = 16.0;
+pub const MAX_BUMP_LENGTH: f32 = 60.0;
+/// ...and its steepest slope (`π × height / length`) this at most: the karts drive up it.
+pub const MAX_BUMP_SLOPE: f32 = 0.35;
+/// Issue #180: the share of a bump, around its crest, that is a trick ramp: from this far into
+/// it to this far from its end (its convex part, where a fast kart leaves the road).
+pub const BUMP_TRICK_SHARE: f32 = 0.25;
+/// Issue #180 (Max: « par exemple 2 à 6 m »): a drop is from this high to [`MAX_DROP_HEIGHT`]
+/// (m): at most twice `RaceTuning::fall_depth` (5 m), so that a kart at the foot of the step is
+/// never counted below the upper road by more than it (the race projects it on the closest road).
+pub const MIN_DROP_HEIGHT: f32 = 2.0;
+pub const MAX_DROP_HEIGHT: f32 = 8.0;
+/// Issue #180: the last meters of the upper road before a drop are a trick ramp (m).
+pub const DROP_LIP: f32 = 8.0;
+/// Issue #180: after a drop, the lower road runs on this far at least (m) with nothing in the way
+/// (no gap, zone, ramp, bump or other drop), turning [`DROP_RUN_OUT_TURN`] at most: a kart off the
+/// edge at full speed lands on it, in its line.
+pub const DROP_RUN_OUT: f32 = 35.0;
+pub const DROP_RUN_OUT_TURN: f32 = 30.0;
 
 /// An anti-gravity zone (issue #78), between two spline parameters.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -777,6 +838,7 @@ impl TrackData {
         self.validate_edges_and_shortcuts()?;
         self.validate_hazards()?;
         self.validate_open()?;
+        self.validate_relief()?;
         // Issue #146: its own far decor, on top of its biome's.
         if !self.far_decor.is_empty() && self.biome.is_none() {
             return fail("far_decor without a biome".to_string());
@@ -1111,6 +1173,144 @@ impl TrackData {
                     "open circuit: the {what} at {at} is on the way back (off the road)"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Issue #180: the bumps and the drops. A bump: from [`MIN_BUMP_HEIGHT`] to
+    /// [`MAX_BUMP_HEIGHT`] high, from [`MIN_BUMP_LENGTH`] to [`MAX_BUMP_LENGTH`] long, its slope
+    /// [`MAX_BUMP_SLOPE`] at most. A drop: from [`MIN_DROP_HEIGHT`] to [`MAX_DROP_HEIGHT`] high,
+    /// inside its segment (a tenth of it from each end at least), whose two points are its height
+    /// apart, the upper one first; the lower road straight enough ([`DROP_RUN_OUT_TURN`]) for
+    /// [`DROP_RUN_OUT`] meters after it. Each one clear of the others (a drop's lip and run-out
+    /// included), of the gaps, the anti-gravity zones, the ramps, the start line and its grid; on
+    /// an open circuit, on its road.
+    fn validate_relief(&self) -> Result<(), InvalidTrack> {
+        if self.bumps.is_empty() && self.drops.is_empty() {
+            return Ok(());
+        }
+        let fail = |message: String| Err(InvalidTrack(message));
+        let n = self.points.len();
+        for (k, bump) in self.bumps.iter().enumerate() {
+            if !bump.at.is_finite()
+                || !(MIN_BUMP_HEIGHT..=MAX_BUMP_HEIGHT).contains(&bump.height)
+                || !(MIN_BUMP_LENGTH..=MAX_BUMP_LENGTH).contains(&bump.length)
+                || std::f32::consts::PI * bump.height / bump.length > MAX_BUMP_SLOPE
+            {
+                return fail(format!(
+                    "bump {k} at {}: {} m high ({MIN_BUMP_HEIGHT} to {MAX_BUMP_HEIGHT}), {} m long \
+                     ({MIN_BUMP_LENGTH} to {MAX_BUMP_LENGTH}), its slope π × height / length \
+                     {MAX_BUMP_SLOPE} at most",
+                    bump.at, bump.height, bump.length
+                ));
+            }
+        }
+        for (k, drop) in self.drops.iter().enumerate() {
+            let at = drop.at.rem_euclid(n as f32);
+            let along = at - at.floor();
+            let i = (at.floor() as usize).min(n - 1);
+            let (upper, lower) = (self.points[i].pos.1, self.points[(i + 1) % n].pos.1);
+            if !drop.at.is_finite()
+                || !(MIN_DROP_HEIGHT..=MAX_DROP_HEIGHT).contains(&drop.height)
+                || !(0.1..=0.9).contains(&along)
+                || (upper - lower - drop.height).abs() > 0.05
+            {
+                return fail(format!(
+                    "drop {k} at {}: {} m high ({MIN_DROP_HEIGHT} to {MAX_DROP_HEIGHT}), inside its \
+                     segment (0.1 to 0.9 along it), its points {i} and {} that much apart (the \
+                     upper one first: {upper} and {lower})",
+                    drop.at,
+                    drop.height,
+                    (i + 1) % n
+                ));
+            }
+            let segment = |d: &DropData| (d.at.rem_euclid(n as f32).floor() as usize).min(n - 1);
+            if self.drops[..k].iter().any(|other| {
+                let gap = (segment(other) + n - i) % n;
+                gap <= 1 || gap >= n - 1
+            }) {
+                return fail(format!(
+                    "drop {k} at {}: on the segment of another drop or next to it",
+                    drop.at
+                ));
+            }
+        }
+        let center = super::layout::CenterLine::of(self);
+        let length = center.length();
+        let distance = |p: f32| center.param_to_distance(p);
+        // What each one takes along the track, as (what, start, length) (m).
+        let mut taken: Vec<(String, f32, f32)> = Vec::new();
+        for (k, bump) in center.bumps().iter().enumerate() {
+            taken.push((format!("bump {k}"), bump.from, bump.length));
+        }
+        for (k, cliff) in center.cliffs().iter().enumerate() {
+            taken.push((
+                format!("drop {k}"),
+                cliff.at - DROP_LIP,
+                DROP_LIP + DROP_RUN_OUT,
+            ));
+            // The lower road goes on in the line of the upper one.
+            let flat = |s: super::layout::TrackSample| Vec2::new(s.forward.x, s.forward.z);
+            let turn = flat(center.at(cliff.at + 0.5))
+                .angle_to(flat(center.at(cliff.at + DROP_RUN_OUT)))
+                .abs()
+                .to_degrees();
+            if turn > DROP_RUN_OUT_TURN {
+                return fail(format!(
+                    "drop {k}: the road below it turns {turn:.0}° in {DROP_RUN_OUT} m \
+                     ({DROP_RUN_OUT_TURN}° at most)"
+                ));
+            }
+        }
+        let overlap = |a: (f32, f32), b: (f32, f32)| {
+            (b.0 - a.0).rem_euclid(length) < a.1 || (a.0 - b.0).rem_euclid(length) < b.1
+        };
+        for (i, (what, start, along)) in taken.iter().enumerate() {
+            if let Some((other, ..)) = taken[..i]
+                .iter()
+                .find(|(_, s, l)| overlap((*start, *along), (*s, *l)))
+            {
+                return fail(format!("{what} and {other} overlap"));
+            }
+        }
+        let range = |from: f32, to: f32| {
+            let start = distance(from);
+            (start, (distance(to) - start).rem_euclid(length))
+        };
+        let others = self
+            .gaps
+            .iter()
+            .map(|g| ("a gap", range(g.from, g.to)))
+            .chain(
+                self.anti_gravity
+                    .iter()
+                    .map(|z| ("an anti-gravity zone", range(z.from, z.to))),
+            )
+            .chain(
+                self.trick_ramps
+                    .iter()
+                    .chain(&self.glide_ramps)
+                    .map(|r| ("a ramp", (distance(r.at), r.length))),
+            )
+            .chain(
+                self.shortcuts
+                    .iter()
+                    .filter(|s| s.kind == ShortcutKind::Jump)
+                    .map(|s| ("a risky jump", range(s.from, s.to))),
+            )
+            // The start line and the grid behind it (its last row 38 m behind the line).
+            .chain([("the start line or its grid", (-40.0, 45.0))]);
+        for (other, place) in others {
+            if let Some((what, ..)) = taken.iter().find(|(_, s, l)| overlap((*s, *l), place)) {
+                return fail(format!("{what} on {other}"));
+            }
+        }
+        if center.open().is_some()
+            && let Some((what, ..)) = taken
+                .iter()
+                .find(|(_, s, l)| !center.on_the_road(*s) || !center.on_the_road(s + l))
+        {
+            return fail(format!("open circuit: {what} is off the road"));
         }
         Ok(())
     }
@@ -1556,5 +1756,118 @@ mod tests {
         };
         assert_eq!(prop("racing-kit/grandStandCovered").validate(), Ok(()));
         assert!(prop("grandStandCovered").validate().is_err());
+    }
+
+    /// Issue #180: a stadium (two straights of 300 m, two half circles of 50 m), a point every
+    /// 10 m: 6 m high from the start line to point 12, a drop of 4 m between points 12 and 13
+    /// (at 12.5), 2 m high from there round the far turn, back up to 6 m along the other straight;
+    /// a bump on the first straight after the drop.
+    fn stadium() -> TrackData {
+        let mut points = Vec::new();
+        for i in 0..30 {
+            points.push((0.0, if i <= 12 { 6.0 } else { 2.0 }, -10.0 * i as f32));
+        }
+        for i in 0..15 {
+            let a = std::f32::consts::PI * (1.0 - i as f32 / 15.0);
+            points.push((50.0 + 50.0 * a.cos(), 2.0, -300.0 - 50.0 * a.sin()));
+        }
+        for i in 0..30 {
+            let y = 2.0 + 4.0 * i as f32 / 29.0;
+            points.push((100.0, y, -300.0 + 10.0 * i as f32));
+        }
+        for i in 0..15 {
+            let a = std::f32::consts::PI * i as f32 / 15.0;
+            points.push((50.0 + 50.0 * a.cos(), 6.0, 50.0 * a.sin()));
+        }
+        let points: Vec<String> = points
+            .iter()
+            .map(|(x, y, z)| format!("(pos: ({x}, {y}, {z}))"))
+            .collect();
+        TrackData::from_ron(&format!(
+            "(name: \"Stade\", points: [{}], bumps: [(at: 17.0, height: 2.2, length: 30.0)], \
+             drops: [(at: 12.5, height: 4.0)])",
+            points.join(", ")
+        ))
+        .unwrap()
+    }
+
+    /// Issue #180: bumps and drops that make no sense are refused: a bump lower than a kart and
+    /// its driver, too short or too long, too steep; a drop whose points are not its height
+    /// apart, the upper one first, too low or too high, at the very end of its segment, next to
+    /// another one; a bump on a drop's lip or on the road below it, on the start line or its
+    /// grid, on a ramp, in a gap; a drop whose road below turns away. The mirror keeps them.
+    #[test]
+    fn bumps_and_drops_that_make_no_sense_are_rejected() {
+        let base = stadium();
+        assert_eq!(base.validate(), Ok(()));
+        assert_eq!(base.mirrored().validate(), Ok(()));
+        assert_eq!(base.mirrored().bumps, base.bumps);
+        assert_eq!(base.mirrored().drops, base.drops);
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = base.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.bumps[0].height = 2.0));
+        assert!(broken(&|d| d.bumps[0].height = 4.5));
+        assert!(broken(&|d| d.bumps[0].length = 12.0));
+        assert!(broken(&|d| d.bumps[0].length = 70.0));
+        assert!(broken(&|d| {
+            d.bumps[0].height = 4.0;
+            d.bumps[0].length = 30.0;
+        }));
+        assert!(!broken(&|d| d.bumps[0].length = 40.0));
+        assert!(broken(&|d| d.bumps[0].at = f32::NAN));
+        assert!(broken(&|d| d.drops[0].height = 3.0));
+        assert!(broken(&|d| d.drops[0].at = 12.02));
+        assert!(broken(&|d| d.drops[0].at = 11.5));
+        assert!(broken(&|d| {
+            d.points[13].pos.1 = 7.0;
+            d.drops[0].height = -1.0;
+        }));
+        assert!(broken(&|d| {
+            for p in &mut d.points[..13] {
+                p.pos.1 = 3.5;
+            }
+            d.drops[0].height = 1.5;
+        }));
+        assert!(broken(&|d| {
+            for p in &mut d.points[..13] {
+                p.pos.1 = 12.0;
+            }
+            d.drops[0].height = 10.0;
+        }));
+        assert!(broken(&|d| d.drops.push(DropData {
+            at: 13.5,
+            height: 4.0
+        })));
+        // Clear of each other: the bump on the drop's lip, or on the road below it.
+        assert!(broken(&|d| d.bumps[0].at = 10.0));
+        assert!(broken(&|d| d.bumps[0].at = 14.0));
+        assert!(!broken(&|d| d.bumps[0].at = 16.8));
+        // Not on the start line nor its grid, a ramp or a gap.
+        assert!(broken(&|d| d.bumps[0].at = 0.2));
+        assert!(broken(&|d| d.bumps[0].at = 86.0));
+        assert!(broken(&|d| {
+            d.trick_ramps.push(TrickRampData {
+                at: 18.0,
+                offset: 0.0,
+                width: 6.0,
+                length: 6.0,
+                angle: 12.0,
+            })
+        }));
+        assert!(broken(&|d| d.gaps.push(GapData {
+            from: 18.0,
+            to: 18.5
+        })));
+        // The road below a drop goes on in its line: not into the far turn.
+        assert!(broken(&|d| {
+            for (i, p) in d.points.iter_mut().enumerate() {
+                p.pos.1 = if i <= 29 { 6.0 } else { 2.0 };
+            }
+            d.drops[0].at = 29.5;
+            d.bumps.clear();
+        }));
     }
 }

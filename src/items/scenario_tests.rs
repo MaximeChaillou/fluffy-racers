@@ -2300,7 +2300,20 @@ mod game {
                 }
                 assert!((359..=362).contains(&ticks), "about 6 s: {ticks}");
                 assert!(fastest > 38.0, "{track:?} from {start} m: {fastest} m/s");
-                // The driver again: it brakes.
+                // The driver again: it brakes (issue #180: once on the ground, if the fusée ended
+                // over a bump of the circuit or its drop).
+                for _ in 0..90 {
+                    let world = app.world();
+                    if world
+                        .get::<crate::kart::KartWheels>(kart)
+                        .unwrap()
+                        .wheels_on_ground()
+                        > 0
+                    {
+                        break;
+                    }
+                    app.update();
+                }
                 let speed = app.world().get::<Velocity>(kart).unwrap().linear.length();
                 for _ in 0..60 {
                     app.update();

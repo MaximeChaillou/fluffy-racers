@@ -86,7 +86,20 @@ pub struct RacingLine {
     turn_of: Vec<Option<(usize, f32)>>,
     /// Issue #107: the circuit's shortcuts, as the bots follow them.
     branches: Vec<Branch>,
+    /// Issue #180: the samples where a kart at speed is in the air, off a bump or a drop, counted
+    /// from sample 0 over two laps (`air[i]`: how many of samples `0..i` are), to know how much of
+    /// the way to a turn it cannot brake on. Empty on a circuit without bump nor drop.
+    air: Vec<u32>,
 }
+
+/// Issue #180: a kart at speed leaves a bump this far into it (a share of its length)...
+const BUMP_TAKEOFF: f32 = 0.3;
+/// ...and lands this far after its end (m): measured at full speed on Prairie Pompon (2.2 m over
+/// 34 m: in the air from about 10 m into it to 36 m), `track::relief_tests`.
+const BUMP_LANDING: f32 = 3.0;
+/// Issue #180: a kart at full speed lands this far below the edge of a drop (m): 20 m off the 4 m
+/// of Prairie Pompon.
+const DROP_LANDING: f32 = 20.0;
 
 /// Issue #107: a shortcut of the circuit (`TrackLayout::shortcuts`), as a bot follows it: its
 /// path, the lane to be in before it, and how its path turns.
@@ -344,6 +357,35 @@ impl RacingLine {
             .map(|shortcut| Branch::new(&center, shortcut))
             .collect();
 
+        // Issue #180: where a kart at speed flies, off the bumps and the drops.
+        let flights: Vec<(f32, f32)> = center
+            .bumps()
+            .iter()
+            .map(|b| {
+                let takeoff = b.from + BUMP_TAKEOFF * b.length;
+                (takeoff, b.from + b.length + BUMP_LANDING - takeoff)
+            })
+            .chain(center.cliffs().iter().map(|c| (c.at, DROP_LANDING)))
+            .collect();
+        let air = if flights.is_empty() {
+            Vec::new()
+        } else {
+            let mut count = 0;
+            let mut air = Vec::with_capacity(2 * n + 1);
+            air.push(0);
+            for i in 0..2 * n {
+                let distance = (i % n) as f32 * step;
+                if flights
+                    .iter()
+                    .any(|(start, length)| center.wrap(distance - start) < *length)
+                {
+                    count += 1;
+                }
+                air.push(count);
+            }
+            air
+        };
+
         Self {
             center,
             step,
@@ -354,7 +396,34 @@ impl RacingLine {
             turns,
             turn_of,
             branches,
+            air,
         }
+    }
+
+    /// Issue #180: whether a turn of `angle` (rad) or more is under way at sample `i` or starts
+    /// within `horizon` samples ahead (not counting what of it is behind).
+    pub fn big_turn_within(&self, i: usize, horizon: usize, angle: f32) -> bool {
+        (0..=horizon).any(|k| {
+            let j = (i + k) % self.sample_count();
+            self.turn_of[j].is_some_and(|(turn, _)| self.remaining_angle(turn, i) >= angle)
+        })
+    }
+
+    /// Issue #180: whether the circuit has bumps or drops (a kart at speed flies off them).
+    pub fn has_air(&self) -> bool {
+        !self.air.is_empty()
+    }
+
+    /// Issue #180: how much of the way from sample `from` to `k` samples further a kart at speed
+    /// is in the air, off a bump or a drop (m): it cannot brake there. 0 on a circuit without them.
+    pub fn air_ahead(&self, from: usize, k: usize) -> f32 {
+        if self.air.is_empty() {
+            return 0.0;
+        }
+        let n = self.sample_count();
+        let from = from % n;
+        let to = (from + k).min(2 * n);
+        (self.air[to] - self.air[from]) as f32 * self.step
     }
 
     /// Issue #107: the shortcuts the bots may take.

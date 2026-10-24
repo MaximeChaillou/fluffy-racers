@@ -659,7 +659,7 @@ mod tests {
     /// Issue #3 acceptance: the kart of #1 can drive a full lap, through every checkpoint in
     /// order (hairpin, jump, chicane, banked turn), without leaving the track. Issue #108: the
     /// circuit redrawn (its five hairpins, the Butte, its two trick ramps): in the air only after
-    /// one of its trick ramps.
+    /// one of its trick ramps (issue #180: or one of its bumps, or its drop).
     #[test]
     fn kart_drives_a_full_lap_of_the_circuit() {
         let mut app = app_on(TrackChoice::default());
@@ -678,12 +678,20 @@ mod tests {
             .get(&handle)
             .unwrap()
             .clone();
-        let ramps: Vec<(f32, f32)> = data
+        let mut ramps: Vec<(f32, f32)> = data
             .trick_ramps
             .iter()
             .map(|ramp| (center.param_to_distance(ramp.at), ramp.length))
             .collect();
         assert!(!ramps.is_empty());
+        // Issue #180: and its bumps and its drop (their trick stretches; a kart flies further
+        // off them than off a ramp).
+        ramps.extend(
+            center
+                .trick_stretches()
+                .into_iter()
+                .map(|(start, length)| (start, length + 30.0)),
+        );
 
         // Distance to drive from the grid to reach checkpoint `k` (the last one closes the lap:
         // back on the start line).
@@ -722,7 +730,7 @@ mod tests {
                 lateral < track::mesh::wall_offset(&sample),
                 "left the track at {position}"
             );
-            // ...and only in the air after a trick ramp.
+            // ...and only in the air after a trick ramp (issue #180: or a bump, or a drop).
             if world.get::<KartState>(kart) == Some(&KartState::Airborne) {
                 airborne_ticks += 1;
                 assert!(

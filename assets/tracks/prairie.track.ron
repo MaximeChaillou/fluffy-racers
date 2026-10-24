@@ -164,30 +164,32 @@
         (pos: (189.98, 6.50, 47.02), width: 14.0, shoulder: 2.0),
         (pos: (186.36, 6.50, 54.15), width: 14.0, shoulder: 2.0),
         (pos: (184.75, 6.50, 61.98), width: 14.0, shoulder: 2.0),
-        // down the Butte, south.
-        (pos: (184.68, 6.48, 69.99), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 5.94, 78.01), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 4.87, 86.02), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 3.52, 94.04), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 2.12, 102.05), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 0.91, 110.07), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 0.15, 118.08), width: 14.0, shoulder: 2.0),
-        // a hairpin to the right (radius 22 m), in the meadow.
-        (pos: (184.47, 0.00, 126.09), width: 14.0, shoulder: 5.0),
-        (pos: (181.95, 0.00, 133.65), width: 14.0, shoulder: 5.0),
-        (pos: (176.90, 0.00, 139.82), width: 14.0, shoulder: 5.0),
-        (pos: (169.99, 0.00, 143.79), width: 14.0, shoulder: 5.0),
-        (pos: (162.12, 0.00, 145.03), width: 14.0, shoulder: 5.0),
-        (pos: (154.32, 0.00, 143.38), width: 14.0, shoulder: 5.0),
-        (pos: (147.61, 0.00, 139.07), width: 14.0, shoulder: 5.0),
-        (pos: (142.89, 0.00, 132.65), width: 14.0, shoulder: 5.0),
-        (pos: (140.77, 0.00, 124.96), width: 14.0, shoulder: 5.0),
-        (pos: (141.52, 0.00, 117.03), width: 14.0, shoulder: 5.0),
-        (pos: (144.21, 0.00, 109.48), width: 14.0, shoulder: 2.0),
-        (pos: (146.71, 0.00, 101.87), width: 14.0, shoulder: 2.0),
-        (pos: (147.81, 0.00, 93.94), width: 14.0, shoulder: 2.0),
-        // north.
-        (pos: (147.84, 0.00, 85.93), width: 14.0, shoulder: 2.0),
+        // down the Butte, south (issue #180: down to the terrace of the hairpin below, 2.5 m above
+        // the meadow).
+        (pos: (184.68, 6.49, 69.99), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 6.16, 78.01), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 5.50, 86.02), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 4.67, 94.04), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 3.80, 102.05), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 3.06, 110.07), width: 14.0, shoulder: 2.0),
+        (pos: (184.68, 2.59, 118.08), width: 14.0, shoulder: 2.0),
+        // a hairpin to the right (radius 22 m), on a terrace 2.5 m above the meadow (issue #180).
+        (pos: (184.47, 2.50, 126.09), width: 14.0, shoulder: 5.0),
+        (pos: (181.95, 2.50, 133.65), width: 14.0, shoulder: 5.0),
+        (pos: (176.90, 2.50, 139.82), width: 14.0, shoulder: 5.0),
+        (pos: (169.99, 2.50, 143.79), width: 14.0, shoulder: 5.0),
+        (pos: (162.12, 2.50, 145.03), width: 14.0, shoulder: 5.0),
+        (pos: (154.32, 2.50, 143.38), width: 14.0, shoulder: 5.0),
+        (pos: (147.61, 2.50, 139.07), width: 14.0, shoulder: 5.0),
+        (pos: (142.89, 2.50, 132.65), width: 14.0, shoulder: 5.0),
+        (pos: (140.77, 2.50, 124.96), width: 14.0, shoulder: 5.0),
+        (pos: (141.52, 2.50, 117.03), width: 14.0, shoulder: 5.0),
+        (pos: (144.21, 2.50, 109.48), width: 14.0, shoulder: 2.0),
+        (pos: (146.71, 2.50, 101.87), width: 14.0, shoulder: 2.0),
+        (pos: (147.81, 2.50, 93.94), width: 14.0, shoulder: 2.0),
+        // north: issue #180, off the terrace by a drop of 2.5 m (the road level up to its edge,
+        // between these two points), then on in the meadow.
+        (pos: (147.84, 2.50, 85.93), width: 14.0, shoulder: 2.0),
         (pos: (147.84, 0.00, 77.91), width: 14.0, shoulder: 2.0),
         (pos: (147.84, 0.00, 69.90), width: 14.0, shoulder: 2.0),
         (pos: (147.84, 0.00, 61.88), width: 14.0, shoulder: 2.0),
@@ -242,6 +244,23 @@
         (pos: (-0.00, 0.00, 16.03), width: 14.0, shoulder: 4.0),
         (pos: (-0.00, 0.00, 8.02), width: 14.0, shoulder: 4.0),
     ],
+    // Issue #180 (GD § 16, rule 3): bumps, a real rise and fall of the road, 2.2 m high (a kart
+    // and its tallest driver): a fast kart takes off from their crest (a trick there gives the
+    // boost), a slow one rolls over. Where nothing turns for long after: up the Butte (the pad at
+    // its foot launches the karts onto it), and out of the last corner toward the line, before
+    // the grid. Not on the short straights between two hairpins: a kart that lands there is too
+    // late to set up its drift (the bots, and a player on the keyboard, lose their orange).
+    bumps: [
+        (at: 44.2, height: 2.2, length: 32.0),
+        (at: 162.2, height: 2.2, length: 28.0),
+    ],
+    // Issue #180: a drop of 2.5 m off the terrace of the meadow's hairpin, on the straight north:
+    // the road stops at its edge and goes on below, in its line (a trick off the edge gives the
+    // boost). Not a fall: no pelican. (Down the Butte, the drop landed too close to the hairpin
+    // below it.)
+    drops: [
+        (at: 123.5, height: 2.5),
+    ],
     offroad: [
         // Sand at the inside of the first hairpin: cutting the apex costs speed.
         (from: 19.370, to: 23.141, left: 0.55, right: 1.0),
@@ -285,12 +304,13 @@
         (kind: Rock, at: 83.162, offset: -0.95, size: 1.1, yaw: 20.0),
     ],
     // The bison of the Butte, pacing across the right side of the climb before the hairpin to the
-    // right at the top (the karts keep left, on its outside).
+    // right at the top (the karts keep left, on its outside); issue #180: past the landing of
+    // the climb's bump, like the second row of boxes and the croquettes after it.
     npcs: [
-        (kind: Bison, at: 49.886, offset: 0.55, sweep: 0.3, period: 6.5),
+        (kind: Bison, at: 51.6, offset: 0.55, sweep: 0.3, period: 6.5),
     ],
-    // Things to drive through: balloons on the climb, hay bales down the Butte and along the
-    // bottom straight.
+    // Things to drive through: balloons on the climb (on its bump), hay bales down the Butte and
+    // along the bottom straight.
     breakables: [
         (kind: Balloon, at: 45.520, offsets: [-0.55, 0.0, 0.55]),
         (kind: HayBale, at: 104.254, offsets: [-0.5]),
@@ -317,7 +337,7 @@
     ],
     item_boxes: [
         (at: 9.357, offsets: [-0.6, -0.2, 0.2, 0.6]),
-        (at: 47.391, offsets: [-0.5, 0.0, 0.5]),
+        (at: 49.2, offsets: [-0.5, 0.0, 0.5]),
         (at: 156.647, offsets: [-0.5, 0.0, 0.5]),
         (at: 74.984, offsets: [-0.7], double: true),
     ],
@@ -328,7 +348,7 @@
         (from: 1.996, count: 5, spacing: 3.0, offset: 0.42),
         (from: 6.737, count: 4, spacing: 3.0, offset: -0.45),
         (from: 31.034, count: 4, spacing: 3.0, offset: 0.4),
-        (from: 51.508, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 53.2, count: 4, spacing: 3.0, offset: -0.4),
         (from: 82.663, count: 3, spacing: 3.0, offset: 0.3),
         (from: 127.178, count: 4, spacing: 3.0, offset: 0.4),
         (from: 157.146, count: 4, spacing: 3.0, offset: 0.45),

@@ -59,6 +59,11 @@ pub struct TrackHandle(pub Handle<TrackData>);
 #[derive(Component, Clone, Copy, Debug)]
 pub struct TrickRamp;
 
+/// Issue #180: on the collider of the faces of the drops (a wall to the karts, apart from the low
+/// walls).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct DropFace;
+
 /// On the collider of a glide ramp (GD § 10, issue #20), with [`TrickRamp`] (a trick works off
 /// it too): leaving it opens the kart's glider (`crate::kart::KartEnvironment`).
 #[derive(Component, Clone, Copy, Debug)]
@@ -240,6 +245,39 @@ pub fn build_circuit_when_loaded(
                 0.0,
                 TriMeshFlags::FIX_INTERNAL_EDGES,
             );
+        }
+    }
+
+    // Issue #180: the faces of the drops, solid like a wall (two-sided), only on a circuit that
+    // has some.
+    if !generated.cliffs.indices.is_empty()
+        && let Some(entity) = spawn_trimesh(
+            &mut commands,
+            &generated.cliffs,
+            Surface::Wall,
+            WALL_RESTITUTION,
+            TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,
+        )
+    {
+        commands.entity(entity).insert(DropFace);
+    }
+    // Issue #180: the trick stretches of the bumps and the drops (their road and shoulders),
+    // marked as trick ramps (GD § 5), only on a circuit that has some (nothing new elsewhere).
+    for (mesh, surface) in [
+        (&generated.trick_road, Surface::Road),
+        (&generated.trick_offroad, Surface::Offroad),
+    ] {
+        if mesh.indices.is_empty() {
+            continue;
+        }
+        if let Some(entity) = spawn_trimesh(
+            &mut commands,
+            mesh,
+            surface,
+            0.0,
+            TriMeshFlags::FIX_INTERNAL_EDGES,
+        ) {
+            commands.entity(entity).insert(TrickRamp);
         }
     }
 

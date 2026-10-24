@@ -4,7 +4,10 @@
 use bevy::prelude::*;
 
 use super::anti_gravity::AntiGravityZone;
-use super::data::{AntiGravityData, ControlPoint, OffroadZone, TrackData};
+use super::data::{
+    AntiGravityData, BUMP_TRICK_SHARE, BumpData, ControlPoint, DROP_LIP, DropData, OffroadZone,
+    TrackData,
+};
 use super::hazard::Hazard;
 use super::shortcut::{OpenEdge, Shortcut};
 use super::water::{Gap, Lake};
@@ -55,6 +58,26 @@ pub struct CenterLine {
     control_distances: Vec<f32>,
     /// Issue #119: an open circuit's ends (its file's `open`); None on a circuit of laps.
     open: Option<OpenEnds>,
+    /// Issue #180: its bumps and its drops (its file's `bumps` and `drops`), along it.
+    bumps: Vec<BumpSpan>,
+    cliffs: Vec<Cliff>,
+}
+
+/// Issue #180: a bump of the road (`TrackData::bumps`), along the centerline: from `from`,
+/// `length` meters long (m), `height` meters high at its crest, in its middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BumpSpan {
+    pub from: f32,
+    pub length: f32,
+    pub height: f32,
+}
+
+/// Issue #180: a drop (`TrackData::drops`): the road steps down `height` meters at `at` (a
+/// distance along the centerline), level on both sides.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cliff {
+    pub at: f32,
+    pub height: f32,
 }
 
 /// Issue #119: where an open circuit's race and road begin and end, as distances along its
@@ -157,6 +180,82 @@ pub fn bank_between(a: f32, b: f32, slopes: (f32, f32), t: f32) -> f32 {
         + (t3 - t2) * slopes.1
 }
 
+/// Issue #180: the cubic Hermite curve from `a` to `b` (slopes `ma` and `mb` per segment) at `t`
+/// (0 to 1), and its slope: a height between two points whose tangent is set (level at a drop).
+fn hermite(a: f32, ma: f32, b: f32, mb: f32, t: f32) -> (f32, f32) {
+    let (t2, t3) = (t * t, t * t * t);
+    (
+        (2.0 * t3 - 3.0 * t2 + 1.0) * a
+            + (t3 - 2.0 * t2 + t) * ma
+            + (-2.0 * t3 + 3.0 * t2) * b
+            + (t3 - t2) * mb,
+        (6.0 * t2 - 6.0 * t) * a
+            + (3.0 * t2 - 4.0 * t + 1.0) * ma
+            + (-6.0 * t2 + 6.0 * t) * b
+            + (3.0 * t2 - 2.0 * t) * mb,
+    )
+}
+
+/// The cumulative length of the curve `at` at each of `params` (from 0, evenly spaced), from the
+/// first one. Issue #180: a step down of the road (a parameter of `cliffs` within a sub-step) has
+/// no length: only the way across it counts there.
+fn measure(params: &[f32], cliffs: &[f32], at: impl Fn(f32) -> Vec3) -> Vec<f32> {
+    let mut lengths = Vec::with_capacity(params.len());
+    let mut total = 0.0;
+    let mut previous = at(0.0);
+    let mut last = 0.0;
+    for &param in params {
+        let position = at(param);
+        total += if cliffs.iter().any(|c| *c > last && *c <= param) {
+            (position - previous).xz().length()
+        } else {
+            position.distance(previous)
+        };
+        previous = position;
+        last = param;
+        lengths.push(total);
+    }
+    lengths
+}
+
+/// Issue #180: the length at spline parameter `param` of the cumulative `lengths` of
+/// [`measure`] (one every 1/[`SUBSTEPS`] of a segment).
+fn interpolate(lengths: &[f32], param: f32) -> f32 {
+    let x = param * SUBSTEPS as f32;
+    let k = (x.floor().max(0.0) as usize).min(lengths.len() - 2);
+    lengths[k] + (lengths[k + 1] - lengths[k]) * (x - k as f32)
+}
+
+/// Issue #180: the spline parameter at length `distance` of the cumulative `lengths` (the
+/// inverse of [`interpolate`]).
+fn param_at(lengths: &[f32], distance: f32) -> f32 {
+    let k = lengths
+        .partition_point(|l| *l <= distance)
+        .clamp(1, lengths.len() - 1)
+        - 1;
+    let span = (lengths[k + 1] - lengths[k]).max(1e-6);
+    (k as f32 + ((distance - lengths[k]) / span).clamp(0.0, 1.0)) / SUBSTEPS as f32
+}
+
+/// Issue #180: the height the bumps `humps` ((start, length, height), along a loop of
+/// `loop_length` meters) add to the road at `distance`, and its slope (per meter): half a cosine
+/// wave up, half down.
+fn hump(humps: &[(f32, f32, f32)], loop_length: f32, distance: f32) -> (f32, f32) {
+    humps
+        .iter()
+        .fold((0.0, 0.0), |(height, slope), (start, length, top)| {
+            let x = (distance - start).rem_euclid(loop_length);
+            if x >= *length {
+                return (height, slope);
+            }
+            let (sin, cos) = (std::f32::consts::TAU * x / length).sin_cos();
+            (
+                height + top * (1.0 - cos) / 2.0,
+                slope + top * std::f32::consts::PI / length * sin,
+            )
+        })
+}
+
 impl CenterLine {
     /// Samples the closed spline through `points` roughly every `step` meters.
     pub fn new(points: &[ControlPoint], step: f32) -> Self {
@@ -167,7 +266,13 @@ impl CenterLine {
     /// where the banking flows from point to point (issue #78, [`bank_slopes`]).
     /// Issue #119: an open circuit's ends too.
     pub fn of(data: &TrackData) -> Self {
-        let mut center = Self::with_zones(&data.points, data.sample_step, &data.anti_gravity);
+        let mut center = Self::shaped(
+            &data.points,
+            data.sample_step,
+            &data.anti_gravity,
+            &data.bumps,
+            &data.drops,
+        );
         center.open = data.open.as_ref().map(|open| {
             let distance = |p: f32| center.param_to_distance(p);
             OpenEnds {
@@ -184,10 +289,47 @@ impl CenterLine {
 
     /// The same, the banking flowing in the anti-gravity zones `zones` ([`bank_slopes`]).
     pub fn with_zones(points: &[ControlPoint], step: f32, zones: &[AntiGravityData]) -> Self {
+        Self::shaped(points, step, zones, &[], &[])
+    }
+
+    /// The same, with the bumps and the drops of issue #180 (`TrackData::bumps`, `drops`): a
+    /// bump adds its hump to the height of the road (a function of the distance along the
+    /// centerline without it); a drop makes its segment level with its first point up to the step
+    /// and with the next one after it, both ends of the segment reached and left level (the
+    /// height's tangent flat there). The step itself has no length: the distances run on through
+    /// it, and [`CenterLine::at`] never blends across it. Without either, exactly the centerline
+    /// before #180.
+    pub fn shaped(
+        points: &[ControlPoint],
+        step: f32,
+        zones: &[AntiGravityData],
+        bumps: &[BumpData],
+        drops: &[DropData],
+    ) -> Self {
         let n = points.len();
         let slopes = bank_slopes(points, zones);
         assert!(n >= 4, "a track needs at least 4 control points");
         let point = |i: usize| points[i % n];
+        // Issue #180: each drop's segment and where along it the road steps down (0 to 1).
+        let steps: Vec<(usize, f32)> = drops
+            .iter()
+            .map(|d| {
+                let at = d.at.rem_euclid(n as f32);
+                ((at.floor() as usize).min(n - 1), at - at.floor())
+            })
+            .collect();
+        let level = |i: usize| {
+            steps
+                .iter()
+                .any(|(s, _)| *s == i % n || (*s + 1) % n == i % n)
+        };
+        let height_slope = |i: usize| {
+            if level(i) {
+                0.0
+            } else {
+                (point(i + 1).pos.1 - point(i + n - 1).pos.1) / 2.0
+            }
+        };
         let curve_at = |param: f32| {
             let segment = (param.floor() as usize) % n;
             let t = param - param.floor();
@@ -197,31 +339,64 @@ impl CenterLine {
                 point(segment + 1).position(),
                 point(segment + 2).position(),
             );
+            let mut position = catmull_rom(p0, p1, p2, p3, t);
+            let mut tangent = catmull_rom_tangent(p0, p1, p2, p3, t);
+            if !steps.is_empty() {
+                if let Some((_, cliff)) = steps.iter().find(|(s, _)| *s == segment) {
+                    position.y = if t < *cliff { p1.y } else { p2.y };
+                    tangent.y = 0.0;
+                } else if level(segment) || level(segment + 1) {
+                    (position.y, tangent.y) = hermite(
+                        p1.y,
+                        height_slope(segment),
+                        p2.y,
+                        height_slope(segment + 1),
+                        t,
+                    );
+                }
+            }
             (
-                catmull_rom(p0, p1, p2, p3, t),
-                catmull_rom_tangent(p0, p1, p2, p3, t),
+                position,
+                tangent,
                 point(segment),
                 point(segment + 1),
                 t,
                 (slopes[segment], slopes[(segment + 1) % n]),
             )
         };
+        // Issue #180: where the road steps down (spline parameters, in `[0, n)`).
+        let cliffs: Vec<f32> = drops.iter().map(|d| d.at.rem_euclid(n as f32)).collect();
 
         // Measure: cumulative length at each fine sub-step.
         let fine_count = n * SUBSTEPS;
-        let mut fine_params = Vec::with_capacity(fine_count + 1);
-        let mut fine_lengths = Vec::with_capacity(fine_count + 1);
-        let mut total = 0.0;
-        let mut previous = curve_at(0.0).0;
-        for k in 0..=fine_count {
-            let param = k as f32 / SUBSTEPS as f32;
-            let position = curve_at(param).0;
-            total += position.distance(previous);
-            previous = position;
-            fine_params.push(param);
-            fine_lengths.push(total);
-        }
-        let length = total;
+        let fine_params: Vec<f32> = (0..=fine_count)
+            .map(|k| k as f32 / SUBSTEPS as f32)
+            .collect();
+        let base = measure(&fine_params, &cliffs, |param| curve_at(param).0);
+        // Issue #180: the bumps, along the centerline without them: (start, length, height) (m).
+        let base_length = base[fine_count];
+        let humps: Vec<(f32, f32, f32)> = bumps
+            .iter()
+            .map(|b| {
+                let at = b.at.rem_euclid(n as f32);
+                (interpolate(&base, at), b.length, b.height)
+            })
+            .collect();
+        let shaped_at = |param: f32| {
+            let mut curve = curve_at(param);
+            if !humps.is_empty() {
+                let (height, slope) = hump(&humps, base_length, interpolate(&base, param));
+                curve.0.y += height;
+                curve.1.y += slope * curve.1.length();
+            }
+            curve
+        };
+        let fine_lengths = if humps.is_empty() {
+            base.clone()
+        } else {
+            measure(&fine_params, &cliffs, |param| shaped_at(param).0)
+        };
+        let length = fine_lengths[fine_count];
         let control_distances = (0..n).map(|i| fine_lengths[i * SUBSTEPS]).collect();
 
         // Resample at a constant distance step that divides the length exactly.
@@ -237,7 +412,7 @@ impl CenterLine {
             let span = (fine_lengths[fine + 1] - fine_lengths[fine]).max(1e-6);
             let along = ((distance - fine_lengths[fine]) / span).clamp(0.0, 1.0);
             let param = fine_params[fine] + (fine_params[fine + 1] - fine_params[fine]) * along;
-            let (position, tangent, a, b, t, slopes) = curve_at(param);
+            let (position, tangent, a, b, t, slopes) = shaped_at(param);
 
             let forward = tangent.normalize_or(Vec3::NEG_Z);
             let flat_right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
@@ -256,12 +431,71 @@ impl CenterLine {
             });
         }
 
+        // Issue #180: the bumps and the steps, as distances along the centerline.
+        let bump_spans = humps
+            .iter()
+            .map(|(start, along, height)| {
+                let from = interpolate(&fine_lengths, param_at(&base, *start));
+                let end = (start + along).rem_euclid(base_length);
+                let to = interpolate(&fine_lengths, param_at(&base, end));
+                BumpSpan {
+                    from,
+                    length: (to - from).rem_euclid(length),
+                    height: *height,
+                }
+            })
+            .collect();
+        let steps = drops
+            .iter()
+            .zip(&cliffs)
+            .map(|(drop, param)| Cliff {
+                at: interpolate(&fine_lengths, *param),
+                height: drop.height,
+            })
+            .collect();
+
         Self {
             samples,
             length,
             control_distances,
             open: None,
+            bumps: bump_spans,
+            cliffs: steps,
         }
+    }
+
+    /// Issue #180: the bumps, as distances along the centerline.
+    pub fn bumps(&self) -> &[BumpSpan] {
+        &self.bumps
+    }
+
+    /// Issue #180: the drops: where the road steps down, and how far.
+    pub fn cliffs(&self) -> &[Cliff] {
+        &self.cliffs
+    }
+
+    /// Issue #180: the stretches of the road that are trick ramps (GD § 5), as (start, length)
+    /// along the centerline: the middle of each bump ([`BUMP_TRICK_SHARE`] in from each end:
+    /// around its crest, where a fast kart takes off), the last [`DROP_LIP`] meters before each
+    /// drop. None on a circuit without them.
+    pub fn trick_stretches(&self) -> Vec<(f32, f32)> {
+        self.bumps
+            .iter()
+            .map(|b| {
+                (
+                    b.from + BUMP_TRICK_SHARE * b.length,
+                    (1.0 - 2.0 * BUMP_TRICK_SHARE) * b.length,
+                )
+            })
+            .chain(self.cliffs.iter().map(|c| (c.at - DROP_LIP, DROP_LIP)))
+            .collect()
+    }
+
+    /// Issue #180: whether `distance` (wrapped) is on one of the [`trick_stretches`](Self::trick_stretches).
+    pub fn on_a_trick_stretch(&self, stretches: &[(f32, f32)], distance: f32) -> bool {
+        stretches
+            .iter()
+            .any(|(start, length)| self.wrap(distance - start) < *length)
     }
 
     pub fn length(&self) -> f32 {
@@ -319,9 +553,21 @@ impl CenterLine {
         let a = self.samples[index];
         let b = self.samples[(index + 1) % self.samples.len()];
         let t = ((distance - a.distance) / step).clamp(0.0, 1.0);
+        let mut position = a.position.lerp(b.position, t);
+        // Issue #180: never across a step down: the road is level on both sides of it.
+        for cliff in &self.cliffs {
+            let into = self.wrap(cliff.at - a.distance);
+            if into > 0.0 && into <= step {
+                position.y = if distance - a.distance < into {
+                    a.position.y
+                } else {
+                    b.position.y
+                };
+            }
+        }
         TrackSample {
             distance,
-            position: a.position.lerp(b.position, t),
+            position,
             forward: a.forward.lerp(b.forward, t).normalize_or(a.forward),
             right: a.right.lerp(b.right, t).normalize_or(a.right),
             up: a.up.lerp(b.up, t).normalize_or(a.up),
@@ -480,6 +726,9 @@ pub const GRID_SLOTS: usize = 12;
 /// the track, each way).
 const HAZARD_RESPAWN_CLEARANCE: f32 = 9.0;
 
+/// Issue #180: nor this far below a drop (m), where the karts off its edge land.
+const DROP_LANDING: f32 = 20.0;
+
 impl TrackLayout {
     pub fn new(data: &TrackData) -> Self {
         let center = CenterLine::of(data);
@@ -489,44 +738,56 @@ impl TrackLayout {
             // a gap (issue #20: no road there) or just before one, in an anti-gravity zone (issue
             // #78: on a wall, maybe), along a stretch without wall (issue #107: the pelican drops
             // a kart that fell from it before it).
-            let blocked: Vec<(f32, f32)> = data
-                .trick_ramps
-                .iter()
-                .chain(&data.glide_ramps)
-                .map(|r| (r.at, r.length + 3.0))
-                .chain(
-                    data.gaps
-                        .iter()
-                        .map(|g| (g.from, g.to))
-                        .chain(data.anti_gravity.iter().map(|z| (z.from, z.to)))
-                        .chain(data.open_edges.iter().map(|e| (e.from, e.to)))
-                        .map(|(from_param, to_param)| {
-                            let from = center.param_to_distance(from_param);
-                            let to = center.param_to_distance(to_param);
-                            (from_param, center.wrap(to - from) + 3.0)
-                        }),
-                )
-                .chain(data.offroad.iter().map(|z| {
-                    let from = center.param_to_distance(z.from);
-                    let to = center.param_to_distance(z.to);
-                    (z.from, center.wrap(to - from) + 3.0)
-                }))
-                .map(|(param, length)| (center.param_to_distance(param) - 3.0, length + 3.0))
-                // Issue #144: nor on an obstacle or a passer-by's way (some meters around it).
-                .chain(
-                    data.obstacles
-                        .iter()
-                        .map(|o| o.at)
-                        .chain(data.npcs.iter().map(|n| n.at))
-                        .map(|at| {
-                            let distance = center.param_to_distance(at);
-                            (
-                                distance - HAZARD_RESPAWN_CLEARANCE,
-                                2.0 * HAZARD_RESPAWN_CLEARANCE,
-                            )
-                        }),
-                )
-                .collect();
+            let blocked: Vec<(f32, f32)> =
+                data.trick_ramps
+                    .iter()
+                    .chain(&data.glide_ramps)
+                    .map(|r| (r.at, r.length + 3.0))
+                    .chain(
+                        data.gaps
+                            .iter()
+                            .map(|g| (g.from, g.to))
+                            .chain(data.anti_gravity.iter().map(|z| (z.from, z.to)))
+                            .chain(data.open_edges.iter().map(|e| (e.from, e.to)))
+                            .map(|(from_param, to_param)| {
+                                let from = center.param_to_distance(from_param);
+                                let to = center.param_to_distance(to_param);
+                                (from_param, center.wrap(to - from) + 3.0)
+                            }),
+                    )
+                    .chain(data.offroad.iter().map(|z| {
+                        let from = center.param_to_distance(z.from);
+                        let to = center.param_to_distance(z.to);
+                        (z.from, center.wrap(to - from) + 3.0)
+                    }))
+                    .map(|(param, length)| (center.param_to_distance(param) - 3.0, length + 3.0))
+                    // Issue #144: nor on an obstacle or a passer-by's way (some meters around it).
+                    .chain(
+                        data.obstacles
+                            .iter()
+                            .map(|o| o.at)
+                            .chain(data.npcs.iter().map(|n| n.at))
+                            .map(|at| {
+                                let distance = center.param_to_distance(at);
+                                (
+                                    distance - HAZARD_RESPAWN_CLEARANCE,
+                                    2.0 * HAZARD_RESPAWN_CLEARANCE,
+                                )
+                            }),
+                    )
+                    // Issue #180: nor on a bump, nor on the lip of a drop or just below it.
+                    .chain(
+                        center
+                            .bumps()
+                            .iter()
+                            .map(|b| (b.from - 3.0, b.length + 6.0))
+                            .chain(
+                                center.cliffs().iter().map(|c| {
+                                    (c.at - DROP_LIP - 3.0, DROP_LIP + 3.0 + DROP_LANDING)
+                                }),
+                            ),
+                    )
+                    .collect();
             checkpoints
                 .iter()
                 .map(|c| c.sample.distance)
@@ -1223,5 +1484,140 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Issue #180: Prairie Pompon, its demonstration circuit (its bumps and its drop).
+    fn prairie_pompon() -> TrackData {
+        let data =
+            TrackData::from_ron(include_str!("../../assets/tracks/prairie.track.ron")).unwrap();
+        data.validate().unwrap();
+        data
+    }
+
+    /// Issue #180: each bump of Prairie Pompon (and its mirror) rises and falls back on its
+    /// stretch only: its crest, in its middle, as high above the road without it as it is
+    /// declared; nothing changed beyond it; no sample-to-sample jump steeper than its slope; the
+    /// road's frame tilted with it (its forward up its slope). Its middle half is a trick stretch.
+    #[test]
+    fn a_bump_rises_and_falls_back_on_its_stretch() {
+        for data in [prairie_pompon(), prairie_pompon().mirrored()] {
+            let center = CenterLine::of(&data);
+            let flat = CenterLine::shaped(
+                &data.points,
+                data.sample_step,
+                &data.anti_gravity,
+                &[],
+                &data.drops,
+            );
+            assert_eq!(center.bumps().len(), data.bumps.len());
+            let step = center.length() / center.samples().len() as f32;
+            let stretches = center.trick_stretches();
+            for (bump, declared) in center.bumps().iter().zip(&data.bumps) {
+                assert!((bump.length - declared.length).abs() < 1.0, "{bump:?}");
+                assert_eq!(bump.height, declared.height);
+                // Its start where the file puts it (the bump adds a little length on the way).
+                let start = center.param_to_distance(declared.at);
+                assert!((bump.from - start).abs() < 0.5, "{bump:?} {start}");
+                // Compared with the road without it, the same distance from its start.
+                let rise = |along: f32| {
+                    center.at(bump.from + along).position.y
+                        - flat
+                            .at(flat.param_to_distance(declared.at) + along)
+                            .position
+                            .y
+                };
+                let crest = rise(bump.length / 2.0);
+                assert!((crest - bump.height).abs() < 0.05, "{crest} {bump:?}");
+                // (On a slope, the length the bump adds shifts the two a little.)
+                for along in [-5.0, -1.0, bump.length + 1.0, bump.length + 5.0] {
+                    assert!(rise(along).abs() < 0.05, "{along}: {}", rise(along));
+                }
+                let slope = std::f32::consts::PI * bump.height / bump.length;
+                let mut steepest: f32 = 0.0;
+                for k in 0..(bump.length / step) as usize {
+                    let (a, b) = (rise(k as f32 * step), rise((k + 1) as f32 * step));
+                    steepest = steepest.max((b - a).abs() / step);
+                }
+                assert!(steepest <= slope + 0.02, "{steepest} > {slope}");
+                // Up its slope at a quarter, down it at three quarters (over the road's own).
+                let tilt = |along: f32| {
+                    center.at(bump.from + along).forward.y
+                        - flat
+                            .at(flat.param_to_distance(declared.at) + along)
+                            .forward
+                            .y
+                };
+                let (up, down) = (tilt(bump.length / 4.0), tilt(0.75 * bump.length));
+                assert!(up > 0.8 * slope && down < -0.8 * slope, "{up} {down}");
+                for (along, tricky) in [(0.2, false), (0.3, true), (0.7, true), (0.8, false)] {
+                    let distance = bump.from + along * bump.length;
+                    assert_eq!(center.on_a_trick_stretch(&stretches, distance), tricky);
+                }
+            }
+        }
+    }
+
+    /// Issue #180: the drop of Prairie Pompon (and its mirror) is a clean step down of its
+    /// height: the road level on both sides of it (`at` never blends across it, the samples
+    /// around it flat), no length added by the step (the samples as far apart across it as
+    /// anywhere), its last 8 m above a trick stretch; no pelican's drop point on it nor just
+    /// below it.
+    #[test]
+    fn a_drop_is_a_clean_step_down() {
+        for data in [prairie_pompon(), prairie_pompon().mirrored()] {
+            let layout = TrackLayout::new(&data);
+            let center = &layout.center;
+            assert_eq!(center.cliffs().len(), 1);
+            let cliff = center.cliffs()[0];
+            assert_eq!(cliff.height, data.drops[0].height);
+            assert!((cliff.at - center.param_to_distance(data.drops[0].at)).abs() < 0.5);
+            let (above, below) = (center.at(cliff.at - 0.02), center.at(cliff.at + 0.02));
+            assert!(
+                (above.position.y - below.position.y - cliff.height).abs() < 0.01,
+                "{above:?} {below:?}"
+            );
+            for along in [-6.0, -3.0, -0.5, 0.5, 3.0, 6.0] {
+                let s = center.at(cliff.at + along);
+                assert!(s.forward.y.abs() < 0.02, "{along}: {s:?}");
+                let level = if along < 0.0 { above } else { below };
+                assert!((s.position.y - level.position.y).abs() < 0.02, "{along}");
+            }
+            let step = center.length() / center.samples().len() as f32;
+            let i = (cliff.at / step) as usize;
+            for k in i - 3..i + 3 {
+                let (a, b) = (center.samples()[k], center.samples()[k + 1]);
+                let across = (b.position - a.position).xz().length();
+                assert!((across - step).abs() < 0.05, "{k}: {across} for {step}");
+            }
+            let stretches = center.trick_stretches();
+            assert!(center.on_a_trick_stretch(&stretches, cliff.at - 0.5));
+            assert!(center.on_a_trick_stretch(&stretches, cliff.at - DROP_LIP + 0.5));
+            assert!(!center.on_a_trick_stretch(&stretches, cliff.at + 0.5));
+            assert!(!center.on_a_trick_stretch(&stretches, cliff.at - DROP_LIP - 0.5));
+            for r in &layout.respawns {
+                let behind = center.wrap(cliff.at - r);
+                assert!(
+                    behind > DROP_LIP + 3.0 && behind < center.length() - 20.0,
+                    "{r}"
+                );
+                for bump in center.bumps() {
+                    assert!(center.wrap(r - bump.from) > bump.length + 3.0, "{r}");
+                }
+            }
+        }
+    }
+
+    /// Issue #180: a circuit without bump nor drop has none, and no trick stretch: its
+    /// centerline is the one of before (`shaped` without them is `with_zones`).
+    #[test]
+    fn a_circuit_without_relief_has_none() {
+        let data = prairie();
+        assert!(data.bumps.is_empty() && data.drops.is_empty());
+        let center = CenterLine::of(&data);
+        assert!(center.bumps().is_empty() && center.cliffs().is_empty());
+        assert!(center.trick_stretches().is_empty());
+        let zoned = CenterLine::with_zones(&data.points, data.sample_step, &data.anti_gravity);
+        assert_eq!(center.samples(), zoned.samples());
+        assert_eq!(center.length(), zoned.length());
     }
 }

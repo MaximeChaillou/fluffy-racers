@@ -750,11 +750,23 @@ fn the_circuit_boost_pads_and_trick_ramp_work() {
         .iter()
         .filter(|s| s.kind == crate::track::ShortcutKind::Jump)
         .count();
+    // Issue #180: and the trick stretches of its bumps and its drop, in two colliders (their road
+    // and their shoulders).
+    let relief = if world
+        .resource::<crate::track::TrackLayout>()
+        .center
+        .trick_stretches()
+        .is_empty()
+    {
+        0
+    } else {
+        2
+    };
     let ramps = world
         .query_filtered::<(), With<TrickRamp>>()
         .iter(world)
         .count();
-    assert_eq!(ramps, data.trick_ramps.len() + jumps);
+    assert_eq!(ramps, data.trick_ramps.len() + jumps + relief);
 
     // The pad of the start straight: the closest one ahead of the grid.
     until_go(&mut app);
