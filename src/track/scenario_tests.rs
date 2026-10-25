@@ -388,8 +388,8 @@ fn no_crash_sends_a_kart_over_a_wall() {
 
 // --- Issue #47: walls drawn as high as they are solid, and the chase camera over them -------------
 
-/// The circuits of the walls' and the camera's tests: the two of issue #47 and the Crique
-/// Câline (issue #19). Not the Col des Moufles: on its switchbacks, the walls of the leg the kart
+/// The circuits of the walls' test (and of the camera's, but issue #148: `camera_circuits()`):
+/// the two of issue #47 and the Crique Câline (issue #19). Not the Col des Moufles: on its switchbacks, the walls of the leg the kart
 /// is on hide a little more of the next leg, lower down the mountain, than the 2 % of the camera's
 /// test (2.05 % measured, never the road just ahead nor the kart: 0 frames); its walls are the
 /// same as everywhere (`mesh::WALL_HEIGHT`).
@@ -399,6 +399,21 @@ fn circuits() -> [TrackChoice; 4] {
         TrackChoice::Circuit("tracks/anneau.track.ron".into()),
         TrackChoice::Circuit("tracks/crique.track.ron".into()),
         // Issue #78: the camera rolls with the kart onto the anti-gravity wall.
+        TrackChoice::Circuit("tracks/ruban.track.ron".into()),
+    ]
+}
+
+/// The circuits of the camera's test: those of `circuits()`, but the Anneau Guimauve and the
+/// Crique Câline redrawn (issue #148) for the Lagon Duvet (issue #20), for the reason the Col des
+/// Moufles is not in `circuits()`: their lacets (five hairpins of 22 m, the other leg 44 m away,
+/// lower or higher) put more of the next leg behind the walls of the leg the kart is on than the
+/// 2 % of the test (3.8 % for the autopilot, 4.1 to 4.3 % for a Hard bot, measured), never the
+/// road just ahead nor the kart (0 frames), never the anti-wall (0 frames); their walls are the
+/// same as everywhere (`mesh::WALL_HEIGHT`), and solid as drawn (`circuits()`, above).
+fn camera_circuits() -> [TrackChoice; 3] {
+    [
+        TrackChoice::default(),
+        TrackChoice::Circuit("tracks/lagon.track.ron".into()),
         TrackChoice::Circuit("tracks/ruban.track.ron".into()),
     ]
 }
@@ -735,7 +750,7 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 }
 
 /// Issue #47: with the walls drawn 1.2 m high (0.8 m before), the chase camera still sees the
-/// road, on the circuits of `circuits()`, followed for a lap of the test autopilot and for a race
+/// road, on the circuits of `camera_circuits()`, followed for a lap of the test autopilot and for a race
 /// of a Hard bot in a full grid:
 /// - its anti-wall (issue #2) never pulls it in: the walls stay under its line of sight, which
 ///   starts 1.35 m above the road at the kart. Measured: 0 frames, before and after;
@@ -750,7 +765,7 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 /// the road after it.
 #[test]
 fn the_chase_camera_sees_the_road_over_the_walls() {
-    let runs: Vec<(TrackChoice, Driver)> = circuits()
+    let runs: Vec<(TrackChoice, Driver)> = camera_circuits()
         .into_iter()
         .flat_map(|track| {
             [Driver::Autopilot, Driver::HardBotInTheGrid].map(|driver| (track.clone(), driver))

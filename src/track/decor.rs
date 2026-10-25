@@ -435,7 +435,8 @@ mod tests {
 
     /// The tight turns: the test circuit's hairpin (12 m at its apex) and banked turn (issue
     /// #108: the layout Prairie Pompon had before #108), the oval's two half circles (35 m, a
-    /// little less where the spline cuts them); not the straights.
+    /// little less where the spline cuts them; issue #148: the layout the Anneau Guimauve had
+    /// before #148, `crate::track::test_oval`); not the straights.
     #[test]
     fn the_tight_turns_are_the_turns() {
         let prairie = CenterLine::of(&crate::track::test_circuit());
@@ -446,7 +447,7 @@ mod tests {
         assert!(hides_a_turn(&turns, Vec2::new(18.0, -88.0), 5.0));
         assert!(!hides_a_turn(&turns, Vec2::new(18.0, -88.0), 1.0));
         assert!(!hides_a_turn(&turns, Vec2::new(-20.0, 0.0), 5.0));
-        let (_, oval) = circuit("anneau.track.ron");
+        let oval = CenterLine::of(&crate::track::test_oval());
         let turns = tight_turns(&oval);
         for t in &turns {
             assert!((20.0..40.0).contains(&t.radius), "{t:?}");
@@ -474,9 +475,9 @@ mod tests {
         assert_eq!(inside_sign(&reversed), -1.0);
         // Issue #19: the Crique Câline turns right, the Col des Moufles left; their mirror
         // images the other way. Issue #20: the Lagon Duvet turns right; issue #78: the Ruban
-        // Réglisse too.
+        // Réglisse too. Issue #148: the Crique Câline redrawn turns left (round its cove).
         for (file, sign) in [
-            ("crique.track.ron", 1.0),
+            ("crique.track.ron", -1.0),
             ("col.track.ron", -1.0),
             ("lagon.track.ron", 1.0),
             ("ruban.track.ron", 1.0),

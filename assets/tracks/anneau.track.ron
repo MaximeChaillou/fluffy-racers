@@ -1,52 +1,354 @@
-// "Anneau Guimauve": a simple oval to try things out (issue #36, admin panel). Original layout:
-// two straights of 140 m and two flat half circles of 35 m radius, about 500 m a lap. Flat out
-// in the turns without drifting; a drift in a turn gives a blue or an orange mini-turbo.
+// "Anneau Guimauve": a ring of marshmallow in a pastry land (issue #36), redrawn after the guide «
+// Conception des circuits » (issue #148, docs/GAME_DESIGN.md § 16). Original layout, about 1537 m a
+// lap, turning right, on a ring of sugar 10 to 17 m above the pink fields: the start straight; two
+// hairpins (right, left) and the climb of the cake, a hairpin to the right at its top, a tight
+// corner to the left; along the top, the risky jump's corner (a tight corner to the right, its
+// inside a drop, that a ramp crosses); off the landing, a drop of 4 m; the lacets down the cake (a
+// hairpin to the left, a hairpin to the right), the climb back and a tight corner to the right; the
+// approach of the bulge and its bump; the bulge (its hidden road straight behind a stack of crates,
+// while the road goes round); the last corner (its grass bridge behind a panel that breaks with a
+// boost) and a bump before the grid. Six big turns (five hairpins and the bulge's S), four tight
+// corners of 90°: no long soft curve, one long straight. The pieces of the shortcuts (the jump's
+// corner and its landing; the bulge, the last corner and their paths) are the Coteau Citrouille's
+// (the Corniche Cannelle's, issues #107, #156, #111), with other covers; the rest is new.
 //
-// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
-// -Z), then turn right. The grid sits on the straight behind point 0.
+// Drawn as a plan of straights and arcs (hairpins of 22 m, tight corners of 18 m), its points every
+// 8 m along it (the parameters below follow them).
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north, -Z),
+// then turn right. The grid sits on the straight behind point 0.
 (
     name: "Anneau Guimauve",
     // Dressing (issue #11): a pastry land (`assets/data/biomes.ron`), the same every time (seed),
-    // and pieces placed by hand: a giant cake in the infield, gingerbread men at the start line.
+    // and pieces placed by hand: gingerbread men at the start line (beyond the posts of its arch),
+    // a giant birthday cake in the infield, giant donuts beside the start straight and the climb back.
     biome: "Guimauve",
     // Issue #104: its music (`assets/data/music.ron`).
     music: "sky-blue-street",
     decor_seed: 5,
     props: [
-        (model: "food-kit/cake-birthday", at: 9.0, side: Right, height: 5.0, radius: 6.5, gap: 15.0),
-        (model: "holiday-kit/gingerbread-man", at: 0.15, side: Both, height: 3.5, radius: 1.2, gap: 0.4),
+        (model: "holiday-kit/gingerbread-man", at: 0.0, side: Both, height: 3.5, radius: 1.2, gap: 1.8),
+        (model: "food-kit/cake-birthday", at: 39.800, side: Right, height: 22.0, radius: 12.0, gap: 30.0),
+        (model: "food-kit/donut-sprinkles", at: 4.000, side: Left, height: 14.0, radius: 7.0, gap: 6.0, yaw: 90.0),
+        (model: "food-kit/donut-chocolate", at: 125.909, side: Left, height: 12.0, radius: 6.0, gap: 6.0, yaw: 90.0),
     ],
     checkpoint_spacing: 25.0,
     points: [
-        // 0-3: start straight, heading north.
-        (pos: (0.0, 0.0, 25.0)),
-        (pos: (0.0, 0.0, -10.0)),
-        (pos: (0.0, 0.0, -45.0)),
-        (pos: (0.0, 0.0, -70.0)),
-        // 4-6: first half circle, to the right (center (35, -70)).
-        (pos: (10.25, 0.0, -94.75)),
-        (pos: (35.0, 0.0, -105.0)),
-        (pos: (59.75, 0.0, -94.75)),
-        // 7-11: back straight, heading south, with a boost pad.
-        (pos: (70.0, 0.0, -70.0)),
-        (pos: (70.0, 0.0, -35.0)),
-        (pos: (70.0, 0.0, 0.0)),
-        (pos: (70.0, 0.0, 35.0)),
-        (pos: (70.0, 0.0, 70.0)),
-        // 12-14: second half circle (center (35, 70)).
-        (pos: (59.75, 0.0, 94.75)),
-        (pos: (35.0, 0.0, 105.0)),
-        (pos: (10.25, 0.0, 94.75)),
-        // 15-16: back on the start straight (the grid sits between 15 and 0).
-        (pos: (0.0, 0.0, 70.0)),
-        (pos: (0.0, 0.0, 50.0)),
+        // the start straight, heading north: the one long straight (the slipstream, the items). The
+        // grid sits behind point 0.
+        (pos: (0.00, 10.00, 0.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -7.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -15.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -22.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -30.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -37.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -45.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -52.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -60.00), width: 15.0, shoulder: 3.0),
+        // the first hairpin, to the right (radius 22 m).
+        (pos: (1.33, 10.06, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (5.15, 10.11, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (11.00, 10.17, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (18.18, 10.22, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (25.82, 10.28, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (33.00, 10.33, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (38.85, 10.39, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (42.67, 10.44, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 10.50, -60.00), width: 13.0, shoulder: 2.0),
+        // south (a log rolls across its left side: the karts keep right for the hairpin to the
+        // left).
+        (pos: (44.00, 10.61, -52.22), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 10.72, -44.44), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 10.83, -36.67), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 10.94, -28.89), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 11.06, -21.11), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 11.17, -13.33), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 11.28, -5.56), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 11.39, 2.22), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 11.50, 10.00), width: 13.0, shoulder: 2.0),
+        // a hairpin to the left.
+        (pos: (45.33, 11.56, 17.52), width: 13.0, shoulder: 2.0),
+        (pos: (49.15, 11.61, 24.14), width: 13.0, shoulder: 2.0),
+        (pos: (55.00, 11.67, 29.05), width: 13.0, shoulder: 2.0),
+        (pos: (62.18, 11.72, 31.67), width: 13.0, shoulder: 2.0),
+        (pos: (69.82, 11.78, 31.67), width: 13.0, shoulder: 2.0),
+        (pos: (77.00, 11.83, 29.05), width: 13.0, shoulder: 2.0),
+        (pos: (82.85, 11.89, 24.14), width: 13.0, shoulder: 2.0),
+        (pos: (86.67, 11.94, 17.52), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 12.00, 10.00), width: 13.0, shoulder: 2.0),
+        // north, the climb of the cake: a trick ramp at its start, a stone swinging over its right
+        // side (the karts keep left for the hairpin to the right).
+        (pos: (88.00, 12.33, 1.67), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 12.67, -6.67), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 13.00, -15.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 13.33, -23.33), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 13.67, -31.67), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.00, -40.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.33, -48.33), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.67, -56.67), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 15.00, -65.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 15.33, -73.33), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 15.67, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 16.00, -90.00), width: 13.0, shoulder: 2.0),
+        // a hairpin to the right at the top of the cake, 16 m up...
+        (pos: (89.33, 16.06, -97.52), width: 13.0, shoulder: 2.0),
+        (pos: (93.15, 16.11, -104.14), width: 13.0, shoulder: 2.0),
+        (pos: (99.00, 16.17, -109.05), width: 13.0, shoulder: 2.0),
+        (pos: (106.18, 16.22, -111.67), width: 13.0, shoulder: 2.0),
+        (pos: (113.82, 16.28, -111.67), width: 13.0, shoulder: 2.0),
+        (pos: (121.00, 16.33, -109.05), width: 13.0, shoulder: 2.0),
+        (pos: (126.85, 16.39, -104.14), width: 13.0, shoulder: 2.0),
+        (pos: (130.67, 16.44, -97.52), width: 13.0, shoulder: 2.0),
+        (pos: (132.00, 16.50, -90.00), width: 13.0, shoulder: 2.0),
+        // ... and straight into a tight corner to the left (90°): an S.
+        (pos: (132.00, 16.75, -83.00), width: 13.0, shoulder: 2.0),
+        (pos: (132.00, 17.00, -76.00), width: 13.0, shoulder: 2.0),
+        (pos: (133.37, 17.00, -69.11), width: 13.0, shoulder: 2.0),
+        (pos: (137.27, 17.00, -63.27), width: 13.0, shoulder: 2.0),
+        (pos: (143.11, 17.00, -59.37), width: 13.0, shoulder: 2.0),
+        (pos: (150.00, 17.00, -58.00), width: 13.0, shoulder: 2.0),
+        // east, along the top of the cake, 17 m up.
+        (pos: (158.00, 17.00, -58.00), width: 13.0, shoulder: 2.0),
+        (pos: (166.00, 17.00, -58.00), width: 13.0, shoulder: 2.0),
+        // the risky jump's corner (the Coteau Citrouille's piece): east, then a tight corner to the
+        // right (90°): its inside is a drop of 17 m, the jump cuts across it; the wide landing,
+        // south.
+        (pos: (174.03, 17.00, -58.00), width: 13.0, shoulder: 2.0),
+        (pos: (182.04, 17.00, -58.00), width: 13.0, shoulder: 2.0),
+        (pos: (190.06, 17.00, -58.01), width: 13.0, shoulder: 2.0),
+        (pos: (198.09, 17.00, -58.01), width: 13.0, shoulder: 2.0),
+        (pos: (206.11, 17.00, -58.02), width: 13.0, shoulder: 2.0),
+        (pos: (214.13, 17.00, -58.02), width: 13.0, shoulder: 2.0),
+        (pos: (222.15, 17.00, -58.02), width: 13.0, shoulder: 2.0),
+        (pos: (230.13, 17.00, -57.46), width: 13.0, shoulder: 2.0),
+        (pos: (237.21, 17.00, -53.85), width: 13.0, shoulder: 2.0),
+        (pos: (242.05, 17.00, -47.53), width: 13.0, shoulder: 2.0),
+        (pos: (243.69, 16.99, -39.75), width: 20.0, shoulder: 2.0),
+        (pos: (243.69, 16.82, -31.72), width: 20.0, shoulder: 2.0),
+        (pos: (243.70, 16.64, -23.70), width: 20.0, shoulder: 2.0),
+        (pos: (243.70, 16.46, -15.69), width: 20.0, shoulder: 2.0),
+        (pos: (243.71, 16.28, -7.66), width: 20.0, shoulder: 2.0),
+        (pos: (243.71, 16.10, 0.36), width: 20.0, shoulder: 2.0),
+        (pos: (243.71, 15.80, 8.36), width: 13.0, shoulder: 2.0),
+        // issue #180: off the landing, a drop of 4 m (the road level up to its edge, between these
+        // two points), then on below.
+        (pos: (243.71, 11.80, 16.36), width: 13.0, shoulder: 2.0),
+        // south, down the cake.
+        (pos: (243.71, 11.51, 24.86), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 11.22, 33.36), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 10.94, 41.86), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 10.65, 50.36), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 10.36, 58.86), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 10.07, 67.36), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 9.79, 75.86), width: 13.0, shoulder: 2.0),
+        (pos: (243.71, 9.50, 84.36), width: 13.0, shoulder: 2.0),
+        // the lacets down the cake: a hairpin to the left...
+        (pos: (245.04, 9.44, 91.88), width: 13.0, shoulder: 2.0),
+        (pos: (248.86, 9.39, 98.50), width: 13.0, shoulder: 2.0),
+        (pos: (254.71, 9.33, 103.41), width: 13.0, shoulder: 2.0),
+        (pos: (261.89, 9.28, 106.03), width: 13.0, shoulder: 2.0),
+        (pos: (269.53, 9.22, 106.03), width: 13.0, shoulder: 2.0),
+        (pos: (276.71, 9.17, 103.41), width: 13.0, shoulder: 2.0),
+        (pos: (282.56, 9.11, 98.50), width: 13.0, shoulder: 2.0),
+        (pos: (286.38, 9.06, 91.88), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 9.00, 84.36), width: 13.0, shoulder: 2.0),
+        // ... north (the bison paces across its right side: the karts keep left for the hairpin to
+        // the right)...
+        (pos: (287.71, 8.89, 76.58), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.78, 68.80), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.67, 61.03), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.56, 53.25), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.44, 45.47), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.33, 37.69), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.22, 29.92), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.11, 22.14), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 8.00, 14.36), width: 13.0, shoulder: 2.0),
+        // ... and a hairpin to the right.
+        (pos: (289.04, 7.94, 6.84), width: 13.0, shoulder: 2.0),
+        (pos: (292.86, 7.89, 0.22), width: 13.0, shoulder: 2.0),
+        (pos: (298.71, 7.83, -4.69), width: 13.0, shoulder: 2.0),
+        (pos: (305.89, 7.78, -7.31), width: 13.0, shoulder: 2.0),
+        (pos: (313.53, 7.72, -7.31), width: 13.0, shoulder: 2.0),
+        (pos: (320.71, 7.67, -4.69), width: 13.0, shoulder: 2.0),
+        (pos: (326.56, 7.61, 0.22), width: 13.0, shoulder: 2.0),
+        (pos: (330.38, 7.56, 6.84), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 7.50, 14.36), width: 13.0, shoulder: 2.0),
+        // south, climbing back.
+        (pos: (331.71, 7.75, 22.22), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 8.00, 30.07), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 8.25, 37.93), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 8.50, 45.79), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 8.75, 53.65), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 9.00, 61.50), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 9.25, 69.36), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 9.50, 77.22), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 9.75, 85.07), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 10.00, 92.93), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 10.25, 100.79), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 10.50, 108.65), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 10.75, 116.50), width: 13.0, shoulder: 2.0),
+        (pos: (331.71, 11.00, 124.36), width: 13.0, shoulder: 2.0),
+        // a tight corner to the right (90°), west.
+        (pos: (330.34, 11.00, 131.25), width: 13.0, shoulder: 2.0),
+        (pos: (326.44, 11.00, 137.09), width: 13.0, shoulder: 2.0),
+        (pos: (320.60, 11.00, 140.99), width: 13.0, shoulder: 2.0),
+        (pos: (313.71, 11.00, 142.36), width: 13.0, shoulder: 2.0),
+        // west, the approach of the bulge: issue #180, a bump (its trick lands well before the
+        // bulge).
+        (pos: (305.92, 10.94, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (298.14, 10.88, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (290.35, 10.82, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (282.56, 10.76, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (274.78, 10.71, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (266.99, 10.65, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (259.20, 10.59, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (251.42, 10.53, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (243.63, 10.47, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (235.85, 10.41, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (228.06, 10.35, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (220.27, 10.29, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (212.49, 10.24, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (204.70, 10.18, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (196.91, 10.12, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (189.13, 10.06, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (181.34, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        // the bulge and the last corner (the Coteau Citrouille's piece): the bulge (left 75°, right
+        // 150°, left 75°); the hidden road goes straight across it, behind a stack of crates; the
+        // last corner, to the right (90°), its inside a drop that the grass bridge crosses; north
+        // (issue #180: a bump, before the grid).
+        (pos: (173.40, 10.00, 143.34), width: 13.0, shoulder: 2.0),
+        (pos: (166.07, 10.00, 146.52), width: 13.0, shoulder: 2.0),
+        (pos: (159.93, 10.00, 151.64), width: 13.0, shoulder: 2.0),
+        (pos: (155.49, 10.00, 158.29), width: 13.0, shoulder: 2.0),
+        (pos: (152.82, 10.00, 165.84), width: 13.0, shoulder: 2.0),
+        (pos: (148.93, 10.00, 172.83), width: 13.0, shoulder: 2.0),
+        (pos: (143.23, 10.00, 178.43), width: 13.0, shoulder: 2.0),
+        (pos: (136.18, 10.00, 182.19), width: 13.0, shoulder: 2.0),
+        (pos: (128.35, 10.00, 183.81), width: 13.0, shoulder: 2.0),
+        (pos: (120.39, 10.00, 183.15), width: 13.0, shoulder: 2.0),
+        (pos: (112.93, 10.00, 180.27), width: 13.0, shoulder: 2.0),
+        (pos: (106.60, 10.00, 175.39), width: 13.0, shoulder: 2.0),
+        (pos: (101.89, 10.00, 168.93), width: 13.0, shoulder: 2.0),
+        (pos: (99.10, 10.00, 161.43), width: 13.0, shoulder: 2.0),
+        (pos: (95.50, 10.00, 154.29), width: 13.0, shoulder: 2.0),
+        (pos: (90.02, 10.00, 148.47), width: 13.0, shoulder: 2.0),
+        (pos: (83.12, 10.00, 144.43), width: 13.0, shoulder: 2.0),
+        (pos: (75.36, 10.00, 142.50), width: 13.0, shoulder: 2.0),
+        (pos: (67.35, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (59.33, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (51.30, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (43.28, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (35.26, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (27.24, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (19.22, 10.00, 142.34), width: 15.0, shoulder: 3.0),
+        (pos: (11.48, 10.00, 140.45), width: 15.0, shoulder: 3.0),
+        (pos: (5.09, 10.00, 135.68), width: 15.0, shoulder: 3.0),
+        (pos: (1.07, 10.00, 128.81), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 120.90), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 112.88), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 104.86), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 96.84), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 88.82), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 80.80), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 72.78), width: 15.0, shoulder: 3.0),
+        // north, back to the start line.
+        (pos: (0.00, 10.00, 64.69), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 56.61), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 48.52), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 40.43), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 32.35), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 24.26), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 16.17), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 8.09), width: 15.0, shoulder: 3.0),
     ],
+    // Issue #180 (GD § 16, rule 3): bumps, a real rise and fall of the road, 2.2 m high (a kart and
+    // its driver), 30 m long: on the approach of the bulge (its trick lands well before the bulge,
+    // whose first turn is gentle) and out of the last corner, before the grid (as on Prairie
+    // Pompon). Not on the straights between two hairpins (one lands too late to prepare the drift),
+    // nor before a tight corner (a Hard bot boosted off a bump went over the walls of the corner
+    // after it).
+    bumps: [
+        (at: 138.468, height: 2.2, length: 30.0),
+        (at: 185.228, height: 2.2, length: 30.0),
+    ],
+    // Issue #180: a drop of 4 m off the jump's landing, on the way down the cake: the road stops at
+    // its edge and goes on below, in its line (a trick off the edge gives the boost: the hairpin
+    // after it is 68 m away, the bots trick). Not a fall: no pelican.
+    drops: [
+        (at: 81.500, height: 4.0),
+    ],
+    // Issue #107: the sides without wall: the inside of the jump's corner (a drop of 17 m), along
+    // the bulge (the hidden road) and inside the last corner (the grass bridge), over a drop of 10
+    // m: where a path passes only (the lessons of Prairie Pompon). Everywhere else, walls.
+    open_edges: [
+        (from: 67.826, to: 78.457, side: Right),
+        (from: 153.000, to: 171.351, side: Right),
+        (from: 171.173, to: 184.900, side: Right),
+    ],
+    shortcuts: [
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
+        // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it falls.
+        (from: 68.450, to: 78.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(201.69, 17.00, -56.51), (216.70, 17.00, -54.52), (221.64, 17.00, -47.00), (238.70, 16.58, -21.01), (238.70, 16.58, -12.01)]),
+        // The hidden road: narrow (5 m), straight across the bulge while the road goes round it,
+        // behind a stack of crates 18 m in, where it leaves the road's edge (they burst as one drives
+        // through them, a little slower, and come back).
+        (from: 153.000, to: 170.603, kind: Road, width: 5.0,
+         points: [(172.00, 10.00, 138.36), (121.27, 10.00, 138.36), (70.53, 10.00, 138.36)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker with
+        // one (the mini-turbo of the bulge's last turn, a piment); closed by a panel 26 m in, where
+        // the drop separates it from the road: it breaks with a boost, a kart without one bounces off.
+        (from: 171.921, to: 184.828, kind: Grass, width: 5.0,
+         points: [(59.96, 10.00, 135.36), (53.49, 10.00, 134.51), (47.46, 10.00, 132.01), (42.48, 10.00, 129.14), (37.50, 10.00, 126.26), (32.52, 10.00, 123.39), (27.54, 10.00, 120.51), (22.54, 10.00, 117.01), (18.23, 10.00, 112.70), (14.73, 10.00, 107.70), (12.15, 10.00, 102.17), (10.57, 10.00, 96.28), (10.04, 10.00, 90.20)],
+         cover: Some((kind: Panel, at: 26.0))),
+    ],
+    // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
+    // the next turn does not want: a log rolling across the left side of the first southward leg (a
+    // hairpin to the left after it), a stone swinging over the right side of the climb of the cake
+    // (a hairpin to the right after it), a rock at the left edge of the jump's landing.
+    obstacles: [
+        (kind: RollingLog, at: 21.500, offset: -0.5, sweep: 0.32, period: 5.0),
+        (kind: SwingingStone, at: 42.440, offset: 0.5, sweep: 0.35, period: 3.6),
+        (kind: Rock, at: 79.000, offset: -0.92, size: 1.1, yaw: 20.0),
+    ],
+    // Issue #144: the bison paces across the right side of the leg between the lacets down the cake
+    // (the karts keep left for the hairpin to the right after it).
+    npcs: [
+        (kind: Bison, at: 103.886, offset: 0.55, sweep: 0.3, period: 6.5),
+    ],
+    // Issue #144: balloons just after the start line (the pack bursts them at GO) and on the way
+    // down the cake, crates on the approach of the bulge.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: Balloon, at: 85.529, offsets: [-0.3, 0.3]),
+        (kind: Crate, at: 142.706, offsets: [-0.6, -0.25]),
+    ],
+    // Trick ramps (issue #13): at the start of the climb of the cake, out of a hairpin (100 m
+    // before the next one).
+    trick_ramps: [
+        (at: 36.200, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): out of the first hairpin, and out of the first lacet down the cake.
+    // None before the grass bridge: it pays only with a boost of one's own.
     boost_pads: [
-        (at: 9.0, offset: 0.0),
+        (at: 18.029, offset: 0.3),
+        (at: 100.029, offset: 0.0),
     ],
-    // Croquettes on both straights, off the middle of the road.
+    item_boxes: [
+        (at: 4.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 40.400, offsets: [-0.5, 0.0, 0.5]),
+        (at: 86.706, offsets: [-0.4, 0.0, 0.4]),
+        (at: 149.670, offsets: [0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on the
+    // grid; one inside the bulge, on its way out.
     croquettes: [
-        (from: 1.5, count: 5, spacing: 3.0, offset: 0.45),
-        (from: 8.0, count: 5, spacing: 3.0, offset: -0.45),
+        (from: 3.4, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 19.571, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 62.500, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 120.818, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 170.853, count: 4, spacing: 3.0, offset: -0.4),
     ],
 )

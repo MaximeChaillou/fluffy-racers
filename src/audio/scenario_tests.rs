@@ -944,10 +944,11 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
 /// Issue #108: on a short circuit, where the pack comes back past the player within the 40 s, as
 /// it did on Prairie Pompon before it was redrawn (1.3 km a lap now: the pack does not come back
 /// in time, out of hearing). Issue #109: the Crique Câline (690 m a lap), the Col des Moufles
-/// being redrawn too (1.3 km).
+/// being redrawn too (1.3 km). Issue #148: the Lagon Duvet (770 m a lap), the Crique Câline
+/// being redrawn too (1.55 km).
 #[test]
 fn the_cap_holds_with_twelve_karts() {
-    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/crique.track.ron".into()), 11);
+    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/lagon.track.ron".into()), 11);
     {
         let mut tuning = app.world_mut().resource_mut::<SoundTuning>();
         tuning.max_sounds = 6;

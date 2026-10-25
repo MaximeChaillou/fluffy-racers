@@ -1602,7 +1602,9 @@ mod tests {
         assert!(WALL_HEIGHT >= kart_top + 0.4 - 1e-4, "{WALL_HEIGHT}");
         for data in [
             test_track(),
-            TrackData::from_ron(include_str!("../../assets/tracks/anneau.track.ron")).unwrap(),
+            // Issue #148: the oval the Anneau Guimauve was before #148 (walls all around, no
+            // bump: every wall vertex on the road or `WALL_HEIGHT` above it).
+            crate::track::test_oval(),
         ] {
             let center = CenterLine::of(&data);
             let meshes = generate(&center, &data, &Palette::default());

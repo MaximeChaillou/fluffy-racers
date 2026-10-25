@@ -23,8 +23,8 @@ use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_play
 
 const CORNICHE: &str = "tracks/corniche.track.ron";
 /// Issue #108: a circuit without any hazard (issue #109: the Crique Câline, the Col des Moufles
-/// has some now).
-const PLAIN_CIRCUIT: &str = "tracks/crique.track.ron";
+/// has some now; issue #148: the Lagon Duvet, the Crique Câline redrawn has some).
+const PLAIN_CIRCUIT: &str = "tracks/lagon.track.ron";
 
 /// The game on the circuit file `path` (its mirror image or not), race seed `seed`, the player's
 /// kart alone, its race started (the test drives it).
@@ -108,8 +108,8 @@ fn under_it_next_tick(app: &App, hazard: &Hazard, lift: f32) -> Transform {
         .looking_to(hazard.road.forward, up)
 }
 
-/// Issue #144: a circuit that declares no hazard (the Crique Câline; Prairie Pompon until issue
-/// #108 gave it some, the Col des Moufles until #109) has nothing of them: no entity, no
+/// Issue #144: a circuit that declares no hazard (the Lagon Duvet; Prairie Pompon until issue
+/// #108 gave it some, the Col des Moufles until #109, the Crique Câline until #148) has nothing of them: no entity, no
 /// component, no resource, no system (the bot races of its world are those of before #144). The
 /// Corniche Cannelle has one entity per hazard (a collider for a fixed one, a pose to interpolate
 /// for a moving one, its state for a thing to drive through), and exactly three systems more,

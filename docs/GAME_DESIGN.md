@@ -960,6 +960,64 @@ Cinq épingles, quatre virages serrés, les S des lacets et du sommet : aucune l
 
 ![Le renflement de la descente : la route cachée tout droit, la route qui part à droite](img/col-route-cachee.jpg)
 
+### L'Anneau Guimauve refait (#148)
+
+L'anneau de guimauve du pays des pâtisseries (le biome « Guimauve »), refait selon le guide : un anneau de sucre perché de 7 à 17 m au-dessus des champs roses, autour d'un gâteau d'anniversaire géant, qu'on gravit puis qu'on redescend. Environ **1 540 m le tour**, à droite (l'ancien ovale de #36, 500 m pris à fond sans drifter, est devenu le circuit d'essai de deux tests unitaires, `src/track/test_oval.track.ron`) :
+
+- **la ligne droite du départ**, la seule longue (l'aspiration, les boîtes ; des bonshommes en pain d'épice à la ligne, un donut géant à côté) ;
+- **deux épingles** (droite, gauche), **un rondin roule** sur la gauche de la branche entre elles, un plot à la sortie de la première ;
+- **la montée du gâteau** (un tremplin à figures au début, des boîtes, **une pierre qui balance** sur sa droite), **une épingle à droite** au sommet, à 16 m, et tout de suite **un virage serré à gauche** : un S ;
+- **le long du sommet**, **le virage du saut risqué** (à droite, 90°) : son intérieur est un vide de 17 m, qu'un tremplin traverse ; la réception élargie à 20 m, **un rocher** à son bord gauche ;
+- **un décrochage de 4 m** au bout de la réception (#180), puis **la descente du gâteau** : deux lacets (une épingle à gauche, une à droite ; **le bison** fait les cent pas sur la droite de la branche entre elles, un plot à sa sortie), la remontée et **un virage serré à droite** ;
+- **l'approche du renflement** et **sa bosse** de 2,2 m (#180), des caisses ; **le renflement** (gauche 75°, droite 150°, gauche 75°), que **la route cachée** coupe tout droit **derrière une pile de caisses** ;
+- **le dernier virage** (à droite, 90°), que traverse **le pont d'herbe, fermé par un panneau qui casse au boost** ; à sa sortie, **une bosse** de 2,2 m avant la grille (comme sur Prairie Pompon).
+
+Cinq épingles, le S du renflement, quatre virages serrés (le S du sommet, le saut, la remontée, le dernier) : aucune longue courbe molle. **Les pièces des raccourcis** (le virage du saut et sa réception ; le renflement, le dernier virage et leurs chemins) sont celles du Coteau Citrouille (#111, celles de la Corniche Cannelle), avec une autre paire de couvertures (les caisses et le panneau) ; le tracé autour d'elles est neuf. Les bords sans muret : l'intérieur du virage du saut, le renflement, l'intérieur du dernier virage (un vide de 10 m et plus) ; partout ailleurs, des murets. Sa musique reste « Sky Blue Street ». Son miroir marche.
+
+**Les mesures** : voir plus bas (« Ce que l'Anneau et la Crique ont appris ») et `STATUS.md`.
+
+![L'Anneau Guimauve vu du sud : la ligne droite du départ à gauche, les lacets du gâteau, le renflement et sa route cachée devant](img/anneau-vue.jpg)
+
+![La route cachée de l'Anneau : un bot Difficile éclate la pile de caisses, le vide de chaque côté du chemin](img/anneau-route-cachee.jpg)
+
+![La bosse de l'approche du renflement : le kart en l'air](img/anneau-bosse.jpg)
+
+![Le décrochage de 4 m au bout de la réception du saut, en descendant du gâteau](img/anneau-decrochage.jpg)
+
+### La Crique Câline refaite (#148)
+
+La crique des pirates (le biome « Plage »), refaite selon le guide : un ponton de planches qui monte sur un cap, longe la falaise et redescend sur la plage, puis traverse l'entrée de la crique. Environ **1 590 m le tour**, **à gauche** autour de la crique (l'ancienne tournait à droite) :
+
+- **la ligne droite du départ** sur le ponton, à 6 m, la seule longue (des drapeaux pirates à la ligne, une tour de guet près de la grille) ;
+- **deux épingles** (gauche, droite) au pied du cap, **une pierre qui balance** sur la droite de la branche entre elles, un plot à la sortie de la première ;
+- **la montée du cap** et **sa bosse** (#180), des boîtes, puis **un virage serré à gauche** sur le sommet, à 12 m ;
+- **le virage du saut risqué** au bord du cap (à gauche, 90°) : son intérieur est un vide de 12 m, qu'un tremplin traverse ; la réception élargie, **un rocher** à son bord droit ;
+- **la descente du cap** et **sa bosse** (#180), des caisses de pirates ;
+- **le renflement sur le chemin de la falaise** (droite 75°, gauche 150°, droite 75°), à 8 m, que **la route cachée** coupe tout droit **derrière une cascade** ; **son virage** (à gauche, 90°), que traverse **le pont d'herbe, derrière un rideau d'herbes des dunes** ;
+- **un décrochage de 4 m** du chemin de la falaise sur la plage (#180), et la descente vers la crique ;
+- **le gué** : la route plonge sous l'eau de l'entrée de la crique et en ressort (un navire pirate échoué sur la plage à côté) ;
+- **trois lacets dans les dunes** (gauche, droite, gauche ; un tremplin à figures au début de la première branche, **un rondin roule** sur sa droite ; **le bison** sur la gauche de la deuxième, un plot à sa sortie), des caisses, et **un virage serré à droite** sur le ponton.
+
+Cinq épingles, le S du renflement, quatre virages serrés : aucune longue courbe molle. **Les pièces des raccourcis** sont celles du Coteau Citrouille **retournées en miroir** (la Crique tourne à gauche ; #109 : une pièce retournée garde ses gains), avec une autre paire de couvertures (la cascade et le rideau) ; le reste est neuf. Les bords sans muret : l'intérieur du virage du saut, le renflement, l'intérieur de son virage ; partout ailleurs, des murets. Ses mécaniques : le drift (cinq épingles), deux bosses et un décrochage, deux tremplins (le saut, celui des dunes), deux plots, l'eau. Sa musique reste « Sunny City ». Son miroir marche.
+
+![La Crique Câline vue du sud : le gué dans l'eau de la crique au premier plan, les lacets des dunes à droite, le cap au fond](img/crique-vue.jpg)
+
+![La cascade qui cache la route de la falaise, à l'entrée du renflement](img/crique-cascade.jpg)
+
+![Une figure sur la bosse de la montée du cap](img/crique-bosse.jpg)
+
+![Le décrochage du chemin de la falaise sur la plage, et le gué au bout](img/crique-decrochage.jpg)
+
+![Le gué : la route sous l'eau de la crique](img/crique-gue.jpg)
+
+### Ce que l'Anneau et la Crique ont appris (#148)
+
+- **Les mesures** (12 bots, graines 0 à 3, le circuit et son miroir) : **bots Difficile, le tour le plus rapide en 46,9 à 47,7 s** sur l'Anneau, **48,5 à 49,7 s** sur la Crique ; bots Normal, le tour le plus rapide à 29,5 à 30,6 m/s de moyenne (environ 51 et 53 s), les plus lents jusqu'à 57 et 59 s, la dernière arrivée à 168 et 173 s (la course de test en laisse 180) ; **4,4 à 4,8 drifts et 3,1 à 3,8 mini-turbos orange par tour** sur l'Anneau, **4,0 à 4,5 et 2,9 à 3,5** sur la Crique (Normal ; 4 et 2 au moins demandés) ; **aucun pélican**, ni en Normal ni en Difficile ; 0 à 3 karts renversés par course ; **les figures sur les bosses et le décrochage** : 2,3 à 2,5 par tour en Normal, 2,9 à 3,0 en Difficile (1,5 et 2 au moins). **Les raccourcis** (bot Difficile, `bots::shortcut_tests`) : sur l'Anneau, le saut fait gagner 0,60 s (0,49 en miroir), la route cachée, à travers ses caisses, 0,83 s (0,82), le pont d'herbe avec un boost 0,75 s (0,65), et sans boost le kart s'arrête à 1 m du panneau ; sur la Crique, le saut 0,47 s (0,59), la route cachée derrière la cascade 0,77 s (0,87), le pont d'herbe avec un boost 0,66 s (0,77), et sans boost il fait perdre 2,95 s (2,83 ; le chemin rejoint la route juste avant le décrochage, que le kart lent descend au pas).
+- **Une bosse ne se place pas avant un virage serré**, même à 80 m : un bot Difficile qui y arrive boosté (le mini-turbo de l'épingle d'avant, puis la figure) vole longtemps, se pose à la corde du virage et passe par-dessus son muret extérieur (vu sur l'Anneau, une bosse sur la remontée avant un virage serré : un à trois pélicans en conduite libre par course, même avec 140 m de ligne droite, un virage de 30 m de rayon ou une montée de 5 %). Elle va **là où ce qui suit tourne doucement** (l'approche du renflement, dont le premier virage fait 75° sur 30 m de rayon), **ou rien ne tourne** (la sortie du dernier virage, vers la grille), **ou en montée** (la montée du cap de la Crique, 5,5 %).
+- **Un décrochage suivi d'une épingle à 52 m ne donne pas de figure** (la règle des 2 s des bots : le virage à drifter est trop près) : à 68 m, si (l'Anneau ; les figures des bots Difficile passent de 2,0 à 3,0 par tour).
+- **Une descente forte gêne une bosse** : sur une pente de 11 %, un kart à pleine vitesse montait à 5,4 m au-dessus de la route (5 au plus, `track::relief_tests`) ; la Crique garde ses pentes sous 8 %.
+- **Un grand décor dans un renflement est refusé** (`decor::hides_a_turn` : rien de plus haut que 1,6 m à l'intérieur d'un virage serré) : l'aiguille, le pin ou l'arbre géant que les autres circuits placent au milieu de leur renflement (`gap: 0.1`) n'est sans doute jamais posé (les tests du décor ne les vérifient pas) ; voir `STATUS.md`, « Prochaines étapes ».
+
 ### Notre implémentation (#156) : des raccourcis étroits et cachés
 
 - **Dans le fichier du circuit**, sur un raccourci (une route ou un chemin d'herbe, jamais un saut) : `cover: Some((kind, at))`, **ce qui ferme ou cache son entrée**, en travers de son chemin, `at` mètres après son début (le fichier est refusé à moins de 2 m de ses bouts, ou si le chemin est trop large pour elle). Deux sortes pour commencer :
@@ -1143,7 +1201,7 @@ Un voyage à travers un royaume de prés, de remparts et un château (le biome �
 - **Aucun réglage nouveau** : la forme d'une bosse et d'un décrochage est dans le fichier du circuit, comme celle des tremplins ; `MIN_BUMP_HEIGHT`, `BUMP_TRICK_SHARE`, `DROP_LIP`, `PARAPET_RUN` et les autres sont des règles du format (comme celles des vides et des zones) ; l'estimation du vol par les bots (`bots::line` : décollage à 30 % de la bosse, atterrissage 3 m après elle ou 20 m sous un décrochage) et leur marge avant un virage (2 s) sont des constantes de leur conduite, comme les autres.
 - **Fluidité** : rien par image ; trois colliders trimesh de plus (la route et les bas-côtés des tremplins des bosses et des décrochages, les faces des décrochages) et leurs triangles dans le maillage du circuit, sur un circuit qui en a. **Rien de nouveau sur un circuit sans bosse ni décrochage** : mêmes entités, mêmes archétypes, mêmes maillages, mêmes courses de bots.
 - **En ligne** : rien ne change (chaque pair construit le même circuit du même fichier ; la figure est celle de son kart, comme sur un tremplin).
-- **Prairie Pompon**, le circuit de démonstration : **deux bosses** de 2,2 m, **sur la montée de la butte** (32 m de long ; le plot à son pied y lance les karts ; la deuxième rangée de boîtes, le bison et les croquettes d'après remontés au-delà de sa réception) et **à la sortie du dernier virage, vers la ligne** (28 m, avant la grille) ; **un décrochage de 2,5 m** sur la ligne droite nord de la prairie : l'épingle de la prairie est sur une terrasse 2,5 m au-dessus d'elle (la descente de la butte s'y arrête), et la route en tombe vers le nord. Les autres circuits du guide reçoivent les leurs avec leurs issues (#162 : le Col des Moufles ; #164 : la Corniche Cannelle ; #184 : l'Échappée Pissenlit, la Forêt Frimousse, les Falaises Flanelle, le Coteau Citrouille, le Périple Polochon) ; les nouveaux circuits (#168, #112 à #115) et les circuits refaits (#148, #150, #151) les ont dès leur dessin.
+- **Prairie Pompon**, le circuit de démonstration : **deux bosses** de 2,2 m, **sur la montée de la butte** (32 m de long ; le plot à son pied y lance les karts ; la deuxième rangée de boîtes, le bison et les croquettes d'après remontés au-delà de sa réception) et **à la sortie du dernier virage, vers la ligne** (28 m, avant la grille) ; **un décrochage de 2,5 m** sur la ligne droite nord de la prairie : l'épingle de la prairie est sur une terrasse 2,5 m au-dessus d'elle (la descente de la butte s'y arrête), et la route en tombe vers le nord. Les autres circuits du guide reçoivent les leurs avec leurs issues (#162 : le Col des Moufles ; #164 : la Corniche Cannelle ; #184 : l'Échappée Pissenlit, la Forêt Frimousse, les Falaises Flanelle, le Coteau Citrouille, le Périple Polochon) ; les nouveaux circuits (#168, #112 à #115) et les circuits refaits (#150, #151) les ont dès leur dessin ; l'Anneau Guimauve et la Crique Câline (#148) ont les leurs (deux bosses et un décrochage chacun).
 
 ![Une figure en l'air au-dessus de la bosse de la montée de la butte, à pleine vitesse (Prairie Pompon)](img/bosse-saut.jpg)
 
@@ -1189,7 +1247,7 @@ Un voyage à travers un royaume de prés, de remparts et un château (le biome �
 ### La suite
 
 - ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
-- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148 ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150 ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
+- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148, faits ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150 ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
 - **Des raccourcis étroits et cachés** (#156, règle 7) : faits sur la Corniche Cannelle ; Prairie Pompon et le Col des Moufles : #162. Chaque nouveau circuit suit la règle 7 et varie les façons de cacher.
 - **Les courses longues** (#119) : la première (l'Échappée Pissenlit, la Coupe Nuage), la deuxième (le Périple Polochon, la Coupe Câlin, #111) ; une par coupe, la dernière, comme un final : celle de la Coupe Doudou et des coupes suivantes.
 - **Les nouveaux circuits** (#110) : la Forêt Frimousse et les Falaises Flanelle (9e et 10e), avec l'Échappée Pissenlit (8e) : les circuits 8 à 10 sont faits. **#111** : le Coteau Citrouille (11e) et le Périple Polochon (12e, la deuxième course longue) : **la Coupe Câlin est complète et proposée**. Le 13e (le premier de la 4e coupe) : #168 ; puis #112 à #115.

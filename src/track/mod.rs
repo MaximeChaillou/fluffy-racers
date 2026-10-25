@@ -79,6 +79,15 @@ pub(crate) fn test_circuit() -> TrackData {
     TrackData::from_ron(include_str!("test_circuit.track.ron")).unwrap()
 }
 
+/// Issue #148: the oval of the unit tests (`test_oval.track.ron`, beside this file): the layout
+/// the Anneau Guimauve had from issue #36 to issue #148 (two straights and two half circles of
+/// 35 m, walls all around), kept as it was for the tests that check the decor's tight turns and
+/// the walls' mesh on a known, simple circuit. Not a circuit of the game.
+#[cfg(test)]
+pub(crate) fn test_oval() -> TrackData {
+    TrackData::from_ron(include_str!("test_oval.track.ron")).unwrap()
+}
+
 /// Issue #119: the open test circuit of the unit tests (`test_open.track.ron`): a small long race
 /// in three sections, not a circuit of the game.
 #[cfg(test)]
