@@ -170,6 +170,14 @@ pub struct Senses<'a> {
     /// Issue #20: its glider is open; the turn rate of its glide at full lock (rad/s, its
     /// Handling « air » included).
     pub glide_turn_rate: Option<f32>,
+    /// Issue #193: seconds of boost the item ready in its hand would give it now (a piment, a
+    /// piment doré's window), 0 without one (or without items): it may take a shortcut with it,
+    /// used at the entrance.
+    pub item_boost: f32,
+    /// Issue #193: the top speed its boost going gives it (m/s, 0 without one), and the one its
+    /// boost item would: what a boost carries it at, once it has sped up (in a few ticks).
+    pub boost_top: f32,
+    pub item_boost_top: f32,
 }
 
 /// What the bot is doing with the jump/drift button.
@@ -257,6 +265,11 @@ pub struct BotBrain {
     /// Its draws for the shortcuts, apart from its other generators: they shift none of its
     /// other choices (and a circuit without shortcut draws none).
     route_rng: BotRng,
+    /// Issue #193: it heads for this shortcut counting on the boost item in its hand (it keeps
+    /// it until then)...
+    pub item_route: Option<usize>,
+    /// ...and uses it this tick (at the shortcut's entrance): the item button.
+    pub boost_item: bool,
 }
 
 impl BotBrain {
@@ -297,6 +310,8 @@ impl BotBrain {
             route: Route::Main,
             decided_branch: None,
             route_rng: BotRng::new(seed ^ ROUTE_SEED),
+            item_route: None,
+            boost_item: false,
         }
     }
 
@@ -322,6 +337,8 @@ impl BotBrain {
         self.avoid = 0.0;
         self.route = Route::Main;
         self.decided_branch = None;
+        self.item_route = None;
+        self.boost_item = false;
     }
 }
 
@@ -1063,6 +1080,11 @@ fn trick(brain: &mut BotBrain, skill: &BotSkill, senses: &Senses, slowing: bool,
     }
 }
 
+/// Issue #193: past a shortcut's end, a bot aims this far inside the road's edge where the path
+/// ends (m), then over to its racing line along this much road (m).
+const EXIT_EDGE: f32 = 2.0;
+const EXIT_BLEND: f32 = 25.0;
+
 /// Issue #107: what the route says this tick.
 enum RouteStep {
     /// Along the racing line.
@@ -1074,13 +1096,16 @@ enum RouteStep {
 }
 
 /// Issue #107 (GD « Conception des circuits »): whether the bot takes the shortcuts ahead, once
-/// per pass and with its level (`BotSkill::shortcut_chance`, `grass_chance`, `jump_chance`): a
-/// road one at once; a grass one only with a boost that lasts most of it (it waits for one up to
-/// the shortcut: a mini-turbo fired before it counts); a risky jump only fast enough; issue
-/// #156: one closed by a panel only with a boost that lasts up to the panel and a little further
-/// (`BotTuning::panel_boost_margin`; it waits for one, like for the grass). Then the shortcut's
-/// lane, onto it at its start (the grass one, or one closed by a panel, only with the boost still
-/// enough), along it to its end. Its draws come from its own generator.
+/// per pass and with its level (`BotSkill::grass_chance`, `jump_chance`). Issue #193 (GD § 16,
+/// rule 7: every shortcut is grass, it pays only with a boost): **only with a boost that carries
+/// it far enough**, at its speed of the moment, from where it is: most of a grass path
+/// (`BotTuning::grass_boost_share`), up to the panel that closes one and a little further
+/// (`BotTuning::panel_boost_margin`, issue #156), up to a risky jump's ramp lip (its ramp is
+/// grass) and a little further (`BotTuning::jump_boost_margin`), a jump only fast enough too. The
+/// boost going (a mini-turbo fired before it counts: it waits for one up to the shortcut), or the
+/// boost item in its hand ([`Senses::item_boost`]), kept for it and used at the entrance
+/// ([`BotBrain::boost_item`]). Then the shortcut's lane, onto it at its start only with the boost
+/// still enough (or the item), along it to its end. Its draws come from its own generator.
 #[allow(clippy::too_many_arguments)]
 fn choose_route(
     brain: &mut BotBrain,
@@ -1093,22 +1118,28 @@ fn choose_route(
     speed: f32,
 ) -> RouteStep {
     let branches = line.branches();
+    brain.boost_item = false;
     let ahead_of = |k: usize| {
         line.center()
             .wrap(branches[k].shortcut.from - here.distance)
     };
-    let boosted_enough = |k: usize, ahead: f32| {
-        let run = ahead + branches[k].shortcut.length() * tuning.grass_boost_share;
-        senses.boost_left * speed.max(1.0) >= run
-    };
-    // Issue #156: up to the panel that closes it (from `along` on its path), and a little more.
-    let boosted_through = |k: usize, ahead: f32, along: f32| {
-        let Some(cover) = branches[k].shortcut.cover else {
-            return true;
+    // How far its boost must carry it: from `ahead` m before shortcut `k`, `along` m on its path.
+    let needed = |k: usize, ahead: f32, along: f32| {
+        let branch = &branches[k];
+        let path = &branch.shortcut;
+        let mut run = match branch.lip {
+            Some(lip) => lip + tuning.jump_boost_margin - along,
+            None => path.length() * tuning.grass_boost_share,
         };
-        let run = ahead + (cover.at - along).max(0.0) + tuning.panel_boost_margin;
-        !cover.closes() || senses.boost_left * speed.max(1.0) >= run
+        if let Some(cover) = path.cover.filter(|c| c.closes()) {
+            run = run.max(cover.at - along + tuning.panel_boost_margin);
+        }
+        ahead + run.max(0.0)
     };
+    // At its speed, or the boost's top speed once it sped up (a few ticks at 40 m/s²).
+    let carries = |seconds: f32, top: f32, run: f32| seconds * speed.max(top).max(1.0) >= run;
+    let boosted_by = |run: f32| carries(senses.boost_left, senses.boost_top, run);
+    let item_by = |run: f32| carries(senses.item_boost, senses.item_boost_top, run);
     let fast_enough = speed >= tuning.jump_speed_share * kart.max_speed * senses.speed_scale;
     match brain.route {
         Route::On(k) => {
@@ -1128,11 +1159,15 @@ fn choose_route(
             // road's edge: the grass bridge).
             let past_its_start = line.center().wrap(here.distance - path.from) < MOUTH_REACH;
             if (at.along >= -1.0 && at.lateral.abs() <= path.half_width) || past_its_start {
-                let go = (branches[k].kind() != ShortcutKind::Grass || boosted_enough(k, 0.0))
-                    && boosted_through(k, 0.0, at.along.max(0.0));
-                if go {
+                let run = needed(k, 0.0, at.along.max(0.0));
+                let with_item = brain.item_route == Some(k) && item_by(run);
+                brain.item_route = None;
+                if boosted_by(run) || with_item {
                     brain.route = Route::On(k);
                     brain.sample = None;
+                    // Issue #193: its boost item, now, as it gets on it (unless its boost
+                    // carries it already).
+                    brain.boost_item = with_item && !boosted_by(run);
                     return RouteStep::Follow(k, at);
                 }
                 brain.route = Route::Main;
@@ -1140,11 +1175,13 @@ fn choose_route(
             }
             if ahead_of(k) > tuning.shortcut_lookahead + 10.0 {
                 brain.route = Route::Main;
+                brain.item_route = None;
                 return RouteStep::Line;
             }
             RouteStep::Lane(branches[k].entry_lateral)
         }
         Route::Main => {
+            brain.item_route = None;
             if let Some(k) = brain.decided_branch
                 && ahead_of(k) > tuning.shortcut_lookahead
             {
@@ -1155,18 +1192,20 @@ fn choose_route(
                 if ahead > tuning.shortcut_lookahead || brain.decided_branch == Some(k) {
                     continue;
                 }
-                let (chance, ready) = match branch.kind() {
-                    ShortcutKind::Road => (skill.shortcut_chance, true),
-                    ShortcutKind::Grass => (skill.grass_chance, boosted_enough(k, ahead)),
+                let (chance, fast) = match branch.kind() {
+                    ShortcutKind::Grass => (skill.grass_chance, true),
                     ShortcutKind::Jump => (skill.jump_chance, fast_enough),
                 };
-                let ready = ready && boosted_through(k, ahead, 0.0);
-                if !ready {
+                // Its boost going carries it from here; its item, from the entrance.
+                let boosted = boosted_by(needed(k, ahead, 0.0));
+                let item = !boosted && item_by(needed(k, 0.0, 0.0));
+                if !fast || !(boosted || item) {
                     continue;
                 }
                 brain.decided_branch = Some(k);
                 if chance > 0.0 && brain.route_rng.chance(chance) {
                     brain.route = Route::Toward(k);
+                    brain.item_route = item.then_some(k);
                     return RouteStep::Lane(branch.entry_lateral);
                 }
                 break;
@@ -1177,7 +1216,7 @@ fn choose_route(
 }
 
 /// Issue #107: one tick of a bot on a shortcut: it steers to its path ahead (past its end, to
-/// its racing line), flat out over a jump, slowing for the turns of a road or a grass path; no
+/// its racing line), flat out over a jump, slowing for the turns of a grass path; no
 /// drift (one going on is let go: its mini-turbo fires), a trick off the jump's ramp. Issue
 /// #156: on a narrow path (the guide's, [`NARROW_PATH`] wide at most), it aims closer
 /// (`BotTuning::narrow_path_aim` at most): it keeps to its curves.
@@ -1202,10 +1241,16 @@ fn follow_branch(
     let target = if ahead <= path.length() {
         path.at(ahead).position
     } else {
-        let d = path.to + (ahead - path.length());
-        line.center()
-            .at(d)
-            .point(line.offset_at(d) * skill.line_fidelity, 0.0)
+        let past = ahead - path.length();
+        let d = path.to + past;
+        let s = line.center().at(d);
+        let racing = line.offset_at(d) * skill.line_fidelity;
+        // Issue #193: a path that ends over the road's shoulder (grass, which brakes like sand):
+        // first onto the road there, then over to its line.
+        let edge = (s.half_width - EXIT_EDGE).max(0.0);
+        let exit = branch.exit_lateral.clamp(-edge, edge);
+        let blend = (past / EXIT_BLEND).clamp(0.0, 1.0);
+        s.point(exit + (racing - exit) * blend, 0.0)
     };
     let (angle, yaw_right) = pursuit(senses.position, senses.forward, senses.right, target, speed);
     let steer = steer_for_yaw(kart, yaw_right, speed, angle);
@@ -1591,24 +1636,31 @@ mod tests {
     }
 
     /// Issue #156 (GD « Conception des circuits »): a shortcut closed by a panel is taken only
-    /// with a boost that lasts up to the panel and `BotTuning::panel_boost_margin` further: 30 m
-    /// before it, a bot that would always take it keeps to its line without a boost, or with one
-    /// too short, and heads for it with one long enough; at its start, it goes on it with the
-    /// boost still enough, and keeps to the road with a boost that would end before the panel.
-    /// The same road shortcut without a panel is taken without a boost.
+    /// with a boost that lasts up to the panel and `BotTuning::panel_boost_margin` further. Issue
+    /// #193: and every shortcut (grass) only with a boost that lasts most of it
+    /// (`grass_boost_share`; a small share here, so that the panel decides when there is one):
+    /// 30 m before it, a bot that would always take it keeps to its line without a boost, or with
+    /// one too short, and heads for it with one long enough; at its start, it goes on it with the
+    /// boost still enough, and keeps to the road with a boost that would end too soon. With no
+    /// boost going but a boost item in its hand long enough from the entrance (a piment), it heads
+    /// for it, keeps the item, and uses it at the entrance; with an item too short, it keeps to
+    /// its line.
     #[test]
-    fn a_shortcut_closed_by_a_panel_is_taken_only_with_a_boost_that_lasts() {
+    fn a_shortcut_is_taken_only_with_a_boost_that_lasts() {
         use crate::track::{TrackData, TrackLayout};
         let text = "(name: \"Square\", points: [(pos: (0.0, 0.0, 0.0)), (pos: (0.0, 0.0, -50.0)), \
                     (pos: (50.0, 0.0, -50.0)), (pos: (50.0, 0.0, 0.0))], \
                     open_edges: [(from: 0.3, to: 1.7, side: Right)], \
-                    shortcuts: [(from: 0.5, to: 1.5, kind: Road, width: 5.0, \
+                    shortcuts: [(from: 0.5, to: 1.5, kind: Grass, width: 5.0, \
                     cover: Some((kind: Panel, at: 8.0)), \
                     points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])])";
         let k = kart();
-        let t = BotTuning::default();
+        let t = BotTuning {
+            grass_boost_share: 0.2,
+            ..default()
+        };
         let mut skill = *t.skill(BotDifficulty::Hard);
-        skill.shortcut_chance = 1.0;
+        skill.grass_chance = 1.0;
         for closed in [true, false] {
             let mut data = TrackData::from_ron(text).unwrap();
             if !closed {
@@ -1627,12 +1679,22 @@ mod tests {
             let branch = &line.branches()[0];
             let from = branch.shortcut.from;
             let speed = 25.0;
-            // Up to the panel (8 m along its path) and the margin, from 30 m before it.
-            let needed = (30.0 + 8.0 + t.panel_boost_margin) / speed;
-            for (boost, takes) in [
-                (0.0, !closed),
-                (needed - 0.2, !closed),
-                (needed + 0.2, true),
+            // Up to the panel (8 m along its path) and the margin, or a fifth of its path.
+            let run = if closed {
+                8.0 + t.panel_boost_margin
+            } else {
+                branch.shortcut.length() * t.grass_boost_share
+            };
+            assert!(8.0 + t.panel_boost_margin > branch.shortcut.length() * t.grass_boost_share);
+            // From 30 m before it.
+            let needed = (30.0 + run) / speed;
+            for (boost, item, takes) in [
+                (0.0, 0.0, false),
+                (needed - 0.2, 0.0, false),
+                (needed + 0.2, 0.0, true),
+                // Its item, from the entrance.
+                (0.0, run / speed + 0.1, true),
+                (0.0, run / speed - 0.1, false),
             ] {
                 let mut brain = BotBrain::new(3, &t);
                 let mut senses = senses_at(
@@ -1644,23 +1706,30 @@ mod tests {
                     &[],
                 );
                 senses.boost_left = boost;
+                senses.item_boost = item;
                 let here = line.locate(senses.position, None);
                 let step = choose_route(&mut brain, &skill, &t, &k, &line, &senses, &here, speed);
+                let name =
+                    format!("closed {closed}, a boost of {boost:.2} s, an item of {item:.2}");
+                assert_eq!(matches!(step, RouteStep::Lane(_)), takes, "{name}");
+                assert_eq!(brain.route == Route::Toward(0), takes, "{name}");
                 assert_eq!(
-                    matches!(step, RouteStep::Lane(_)),
-                    takes,
-                    "closed {closed}, a boost of {boost:.2} s"
+                    brain.item_route,
+                    (takes && item > 0.0).then_some(0),
+                    "{name}"
                 );
-                assert_eq!(brain.route == Route::Toward(0), takes);
+                assert!(!brain.boost_item, "{name}: not before the entrance");
             }
-            // At its start, heading for it: on it with the boost still enough, else back to
-            // its line.
-            for (boost, goes) in [
-                ((8.0 + t.panel_boost_margin) / speed + 0.1, true),
-                (0.2, !closed),
+            // At its start, heading for it: on it with the boost still enough, or with its item
+            // (used now), else back to its line.
+            for (boost, item, goes) in [
+                (run / speed + 0.1, false, true),
+                (0.2, false, false),
+                (0.0, true, true),
             ] {
                 let mut brain = BotBrain::new(3, &t);
                 brain.route = Route::Toward(0);
+                brain.item_route = item.then_some(0);
                 let start = branch.shortcut.samples()[1];
                 let mut senses = senses_at(&line, from, 0.0, speed, KartState::Grounded, &[]);
                 senses.position = start.position + Vec3::Y * 0.55;
@@ -1668,14 +1737,13 @@ mod tests {
                 senses.right = start.right;
                 senses.velocity = start.forward * speed;
                 senses.boost_left = boost;
+                senses.item_boost = if item { run / speed + 0.5 } else { 0.0 };
                 let here = line.locate(senses.position, None);
                 let step = choose_route(&mut brain, &skill, &t, &k, &line, &senses, &here, speed);
-                assert_eq!(
-                    matches!(step, RouteStep::Follow(0, _)),
-                    goes,
-                    "closed {closed}, at its start with a boost of {boost:.2} s"
-                );
-                assert_eq!(brain.route == Route::On(0), goes);
+                let name = format!("closed {closed}, at its start with a boost of {boost:.2} s");
+                assert_eq!(matches!(step, RouteStep::Follow(0, _)), goes, "{name}");
+                assert_eq!(brain.route == Route::On(0), goes, "{name}");
+                assert_eq!(brain.boost_item, item, "{name}: its item now");
             }
         }
     }
@@ -1711,6 +1779,9 @@ mod tests {
             creamed: false,
             item_box: None,
             glide_turn_rate: None,
+            item_boost: 0.0,
+            boost_top: 0.0,
+            item_boost_top: 0.0,
         }
     }
 

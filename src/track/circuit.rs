@@ -273,21 +273,16 @@ pub fn build_circuit_when_loaded(
         }
     }
 
-    // Issue #107: the shortcuts' roads and grass paths, only on a circuit that has them (the
-    // same archetypes as the road's: nothing new elsewhere).
-    for (mesh, surface) in [
-        (&generated.shortcut_road, Surface::Road),
-        (&generated.shortcut_grass, Surface::Offroad),
-    ] {
-        if !mesh.indices.is_empty() {
-            spawn_trimesh(
-                &mut commands,
-                mesh,
-                surface,
-                0.0,
-                TriMeshFlags::FIX_INTERNAL_EDGES,
-            );
-        }
+    // Issue #107: the shortcuts' grass paths (issue #193: every shortcut is grass), only on a
+    // circuit that has them (the same archetypes as the road's: nothing new elsewhere).
+    if !generated.shortcut_grass.indices.is_empty() {
+        spawn_trimesh(
+            &mut commands,
+            &generated.shortcut_grass,
+            Surface::Offroad,
+            0.0,
+            TriMeshFlags::FIX_INTERNAL_EDGES,
+        );
     }
 
     // Issue #180: the faces of the drops, solid like a wall (two-sided), only on a circuit that
@@ -330,7 +325,14 @@ pub fn build_circuit_when_loaded(
         &layout,
         &palette,
     );
-    spawn_trick_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
+    spawn_trick_ramps(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &layout,
+        data,
+        &palette,
+    );
     spawn_glide_ramps(&mut commands, &mut meshes, &mut materials, &layout, data);
     let item_boxes = no_boxes.is_none();
     spawn_spots(
@@ -703,8 +705,16 @@ fn spawn_trick_ramps(
     materials: &mut Assets<StandardMaterial>,
     layout: &TrackLayout,
     data: &TrackData,
+    palette: &Palette,
 ) {
     let material = materials.add(Color::srgb(0.98, 0.72, 0.25));
+    // Issue #193: a risky jump's ramp is grass (off-road, the green of the shoulders): without a
+    // boost, a kart slows down on it and falls short; with one, it flies. One material more, only
+    // on a circuit with a risky jump.
+    let grass = layout.shortcuts.iter().any(|s| s.ramp.is_some()).then(|| {
+        let (r, g, b) = palette.shoulder;
+        materials.add(Color::srgb(r, g, b))
+    });
     // White stripes mark a trick ramp and its lip, where to press the jump/drift button.
     let stripe_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -728,22 +738,35 @@ fn spawn_trick_ramps(
                 ramp.length,
                 ramp.angle.to_radians(),
                 ramp.width,
+                None,
             )
         })
         .chain(layout.shortcuts.iter().filter_map(|shortcut| {
             let ramp = shortcut.ramp?;
-            Some((ramp.start, ramp.base(), ramp.length, ramp.angle, ramp.width))
+            Some((
+                ramp.start,
+                ramp.base(),
+                ramp.length,
+                ramp.angle,
+                ramp.width,
+                grass.clone(),
+            ))
         }));
-    for (start, base, length, angle, width) in ramps {
+    for (start, base, length, angle, width, grass) in ramps {
         let transform = ramp_transform_on(start, base, length, angle, half_thickness);
         let half = Vec3::new(width / 2.0, half_thickness, length / 2.0);
-        let entity = super::spawn_static_box(commands, transform, half, Surface::Road, 0.0);
+        let surface = if grass.is_some() {
+            Surface::Offroad
+        } else {
+            Surface::Road
+        };
+        let entity = super::spawn_static_box(commands, transform, half, surface, 0.0);
         commands
             .entity(entity)
             .insert((
                 TrickRamp,
                 Mesh3d(meshes.add(Cuboid::from_size(half * 2.0))),
-                MeshMaterial3d(material.clone()),
+                MeshMaterial3d(grass.unwrap_or_else(|| material.clone())),
             ))
             .with_children(|ramp| {
                 // The lip (top end, local -Z) and two chevrons pointing up the ramp.

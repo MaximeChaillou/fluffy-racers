@@ -115,8 +115,13 @@ pub struct HazardTuning {
     pub crate_slowdown: f32,
     pub balloon_slowdown: f32,
     /// Issue #156 (GD « Conception des circuits »): a shortcut's panel, broken by a kart with a
-    /// boost, comes back this long after (s; the same tick on every peer).
+    /// boost, comes back this long after (s; the same tick on every peer). Issue #193 (Max: « le
+    /// truc qui cache doit revenir plus vite »): 1.75 s (6 s before): a kart without a boost
+    /// that follows a boosted one no longer finds it open.
     pub panel_respawn_seconds: f32,
+    /// Issue #193: a shortcut's stack of crates (issue #110) comes back this long after it burst
+    /// (s; 5 s before, `respawn_seconds` like the crates on the road).
+    pub cover_respawn_seconds: f32,
     /// Issue #156: how much a kart without a boost bounces off a panel (its restitution; a wall's
     /// is 0.3: a gentle bounce, the kart is not thrown back).
     pub panel_bounce: f32,
@@ -136,7 +141,8 @@ impl Default for HazardTuning {
             hay_slowdown: 0.08,
             crate_slowdown: 0.04,
             balloon_slowdown: 0.0,
-            panel_respawn_seconds: 6.0,
+            panel_respawn_seconds: 1.75,
+            cover_respawn_seconds: 1.75,
             panel_bounce: 0.15,
             panel_reach: 0.3,
         }

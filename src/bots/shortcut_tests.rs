@@ -1,10 +1,12 @@
 //! Issue #107 acceptance: headless scenarios of the shortcuts on the Corniche Cannelle and its
 //! mirror (the whole game, `GamePlugin` with `MinimalPlugins`, the player's kart alone, its race
-//! started, one fixed tick per `app.update()`): a risky jump made saves time, one too slow falls
-//! and the pelican drops the kart before it; the grass bridge never calls the pelican, slows a
-//! kart without a boost down to the off-road's top speed and pays with one; the hidden road saves
-//! time; the bots take them as their level says, and the grass only with a boost. Issue #108: the
-//! same on Prairie Pompon redrawn after the guide ([`CIRCUITS`]).
+//! started, one fixed tick per `app.update()`): a risky jump too slow falls and the pelican drops
+//! the kart before it; the grass never calls the pelican; the bots take them as their level says.
+//! Issue #108 and after: the same on every circuit of the guide ([`CIRCUITS`]). Issue #193 (Max:
+//! « je veux que les raccourcis soient tous en herbe, même ceux cachés, et il faut absolument un
+//! piment ou équivalent pour passer ») : every shortcut is grass (a jump's ramp too), loses time
+//! without a boost even taken perfectly, saves some with one, and the bots take one only with a
+//! boost.
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::Velocity;
@@ -135,6 +137,23 @@ const CIRCUITS: [Circuit; 10] = [
     },
 ];
 
+/// The circuits of [`CIRCUITS`] the run asks for (`FLUFFY_RACE_CIRCUITS`, as the races of
+/// `scenario_tests`: all of them by default).
+fn wanted() -> impl Iterator<Item = Circuit> {
+    CIRCUITS
+        .into_iter()
+        .filter(|c| super::scenario_tests::circuit_wanted(c.path))
+}
+
+impl Circuit {
+    /// Where the tests start their bot before shortcut `k` of the circuit (issue #193: by its
+    /// number in the file: the jump, the hidden path, the grass bridge on every circuit of the
+    /// guide).
+    fn approach(&self, k: usize) -> f32 {
+        [self.jump_approach, self.road_approach, self.grass_approach][k]
+    }
+}
+
 /// A circuit of [`CIRCUITS`], the player's kart alone on it, its race started.
 struct Canyon {
     app: App,
@@ -149,13 +168,22 @@ struct Run {
     /// Ticks to reach the goal (`None`: never in time).
     ticks: Option<u32>,
     tows: Vec<TowReason>,
-    /// The kinds of shortcut the kart was counted on (`Course::project`), in order.
+    /// The kinds of shortcut the kart was counted on (`Course::project`), in order, and their
+    /// numbers.
     on: Vec<ShortcutKind>,
-    /// Fastest forward speed on a grass path without a boost (m/s), and ticks spent there.
+    on_index: Vec<usize>,
+    /// Fastest forward speed on a grass path without a boost after its first half second there
+    /// (m/s), and ticks spent there.
     grass_speed: f32,
     grass_ticks: u32,
+    /// Issue #193: ticks on a shortcut's grass (well inside its path, or on a jump's ramp) with
+    /// its wheels on the ground, and those of them with a wheel on something else than grass.
+    ground_ticks: u32,
+    not_grass_ticks: u32,
     /// Its race distance right after the pelican dropped it.
     dropped_at: Option<f32>,
+    /// Its checkpoints crossed at the end.
+    passed: u32,
 }
 
 impl Canyon {
@@ -187,6 +215,14 @@ impl Canyon {
         let course = app.world().resource::<Course>().clone();
         assert_eq!(layout.mirrored, mirrored);
         assert_eq!(layout.name, circuit.name);
+        // Issue #193: the jump, the hidden path and the grass bridge, in this order.
+        let kinds: Vec<ShortcutKind> = layout.shortcuts.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            [ShortcutKind::Jump, ShortcutKind::Grass, ShortcutKind::Grass],
+            "{}",
+            circuit.name
+        );
         Self {
             app,
             kart,
@@ -195,7 +231,7 @@ impl Canyon {
         }
     }
 
-    /// The circuit's shortcut of `kind` (one of each).
+    /// The circuit's first shortcut of `kind`.
     fn shortcut(&self, kind: ShortcutKind) -> Shortcut {
         self.layout
             .shortcuts
@@ -214,11 +250,11 @@ impl Canyon {
             .insert((bot(BotDifficulty::Hard, 7, &tuning), OwnSkill(skill)));
     }
 
-    /// A Hard bot's skill that takes shortcuts of `kind` every time, and no other.
+    /// A Hard bot's skill that takes shortcuts of `kind` every time it may (with a boost: issue
+    /// #193), and no other.
     fn skill_for(&self, kind: Option<ShortcutKind>) -> BotSkill {
         let tuning = self.app.world().resource::<BotTuning>();
         let mut skill = *tuning.skill(BotDifficulty::Hard);
-        skill.shortcut_chance = f32::from(kind == Some(ShortcutKind::Road));
         skill.grass_chance = f32::from(kind == Some(ShortcutKind::Grass));
         skill.jump_chance = f32::from(kind == Some(ShortcutKind::Jump));
         skill
@@ -259,17 +295,6 @@ impl Canyon {
         self.place_at(position, sample.forward, speed, distance);
     }
 
-    /// Issue #171: a purple mini-turbo's boost (its strength, its 2.63 s): what pays on a grass
-    /// path since its grass is slower (40 % of the top speed), most of the way on it.
-    fn purple_boost(&mut self) {
-        let seconds = self
-            .app
-            .world()
-            .resource::<KartTuning>()
-            .mini_turbo_durations[2];
-        self.boost(seconds);
-    }
-
     /// A boost of a purple mini-turbo's strength for `seconds`.
     fn boost(&mut self, seconds: f32) {
         let strength = self
@@ -284,13 +309,64 @@ impl Canyon {
             .add(strength, seconds);
     }
 
+    /// Issue #193: the boost the tests fire `lead` m before `path` (of a purple mini-turbo's
+    /// strength): a purple mini-turbo's (2.63 s), or longer on a path that needs more for its
+    /// boost to carry the kart over all of it (a jump: up to its ramp's lip): a long hidden path
+    /// (60 to 100 m) needs a piment doré, or a purple fired at its very mouth; covering less of
+    /// it hardly pays, the rest of the way at 35 % of the top speed costs what the boost saved.
+    fn boost_for(&self, path: &Shortcut, lead: f32) -> f32 {
+        let t = self.app.world().resource::<KartTuning>();
+        let bots = self.app.world().resource::<BotTuning>();
+        let top = t.max_speed * (1.0 + t.mini_turbo_strengths[2]);
+        let run = match path.ramp {
+            Some(ramp) => path.locate(ramp.lip()).along + bots.jump_boost_margin,
+            None => path.length(),
+        };
+        t.mini_turbo_durations[2].max((lead + run) / top * 1.1 + 0.2)
+    }
+
+    /// Issue #156: every panel of the circuit down for 20 s (a kart with a boost broke it a
+    /// moment ago).
+    fn panels_down(&mut self) {
+        let world = self.app.world_mut();
+        let tick = world.resource::<Race>().flow.tick;
+        for mut panel in world.query::<&mut crate::track::Panel>().iter_mut(world) {
+            panel.down_until = tick + 20 * 60;
+        }
+    }
+
     /// Runs until the kart's race distance reaches `goal` (or `seconds` went by); `input` drives
     /// it when it is not a bot (`None`: its bot drives).
     fn run(&mut self, goal: f32, seconds: f32, input: Option<&dyn Fn(&App) -> KartInput>) -> Run {
+        self.run_boosted(goal, seconds, input, None)
+    }
+
+    /// [`Self::run`], with a boost of a purple mini-turbo's strength, `boost.1` s long, given once
+    /// the kart's race distance reaches `boost.0` (issue #193: the boost fired just before a
+    /// shortcut).
+    fn run_boosted(
+        &mut self,
+        goal: f32,
+        seconds: f32,
+        input: Option<&dyn Fn(&App) -> KartInput>,
+        mut boost_at: Option<(f32, f32)>,
+    ) -> Run {
         let mut run = Run::default();
         let max_speed = self.app.world().resource::<KartTuning>().max_speed;
         let mut was_carried = false;
         for tick in 1..=(seconds * 60.0) as u32 {
+            if let Some((at, length)) = boost_at {
+                let distance = self
+                    .app
+                    .world()
+                    .get::<RaceProgress>(self.kart)
+                    .unwrap()
+                    .distance;
+                if distance >= at {
+                    self.boost(length);
+                    boost_at = None;
+                }
+            }
             if let Some(input) = input {
                 let wanted = input(&self.app);
                 *self
@@ -316,15 +392,52 @@ impl Canyon {
             was_carried = carried;
             let projection = self.course.project(progress.passed, transform.translation);
             if let Some(k) = projection.shortcut {
-                let kind = self.course.shortcuts[k].kind;
-                if run.on.last() != Some(&kind) {
+                let path = &self.course.shortcuts[k];
+                let kind = path.kind;
+                if run.on_index.last() != Some(&k) {
                     run.on.push(kind);
+                    run.on_index.push(k);
                 }
                 let boost = world.get::<Boost>(self.kart).unwrap();
                 if kind == ShortcutKind::Grass && boost.remaining <= 0.0 {
-                    let velocity = world.get::<Velocity>(self.kart).unwrap().linear;
-                    run.grass_speed = run.grass_speed.max(velocity.dot(*transform.forward()));
+                    // Once it braked down to the grass's speed (issue #193: 0.25 s from the top
+                    // speed; half a second given).
+                    if run.grass_ticks >= 30 {
+                        let velocity = world.get::<Velocity>(self.kart).unwrap().linear;
+                        run.grass_speed = run.grass_speed.max(velocity.dot(*transform.forward()));
+                    }
                     run.grass_ticks += 1;
+                }
+            }
+            // Issue #193: what its wheels stand on, well inside a grass path (counted on it), or
+            // on a jump's ramp (its box).
+            let wheels = world.get::<crate::kart::KartWheels>(self.kart).unwrap();
+            let at = transform.translation;
+            let inside =
+                self.course
+                    .shortcuts
+                    .iter()
+                    .enumerate()
+                    .any(|(k, path)| match path.ramp {
+                        Some(ramp) => {
+                            let d = at - ramp.start;
+                            let along = d.dot(ramp.direction);
+                            let across = d.dot(Vec3::new(-ramp.direction.z, 0.0, ramp.direction.x));
+                            // Its four wheels on it: a kart's length in from its foot.
+                            (2.0..ramp.length * ramp.angle.cos() - 1.0).contains(&along)
+                                && across.abs() < ramp.width / 2.0 - 1.0
+                        }
+                        None => {
+                            let here = path.locate(at);
+                            projection.shortcut == Some(k)
+                                && (1.0..path.length() - 1.0).contains(&here.along)
+                                && here.lateral.abs() < path.half_width - 1.0
+                        }
+                    });
+            if inside && wheels.on_ground.iter().all(|on| *on) {
+                run.ground_ticks += 1;
+                if wheels.offroad_ratio < 0.999 {
+                    run.not_grass_ticks += 1;
                 }
             }
             assert!(run.grass_speed <= max_speed * 1.5);
@@ -333,6 +446,12 @@ impl Canyon {
                 break;
             }
         }
+        run.passed = self
+            .app
+            .world()
+            .get::<RaceProgress>(self.kart)
+            .unwrap()
+            .passed;
         run
     }
 }
@@ -367,45 +486,157 @@ fn follow(path: &Shortcut, layout: &TrackLayout, app: &App, kart: Entity) -> Kar
     }
 }
 
-/// Issue #107 acceptance (« un saut risqué réussi fait gagner du temps, raté il fait tomber et
-/// venir le pélican »), on the Corniche Cannelle and its mirror (issue #108: and Prairie Pompon):
-/// a Hard bot that goes for the risky jump from before it (110 m on the Corniche), flat out,
-/// makes it (counted on the jump, never towed) and reaches 40 m past its landing at least 0.25 s
-/// before the same bot by the road; a kart lined up at the foot of the jump's ramp at 13 m/s,
-/// flat out, falls short: the pelican comes (it fell) and drops it before the jump.
-#[test]
-fn a_risky_jump_made_saves_time_and_one_too_slow_falls_to_the_pelican() {
-    for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
-        let mut times = Vec::new();
-        for kind in [Some(ShortcutKind::Jump), None] {
-            let mut canyon = Canyon::new(circuit, mirrored);
-            let jump = canyon.shortcut(ShortcutKind::Jump);
-            let skill = canyon.skill_for(kind);
-            canyon.becomes_a_bot(skill);
-            canyon.place(jump.from - circuit.jump_approach, 26.0);
-            let run = canyon.run(jump.from + jump.span + 40.0, 20.0, None);
-            assert!(run.tows.is_empty(), "{kind:?} (mirror {mirrored}): {run:?}");
-            let jumped = run.on.contains(&ShortcutKind::Jump);
-            assert_eq!(
-                jumped,
-                kind.is_some(),
-                "{kind:?} (mirror {mirrored}): {run:?}"
-            );
-            times.push(run.ticks.expect("the goal is reached") as f32 / 60.0);
-        }
-        println!(
-            "{} (mirror {mirrored}): the jump in {:.2} s, the road in {:.2} s",
-            circuit.name, times[0], times[1]
-        );
-        assert!(
-            times[0] + 0.25 <= times[1],
-            "{} (mirror {mirrored}): the jump in {:.2} s, the road in {:.2} s",
-            circuit.name,
-            times[0],
-            times[1]
-        );
+/// Issue #193: the least a boosted shortcut saves on the road **with the same boost** (s): a
+/// risky jump, a hidden path, a grass bridge. Before #193, against the road without a boost, the
+/// jump and the hidden road taken without one: 0.25, 0.4 and 0.5 s (a boosted kart takes the
+/// road's turns faster too: the same boost on both sides is the fair measure).
+const BOOSTED_GAIN: [f32; 3] = [0.15, 0.5, 0.5];
+/// Issue #193: how far before a shortcut's start the boost of the tests is fired (m): « un
+/// mini-turbo violet lancé 20 m avant » (#171) for a grass bridge; the risky jump's ramp and the
+/// hidden path's mouth need the bot lined up first (it heads for one only once it has a boost
+/// that carries it there and over most of it).
+const BOOST_LEAD: [f32; 3] = [40.0, 40.0, 20.0];
 
-        // Too slow: it falls into the drop, the pelican drops it before the jump.
+/// Issue #193 acceptance (« sans boost, un raccourci fait perdre du temps à coup sûr, même à un
+/// bot Difficile qui le prend parfaitement ; avec un piment, un mini-turbo violet ou un plot
+/// juste avant, il en fait gagner » ; « le gain avec boost et la perte sans boost sont vérifiés
+/// sur chaque raccourci de chaque circuit du guide » ; « sol d'herbe sur tout le chemin ») : on
+/// every circuit of the guide with shortcuts ([`CIRCUITS`]) and its mirror, for **each** of its
+/// shortcuts (the risky jump, the hidden path, the grass bridge):
+///
+/// - **with a boost** (a purple mini-turbo's, fired [`BOOST_LEAD`] before its start), a Hard bot
+///   that may take it takes it (counted on it, never towed, the same checkpoints crossed) and
+///   reaches 20 m past its end at least [`BOOSTED_GAIN`] before the same bot with the same boost
+///   by the road (which never takes it);
+/// - **without a boost**, the bot that would take it keeps to the road (issue #193: never on a
+///   shortcut without one); and a kart that takes it anyway, flat out along its path from the same
+///   place (the perfect line), is there later: at least 0.3 s on a grass path (its panel down, if
+///   it has one: below, it never gets past it standing), and a risky jump made at full speed
+///   falls short (its ramp is grass) and the pelican brings it back before it;
+/// - **its ground is grass all along**: every tick that kart is well inside the path (a grass
+///   path: 1 m from its edges and its ends; a jump: on its ramp), its four wheels on the ground,
+///   all of them are on the off-road (its top speed there the off-road's, 35 %).
+///
+/// Before #193, the hidden roads paid without a boost (0.65 to 0.9 s), the jumps at full speed
+/// (0.3 to 0.6 s).
+#[test]
+fn every_shortcut_is_grass_loses_time_without_a_boost_and_saves_some_with_one() {
+    let mut failures = Vec::new();
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
+        let name = circuit.name;
+        for k in 0..3 {
+            let canyon = Canyon::new(circuit, mirrored);
+            let path = canyon.layout.shortcuts[k].clone();
+            let kind = path.kind;
+            let tuning = canyon.app.world().resource::<KartTuning>().clone();
+            let approach = circuit.approach(k);
+            let lead = BOOST_LEAD[k].min(approach);
+            let seconds = canyon.boost_for(&path, lead);
+            drop(canyon);
+            let goal = path.from + path.span + 20.0;
+            let label = format!("{name} (mirror {mirrored}), shortcut {k} ({kind:?})");
+
+            // With a boost: by the shortcut, then by the road.
+            let mut boosted = Vec::new();
+            for takes in [true, false] {
+                let mut canyon = Canyon::new(circuit, mirrored);
+                let skill = canyon.skill_for(takes.then_some(kind));
+                canyon.becomes_a_bot(skill);
+                canyon.place(path.from - approach, 26.0);
+                let run = canyon.run_boosted(goal, 20.0, None, Some((path.from - lead, seconds)));
+                if takes {
+                    println!("{label}: boosted by it, {run:?}");
+                }
+                assert!(
+                    run.tows.is_empty(),
+                    "{label} boosted, takes {takes}: {run:?}"
+                );
+                assert_eq!(
+                    run.on_index.contains(&k),
+                    takes,
+                    "{label} boosted, takes {takes}: {run:?}"
+                );
+                boosted.push((
+                    run.ticks.expect("the goal is reached") as f32 / 60.0,
+                    run.passed,
+                ));
+            }
+            println!(
+                "{label}: boosted ({:.2} s, {} m before), the shortcut in {:.2} s, the road in \
+                 {:.2} s",
+                seconds, lead, boosted[0].0, boosted[1].0
+            );
+            if boosted[0].0 + BOOSTED_GAIN[k] > boosted[1].0 {
+                failures.push(format!(
+                    "{label}: boosted, the shortcut in {:.2} s, the road in {:.2} s",
+                    boosted[0].0, boosted[1].0
+                ));
+            }
+            assert_eq!(boosted[0].1, boosted[1].1, "{label}: the same checkpoints");
+
+            // Without a boost: the bot that would take it keeps to the road.
+            let mut canyon = Canyon::new(circuit, mirrored);
+            let skill = canyon.skill_for(Some(kind));
+            canyon.becomes_a_bot(skill);
+            canyon.place(path.from - approach, 26.0);
+            let run = canyon.run(goal, 20.0, None);
+            assert!(run.tows.is_empty() && run.on.is_empty(), "{label}: {run:?}");
+            let road = run.ticks.expect("the goal is reached") as f32 / 60.0;
+
+            // A kart that takes it anyway, flat out along it from the same place, at full speed.
+            let mut canyon = Canyon::new(circuit, mirrored);
+            canyon.place(path.from - approach, tuning.max_speed);
+            if path.closed() {
+                canyon.panels_down();
+            }
+            let (shortcut, layout, kart) = (path.clone(), canyon.layout.clone(), canyon.kart);
+            let driver = move |app: &App| follow(&shortcut, &layout, app, kart);
+            let run = canyon.run(goal, 25.0, Some(&driver));
+            assert!(run.on_index.contains(&k), "{label}: {run:?}");
+            // Many ticks on a grass path; a few on a jump's short ramp (its four wheels on it).
+            let least = if kind == ShortcutKind::Jump { 5 } else { 60 };
+            assert!(run.ground_ticks >= least, "{label}: {run:?}");
+            assert_eq!(
+                run.not_grass_ticks, 0,
+                "{label}: off the grass on it ({run:?})"
+            );
+            let lost = match kind {
+                ShortcutKind::Grass => {
+                    assert!(run.tows.is_empty(), "{label}: {run:?}");
+                    let cap = tuning.max_speed * tuning.offroad_speed_factor;
+                    assert!(
+                        run.grass_speed <= cap * 1.05,
+                        "{label}: {:.1} m/s on the grass, the off-road's top speed is {cap:.1}",
+                        run.grass_speed
+                    );
+                    run.ticks.expect("the goal is reached") as f32 / 60.0
+                }
+                ShortcutKind::Jump => {
+                    // Its grass ramp brakes it: it falls short, the pelican drops it before.
+                    assert_eq!(run.tows.first(), Some(&TowReason::Fell), "{label}: {run:?}");
+                    let dropped = run.dropped_at.expect("dropped");
+                    assert!(dropped <= path.from, "{label}: dropped at {dropped:.0} m");
+                    run.ticks.map_or(f32::INFINITY, |t| t as f32 / 60.0)
+                }
+            };
+            println!("{label}: no boost, the road in {road:.2} s, the shortcut in {lost:.2} s");
+            if road + 0.3 > lost {
+                failures.push(format!(
+                    "{label}: no boost, the road in {road:.2} s, the shortcut in {lost:.2} s"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Issue #107 acceptance (« un saut risqué réussi fait gagner du temps, raté il fait tomber et
+/// venir le pélican »), on every circuit of the guide with shortcuts and its mirror: a kart lined
+/// up at the foot of the jump's ramp at 13 m/s, flat out, falls short: the pelican comes (it
+/// fell) and drops it before the jump. Made (with a boost since #193): above.
+#[test]
+fn a_risky_jump_too_slow_falls_to_the_pelican() {
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
         let mut canyon = Canyon::new(circuit, mirrored);
         let jump = canyon.shortcut(ShortcutKind::Jump);
         let ramp = jump.ramp.unwrap();
@@ -433,213 +664,73 @@ fn a_risky_jump_made_saves_time_and_one_too_slow_falls_to_the_pelican() {
     }
 }
 
-/// Issue #107 acceptance (« l'herbe autorisée ne déclenche pas le pélican et ralentit sans
-/// boost »), on the Corniche Cannelle and its mirror (issue #108: and Prairie Pompon): a kart
-/// that drives the grass bridge (the grass path) flat out without a boost is never towed and goes
-/// no faster there than the off-road's top speed (GD § 2: 40 % since #171); with a boost (issue
-/// #171: a purple mini-turbo's, 2.63 s, 20 m before it; 2 s before #171, when the grass was 55 %:
-/// on the bridges of 72 m, it now loses 0.1 to 0.2 s with it), a Hard bot takes it (it only does
-/// with one) and reaches 20 m past its end at least 0.5 s before the same bot with the same boost
-/// by the road; without a boost, the
-/// bot keeps to the road, and is there at least 0.3 s before a kart that drives the grass from
-/// the same place, flat out. Issue #156: on the Corniche Cannelle, a panel closes the grass
-/// bridge: the kart that drives it without a boost does it with the panel down (broken a moment
-/// before by another kart), and a kart that drives it from its start without a boost, the panel
-/// standing, never gets past the panel (it bounces off it) while the bot by the road is there.
+/// Issue #107 acceptance (« l'herbe autorisée ne déclenche pas le pélican »), issue #156: a
+/// shortcut closed by a panel: a kart that drives it from its start without a boost, the panel
+/// standing, never gets past the panel (it bounces off it, or is stuck and towed), on every
+/// circuit with one and its mirror.
 #[test]
-fn the_grass_bridge_never_calls_the_pelican_slows_without_a_boost_and_pays_with_one() {
-    for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
+fn a_panel_stops_a_kart_without_a_boost() {
+    let mut closed = 0;
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
         let name = circuit.name;
+        let canyon = Canyon::new(circuit, mirrored);
+        let Some(grass) = canyon.layout.shortcuts.iter().find(|s| s.closed()).cloned() else {
+            continue;
+        };
+        drop(canyon);
+        closed += 1;
+        let cover = grass.cover.unwrap();
         let mut canyon = Canyon::new(circuit, mirrored);
-        let grass = canyon.shortcut(ShortcutKind::Grass);
-        let tuning = canyon.app.world().resource::<KartTuning>().clone();
         let start = grass.samples()[0];
         canyon.place_at(
             start.position + Vec3::Y * GRID_HEIGHT,
             start.forward,
-            12.0,
+            20.0,
             grass.from,
         );
-        if grass.closed() {
-            // Issue #156: its panel down (a kart with a boost broke it a moment ago).
-            let world = canyon.app.world_mut();
-            let tick = world.resource::<Race>().flow.tick;
-            for mut panel in world.query::<&mut crate::track::Panel>().iter_mut(world) {
-                panel.down_until = tick + 20 * 60;
-            }
-        }
         let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
         let driver = move |app: &App| follow(&path, &layout, app, kart);
-        let run = canyon.run(grass.from + grass.span + 20.0, 15.0, Some(&driver));
-        assert!(run.tows.is_empty(), "{name} (mirror {mirrored}): {run:?}");
-        assert!(run.ticks.is_some(), "{run:?}");
-        assert!(run.grass_ticks >= 60, "{run:?}");
-        let cap = tuning.max_speed * tuning.offroad_speed_factor;
-        assert!(
-            run.grass_speed <= cap * 1.05,
-            "{name} (mirror {mirrored}): {:.1} m/s on the grass, the off-road's top speed is \
-             {cap:.1}",
-            run.grass_speed
-        );
-
-        let mut times = Vec::new();
-        for kind in [Some(ShortcutKind::Grass), None] {
-            let mut canyon = Canyon::new(circuit, mirrored);
-            let skill = canyon.skill_for(kind);
-            canyon.becomes_a_bot(skill);
-            canyon.place(grass.from - circuit.grass_approach, 26.0);
-            canyon.purple_boost();
-            let run = canyon.run(grass.from + grass.span + 20.0, 15.0, None);
-            assert!(
-                run.tows.is_empty(),
-                "{name} {kind:?} (mirror {mirrored}): {run:?}"
-            );
-            assert_eq!(
-                run.on.contains(&ShortcutKind::Grass),
-                kind.is_some(),
-                "{name} {kind:?} (mirror {mirrored}): {run:?}"
-            );
-            times.push(run.ticks.expect("the goal is reached") as f32 / 60.0);
-        }
-        println!(
-            "{name} (mirror {mirrored}): boosted, the grass in {:.2} s, the road in {:.2} s",
-            times[0], times[1]
-        );
-        assert!(
-            times[0] + 0.5 <= times[1],
-            "{name} (mirror {mirrored}): boosted, the grass in {:.2} s, the road in {:.2} s",
-            times[0],
-            times[1]
-        );
-
-        // No boost: the bot that would take the grass keeps to the road, and it is right: the
-        // grass is slower.
-        let mut canyon = Canyon::new(circuit, mirrored);
-        let skill = canyon.skill_for(Some(ShortcutKind::Grass));
-        canyon.becomes_a_bot(skill);
-        canyon.place(grass.from - circuit.grass_approach, 26.0);
-        let run = canyon.run(grass.from + grass.span + 20.0, 15.0, None);
-        assert!(run.tows.is_empty() && run.on.is_empty(), "{run:?}");
-        let road = run.ticks.expect("the goal is reached") as f32 / 60.0;
-        if let Some(cover) = grass.cover.filter(|c| c.closes()) {
-            // Issue #156: closed by a panel: without a boost, a kart never gets past it.
-            let mut canyon = Canyon::new(circuit, mirrored);
-            let start = grass.samples()[0];
-            canyon.place_at(
-                start.position + Vec3::Y * GRID_HEIGHT,
-                start.forward,
-                20.0,
-                grass.from,
-            );
-            let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
-            let driver = move |app: &App| follow(&path, &layout, app, kart);
-            let mut furthest = f32::MIN;
-            for _ in 0..(road * 60.0) as u32 + 60 {
-                let input = driver(&canyon.app);
-                *canyon
-                    .app
-                    .world_mut()
-                    .get_mut::<KartInput>(canyon.kart)
-                    .unwrap() = input;
-                canyon.app.update();
-                let world = canyon.app.world();
-                let at = world.get::<Transform>(canyon.kart).unwrap().translation;
-                let here = grass.locate(at);
-                // Pushing against it for long, it is stuck: the pelican comes; or it slid off the
-                // narrow path along the panel and fell, by the panel: the pelican too.
-                if let Some(carry) = world.get::<Tow>(canyon.kart).unwrap().carry {
-                    println!("{name} (mirror {mirrored}): {:?} at {here:?}", carry.reason);
-                    assert!(
-                        carry.reason == TowReason::Stuck
-                            || (carry.reason == TowReason::Fell
-                                && here.along > cover.at - 4.0
-                                && here.along < cover.at + 1.0),
-                        "{name} (mirror {mirrored}): {:?} at {here:?}",
-                        carry.reason
-                    );
-                    break;
-                }
-                if here.lateral.abs() <= grass.half_width + 1.0 {
-                    furthest = furthest.max(here.along);
-                }
-            }
-            println!(
-                "{name} (mirror {mirrored}): no boost, the road in {road:.2} s, the grass stopped \
-                 {:.2} m before its panel",
-                cover.at - furthest
-            );
-            assert!(
-                furthest > cover.at - 3.0 && furthest < cover.at - 0.9,
-                "{name} (mirror {mirrored}): {furthest:.1} m along the grass, its panel at {}",
-                cover.at
-            );
-            continue;
-        }
-        let mut canyon = Canyon::new(circuit, mirrored);
-        canyon.place(grass.from - circuit.grass_approach, 26.0);
-        let (path, layout, kart) = (grass.clone(), canyon.layout.clone(), canyon.kart);
-        let driver = move |app: &App| follow(&path, &layout, app, kart);
-        let run = canyon.run(grass.from + grass.span + 20.0, 15.0, Some(&driver));
-        assert!(
-            run.tows.is_empty() && run.on == [ShortcutKind::Grass],
-            "{run:?}"
-        );
-        let on_grass = run.ticks.expect("the goal is reached") as f32 / 60.0;
-        println!(
-            "{name} (mirror {mirrored}): no boost, the grass in {on_grass:.2} s, the road in \
-             {road:.2} s"
-        );
-        assert!(
-            road + 0.3 <= on_grass,
-            "{name} (mirror {mirrored}): no boost, the grass in {on_grass:.2} s, the road in \
-             {road:.2} s"
-        );
-    }
-}
-
-/// Issue #107: the hidden road saves time, and counts right: a Hard bot that takes it reaches
-/// 30 m past its end before the same bot by the road, never towed, with the same checkpoints
-/// crossed. Mirrored too; on Prairie Pompon too (issue #108).
-#[test]
-fn the_hidden_road_saves_time_and_counts_right() {
-    for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
-        let mut runs = Vec::new();
-        for kind in [Some(ShortcutKind::Road), None] {
-            let mut canyon = Canyon::new(circuit, mirrored);
-            let road = canyon.shortcut(ShortcutKind::Road);
-            let skill = canyon.skill_for(kind);
-            canyon.becomes_a_bot(skill);
-            canyon.place(road.from - circuit.road_approach, 24.0);
-            let goal = road.from + road.span + 30.0;
-            let run = canyon.run(goal, 15.0, None);
-            assert!(run.tows.is_empty(), "{kind:?} (mirror {mirrored}): {run:?}");
-            assert_eq!(
-                run.on.contains(&ShortcutKind::Road),
-                kind.is_some(),
-                "{kind:?} (mirror {mirrored}): {run:?}"
-            );
-            let passed = canyon
+        let mut furthest = f32::MIN;
+        for _ in 0..(12 * 60) {
+            let input = driver(&canyon.app);
+            *canyon
                 .app
-                .world()
-                .get::<RaceProgress>(canyon.kart)
-                .unwrap()
-                .passed;
-            runs.push((
-                run.ticks.expect("the goal is reached") as f32 / 60.0,
-                passed,
-            ));
+                .world_mut()
+                .get_mut::<KartInput>(canyon.kart)
+                .unwrap() = input;
+            canyon.app.update();
+            let world = canyon.app.world();
+            let at = world.get::<Transform>(canyon.kart).unwrap().translation;
+            let here = grass.locate(at);
+            // Pushing against it for long, it is stuck: the pelican comes; or it slid off the
+            // narrow path along the panel and fell, by the panel: the pelican too.
+            if let Some(carry) = world.get::<Tow>(canyon.kart).unwrap().carry {
+                println!("{name} (mirror {mirrored}): {:?} at {here:?}", carry.reason);
+                assert!(
+                    carry.reason == TowReason::Stuck
+                        || (carry.reason == TowReason::Fell
+                            && here.along > cover.at - 4.0
+                            && here.along < cover.at + 1.0),
+                    "{name} (mirror {mirrored}): {:?} at {here:?}",
+                    carry.reason
+                );
+                break;
+            }
+            if here.lateral.abs() <= grass.half_width + 1.0 {
+                furthest = furthest.max(here.along);
+            }
         }
         println!(
-            "{} (mirror {mirrored}): hidden road {:?}, road {:?}",
-            circuit.name, runs[0], runs[1]
+            "{name} (mirror {mirrored}): no boost, the grass stopped {:.2} m before its panel",
+            cover.at - furthest
         );
         assert!(
-            runs[0].0 + 0.4 <= runs[1].0,
-            "{} (mirror {mirrored}): {runs:?}",
-            circuit.name
+            furthest > cover.at - 3.0 && furthest < cover.at - 0.9,
+            "{name} (mirror {mirrored}): {furthest:.1} m along the grass, its panel at {}",
+            cover.at
         );
-        assert_eq!(runs[0].1, runs[1].1, "the same checkpoints crossed");
     }
+    assert!(closed >= 8, "{closed} circuits with a panel");
 }
 
 /// Whether the segment from `from` to `to` crosses the box of half extents `half` around
@@ -903,8 +994,6 @@ struct Ride {
     lowest: f32,
 }
 
-const KINDS: [ShortcutKind; 3] = [ShortcutKind::Road, ShortcutKind::Grass, ShortcutKind::Jump];
-
 /// Issue #171 acceptance (« la fusée sur chaque sorte de raccourci sans chute »): on every circuit
 /// with shortcuts ([`CIRCUITS`]: the Corniche Cannelle, Prairie Pompon, the Col des Moufles and
 /// the others) and its mirror, a fusée launched at the entrance of each shortcut (the hidden
@@ -915,15 +1004,16 @@ const KINDS: [ShortcutKind; 3] = [ShortcutKind::Road, ShortcutKind::Grass, Short
 /// across the void: it fell from every one of them.
 #[test]
 fn a_fusee_never_falls_off_a_shortcut() {
-    for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
         let mut canyon = Canyon::new(circuit, mirrored);
         let time = canyon
             .app
             .world()
             .resource::<crate::items::ItemTuning>()
             .fusee_time;
-        for kind in KINDS {
-            let path = canyon.shortcut(kind);
+        for k in 0..3 {
+            let path = canyon.layout.shortcuts[k].clone();
+            let kind = path.kind;
             let length = path.length();
             for (place, along) in [
                 ("entrance", 6.0),
@@ -954,24 +1044,26 @@ fn a_fusee_never_falls_off_a_shortcut() {
 /// it (2 s more), on every circuit with shortcuts and its mirror.
 #[test]
 fn a_bot_fusee_never_falls_off_a_shortcut() {
-    for (circuit, mirrored) in CIRCUITS.into_iter().flat_map(|c| [(c, false), (c, true)]) {
-        for kind in KINDS {
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
+        for (k, lead) in BOOST_LEAD.into_iter().enumerate() {
             let mut canyon = Canyon::new(circuit, mirrored);
-            let path = canyon.shortcut(kind);
+            let path = canyon.layout.shortcuts[k].clone();
+            let kind = path.kind;
             let skill = canyon.skill_for(Some(kind));
             canyon.becomes_a_bot(skill);
-            let approach = match kind {
-                ShortcutKind::Road => circuit.road_approach,
-                ShortcutKind::Grass => circuit.grass_approach,
-                ShortcutKind::Jump => circuit.jump_approach,
-            };
-            canyon.place(path.from - approach, 26.0);
-            if kind == ShortcutKind::Grass {
-                canyon.purple_boost();
-            }
-            let name = format!("{} (mirror {mirrored}), {kind:?}", circuit.name);
+            canyon.place(path.from - circuit.approach(k), 26.0);
+            // Issue #193: it takes one only with a boost, fired just before it.
+            let lead = lead.min(circuit.approach(k));
+            let mut boost_at = Some((path.from - lead, canyon.boost_for(&path, lead)));
+            let name = format!("{} (mirror {mirrored}), {kind:?} {k}", circuit.name);
             let mut on = false;
             for _ in 0..(20 * 60) {
+                if let Some((at, seconds)) = boost_at
+                    && canyon.progress().distance >= at
+                {
+                    canyon.boost(seconds);
+                    boost_at = None;
+                }
                 canyon.app.update();
                 let world = canyon.app.world();
                 let at = world.get::<Transform>(canyon.kart).unwrap().translation;
@@ -997,7 +1089,16 @@ fn a_bot_fusee_never_falls_off_a_shortcut() {
                     break;
                 }
             }
-            assert!(on, "{name}: the bot never got a third of the way on it");
+            let world = canyon.app.world();
+            assert!(
+                on,
+                "{name}: the bot never got a third of the way on it (route {:?}, boost {:?}, at \
+                 {:.0} m, its path from {:.0} m)",
+                world.get::<BotBrain>(canyon.kart).unwrap().route,
+                world.get::<Boost>(canyon.kart).unwrap(),
+                canyon.progress().distance,
+                path.from
+            );
             canyon.fusee();
             let ride = canyon.ride(path.low, 2.0, None);
             println!("{name}: {ride:?}");

@@ -806,14 +806,16 @@
         (from: 543.173, to: 556.900, side: Right),
     ],
     shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
         // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the
         // tight corner, landing on the road after it.
         (from: 406.450, to: 416.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
          points: [(476.51, 14.00, -140.32), (474.52, 14.00, -125.31), (466.99, 14.00, -120.37), (441.01, 13.58, -103.31), (432.01, 13.58, -103.31)]),
+        // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: narrow (5 m), straight behind a giant pine while the road goes round
         // it, behind a waterfall 18 m in (one drives through it).
-        (from: 525.000, to: 542.603, kind: Road, width: 5.0,
+        (from: 525.000, to: 542.603, kind: Grass, width: 5.0,
          points: [(251.98, 12.00, 89.75), (201.25, 12.00, 89.75), (150.51, 12.00, 89.75)],
          cover: Some((kind: Waterfall, at: 18.0))),
         // The grass bridge, across the tight corner: narrow (5 m), closed by a panel 26 m in

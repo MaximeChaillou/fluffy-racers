@@ -742,7 +742,7 @@ fn a_panel_back_with_a_kart_in_it_lets_it_out_first() {
 /// Falaises Flanelle's hidden road (and its mirror) behind a stack of crates: a kart that drives
 /// the path flat out bursts it on its way (no tumble, a crate's slowdown, 4 %, a little at most:
 /// it never stops it), drives on through it, nothing more bursts while it is gone, and it comes
-/// back `respawn_seconds` later. The stack is no wall: no collider; and it is not in the bots'
+/// back `cover_respawn_seconds` later (issue #193: 1.75 s; `respawn_seconds`, 5 s, before). The stack is no wall: no collider; and it is not in the bots'
 /// way (on the path, off the road).
 #[test]
 fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
@@ -788,8 +788,10 @@ fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
             (lost - tuning.crate_slowdown).abs() <= 0.02,
             "mirror {mirrored}: {lost} of its speed lost ({before} → {after})"
         );
-        // Through it and on along the path, while it is gone; then it comes back.
-        let ticks = crate::race::seconds_to_ticks(tuning.respawn_seconds);
+        // Through it and on along the path, while it is gone; then it comes back (issue #193:
+        // sooner than the crates on the road).
+        assert!(tuning.cover_respawn_seconds < tuning.respawn_seconds);
+        let ticks = crate::race::seconds_to_ticks(tuning.cover_respawn_seconds);
         for tick in 1..=ticks + 1 {
             if tick < 60 {
                 along_the_path(&mut app, kart, &path);

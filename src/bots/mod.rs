@@ -443,6 +443,30 @@ fn drive_bots(
         let creamed = item_effects.is_some_and(|e| e.creamed > 0.0);
         let rocket = item_effects.is_some_and(|e| e.rocket > 0.0);
         let has_room = slots.is_some_and(|s| s.has_room());
+        // Issue #193: the boost its hand would give now (for a shortcut, used at its entrance),
+        // and the top speeds of its boosts (its own kart's top speed, its catch-up).
+        let (item_boost, item_strength) = match (slots.filter(|_| items_on), item_tuning.as_deref())
+        {
+            (Some(slots), Some(items)) => match slots.hand {
+                Slot::Ready {
+                    item: ItemKind::Piment,
+                    ..
+                } => (items.piment_duration, items.piment_strength),
+                Slot::Ready {
+                    item: ItemKind::PimentDore,
+                    ..
+                } => (items.golden_piment_time, items.piment_strength),
+                _ => (0.0, 0.0),
+            },
+            _ => (0.0, 0.0),
+        };
+        let top = effects.tuning(&kart_tuning).max_speed * scale.0;
+        let boost_top = if boost.is_active() {
+            top * (1.0 + boost.strength)
+        } else {
+            0.0
+        };
+        let item_boost_top = top * (1.0 + item_strength);
         let senses = Senses {
             entity,
             position: transform.translation,
@@ -473,6 +497,9 @@ fn drive_bots(
                 None
             },
             glide_turn_rate,
+            item_boost,
+            boost_top,
+            item_boost_top,
         };
         // The bot knows its own kart: its stats applied (drift radii, tiers, steering), under
         // water the water's physics too.
@@ -520,6 +547,11 @@ fn drive_bots(
                     && *state != KartState::Respawning
                     && !progress.is_some_and(|p| p.finished()),
                 golden: slots.golden > 0,
+                // Issue #193: its boost item, kept for the shortcut ahead, used at its entrance;
+                // on a shortcut, a piment doré's next boost as soon as one ends.
+                saving: brain.item_route.is_some(),
+                boost_now: brain.boost_item,
+                on_shortcut: matches!(brain.route, Route::On(_)),
                 danger: dangers.iter().any(|(owner, at)| {
                     *owner != entity
                         && at.distance(transform.translation) <= tuning.item_danger_range

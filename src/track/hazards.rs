@@ -330,7 +330,8 @@ pub fn slowdown(tuning: &HazardTuning, kind: BreakableKind) -> f32 {
 
 /// The things to drive through: one there bursts under the first kart that touches it (ours or
 /// another peer's: each peer bursts what it sees, the effect is ours only), ours slowed down a
-/// little; it comes back after `HazardTuning::respawn_seconds`. All back when a race (re)starts.
+/// little; it comes back after `HazardTuning::respawn_seconds` (a shortcut's stack of crates
+/// after `cover_respawn_seconds`, issue #193). All back when a race (re)starts.
 #[allow(clippy::type_complexity)]
 fn burst_breakables(
     time: Res<Time>,
@@ -379,7 +380,13 @@ fn burst_breakables(
             if *state == KartState::Respawning || !kart_capsule(kart_transform).touches(&shape) {
                 continue;
             }
-            breakable.respawn_in = tuning.respawn_seconds.max(f32::MIN_POSITIVE);
+            // Issue #193: a shortcut's stack of crates comes back sooner.
+            let respawn = if hazard.kind.bursts() && matches!(hazard.kind, HazardKind::Cover(_)) {
+                tuning.cover_respawn_seconds
+            } else {
+                tuning.respawn_seconds
+            };
+            breakable.respawn_in = respawn.max(f32::MIN_POSITIVE);
             breakable.bursts += 1;
             breakable.burst_by = Some(kart);
             if ours && let Some(mut velocity) = velocity {

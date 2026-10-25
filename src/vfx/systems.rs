@@ -1387,7 +1387,15 @@ pub(super) fn emit_karts(
         // The ground: dust off the road (issue #130: the color of the ground it comes from), the
         // anti-gravity's sparks, the glider's wind.
         let dusty = on_ground && wheels.offroad_ratio > 0.0 && speed > world.dust_min_speed;
-        let dust_rate = world.dust_rate * wheels.offroad_ratio * speed_ratio.min(1.2);
+        // Issue #193: braking into the grass like into sand, it ploughs (more dust).
+        let ploughing = !kart_boost.is_active()
+            && speed > kart_tuning.max_speed * kart_tuning.offroad_speed_factor * 1.05;
+        let plough = if ploughing {
+            1.0 + world.dust_plough
+        } else {
+            1.0
+        };
+        let dust_rate = world.dust_rate * wheels.offroad_ratio * speed_ratio.min(1.2) * plough;
         let offroad = on_ground && wheels.offroad_ratio > 0.5;
         let ground = if dusty || (offroad && bursts.landing) {
             ground_paint(layout, race_progress.map(|p| p.distance), root.translation)

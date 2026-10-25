@@ -200,8 +200,9 @@ fn strike_effect(a_weight: u8, b_weight: u8, gap: f32) -> StrikeEffect {
 }
 
 /// Issue #34 acceptance: a strike on a kart in reach pushes it sideways (about 1.4 m, GD § 15),
-/// slows it down (−10 %) and costs it 1 croquette. It keeps control (no spin), and the striker
-/// rests for 1.5 s.
+/// slows it down (−35 % since #193, Max: « là les karts continuent de rouler à la même vitesse »;
+/// −10 % before) and costs it 1 croquette. It keeps control (no spin), and the striker rests for
+/// 1.5 s.
 #[test]
 fn a_strike_in_reach_pushes_the_kart_aside_slows_it_and_costs_a_croquette() {
     let (mut arena, a, b) = side_by_side(10, 10, 2.2);
@@ -222,7 +223,7 @@ fn a_strike_in_reach_pushes_the_kart_aside_slows_it_and_costs_a_croquette() {
         effect.moved
     );
     assert!(
-        (0.88..=0.93).contains(&effect.speed_ratio),
+        (0.62..=0.68).contains(&effect.speed_ratio),
         "speed × {:.3}",
         effect.speed_ratio
     );
@@ -356,8 +357,10 @@ fn the_grabber_is_towed_up_to_the_speed_of_a_faster_kart_never_beyond() {
 }
 
 /// GD § 15's tuning goal: at equal Weights, a full grab of 2 s costs a kart at full speed about
-/// 10 % of its speed; a light kart held is braked more than a heavy one (its Weight factor). It
-/// gets its speed back once free.
+/// 10 % of its speed while it is held; a light kart held is braked more than a heavy one (its
+/// Weight factor). Issue #193: let go at the end of the grab (its time up, no throw), it loses
+/// 10 % more of its speed at once (`release_speed_loss`), whatever its Weight. It gets its speed
+/// back once free.
 #[test]
 fn a_full_grab_costs_the_kart_held_about_ten_percent_of_its_speed() {
     let mut lost = Vec::new();
@@ -366,15 +369,26 @@ fn a_full_grab_costs_the_kart_held_about_ten_percent_of_its_speed() {
         let (mut alone, _, ab) = side_by_side(10, target_weight, 2.2);
         let mut slowest = 1.0f32;
         let mut ticks_held = 0;
+        let mut released = None;
+        let mut last = 1.0f32;
         for _ in 0..150 {
             arena.tick(&[(a, PAW), (b, FULL_THROTTLE)]);
             alone.tick(&[(ab, FULL_THROTTLE)]);
+            let ratio = arena.speed(b) / alone.speed(ab);
             if arena.paw(b).held.is_some() {
                 ticks_held += 1;
+                slowest = slowest.min(ratio);
+            } else if ticks_held > 0 && released.is_none() {
+                released = Some(ratio / last);
             }
-            slowest = slowest.min(arena.speed(b) / alone.speed(ab));
+            last = ratio;
         }
         assert_eq!(ticks_held, 120, "weight {target_weight}: a full grab");
+        let released = released.expect("let go");
+        assert!(
+            (0.88..=0.92).contains(&released),
+            "weight {target_weight}: let go, its speed × {released:.3}"
+        );
         lost.push(1.0 - slowest);
         // Free again: back to its speed.
         arena.run(2.0, &[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
@@ -595,7 +609,12 @@ fn a_heavy_kart_pushes_a_light_one_further_than_the_reverse() {
     assert!((1.6..=2.1).contains(&ratio), "{ratio}");
     for effect in [heavy_on_light, even, light_on_heavy] {
         assert_eq!(effect.croquettes, 2);
-        assert!((0.88..=0.93).contains(&effect.speed_ratio));
+        // Issue #193: 35 % lost whatever the Weights (10 % before).
+        assert!(
+            (0.62..=0.68).contains(&effect.speed_ratio),
+            "{}",
+            effect.speed_ratio
+        );
     }
 }
 

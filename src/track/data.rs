@@ -362,20 +362,22 @@ pub struct OpenEdgeData {
 /// Issue #107: what a shortcut is made of.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ShortcutKind {
-    /// A road (asphalt and curbs), no wall: a hidden way, behind the decor.
-    Road,
-    /// A grass path, no wall: off-road (GD § 2: about 40 % of the top speed since #171), worth it only with
-    /// a boost (which ignores the off-road).
+    /// A grass path, no wall: off-road (GD § 2: about 35 % of the top speed since #193, 40 %
+    /// since #171), worth it only with a boost (which ignores the off-road). Issue #193 (Max:
+    /// « je veux que les raccourcis soient tous en herbe, même ceux cachés ») : every shortcut is
+    /// one, the hidden ones too; the hidden road of before (`Road`, asphalt and curbs) is gone,
+    /// and a file that still says `kind: Road` is refused.
     Grass,
     /// A risky jump: a trick ramp on the road, then nothing (the drop) until the landing on the
-    /// road further on. Short, and the kart falls.
+    /// road further on. Short, and the kart falls. Issue #193: its ramp is grass (off-road): a
+    /// kart without a boost slows down on it and falls short; with a boost, it flies.
     Jump,
 }
 
 /// Issue #107: a shortcut off the centerline, from the centerline at `from` to the centerline
 /// at `to` (spline parameters), along `points`: its first point on the road near `from`, its
 /// last one on the road near `to`, both on a side of the road without wall (`open_edges`). A
-/// `Road` or `Grass` shortcut is built `width` meters wide along its points (their height its
+/// `Grass` shortcut is built `width` meters wide along its points (their height its
 /// surface's); a `Jump` is built as its trick ramp only: from `points[1]` toward `points[2]`
 /// (`points[0]`, on the road before it, lines the karts up with it), the flight over the drop
 /// to the landing near its last point.
@@ -398,7 +400,7 @@ pub struct ShortcutData {
     #[serde(default = "default_jump_ramp_angle")]
     pub ramp_angle: f32,
     /// Issue #156 (GD « Conception des circuits »): what closes or hides its entrance, if
-    /// anything (a road or a grass path; never a jump): `cover: Some((kind: Panel, at: 18.0))`.
+    /// anything (a grass path; never a jump): `cover: Some((kind: Panel, at: 18.0))`.
     #[serde(default)]
     pub cover: Option<CoverData>,
 }
@@ -422,7 +424,7 @@ pub enum CoverKind {
     /// Issue #110: a stack of crates across the path, two and three high: it bursts as a kart
     /// drives through it (splinters, a « pof », a little slower: a crate's
     /// `HazardTuning::crate_slowdown`), and comes back after a while
-    /// (`HazardTuning::respawn_seconds`), like the crates on the road (issue #144).
+    /// (`HazardTuning::cover_respawn_seconds`, issue #193: sooner than the crates on the road).
     Crates,
 }
 
@@ -951,7 +953,7 @@ impl TrackData {
                     shortcut.ramp_length, shortcut.ramp_angle, shortcut.ramp_width
                 ));
             }
-            // Issue #156: its cover, on its path (a road or a grass path), across all of it.
+            // Issue #156: its cover, on its path (a grass path), across all of it.
             if let Some(cover) = shortcut.cover {
                 let length = super::shortcut::Shortcut::new(&center, shortcut).length();
                 if shortcut.kind == ShortcutKind::Jump
@@ -1508,14 +1510,14 @@ mod tests {
         }
     }
 
-    /// Issue #156: a shortcut's cover: on a road or a grass path (never a jump), 2 m from its ends
+    /// Issue #156: a shortcut's cover: on a grass path (never a jump), 2 m from its ends
     /// at least, the path narrow enough for it to stand across it; the mirror keeps it.
     #[test]
     fn a_shortcut_s_cover_that_makes_no_sense_is_rejected() {
         let base = TrackData::from_ron(&MINIMAL.replace(
             "(name:",
             "(open_edges: [(from: 0.3, to: 1.7, side: Right)], \
-             shortcuts: [(from: 0.5, to: 1.5, kind: Road, width: 5.0, \
+             shortcuts: [(from: 0.5, to: 1.5, kind: Grass, width: 5.0, \
              cover: Some((kind: Panel, at: 8.0)), \
              points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])], name:",
         ))
@@ -1528,7 +1530,6 @@ mod tests {
             change(&mut data.shortcuts[0]);
             data.validate().is_err()
         };
-        assert!(!broken(&|s| s.kind = ShortcutKind::Grass));
         // Issue #110: the waterfall and the stack of crates stand on a path the same way.
         for kind in [CoverKind::Foliage, CoverKind::Waterfall, CoverKind::Crates] {
             assert!(!broken(&|s| s.cover.as_mut().unwrap().kind = kind));
@@ -1642,12 +1643,23 @@ mod tests {
         let base = TrackData::from_ron(&MINIMAL.replace(
             "(name:",
             "(open_edges: [(from: 0.3, to: 1.7, side: Right)], \
-             shortcuts: [(from: 0.5, to: 1.5, kind: Road, \
+             shortcuts: [(from: 0.5, to: 1.5, kind: Grass, \
              points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])], name:",
         ))
         .unwrap();
         assert_eq!(base.validate(), Ok(()));
         assert_eq!(base.shortcuts[0].width, 9.0, "the default width");
+        // Issue #193: every shortcut is grass (or a jump, its ramp grass): a road is refused.
+        let road = MINIMAL.replace(
+            "(name:",
+            "(open_edges: [(from: 0.3, to: 1.7, side: Right)], \
+             shortcuts: [(from: 0.5, to: 1.5, kind: Road, \
+             points: [(5.0, 0.0, -25.0), (20.0, 0.0, -35.0), (25.0, 0.0, -45.0)])], name:",
+        );
+        assert!(
+            TrackData::from_ron(&road).is_err(),
+            "a road shortcut is refused"
+        );
         let broken = |change: &dyn Fn(&mut TrackData)| {
             let mut data = base.clone();
             change(&mut data);

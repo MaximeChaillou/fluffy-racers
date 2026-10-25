@@ -903,19 +903,27 @@ pub fn shown_with_effects(
 /// Turns the body by the drift's slip angle around the front axle (the simulation's
 /// `DriftMotion`, interpolated between the last two ticks like the pose); rolls the body once
 /// when a trick starts; shakes it while the engine stalls; spins or flips it after an item hit
-/// and makes it blink while it is invincible (issue #16).
+/// and makes it blink while it is invincible (issue #16). Issue #193: swerves it under a paw
+/// strike (`interactions::swerve_angle`, toward the push: seen only, on every peer, from its
+/// `Paw`).
 fn pose_bodies(
     time: Res<Time>,
     fixed_time: Res<Time<Fixed>>,
     deflated_scale: Option<Res<DeflatedScale>>,
     kart_tuning: Option<Res<KartTuning>>,
+    interactions: Option<Res<crate::interactions::InteractionTuning>>,
     karts: Query<(
         &KartState,
         &DriftMotion,
         &Stall,
         &Invincibility,
         Option<&ItemEffects>,
-        (Option<&KartEnvironment>, Option<&Velocity>),
+        (
+            Option<&KartEnvironment>,
+            Option<&Velocity>,
+            Option<&crate::interactions::Paw>,
+            &GlobalTransform,
+        ),
     )>,
     mut pivots: Query<(&mut KartBodyPivot, &mut Transform, &mut Visibility)>,
 ) {
@@ -924,7 +932,7 @@ fn pose_bodies(
     let now = time.elapsed_secs();
     let small = deflated_scale.map_or(1.0, |s| s.0);
     for (mut pivot, mut transform, mut visibility) in &mut pivots {
-        let Ok((state, motion, stall, invincibility, effects, (environment, velocity))) =
+        let Ok((state, motion, stall, invincibility, effects, (environment, velocity, paw, body))) =
             karts.get(pivot.body)
         else {
             continue;
@@ -959,7 +967,17 @@ fn pose_bodies(
             )),
             _ => None,
         };
-        let slip = motion.interpolated_slip(alpha);
+        // Issue #193: the swerve under a paw strike, toward the push (nose to the right for a
+        // push to the right).
+        let swerve = match (paw, interactions.as_deref()) {
+            (Some(paw), Some(tuning)) if paw.struck_count > 0 => {
+                let seconds = (paw.struck_ticks as f32 + alpha) / crate::TICK_HZ as f32;
+                let side = paw.struck_side.dot(*body.right()).signum();
+                side * crate::interactions::swerve_angle(tuning, seconds)
+            }
+            _ => 0.0,
+        };
+        let slip = motion.interpolated_slip(alpha) + swerve;
         // Trick: a new roll when it starts; a roll in progress finishes even after landing.
         let tricking = *state == KartState::Trick;
         let mut spin = pivot.spin;

@@ -111,6 +111,12 @@ pub struct Branch {
     pub entry_lateral: f32,
     /// Signed curvature of its path, per sample (1/m, right turns positive), seen from above.
     curvature: Vec<f32>,
+    /// Issue #193: a risky jump's ramp lip, along its path from its start (m): a bot needs a
+    /// boost up to there (its ramp is grass).
+    pub lip: Option<f32>,
+    /// Issue #193: where its path ends, across the road at its end (m, right positive): a bot
+    /// leaving it heads for the road there first (its shoulder is grass, it brakes like sand).
+    pub exit_lateral: f32,
 }
 
 impl Branch {
@@ -133,6 +139,14 @@ impl Branch {
             shortcut: shortcut.clone(),
             entry_lateral: (first - start.position).dot(start.right),
             curvature,
+            lip: shortcut
+                .ramp
+                .map(|ramp| shortcut.locate(ramp.lip()).along.max(0.0)),
+            exit_lateral: {
+                let end = center.at(shortcut.from + shortcut.span);
+                let last = samples[samples.len() - 1].position;
+                (last - end.position).dot(end.right)
+            },
         }
     }
 

@@ -49,8 +49,14 @@ pub struct InteractionTuning {
     pub strike_push_speed: f32,
     /// ...fading out in this long (GD: 0.4 s; about 1.4 m in all).
     pub strike_push_time: f32,
-    /// The target loses this share of its speed (GD: 10 %), whatever the Weights.
+    /// The target loses this share of its speed, whatever the Weights (GD: 35 % since #193, Max:
+    /// « là les karts continuent de rouler à la même vitesse »; 10 % before). A throw too.
     pub strike_speed_loss: f32,
+    /// Issue #193: the target swerves under the blow, seen only (its body yaws toward the push,
+    /// then back, `kart::visual`): this much at most (rad)...
+    pub strike_swerve: f32,
+    /// ...over this long (s): it keeps its heading and its control (GD § 15, #154).
+    pub strike_swerve_time: f32,
     /// Then it is protected from the paw strikes (not from the items) for this long (GD: 1 s).
     pub strike_protection: f32,
     /// A strike or a grab into thin air: the kart slides this far toward the side of the swing
@@ -92,6 +98,10 @@ pub struct InteractionTuning {
     /// ...a paw strike with a push this much stronger (GD: × 1.5), the same speed loss,
     /// croquette and protection.
     pub throw_push_factor: f32,
+    /// Issue #193 (« même idée, plus douce, pour l'attrape quand on se fait lâcher »): let go
+    /// without a throw (the button released, or the tether's time up), the kart held loses this
+    /// share of its speed (GD: 10 %), whatever the Weights.
+    pub release_speed_loss: f32,
 
     // --- Network (docs/ARCHITECTURE.md, for issues #8 and #9) -----------------------------------
     /// The kart struck or grabbed accepts the event when the other kart is in reach, plus this
@@ -126,7 +136,9 @@ impl Default for InteractionTuning {
 
             strike_push_speed: 7.0,
             strike_push_time: 0.4,
-            strike_speed_loss: 0.1,
+            strike_speed_loss: 0.35,
+            strike_swerve: 0.35,
+            strike_swerve_time: 0.6,
             strike_protection: 1.0,
             whiff_slide: 0.3,
             off_balance_time: 0.6,
@@ -141,6 +153,7 @@ impl Default for InteractionTuning {
             throw_min_hold: 0.5,
             throw_steer: 0.5,
             throw_push_factor: 1.5,
+            release_speed_loss: 0.1,
 
             reach_tolerance: 0.75,
             max_event_age: 0.3,
@@ -174,7 +187,13 @@ mod tests {
         // About 1.5 m sideways (a push fading out linearly).
         let moved = t.strike_push_speed * t.strike_push_time / 2.0;
         assert!((1.3..=1.6).contains(&moved), "{moved}");
-        assert_eq!(t.strike_speed_loss, 0.1);
+        // Issue #193: 35 % (10 % before), within the issue's 30 to 40 %; a swerve of 20° seen
+        // only; 10 % when let go.
+        assert_eq!(t.strike_speed_loss, 0.35);
+        assert!((0.3..=0.4).contains(&t.strike_speed_loss));
+        assert!(t.strike_swerve > 0.0 && t.strike_swerve < 0.5 && t.strike_swerve_time > 0.0);
+        assert_eq!(t.release_speed_loss, 0.1);
+        assert!(t.release_speed_loss < t.strike_speed_loss);
         assert_eq!(t.strike_protection, 1.0);
         assert_eq!(t.whiff_slide, 0.3);
         assert_eq!(t.grab_window, 0.5);

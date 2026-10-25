@@ -80,13 +80,13 @@ pub struct BotSkill {
     pub trick_chance: f32,
 
     // --- Shortcuts (issue #107, GD « Conception des circuits ») -----------------------------------
-    /// Chance to take a road shortcut (decided once per pass)...
-    pub shortcut_chance: f32,
-    /// ...a grass one, only with a boost long enough to reach it and cross part of it
-    /// (`BotTuning::grass_boost_share`)...
+    /// Chance to take a grass shortcut (decided once per pass), only with a boost long enough to
+    /// reach it and cross most of it (`BotTuning::grass_boost_share`). Issue #193: every shortcut
+    /// is grass (the hidden ones too: the `shortcut_chance` of their roads is gone)...
     pub grass_chance: f32,
-    /// ...and a risky jump, only fast enough (`BotTuning::jump_speed_share`). GD: only the Hard
-    /// bots try the jumps.
+    /// ...and a risky jump, only fast enough (`BotTuning::jump_speed_share`) and with a boost up
+    /// to its ramp's lip (issue #193: its ramp is grass, `BotTuning::jump_boost_margin`). GD:
+    /// only the Hard bots try the jumps.
     pub jump_chance: f32,
 
     // --- Items (GD § 8 and 12, issue #16) -------------------------------------------------------
@@ -248,6 +248,9 @@ pub struct BotTuning {
     /// It tries a risky jump only at this share of its top speed or faster, from the decision
     /// to the ramp.
     pub jump_speed_share: f32,
+    /// Issue #193: a risky jump's ramp is grass: a bot tries it only with a boost that lasts, at
+    /// its speed of the moment, up to the ramp's lip and this much further (m).
+    pub jump_boost_margin: f32,
 
     // --- Recovery -----------------------------------------------------------------------------
     /// Slower than this (m/s) while trying to drive for `stuck_seconds`: the bot backs up for
@@ -295,7 +298,6 @@ impl Default for BotTuning {
                     start_delay_min: 0.2,
                     start_delay_max: 1.3,
                     trick_chance: 0.4,
-                    shortcut_chance: 0.25,
                     grass_chance: 0.25,
                     jump_chance: 0.0,
                     item_delay: 2.5,
@@ -327,7 +329,6 @@ impl Default for BotTuning {
                     start_delay_min: 0.05,
                     start_delay_max: 0.7,
                     trick_chance: 0.8,
-                    shortcut_chance: 0.6,
                     grass_chance: 0.7,
                     jump_chance: 0.0,
                     item_delay: 1.2,
@@ -359,7 +360,6 @@ impl Default for BotTuning {
                     start_delay_min: 0.0,
                     start_delay_max: 0.22,
                     trick_chance: 1.0,
-                    shortcut_chance: 0.9,
                     grass_chance: 1.0,
                     jump_chance: 0.6,
                     item_delay: 0.5,
@@ -405,7 +405,7 @@ impl Default for BotTuning {
             item_drop_period: 4.0,
             item_patience: 5.0,
             item_piment_straight: 45.0,
-            item_box_pull: 3.5,
+            item_box_pull: 4.5,
             item_box_range: 35.0,
             item_bomb_range: [7.0, 24.0],
             item_bomb_cone: 3.0,
@@ -422,6 +422,7 @@ impl Default for BotTuning {
             panel_boost_margin: 6.0,
             narrow_path_aim: 8.0,
             jump_speed_share: 0.9,
+            jump_boost_margin: 10.0,
 
             stuck_speed: 1.5,
             stuck_seconds: 0.6,
@@ -451,8 +452,7 @@ mod tests {
             assert!(high.drift_chance >= low.drift_chance);
             assert!(high.start_delay_max < low.start_delay_max);
             assert!(high.trick_chance >= low.trick_chance);
-            // Issue #107: harder = takes more shortcuts.
-            assert!(high.shortcut_chance > low.shortcut_chance);
+            // Issue #107: harder = takes more shortcuts (issue #193: all grass).
             assert!(high.grass_chance > low.grass_chance);
             assert!(high.jump_chance >= low.jump_chance);
             // Issue #16: harder = uses its items sooner, aims better, shields more.
@@ -503,6 +503,6 @@ mod tests {
         assert_eq!(jumps[..2], [0.0, 0.0]);
         assert!(jumps[2] > 0.0);
         assert!(t.grass_boost_share > 0.0 && t.jump_speed_share > 0.5);
-        assert!(t.panel_boost_margin > 0.0);
+        assert!(t.panel_boost_margin > 0.0 && t.jump_boost_margin > 0.0);
     }
 }

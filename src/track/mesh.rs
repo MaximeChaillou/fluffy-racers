@@ -323,9 +323,8 @@ pub struct TrackMeshes {
     pub anti_gravity_road: MeshData,
     /// The same for their shoulders (`Surface::Offroad`, and `AntiGravity`).
     pub anti_gravity_offroad: MeshData,
-    /// Issue #107: the roads of the shortcuts (`Surface::Road`) and their grass paths
-    /// (`Surface::Offroad`). Empty on a circuit without one.
-    pub shortcut_road: MeshData,
+    /// Issue #107: the grass paths of the shortcuts (`Surface::Offroad`; issue #193: every
+    /// shortcut is grass, the roads of before are gone). Empty on a circuit without one.
     pub shortcut_grass: MeshData,
     /// Issue #180: the road and the shoulders of the trick stretches of the bumps and the drops
     /// (`CenterLine::trick_stretches`: `Surface::Road` and `Offroad`, and `TrickRamp`), apart from
@@ -336,8 +335,8 @@ pub struct TrackMeshes {
     /// Issue #180: the faces of the drops (`Surface::Wall`, drawn and solid, apart from the low
     /// walls: not a wall a kart sees the road over). Empty on a circuit without a drop.
     pub cliffs: MeshData,
-    /// Issue #187: the road's surface (the road's, the anti-gravity zones', the trick stretches',
-    /// the shortcuts' roads) as it is drawn with its paving, its UVs in meters divided by
+    /// Issue #187: the road's surface (the road's, the anti-gravity zones', the trick stretches')
+    /// as it is drawn with its paving, its UVs in meters divided by
     /// `paving::PAVING_TILE` (the ground's `x` and `z` for a paving that lies on the ground;
     /// across and along the centerline for one that follows the road, and in the anti-gravity
     /// zones), and its curbs (out of the
@@ -361,7 +360,6 @@ impl TrackMeshes {
         all.append(&self.decor);
         all.append(&self.anti_gravity_road);
         all.append(&self.anti_gravity_offroad);
-        all.append(&self.shortcut_road);
         all.append(&self.shortcut_grass);
         all.append(&self.trick_road);
         all.append(&self.trick_offroad);
@@ -735,53 +733,14 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         }
     }
 
-    // Issue #107: the shortcuts' roads and grass paths, their skirts down to the ground.
+    // Issue #107: the shortcuts' grass paths (issue #193: all of them), their skirts down to the
+    // ground.
     for shortcut in &data.shortcuts {
         let path = Shortcut::new(center, shortcut);
         let samples = path.samples();
         let half = path.half_width;
         let lift = |s: &TrackSample, lateral: f32| s.point(lateral, SHORTCUT_LIFT);
         match shortcut.kind {
-            ShortcutKind::Road => {
-                // Issue #187: drawn with the paving and the borders of the circuit's road.
-                let along = Along::of_path(samples, inner_width(half));
-                along.paving_between(
-                    &mut meshes.paving,
-                    samples,
-                    inner_width(half),
-                    SHORTCUT_LIFT,
-                    planar,
-                );
-                along.borders_between(
-                    &mut meshes.borders,
-                    samples,
-                    inner_width(half),
-                    SHORTCUT_LIFT,
-                );
-                let road = &mut meshes.shortcut_road;
-                let inner = half - CURB_WIDTH;
-                road.strip(
-                    samples,
-                    false,
-                    |s| lift(s, -inner),
-                    |s| lift(s, inner),
-                    |_| asphalt,
-                );
-                road.strip(
-                    samples,
-                    false,
-                    |s| lift(s, -half),
-                    |s| lift(s, -inner),
-                    stripe,
-                );
-                road.strip(
-                    samples,
-                    false,
-                    |s| lift(s, inner),
-                    |s| lift(s, half),
-                    stripe,
-                );
-            }
             ShortcutKind::Grass => meshes.shortcut_grass.strip(
                 samples,
                 false,
@@ -901,11 +860,6 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
     meshes
 }
 
-/// A shortcut's road's half width without its curbs.
-fn inner_width(half: f32) -> f32 {
-    half - CURB_WIDTH
-}
-
 /// Issue #187: the UVs of a run of samples (`v` at each sample, its end too when it is closed),
 /// for the paving (meters along the centerline, so many tiles that the loop closes on a whole
 /// number of them) and for each border (meters along its middle, likewise), and the paving's tint
@@ -950,27 +904,6 @@ impl Along {
         let side = |sign: f32| {
             arc(samples, closed, |s| {
                 s.point(sign * (s.half_width + CURB_WIDTH / 2.0), 0.0)
-            })
-        };
-        Self {
-            road,
-            left: side(-1.0),
-            right: side(1.0),
-            tint,
-        }
-    }
-
-    /// The same along a shortcut's path (open, its own start): its road `inner` m each way from
-    /// its middle, its curbs beyond.
-    fn of_path(samples: &[TrackSample], inner: f32) -> Self {
-        let road = arc(samples, false, |s| s.position)
-            .iter()
-            .map(|v| v * BORDER_TILE / PAVING_TILE)
-            .collect();
-        let tint = vec![grey(1.0); samples.len()];
-        let side = |sign: f32| {
-            arc(samples, false, |s| {
-                s.point(sign * (inner + CURB_WIDTH / 2.0), 0.0)
             })
         };
         Self {
@@ -1043,71 +976,6 @@ impl Along {
             &self.right,
             white,
             keep,
-        );
-    }
-
-    /// A shortcut's road (`inner` m each way, `lift` above its path), with the paving.
-    fn paving_between(
-        &self,
-        paving: &mut PaintedMesh,
-        samples: &[TrackSample],
-        inner: f32,
-        lift: f32,
-        planar: bool,
-    ) {
-        if planar {
-            paving.planar_strip_where(
-                samples,
-                false,
-                |s| s.point(-inner, lift),
-                |s| s.point(inner, lift),
-                PAVING_TILE,
-                |i| self.tint[i],
-                |_, _| true,
-            );
-            return;
-        }
-        paving.strip_where(
-            samples,
-            false,
-            |s| s.point(-inner, lift),
-            |s| s.point(inner, lift),
-            |_| (-inner / PAVING_TILE, inner / PAVING_TILE),
-            &self.road,
-            |i| self.tint[i],
-            |_, _| true,
-        );
-    }
-
-    /// Its curbs, with their border.
-    fn borders_between(
-        &self,
-        borders: &mut PaintedMesh,
-        samples: &[TrackSample],
-        inner: f32,
-        lift: f32,
-    ) {
-        let white = |_| grey(1.0);
-        let half = inner + CURB_WIDTH;
-        borders.strip_where(
-            samples,
-            false,
-            |s| s.point(-half, lift),
-            |s| s.point(-inner, lift),
-            |_| (1.0, 0.0),
-            &self.left,
-            white,
-            |_, _| true,
-        );
-        borders.strip_where(
-            samples,
-            false,
-            |s| s.point(inner, lift),
-            |s| s.point(half, lift),
-            |_| (0.0, 1.0),
-            &self.right,
-            white,
-            |_, _| true,
         );
     }
 }
@@ -1422,13 +1290,8 @@ mod tests {
             );
             assert_eq!(drawn.paving.uvs.len(), drawn.paving.mesh.positions.len());
             assert_eq!(drawn.borders.uvs.len(), drawn.borders.mesh.positions.len());
-            // The paving and the borders: the road's triangles (and the shortcuts' roads).
-            let road = triangles(&[
-                &meshes.road,
-                &meshes.anti_gravity_road,
-                &meshes.trick_road,
-                &meshes.shortcut_road,
-            ]);
+            // The paving and the borders: the road's triangles (issue #193: no shortcut is a road).
+            let road = triangles(&[&meshes.road, &meshes.anti_gravity_road, &meshes.trick_road]);
             for t in triangles(&[&drawn.paving.mesh, &drawn.borders.mesh]) {
                 assert!(road.binary_search(&t).is_ok(), "{file}: {t:?}");
             }
@@ -2005,31 +1868,38 @@ mod tests {
                     .sum::<usize>()
             };
             assert_eq!(
-                meshes.shortcut_road.positions.len(),
-                3 * 4 * quads(ShortcutKind::Road)
-            );
-            assert_eq!(
                 meshes.shortcut_grass.positions.len(),
                 4 * quads(ShortcutKind::Grass)
             );
-            assert!(quads(ShortcutKind::Road) > 50 && quads(ShortcutKind::Grass) > 30);
-            for (mesh, kind) in [
-                (&meshes.shortcut_road, ShortcutKind::Road),
-                (&meshes.shortcut_grass, ShortcutKind::Grass),
-            ] {
-                let path = shortcuts.iter().find(|s| s.kind == kind).unwrap();
-                for p in &mesh.positions {
-                    let here = path.locate(Vec3::from_array(*p));
-                    assert!((here.height - SHORTCUT_LIFT).abs() < 0.01, "{here:?}");
-                    assert!(here.lateral.abs() <= path.half_width + 0.01, "{here:?}");
-                }
+            // Issue #193: the hidden road and the grass bridge, both grass.
+            assert_eq!(
+                shortcuts
+                    .iter()
+                    .filter(|s| s.kind == ShortcutKind::Grass)
+                    .count(),
+                2
+            );
+            assert!(quads(ShortcutKind::Grass) > 80);
+            for p in &meshes.shortcut_grass.positions {
+                let p = Vec3::from_array(*p);
+                // On one of the grass paths: the one it lies on (the nearest).
+                let here = shortcuts
+                    .iter()
+                    .filter(|s| s.kind == ShortcutKind::Grass)
+                    .map(|path| (path.half_width, path.locate(p)))
+                    .min_by(|a, b| {
+                        let off =
+                            |h: &crate::track::shortcut::OnPath| h.height.abs() + h.lateral.abs();
+                        off(&a.1).total_cmp(&off(&b.1))
+                    })
+                    .unwrap();
+                assert!((here.1.height - SHORTCUT_LIFT).abs() < 0.01, "{here:?}");
+                assert!(here.1.lateral.abs() <= here.0 + 0.01, "{here:?}");
             }
         }
         let prairie = test_track();
         let meshes = generate(&CenterLine::of(&prairie), &prairie, &Palette::default());
-        assert!(
-            meshes.shortcut_road.indices.is_empty() && meshes.shortcut_grass.indices.is_empty()
-        );
+        assert!(meshes.shortcut_grass.indices.is_empty());
     }
 
     #[test]

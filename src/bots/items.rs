@@ -70,6 +70,13 @@ pub struct ItemSenses {
     pub can_act: bool,
     /// Its piment doré's window is open (issue #18).
     pub golden: bool,
+    /// Issue #193: it keeps its boost item (a piment, a piment doré) for the shortcut it heads
+    /// for...
+    pub saving: bool,
+    /// ...and uses it now, at its entrance...
+    pub boost_now: bool,
+    /// ...and it is on a shortcut: a piment doré's next boost as soon as one ends.
+    pub on_shortcut: bool,
     /// Another kart's item is close (issue #18: for the klaxon-canard).
     pub danger: bool,
     /// Tick duration (s).
@@ -262,6 +269,10 @@ fn decide(
         brain.ready_for = 0.0;
     }
     brain.ready_for += dt;
+    // Issue #193: the boost item kept for a shortcut goes at its entrance, however fresh.
+    if senses.boost_now && matches!(item, ItemKind::Piment | ItemKind::PimentDore) {
+        return brain.tap(false);
+    }
     if brain.ready_for < skill.item_delay {
         return ItemButtons::default();
     }
@@ -269,6 +280,12 @@ fn decide(
     let behind = followed_close(senses.behind);
     let ahead_in_race = senses.rank > 1;
     let press = match (item, count) {
+        // Issue #193: on a shortcut, a piment doré's boosts one after the other; the boost item
+        // kept for a shortcut stays in the hand until its entrance.
+        (ItemKind::PimentDore, _) if senses.golden && senses.on_shortcut => {
+            (!senses.boosting).then_some(false)
+        }
+        (ItemKind::Piment | ItemKind::PimentDore, _) if senses.saving => None,
         // Issue #18.
         (ItemKind::PimentDore, _) if senses.golden => (!senses.boosting
             && senses.straight >= tuning.item_piment_straight * tuning.item_golden_straight)
@@ -620,6 +637,36 @@ mod tests {
         assert!(!press(&full));
         full.croquettes = 7;
         assert!(press(&full));
+    }
+
+    /// Issue #193: a piment (or a piment doré) kept for the shortcut ahead is not used on the
+    /// straight, even after a long wait; it goes at the shortcut's entrance at once, however
+    /// fresh; on the shortcut, a piment doré's next boost as soon as one ends.
+    #[test]
+    fn a_piment_kept_for_a_shortcut_goes_at_its_entrance() {
+        let tuning = BotTuning::default();
+        let skill = tuning.skill(BotDifficulty::Easy);
+        let long = ((skill.item_delay + 3.0 * tuning.item_patience) / DT) as usize;
+        for item in [ItemKind::Piment, ItemKind::PimentDore] {
+            let mut kept = senses(Some((item, 1)));
+            kept.saving = true;
+            let mut brain = BotItemBrain::new(4);
+            assert_eq!(first_press(&mut brain, skill, &tuning, &kept, long), None);
+            let mut now = kept;
+            now.boost_now = true;
+            assert_eq!(
+                first_press(&mut BotItemBrain::new(4), skill, &tuning, &now, 1).map(|p| p.0),
+                Some(0),
+                "{item:?}"
+            );
+        }
+        let mut golden = senses(Some((ItemKind::PimentDore, 1)));
+        golden.golden = true;
+        golden.on_shortcut = true;
+        golden.straight = 0.0;
+        assert!(first_press(&mut BotItemBrain::new(5), skill, &tuning, &golden, long).is_some());
+        golden.boosting = true;
+        assert!(first_press(&mut BotItemBrain::new(5), skill, &tuning, &golden, long).is_none());
     }
 
     /// A pelote goes at a kart in its sights ahead, backwards at a kart close behind; an abeille
