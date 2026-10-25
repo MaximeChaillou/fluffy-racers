@@ -7,9 +7,11 @@
 //!   tether.
 //! - **Paw strike**: the closest kart in reach to the side ([`pick_target`]) is pushed sideways
 //!   (7 m/s fading out in 0.4 s, about 1.4 m: the kart's `Shove`, which neither the grip nor the
-//!   drift wipes out, and which a wall stops), loses 10 % of its speed and 1 croquette
-//!   (`LossCause::Strike`), then is protected from the strikes for 1 s. It keeps control: no spin,
-//!   its drift, charge and boost go on. Into thin air, the striker slides 0.3 m and flails.
+//!   drift wipes out, and which a wall stops), loses 35 % of its speed (issue #193; 10 % before)
+//!   and 1 croquette (`LossCause::Strike`), swerves (seen only), then is protected from the
+//!   strikes for 1 s. It keeps control: no spin, its drift, charge and boost go on. Into thin
+//!   air, the striker slides 0.3 m and flails. Let go without a throw, the kart held loses 15 %
+//!   of its speed (issue #193).
 //! - **Grab**: the paw reaches out for 0.5 s and grabs the first kart in reach (to the side or just
 //!   ahead). The tether is a damped spring that only pulls (no Rapier joint): the grabber is
 //!   towed up to its partner's speed, never beyond; the kart held gets a quarter of the pull, never
@@ -48,7 +50,7 @@ pub use logic::{
     Held, InReach, KartView, Paw, PawContext, PawMotion, PawOutcome, PawStats, Swing, SwingKind,
     TetherEnd, accepts, aimed_side, can_be_grabbed, can_be_struck, can_grab, can_strike,
     held_accel, held_end, let_go, max_arm_length, max_reach, pick_target, reach, step_paw,
-    step_remote_paw, tether_accel, ticks,
+    step_remote_paw, swerve_angle, tether_accel, ticks,
 };
 pub use tuning::InteractionTuning;
 /// Issue #130: the drivers' acting is laid over what it writes.
@@ -730,7 +732,10 @@ fn count_landed(mut answers: MessageReader<StrikeAnswer>, mut stats: Query<&mut 
 }
 
 /// The end of a tether, whoever decided it: the grabber lets go (3 s of cooldown; 1.5 s after a
-/// refusal; off balance when the kart held broke free or refused), the kart held is free.
+/// refusal; off balance when the kart held broke free or refused), the kart held is free. Issue
+/// #193: let go without a throw (released, or the time up), the kart held loses
+/// `release_speed_loss` of its speed (a throw is a strike, with the strike's loss). The victim
+/// decides here too: only our own kart held (another peer's applies it to itself).
 ///
 /// Online, another peer's kart that held ours lets go on our screen too (issue #81): its paw only
 /// shows what its peer told, and when the end is ours (we broke free, refused, finished...), its
@@ -738,11 +743,20 @@ fn count_landed(mut answers: MessageReader<StrikeAnswer>, mut stats: Query<&mut 
 fn end_tethers(
     tuning: Res<InteractionTuning>,
     mut ended: MessageReader<TetherEnded>,
-    mut karts: Query<(&Transform, &mut Paw, &mut PawStats, &mut Shove), With<Kart>>,
+    mut karts: Query<
+        (
+            &Transform,
+            &mut Velocity,
+            &mut Paw,
+            &mut PawStats,
+            &mut Shove,
+        ),
+        With<Kart>,
+    >,
     mut remotes: Query<&mut Paw, (With<Remote>, Without<Kart>)>,
 ) {
     for end in ended.read() {
-        if let Ok((transform, mut paw, mut stats, mut shove)) = karts.get_mut(end.grabber)
+        if let Ok((transform, _, mut paw, mut stats, mut shove)) = karts.get_mut(end.grabber)
             && let PawMotion::Holding { target, side, .. } = paw.motion
             && target == end.target
         {
@@ -768,12 +782,17 @@ fn end_tethers(
         {
             let_go(&mut paw, &tuning, target, side, end.reason);
         }
-        if let Ok((_, mut paw, mut stats, _)) = karts.get_mut(end.target)
+        if let Ok((_, mut velocity, mut paw, mut stats, _)) = karts.get_mut(end.target)
             && paw.held.is_some_and(|held| held.by == end.grabber)
         {
             paw.held = None;
             if end.reason == TetherEnd::Escaped {
                 stats.escapes += 1;
+            }
+            if matches!(end.reason, TetherEnd::Released | TetherEnd::TimeUp) {
+                let keep = 1.0 - tuning.release_speed_loss.clamp(0.0, 1.0);
+                let v = velocity.linear;
+                velocity.linear = Vec3::new(v.x * keep, v.y, v.z * keep);
             }
         }
     }

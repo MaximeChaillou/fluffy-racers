@@ -426,10 +426,11 @@ mod tests {
         let t = KartTuning::default();
         let no_boost = Boost::default();
         assert_eq!(max_speed(&t, 0.0, &no_boost), t.max_speed);
-        // Issue #171: 40 % (55 % before: the grass did not slow down enough, Max).
-        assert!((max_speed(&t, 1.0, &no_boost) - 0.4 * t.max_speed).abs() < 1e-4);
+        // Issue #193: 35 % (Max: « comme du sable »; 40 % since #171, 55 % before: the grass did
+        // not slow down enough, Max).
+        assert!((max_speed(&t, 1.0, &no_boost) - 0.35 * t.max_speed).abs() < 1e-4);
         let half = max_speed(&t, 0.5, &no_boost);
-        assert!(half < t.max_speed && half > 0.4 * t.max_speed);
+        assert!(half < t.max_speed && half > 0.35 * t.max_speed);
     }
 
     #[test]
@@ -442,22 +443,33 @@ mod tests {
 
     /// Issue #171: entering the grass at full speed, the kart brakes at once: it is down to the
     /// off-road's top speed within 0.6 s (it took 1.3 s at `overspeed_decel`), never below it;
-    /// half its wheels on it, it brakes less hard.
+    /// half its wheels on it, it brakes less hard. Issue #193 (Max: « comme si on arrivait dans
+    /// du sable »): two to three times harder than the 30 m/s² of #171, so within 0.3 s and 6 m
+    /// (0.25 s and 4.9 m at 75 m/s²), but not at once (more than 0.2 s: the kart is not stopped
+    /// dead), and through the grass's top speed of 35 %.
     #[test]
     fn entering_offroad_brakes_fast() {
         let t = KartTuning::default();
+        assert!(
+            (2.0 * 30.0..=3.0 * 30.0).contains(&t.offroad_decel),
+            "{}",
+            t.offroad_decel
+        );
         let cap = max_speed(&t, 1.0, &Boost::default());
         let full = input(1.0, 0.0, 0.0);
         let mut speed = t.max_speed;
         let mut ticks = 0;
+        let mut gone = 0.0;
         while speed > cap + 1e-3 {
             speed = next_forward_speed_on(&t, speed, &full, cap, false, 1.0, 1.0 / 60.0);
+            gone += speed / 60.0;
             ticks += 1;
             assert!(ticks < 600);
         }
         assert!((speed - cap).abs() < 1e-3, "{speed}");
-        assert!(ticks <= 36, "{ticks} ticks");
-        let slow = drive(&t, t.max_speed, &full, cap, 0.6);
+        assert!((13..=18).contains(&ticks), "{ticks} ticks");
+        assert!(gone < 6.0, "{gone:.1} m");
+        let slow = drive(&t, t.max_speed, &full, cap, 0.3);
         assert!(
             slow > cap + 1.0,
             "the plain overspeed decel is slower: {slow}"

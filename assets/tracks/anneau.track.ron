@@ -286,15 +286,17 @@
         (from: 171.173, to: 184.900, side: Right),
     ],
     shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
         // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
         // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it falls.
         (from: 68.450, to: 78.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
          points: [(201.69, 17.00, -56.51), (216.70, 17.00, -54.52), (221.64, 17.00, -47.00), (238.70, 16.58, -21.01), (238.70, 16.58, -12.01)]),
+        // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: narrow (5 m), straight across the bulge while the road goes round it,
         // behind a stack of crates 18 m in, where it leaves the road's edge (they burst as one drives
         // through them, a little slower, and come back).
-        (from: 153.000, to: 170.603, kind: Road, width: 5.0,
+        (from: 153.000, to: 170.603, kind: Grass, width: 5.0,
          points: [(172.00, 10.00, 138.36), (121.27, 10.00, 138.36), (70.53, 10.00, 138.36)],
          cover: Some((kind: Crates, at: 18.0))),
         // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker with
@@ -311,7 +313,8 @@
     obstacles: [
         (kind: RollingLog, at: 21.500, offset: -0.5, sweep: 0.32, period: 5.0),
         (kind: SwingingStone, at: 42.440, offset: 0.5, sweep: 0.35, period: 3.6),
-        (kind: Rock, at: 79.000, offset: -0.92, size: 1.1, yaw: 20.0),
+        // Issue #193: no more rock at the left edge of the jump's landing (a boosted kart lands
+        // long, at that edge).
     ],
     // Issue #144: the bison paces across the right side of the leg between the lacets down the cake
     // (the karts keep left for the hairpin to the right after it).

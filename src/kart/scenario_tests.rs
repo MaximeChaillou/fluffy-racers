@@ -231,27 +231,29 @@ fn full_throttle_reaches_95_percent_of_max_speed_in_2_5_s() {
     assert!(speed <= 1.01 * max, "speed {speed} above max {max}");
 }
 
-/// Issue #171: 40 % of the top speed off the road (55 % before #171: « l'herbe ne ralentit pas
-/// assez », Max).
+/// Issue #193: 35 % of the top speed off the road (Max: « comme du sable »; 40 % since #171, 55 %
+/// before: « l'herbe ne ralentit pas assez », Max).
 #[test]
-fn offroad_caps_speed_around_40_percent() {
+fn offroad_caps_speed_around_35_percent() {
     let mut scenario = Scenario::flat(Surface::Offroad);
     let max = scenario.tuning().max_speed;
     let mut top = 0.0f32;
     scenario.run_with(5.0, FULL_THROTTLE, |s| top = top.max(s.forward_speed()));
     let speed = scenario.forward_speed();
     assert!(
-        speed > 0.37 * max && speed < 0.43 * max,
+        speed > 0.32 * max && speed < 0.38 * max,
         "off-road speed {speed} (max {max})"
     );
-    assert!(top < 0.43 * max, "never above the off-road cap: {top}");
+    assert!(top < 0.38 * max, "never above the off-road cap: {top}");
 }
 
 /// Issue #171 acceptance (« l'herbe avec et sans boost »): a road that turns into grass 80 m
-/// ahead. Without a boost, the kart that comes at full speed brakes at once on the grass: below
-/// 45 % of its top speed within 0.75 s, and it never goes faster there after 1 s; over the 60 m
-/// of grass that follow, it is at least twice as slow as on the road. With a boost (a purple
+/// ahead. Without a boost, the kart that comes at full speed brakes at once on the grass; over
+/// the 60 m of grass that follow, it is much slower than on the road. With a boost (a purple
 /// mini-turbo's strength, held all the way), the grass changes nothing: as fast as on the road.
+/// Issue #193 (« comme si on arrivait dans du sable »): below 40 % of its top speed within 0.3 s
+/// (45 % within 0.75 s before), never above 37 % after 1 s (42 % before), and at least 2.5 times
+/// as slow as on the road over the 60 m (twice before).
 #[test]
 fn the_grass_slows_down_hard_without_a_boost_and_not_with_one() {
     let grass_from = -80.0;
@@ -288,7 +290,7 @@ fn the_grass_slows_down_hard_without_a_boost_and_not_with_one() {
             );
         });
         let strength = scenario.tuning().mini_turbo_strengths[2];
-        let (mut entered, mut ticks, mut at_075, mut after_1s) = (None, 0u32, 0.0, 0.0f32);
+        let (mut entered, mut ticks, mut at_03, mut after_1s) = (None, 0u32, 0.0, 0.0f32);
         for _ in 0..(15.0 * TICKS_PER_SECOND) as u32 {
             if boost {
                 scenario.add_boost(strength, 1.0);
@@ -301,14 +303,14 @@ fn the_grass_slows_down_hard_without_a_boost_and_not_with_one() {
             }
             if let Some(from) = entered {
                 let since = (ticks - from) as f32 / TICKS_PER_SECOND;
-                if (since - 0.75).abs() < 0.5 / TICKS_PER_SECOND {
-                    at_075 = scenario.forward_speed();
+                if (since - 0.3).abs() < 0.5 / TICKS_PER_SECOND {
+                    at_03 = scenario.forward_speed();
                 }
                 if since > 1.0 {
                     after_1s = after_1s.max(scenario.forward_speed());
                 }
                 if z < grass_from - 60.0 {
-                    return (since, at_075, after_1s);
+                    return (since, at_03, after_1s);
                 }
             }
         }
@@ -324,9 +326,9 @@ fn the_grass_slows_down_hard_without_a_boost_and_not_with_one() {
          {boosted_grass:?}"
     );
     assert!(road.1 > 0.95 * max, "{road:?}");
-    assert!(grass.1 < 0.45 * max, "braked at once: {grass:?}");
-    assert!(grass.2 < 0.42 * max, "{grass:?}");
-    assert!(grass.0 > 2.0 * road.0, "{grass:?} / {road:?}");
+    assert!(grass.1 < 0.40 * max, "braked at once: {grass:?}");
+    assert!(grass.2 < 0.37 * max, "{grass:?}");
+    assert!(grass.0 > 2.5 * road.0, "{grass:?} / {road:?}");
     assert!(boosted_grass.1 > max, "{boosted_grass:?}");
     assert!(
         (boosted_grass.0 - boosted_road.0).abs() < 1.5 / TICKS_PER_SECOND,
@@ -1823,8 +1825,8 @@ fn the_handling_stat_changes_the_drift_radius() {
     assert!(full_lock(0) < full_lock(10) * 0.95);
 }
 
-/// Issue #15: the Traction stat changes the off-road top speed (GD § 2: 40 % in the middle since
-/// #171, 55 % before).
+/// Issue #15: the Traction stat changes the off-road top speed (GD § 2: 35 % in the middle since
+/// #193, 40 % since #171, 55 % before).
 #[test]
 fn the_traction_stat_changes_the_offroad_speed() {
     let offroad = |level| {
@@ -1836,9 +1838,9 @@ fn the_traction_stat_changes_the_offroad_speed() {
         scenario.forward_speed()
     };
     let (slippery, middle, grippy) = (offroad(0), offroad(10), offroad(20));
-    assert!((middle - 0.4 * 28.5).abs() < 0.2, "{middle}");
-    assert!((slippery - 0.4 * 0.85 * 28.5).abs() < 0.2, "{slippery}");
-    assert!((grippy - 0.4 * 1.15 * 28.5).abs() < 0.2, "{grippy}");
+    assert!((middle - 0.35 * 28.5).abs() < 0.2, "{middle}");
+    assert!((slippery - 0.35 * 0.85 * 28.5).abs() < 0.2, "{slippery}");
+    assert!((grippy - 0.35 * 1.15 * 28.5).abs() < 0.2, "{grippy}");
     // On the road, nothing changes.
     let road = launch(KartStats::default().with(Stat::Traction, 20)).top;
     assert!((road - 28.5).abs() < 0.1, "{road}");

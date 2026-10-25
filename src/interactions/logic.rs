@@ -274,6 +274,20 @@ pub fn max_reach(tuning: &InteractionTuning) -> f32 {
     side.max(ahead)
 }
 
+/// Issue #193: the swerve of a kart struck (or thrown), seen only: its body's yaw (rad, toward
+/// the push), `seconds` after the blow, of `InteractionTuning::strike_swerve` at most. It swings
+/// toward the push at once, then back a little past straight, and is over after
+/// `strike_swerve_time`: the kart's heading and its control never change (GD § 15, #154).
+pub fn swerve_angle(tuning: &InteractionTuning, seconds: f32) -> f32 {
+    let time = tuning.strike_swerve_time;
+    if time <= 0.0 || time.is_nan() || !(0.0..time).contains(&seconds) {
+        return 0.0;
+    }
+    let u = seconds / time;
+    // sin(1.5 π u) (1 − u) peaks at about 0.70 (u ≈ 0.27): scaled to reach the swerve.
+    tuning.strike_swerve / 0.7 * (1.5 * std::f32::consts::PI * u).sin() * (1.0 - u)
+}
+
 /// The longest an arm may show (m, issue #81): a tether grabbed at the farthest reach, stretched
 /// up to its break, plus the network's tolerance (about 8 m). Past it, whatever a paw says, its
 /// tether is broken: the arm is not drawn (`visual.rs`).
@@ -1385,5 +1399,24 @@ mod tests {
         let mut idle = Paw::default();
         assert!(!step_remote_paw(&mut idle, &t));
         assert_eq!(idle, Paw::default());
+    }
+
+    /// Issue #193: the swerve of a kart struck swings toward the push, up to the tuning's
+    /// swerve, back a little past straight, and is over in its time.
+    #[test]
+    fn a_kart_struck_swerves_then_straightens() {
+        let t = InteractionTuning::default();
+        let angles: Vec<f32> = (0..=60)
+            .map(|tick| swerve_angle(&t, tick as f32 / 60.0))
+            .collect();
+        let most = angles.iter().copied().fold(f32::MIN, f32::max);
+        let least = angles.iter().copied().fold(f32::MAX, f32::min);
+        assert!((most - t.strike_swerve).abs() < 0.02, "{most}");
+        assert!(least < 0.0 && least > -0.4 * t.strike_swerve, "{least}");
+        assert_eq!(angles[0], 0.0);
+        assert!(angles[3] > 0.0, "toward the push at once");
+        let over = (t.strike_swerve_time * 60.0).ceil() as usize;
+        assert!(angles[over..].iter().all(|a| *a == 0.0));
+        assert_eq!(swerve_angle(&t, -0.1), 0.0);
     }
 }

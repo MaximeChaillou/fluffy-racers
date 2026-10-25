@@ -157,7 +157,7 @@ impl Knob {
             }
             Knob::Bumps => {
                 "Les chocs entre karts (le pivotement gardé) et le coup de patte (poussée, \
-                 vitesse perdue, jet)."
+                 vitesse perdue, embardée, jet, attrape lâchée)."
             }
             Knob::Bots => {
                 "Leur niveau (précision, vitesse, drifts), leur rattrapage et leur agressivité \
@@ -247,9 +247,10 @@ pub const LINKS: &[Link] = &[
     link(Speed, "ItemTuning.boomerang_speed", 0.8, 1.2),
     // --- Tenue de route: slippery (0) to grippy (100) ---------------------------------------------
     link(Grip, "KartTuning.lateral_grip", 0.5, 1.5),
-    // Issue #171: recentred on 40 % (55 % before): from 35 % at 0 to 55 % (the old default) at
-    // 100; the brake at the entry of the grass, harder at 0. Before: 0.75 / 1.3 around 55 %.
-    bounded(Grip, "KartTuning.offroad_speed_factor", 0.875, 1.375, 1.0),
+    // Issue #193: recentred on 35 % (Max: « comme du sable »): from 28 % at 0 to 50 % at 100;
+    // the brake at the entry of the grass (75 m/s² in the middle), harder at 0. Before (#171):
+    // 0.875 / 1.375 around 40 % (35 % to 55 %); before #171: 0.75 / 1.3 around 55 %.
+    bounded(Grip, "KartTuning.offroad_speed_factor", 0.8, 1.43, 1.0),
     link(Grip, "KartTuning.offroad_decel", 1.3, 0.7),
     link(Grip, "KartTuning.suspension_damping", 0.6, 1.6),
     link(Grip, "KartTuning.tilt_damping", 0.7, 1.4),
@@ -285,7 +286,11 @@ pub const LINKS: &[Link] = &[
     link(Bumps, "KartTuning.bump_spin_max", 0.4, 2.5),
     link(Bumps, "InteractionTuning.strike_push_speed", 0.5, 1.6),
     link(Bumps, "InteractionTuning.strike_push_time", 0.8, 1.25),
-    bounded(Bumps, "InteractionTuning.strike_speed_loss", 0.5, 2.0, 1.0),
+    // Issue #193: 35 % in the middle (10 % before, × 0.5 / 2.0): 17.5 % at 0, 52.5 % at 100;
+    // the swerve seen and the loss of a kart let go with it.
+    bounded(Bumps, "InteractionTuning.strike_speed_loss", 0.5, 1.5, 1.0),
+    link(Bumps, "InteractionTuning.strike_swerve", 0.5, 1.5),
+    bounded(Bumps, "InteractionTuning.release_speed_loss", 0.5, 1.5, 1.0),
     link(Bumps, "InteractionTuning.throw_push_factor", 0.7, 1.4),
     // --- Bots: level, catch-up and aggressiveness, the three levels together ----------------------
     link(Bots, "BotTuning.skills[*].wobble", 1.6, 0.5),
@@ -343,6 +348,8 @@ pub const LINKS: &[Link] = &[
     link(Effects, "VfxTuning.world.croquette_sparkles", 0.2, 1.6),
     link(Effects, "VfxTuning.world.lost_sparkles", 0.2, 1.6),
     link(Effects, "VfxTuning.world.dust_rate", 0.2, 1.6),
+    // Issue #193: the dust of a kart braking into the grass.
+    link(Effects, "VfxTuning.world.dust_plough", 0.2, 1.6),
     link(Effects, "VfxTuning.world.landing_puffs", 0.2, 1.6),
     link(Effects, "VfxTuning.world.anti_gravity_rate", 0.2, 1.6),
     link(Effects, "VfxTuning.world.glide_wind_rate", 0.2, 1.6),

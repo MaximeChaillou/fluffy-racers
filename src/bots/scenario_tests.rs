@@ -202,9 +202,12 @@ struct KartLog {
     broken: u32,
     tows: Vec<TowEvent>,
     previous: Option<KartState>,
-    /// Issue #107: drifts started, shortcuts taken (road, grass, jump), and the route last tick.
+    /// Issue #107: drifts started, shortcuts taken (by their number on the circuit, issue #193:
+    /// all grass but the jump), and the route last tick. Issue #193: the ones it got on without
+    /// a boost going (never: a shortcut pays only with one).
     drifts: u32,
-    shortcuts: [u32; 3],
+    shortcuts: Vec<u32>,
+    unboosted: u32,
     route: Route,
     /// Croquettes picked up and lost (issue #14), most held at once.
     croquettes_picked: u32,
@@ -388,12 +391,11 @@ impl RaceLog {
             if let (Route::On(k), Some(line)) = (route, line)
                 && log.route != route
             {
-                let kind = line.branches()[k].kind();
-                log.shortcuts[match kind {
-                    ShortcutKind::Road => 0,
-                    ShortcutKind::Grass => 1,
-                    ShortcutKind::Jump => 2,
-                }] += 1;
+                log.shortcuts.resize(line.branches().len(), 0);
+                log.shortcuts[k] += 1;
+                if !world.get::<Boost>(*entity).unwrap().is_active() {
+                    log.unboosted += 1;
+                }
             }
             let jumping = line.is_some_and(|line| {
                 world
@@ -508,7 +510,7 @@ impl RaceLog {
                 out,
                 "slot {:2} {:?}: finish {:?} s, laps {:?}, mini-turbos blue/orange/purple {:?}, \
                  drifts without boost {}, broken {}, croquettes picked {} lost {} (at most {}, \
-                 {} at the end), {:.1} s touching other karts, {:.1} s off the road without a boost{}, shortcuts road/grass/jump {:?}",
+                 {} at the end), {:.1} s touching other karts, {:.1} s off the road without a boost{}, shortcuts {:?} ({} without a boost)",
                 log.slot,
                 log.difficulty,
                 progress.finish.map(ticks_to_seconds),
@@ -533,6 +535,7 @@ impl RaceLog {
                         .collect::<String>()
                 },
                 log.shortcuts,
+                log.unboosted,
             );
             if let Some(paws) = app
                 .world()
@@ -985,6 +988,10 @@ struct RaceResult {
     lateral_spread: f32,
     /// Printed with `--nocapture`, in the order of the seeds.
     report: String,
+    /// Issue #193: the kinds of the circuit's shortcuts (by their number), and how many times
+    /// the karts go by each one in a race (every kart, every lap or section).
+    shortcut_kinds: Vec<ShortcutKind>,
+    passes: f32,
 }
 
 impl RaceResult {
@@ -1045,11 +1052,18 @@ impl RaceResult {
             .iter()
             .map(|(entity, _)| (progress(app, *entity).distance / lap_length).max(0.0))
             .sum();
+        let shortcut_kinds = app
+            .world()
+            .get_resource::<RacingLine>()
+            .map(|line| line.branches().iter().map(|b| b.kind()).collect())
+            .unwrap_or_default();
         Self {
+            passes: (log.karts.len() * course.laps as usize) as f32,
             karts,
             kart_laps,
             lateral_spread: spread(&log.straight_laterals),
             report: log.report(app, label),
+            shortcut_kinds,
         }
     }
 
@@ -1099,20 +1113,43 @@ impl RaceResult {
             .collect()
     }
 
-    /// Issue #107: shortcuts taken by all the karts (road, grass, jump).
     /// Issue #144: times a kart was knocked over (all the karts).
     fn knocks(&self) -> u32 {
         self.karts.iter().map(|k| k.log.knocks).sum()
     }
 
-    fn shortcuts(&self) -> [u32; 3] {
-        self.karts.iter().fold([0; 3], |sum, k| {
-            [
-                sum[0] + k.log.shortcuts[0],
-                sum[1] + k.log.shortcuts[1],
-                sum[2] + k.log.shortcuts[2],
-            ]
-        })
+    /// Issue #107: shortcuts of `kind` taken by all the karts (issue #193: the hidden path and the
+    /// grass bridge are both grass).
+    fn shortcuts_of(&self, kind: ShortcutKind) -> u32 {
+        self.karts
+            .iter()
+            .map(|kart| {
+                (0..self.shortcut_kinds.len())
+                    .filter(|k| self.shortcut_kinds[*k] == kind)
+                    .map(|k| kart.log.shortcuts.get(k).copied().unwrap_or(0))
+                    .sum::<u32>()
+            })
+            .sum()
+    }
+
+    /// Issue #193: the largest share of the passes (every kart, every lap or section) that went
+    /// by one of the shortcuts (0 on a circuit without).
+    fn shortcut_share(&self) -> f32 {
+        (0..self.shortcut_kinds.len())
+            .map(|k| {
+                let taken: u32 = self
+                    .karts
+                    .iter()
+                    .map(|kart| kart.log.shortcuts.get(k).copied().unwrap_or(0))
+                    .sum();
+                taken as f32 / self.passes.max(1.0)
+            })
+            .fold(0.0, f32::max)
+    }
+
+    /// Issue #193: shortcuts taken without a boost going, by all the karts (never).
+    fn unboosted(&self) -> u32 {
+        self.karts.iter().map(|k| k.log.unboosted).sum()
     }
 
     /// The times of the laps `laps` (0: the first) of every kart.
@@ -1655,11 +1692,20 @@ fn the_three_difficulties_drive_differently() {
 /// a race, lowest mean, highest mean, highest of a race; s), the same ratios to the values
 /// measured as on the circuit of #3 (Easy 18.5, 19.6, 20.9, 23; Normal 17, 18.2, 19.5, 21; Hard
 /// 15.5, 16.6, 17.8, 19.5): about 1370 m a lap, its means measured at 49.5 s (Easy), 45.8 s
-/// (Normal) and 42.0 s (Hard).
+/// (Normal) and 42.0 s (Hard), then [44.6, 48.2, 51.5, 57.3], [42.0, 44.9, 48.1, 51.5] and
+/// [37.9, 40.9, 43.9, 48.6].
+///
+/// Issue #193: measured values, not a goal of the game. At #108 the hidden road of Prairie was
+/// a free road, taken on almost every lap; since #193 every shortcut is grass and pays only with
+/// a boost, and the laps are slower, as wanted; three of its hairpins are longer too (for the
+/// keyboard player of `race::scenario_tests`). Re-measured with the code and the circuit of #193
+/// (8 seeds, `the_three_difficulties_drive_differently`): 50.32 s (Easy), 47.32 s (Normal),
+/// 44.00 s (Hard). Each bound is the one of #108 times the new mean over the old one (the same
+/// ratios, the same relative width), rounded toward the inside of the window (never wider).
 const LAP_WINDOWS: [(BotDifficulty, [f32; 4]); 3] = [
-    (BotDifficulty::Easy, [44.6, 48.2, 51.5, 57.3]),
-    (BotDifficulty::Normal, [42.0, 44.9, 48.1, 51.5]),
-    (BotDifficulty::Hard, [37.9, 40.9, 43.9, 48.6]),
+    (BotDifficulty::Easy, [45.4, 49.0, 52.3, 58.2]),
+    (BotDifficulty::Normal, [43.4, 46.4, 49.6, 53.2]),
+    (BotDifficulty::Hard, [39.8, 42.9, 45.9, 50.9]),
 ];
 
 /// Issue #6 acceptance: at the highest difficulty the bots chain orange mini-turbos, in a turn
@@ -2316,7 +2362,7 @@ fn measure_tick_cost_with_twelve_karts() {
 const CIRCUITS_VARIABLE: &str = "FLUFFY_RACE_CIRCUITS";
 
 /// Whether the races of every circuit run on the circuit file `path` ([`CIRCUITS_VARIABLE`]).
-fn circuit_wanted(path: &str) -> bool {
+pub(super) fn circuit_wanted(path: &str) -> bool {
     std::env::var(CIRCUITS_VARIABLE).map_or(true, |words| {
         words
             .split(',')
@@ -2565,6 +2611,28 @@ fn guide_checks(checks: &mut Checks, races: &[&RaceResult]) {
     );
 }
 
+/// Issue #193 (Max: « tout le monde prend tout le temps les raccourcis, ce n'est pas valable ») :
+/// a shortcut takes at most this share of the passes by it (every kart, every lap or section) in
+/// a race of 12 bots.
+const SHORTCUT_SHARE: f32 = 0.25;
+
+/// Issue #193: the shortcuts stay a minority ([`SHORTCUT_SHARE`] of the passes at most, each
+/// one), and only for karts with a boost going (a shortcut taken without one: never).
+fn shortcut_checks(checks: &mut Checks, races: &[&RaceResult]) {
+    checks.at_most(
+        "shortcuts taken without a boost (none)",
+        &per_race(races, |r| r.unboosted() as f32),
+        Some(0.0),
+        None,
+    );
+    checks.at_most(
+        "the most taken shortcut, share of the passes by it",
+        &per_race(races, |r| r.shortcut_share()),
+        Some(SHORTCUT_SHARE),
+        None,
+    );
+}
+
 /// Issue #180: tricks off the bumps and the drops per kart and per lap (the karts' mean), at
 /// worst and on average over the seeds, for Normal bots (`BotSkill::trick_chance` 0.8) and Hard
 /// ones (1): a bot takes off from a bump at speed and from every drop, and tricks with its level.
@@ -2709,6 +2777,8 @@ fn bots_race_every_circuit_and_its_mirror() {
             if GUIDE_CIRCUITS.contains(&entry.name.as_str()) {
                 guide_checks(&mut checks, &tows);
             }
+            // Issue #193: the shortcuts, a minority, only boosted.
+            shortcut_checks(&mut checks, &tows);
             // Issue #144: the bots keep clear of the obstacles and the passers-by (their lanes):
             // knocked over seldom, by a push of the pack (no items nor paws in these races: a
             // knock is a hazard's). Checked on the circuits that have some (the tables of the
@@ -2763,22 +2833,17 @@ fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
             Some(0.0),
             None,
         );
-        checks.at_least(
-            "hidden roads taken",
-            &per_race(&runs, |r| r.race.shortcuts()[0] as f32),
-            Some(6.0),
-            Some(12.0),
-        );
-        checks.at_least(
-            "risky jumps tried",
-            &per_race(&runs, |r| r.race.shortcuts()[2] as f32),
-            Some(3.0),
-            Some(8.0),
-        );
+        // Issue #193: a shortcut pays only with a boost: the Hard bots take them boosted only,
+        // a minority of the passes (before #193: 6 hidden roads at least and 12 on average, 3
+        // jumps at least and 8 on average, taken without a boost; now 0 to 2 jumps a race, the
+        // hidden path almost never: it needs a long boost).
+        let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
+        shortcut_checks(&mut checks, &races);
         checks.at_most(
             "risky jumps that fell short, per jump tried",
             &per_race(&runs, |r| {
-                r.race.tows_of(TowCause::RiskyJump) as f32 / (r.race.shortcuts()[2] as f32).max(1.0)
+                r.race.tows_of(TowCause::RiskyJump) as f32
+                    / (r.race.shortcuts_of(ShortcutKind::Jump) as f32).max(1.0)
             }),
             Some(0.5),
             Some(0.25),
@@ -2791,7 +2856,6 @@ fn hard_bots_take_the_shortcuts_and_try_the_risky_jump() {
             Some(HAZARD_KNOCKS),
         );
         // Issue #146: the guide's lap, on Hard bots.
-        let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
         guide_lap_checks(&mut checks, &races);
         println!("=== {title} — seeds {:?}\n{}", checks.seeds, checks.table);
         failures.append(&mut checks.failures);
@@ -2841,6 +2905,8 @@ fn hard_bots_lap_the_guide_circuits_in_the_guide_s_time() {
             );
             let races = runs.iter().map(|r| &r.race).collect::<Vec<_>>();
             guide_lap_checks(&mut checks, &races);
+            // Issue #193: the shortcuts, a minority, only boosted.
+            shortcut_checks(&mut checks, &races);
             // Issue #180: Hard bots trick off the bumps and the drops more than Normal ones.
             if runs[0].relief {
                 relief_checks(

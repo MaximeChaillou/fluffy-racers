@@ -9,8 +9,8 @@ use super::*;
 use crate::TICK_HZ;
 use crate::bots::RacingLine;
 use crate::kart::{
-    BoostFlame, DriftSide, KartState, KartTuning, MiniTurbo, Stall, StallSmoke, TrickTracker,
-    flame_size,
+    BoostFlame, DriftSide, KartState, KartTuning, KartWheels, MiniTurbo, Stall, StallSmoke,
+    TrickTracker, flame_size,
 };
 use crate::tests::{app_on, follow_centerline, hold_keys, player};
 use crate::track::{
@@ -839,10 +839,17 @@ fn the_circuit_boost_pads_and_trick_ramp_work() {
 
 // --- Issue #30: an orange mini-turbo in the big turns of Prairie Pompon ----------------------------
 
-/// A player on the keyboard: follows the racing line, hops a little before each big turn
-/// (`HOP_LEAD`), and in the drift only holds the inward key or lets go of the arrows (the two
-/// options of a keyboard, which charge +5 and +2), lifting off when running wide. It releases at
-/// orange, or gives up past the turn.
+/// A player on the keyboard: follows the racing line, moves over to the outside of the road
+/// before each big turn (`SETUP_TIME`, `SETUP_MARGIN`), hops a little before it (`HOP_LEAD`),
+/// and in the drift only holds the inward key, lets go of the arrows or takes the outward key
+/// (the options of a keyboard, which charge +5, +2 and +2), never anything in between; it takes
+/// the outward key when it would leave the road by the inside (`GUARD_TIME`, `GUARD_ROOM`), and
+/// lifts off when running wide. It releases at orange, or gives up past the turn.
+///
+/// Issue #193: it hopped 0.7 s before the turn and only looked at the racing line, so its drift
+/// (21 m of radius at full lock) began 15 m early and cut the inside of every hairpin, on the
+/// grass up to the inner wall: a player on the keyboard drives on the road. The test checks it
+/// now (not a tick off the road in a big turn).
 #[derive(Default)]
 struct KeyboardDrifter {
     sample: Option<usize>,
@@ -850,6 +857,7 @@ struct KeyboardDrifter {
     turn: Option<usize>,
     inside: bool,
     last_jump: bool,
+    last_lateral: Option<f32>,
 }
 
 /// A drift released by the `KeyboardDrifter`: the big turn, where (m along the lap), the tier.
@@ -861,9 +869,17 @@ struct Release {
 }
 
 impl KeyboardDrifter {
-    /// Hops this long before a big turn (s): the drift starts on the approach, its curve setting
-    /// in as the turn begins, and goes on through the whole turn.
-    const HOP_LEAD: f32 = 0.7;
+    /// Hops this long before a big turn (s): the drift starts as the turn begins and goes on
+    /// through the whole turn (issue #193: 0.4 s; 0.7 s before, too early).
+    const HOP_LEAD: f32 = 0.4;
+    /// This long before a big turn (s), it moves over to the outside of the road ...
+    const SETUP_TIME: f32 = 2.0;
+    /// ... this far from its outer limit (m).
+    const SETUP_MARGIN: f32 = 1.5;
+    /// In the drift, where it would be in this long (s) at its sideways speed ...
+    const GUARD_TIME: f32 = 0.4;
+    /// ... closer than this to the inner limit of the road (m), it takes the outward key.
+    const GUARD_ROOM: f32 = 3.5;
 
     fn big_turn(line: &RacingLine, sample: usize) -> Option<usize> {
         line.turn_at(sample)
@@ -882,9 +898,30 @@ impl KeyboardDrifter {
         let speed = velocity.dot(*transform.forward());
         let here = line.locate(transform.translation, self.sample);
         self.sample = Some(here.index);
+        let lateral_rate = self
+            .last_lateral
+            .map_or(0.0, |last| (here.lateral - last) * TICK_HZ as f32);
+        self.last_lateral = Some(here.lateral);
 
         let aim = here.distance + 5.0 + 0.35 * speed.max(0.0);
-        let target = line.center().at(aim).point(line.offset_at(aim), 0.0);
+        let mut offset = line.offset_at(aim);
+        if matches!(state, KartState::Grounded)
+            && let Some((turn, k)) = line.turn_ahead(
+                here.index,
+                (Self::SETUP_TIME * speed.max(0.0) / line.step()).ceil() as usize,
+            )
+            && line.turns()[turn].angle > 2.4
+            && self.turn != Some(turn)
+            && k > 0
+        {
+            let [left, right] = line.limits_at(aim);
+            offset = if line.turns()[turn].side.sign() > 0.0 {
+                left + Self::SETUP_MARGIN
+            } else {
+                right - Self::SETUP_MARGIN
+            };
+        }
+        let target = line.center().at(aim).point(offset, 0.0);
         let to = target - transform.translation;
         let angle = to
             .dot(*transform.right())
@@ -916,7 +953,19 @@ impl KeyboardDrifter {
                     } else {
                         0.0
                     };
-                    if inward > 0.25 {
+                    // Issue #193: never off the road by the inside (see the test).
+                    let [left, right] = line.limits_at(here.distance);
+                    let ahead = here.lateral + lateral_rate * Self::GUARD_TIME;
+                    let room = if side.sign() > 0.0 {
+                        right - ahead
+                    } else {
+                        ahead - left
+                    };
+                    let guarded = room < Self::GUARD_ROOM;
+                    if guarded && input.steer == side.sign() {
+                        input.steer = -side.sign();
+                    }
+                    if inward > 0.25 && !guarded {
                         input.throttle = 0.0;
                     }
                 }
@@ -954,7 +1003,11 @@ impl KeyboardDrifter {
 /// mini-turbo to a player, on every lap, and well before the end of the turn (the drift of #4
 /// gave a blue at best: about 130 units per radian of turn, 176° turns). Driven like a keyboard
 /// player: full inward or the stick released, nothing in between. Issue #108: Prairie Pompon
-/// redrawn, its five hairpins (two of them before #108).
+/// redrawn, its five hairpins (two of them before #108). Issue #193: on the road (the grass
+/// brakes like sand now; before, the driver cut the inside of the hairpins on the grass), and
+/// the three shortest hairpins of Prairie Pompon longer for it (the first one 10 m, the second
+/// 17 m, the fifth one 208° instead of about 200°), the rule unchanged: an orange at least 15 m
+/// before the end of each one.
 #[test]
 fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
     let (mut app, kart) = race_app();
@@ -967,6 +1020,15 @@ fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
     assert_eq!(big.len(), 5, "{:?}", line.turns());
     until_go(&mut app);
     let mut driver = KeyboardDrifter::default();
+    let mut off_road = std::collections::BTreeMap::<(usize, usize), u32>::new();
+    let layout = app.world().resource::<crate::track::TrackLayout>().clone();
+    let sand: Vec<_> = layout
+        .offroad
+        .iter()
+        .map(|zone| {
+            layout.center.param_to_distance(zone.from)..layout.center.param_to_distance(zone.to)
+        })
+        .collect();
     let mut releases = Vec::new();
     let mut laps = 0;
     for _ in 0..(150.0 * TICK_HZ) as usize {
@@ -983,6 +1045,22 @@ fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
         app.update();
         assert!(!tow(&app, kart).is_carrying(), "towed: {releases:?}");
         let p = progress(&app, kart);
+        // Issue #193: a wheel off the road (on the grass of the shoulder) in a big turn, per lap
+        // and turn. Not on a sand patch of the road itself (the apex of the first hairpin):
+        // there, the kart is on the road, and the sand only slows it down.
+        let world = app.world();
+        let here = line.locate(
+            world.get::<Transform>(kart).unwrap().translation,
+            driver.sample,
+        );
+        let on_a_patch = sand.iter().any(|range| range.contains(&here.distance))
+            && here.lateral.abs() < layout.center.at(here.distance).half_width - 1.0;
+        if let Some(turn) = KeyboardDrifter::big_turn(&line, here.index)
+            && world.get::<KartWheels>(kart).unwrap().offroad_ratio > 0.0
+            && !on_a_patch
+        {
+            *off_road.entry((p.lap_times.len(), turn)).or_insert(0) += 1;
+        }
         if p.lap_times.len() > laps {
             laps = p.lap_times.len();
             driver.turn = None;
@@ -991,11 +1069,30 @@ fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
             break;
         }
     }
+    let ends: Vec<(usize, f32)> = big
+        .iter()
+        .map(|t| {
+            (
+                *t,
+                (line.turns()[*t].start + line.turns()[*t].len) as f32 * line.step(),
+            )
+        })
+        .collect();
     println!(
-        "keyboard player: {releases:?}, laps {:?}",
+        "keyboard player: {releases:?}, laps {:?}, ticks off the road (lap, turn): {off_road:?}, \
+         big turns end at (turn, m): {ends:?}",
         progress(&app, kart).lap_times
     );
     assert!(progress(&app, kart).finished());
+    // Issue #193: on the road through every big turn, not a single tick with a wheel off it (on
+    // the shoulder's grass).
+    // Before #193 this driver cut the inside of all five hairpins (73 to 226 ticks a hairpin on
+    // the grass, 80 to 95 with the grass of `dev`, against its inner wall): the soft grass slowed
+    // it down, and the orange came early by that. A player drifts on the road.
+    assert!(
+        off_road.is_empty(),
+        "off the road in a big turn: {off_road:?}"
+    );
     // One drift per big turn and per lap, each released at orange, at least 15 m before the
     // turn ends.
     assert_eq!(releases.len(), 3 * big.len(), "{releases:?}");
@@ -1011,7 +1108,7 @@ fn a_keyboard_player_gets_an_orange_in_every_big_turn() {
     }
     // A lap stays around 42.5 s for this driver on Prairie Pompon redrawn (issue #108; around 17
     // s on the circuit of #3, from 15 to 19.5 s: the same ratios), laps 2 and 3, without the
-    // start.
+    // start. Issue #193: around 45.8 s (on the road, the hairpins longer), the same window.
     for lap in &progress(&app, kart).lap_times[1..] {
         let seconds = ticks_to_seconds(*lap);
         assert!((37.5..49.0).contains(&seconds), "{seconds} s");

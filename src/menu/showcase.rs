@@ -101,7 +101,6 @@ impl HomeTuning {
             grab_chance: self.grab_chance.clamp(0.0, 1.0),
             escape_delay: self.escape_delay.max(0.0),
             strike_edge_bias: 0.0,
-            shortcut_chance: 0.0,
             grass_chance: 0.0,
             jump_chance: 0.0,
             ..*bots.skill(BotDifficulty::Hard)
@@ -514,11 +513,8 @@ mod tests {
         assert_eq!(skill.line_fidelity, hard.line_fidelity);
         assert_eq!(skill.throw, hard.throw);
         // Issue #108: the pack keeps to the road.
-        assert!(hard.shortcut_chance > 0.0 && hard.grass_chance > 0.0 && hard.jump_chance > 0.0);
-        assert_eq!(
-            (skill.shortcut_chance, skill.grass_chance, skill.jump_chance),
-            (0.0, 0.0, 0.0)
-        );
+        assert!(hard.grass_chance > 0.0 && hard.jump_chance > 0.0);
+        assert_eq!((skill.grass_chance, skill.jump_chance), (0.0, 0.0));
         assert!(t.blend_seconds < t.shot_seconds);
     }
 }

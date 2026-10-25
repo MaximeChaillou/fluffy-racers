@@ -444,6 +444,10 @@ pub struct WorldVfx {
     /// wheels off the road), from this speed (m/s); their size and life.
     pub dust_rate: f32,
     pub dust_min_speed: f32,
+    /// Issue #193 (the grass brakes like sand): while a kart without a boost is still braking
+    /// down to the off-road's top speed, its dust is this much thicker (× 1 + this): it ploughs
+    /// into the grass.
+    pub dust_plough: f32,
     pub dust_size: f32,
     pub dust_life: f32,
     /// Issue #185: the dust is this opaque at most (off the road, on a landing, out of the tyres).
@@ -490,6 +494,7 @@ impl Default for WorldVfx {
             sparkle_life: 0.45,
             dust_rate: 16.0,
             dust_min_speed: 4.0,
+            dust_plough: 2.0,
             dust_size: 0.32,
             dust_life: 0.45,
             dust_opacity: 0.6,

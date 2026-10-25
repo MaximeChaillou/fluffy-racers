@@ -268,7 +268,8 @@ fn every_knob_at_an_end_stays_within_playable_bounds() {
             "{at}"
         );
         assert!(k.lateral_grip >= 12.0, "{at}");
-        assert!((0.35..=1.0).contains(&k.offroad_speed_factor), "{at}");
+        // Issue #193: 35 % in the middle now (Max), 28 % at the slippery end (35 % before).
+        assert!((0.28..=1.0).contains(&k.offroad_speed_factor), "{at}");
         assert!((0.0..=1.0).contains(&k.bump_spin_keep), "{at}");
         // Untouched by the knobs: the drift keeps its speeds and the kart its body.
         assert!(k.drift_exit_speed < k.drift_min_speed);
