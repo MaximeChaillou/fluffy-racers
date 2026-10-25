@@ -252,11 +252,14 @@ impl Plugin for SalonPlugin {
                 PostUpdate,
                 (
                     online::show_remote_walkers.in_set(InterpolationSystems),
-                    (walker::step_walker_wobbles, walker::pose_walker_paws)
-                        .chain()
+                    walker::step_walker_wobbles
                         .after(InterpolationSystems)
                         .after(AnimationSystems)
-                        .before(crate::characters::lay_wobbles)
+                        .before(crate::characters::lay_wobbles),
+                    // Issue #169: the paw follows the body once its clip and its wobble moved it.
+                    walker::pose_walker_paws
+                        .after(walker::step_walker_wobbles)
+                        .after(crate::characters::WobbleSystems)
                         .before(TransformSystems::Propagate),
                     walker::film_the_salon
                         .after(crate::camera::chase)

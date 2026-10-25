@@ -1123,6 +1123,276 @@ fn the_drivers_sit_in_their_karts_and_play_what_happens() {
     assert!(frames < 300, "the karts never came back");
 }
 
+/// Whether `p` is inside `mesh` (a closed surface, maybe of a few shells): an odd number of its
+/// triangles crossed by a ray from it, along a majority of three directions.
+fn inside_mesh(mesh: &crate::track::mesh::MeshData, p: Vec3) -> bool {
+    let crossings = |dir: Vec3| {
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter(|t| {
+                let [a, b, c] = t.map(|i| Vec3::from(mesh.positions[i as usize]));
+                // Möller–Trumbore.
+                let (e1, e2) = (b - a, c - a);
+                let h = dir.cross(e2);
+                let det = e1.dot(h);
+                if det.abs() < 1e-9 {
+                    return false;
+                }
+                let f = 1.0 / det;
+                let s = p - a;
+                let u = f * s.dot(h);
+                let q = s.cross(e1);
+                let v = f * dir.dot(q);
+                (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0 && f * e2.dot(q) > 1e-6
+            })
+            .count()
+    };
+    let dirs = [
+        Vec3::new(0.13, 0.97, 0.21).normalize(),
+        Vec3::new(-0.31, 0.11, 0.94).normalize(),
+        Vec3::new(0.27, -0.9, -0.33).normalize(),
+    ];
+    dirs.iter().filter(|d| crossings(**d) % 2 == 1).count() >= 2
+}
+
+/// Issue #169, the issue's criteria on the real files: **each animal's shoulder is on its body,
+/// at every size** (inside its body's mesh, just under its side: a little further out is
+/// outside), on both sides; and **each animal has its paw, its colors taken on its model** (its
+/// front leg's fur, foot and sole, or a bird's wing), none of them the cream paw of before, no
+/// two alike. The fixed shoulder of before was off the chick's body: the check catches it.
+#[test]
+fn every_animal_has_its_paw_out_of_its_body() {
+    use crate::characters::{
+        DriverTuning, PawColors, PawShape, Roster, animal_model_data, leg_colors, paw_model,
+        rest_transform, wing_colors,
+    };
+    let mut app = loading_app();
+    app.add_plugins(ModelPlugin);
+    app.update();
+    let ids = animal_models();
+    {
+        let world = app.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let mut models = world.resource_mut::<Models>();
+        for id in &ids {
+            models.request_animated(id, Keep::Always, Some(&server));
+        }
+    }
+    wait_for_the_models(&mut app, &ids);
+    let roster = Roster::embedded();
+    let tuning = DriverTuning::default();
+    let models = app.world().resource::<Models>();
+    let cream = PawColors::cream();
+    let mut seen: Vec<(String, PawShape, [f32; 4], [f32; 4])> = Vec::new();
+    for character in &roster.characters {
+        let name = &character.name;
+        let id = character.model.as_deref().unwrap();
+        let animal = animal_model_data(models.get(id).unwrap()).unwrap();
+        let paw = paw_model(&animal, character.paw).unwrap_or_else(|| panic!("{name}: no paw"));
+        let body = animal.node("body").unwrap();
+        let mesh = animal.nodes[body].mesh.as_ref().unwrap();
+        // On its body, just under its side, on both sides.
+        for (shoulder, out) in [
+            (paw.shoulder, Vec3::X),
+            (paw.shoulder * Vec3::new(-1.0, 1.0, 1.0), Vec3::NEG_X),
+        ] {
+            assert!(
+                inside_mesh(mesh, shoulder),
+                "{name}: {shoulder} off its body"
+            );
+            assert!(
+                !inside_mesh(mesh, shoulder + out * 0.2),
+                "{name}: {shoulder} deep in its body"
+            );
+        }
+        // At every size, in the kart: inside the box of its body as it sits, on its side, a
+        // third of the way up.
+        let rest = rest_transform(&animal, body);
+        for size in [0.5, character.size, 1.0, 1.6] {
+            let seat = Mat4::from_translation(crate::kart::DRIVER_SEAT)
+                * Mat4::from_scale(Vec3::splat(size))
+                * animal.placement(&tuning).to_matrix()
+                * rest;
+            let placed = crate::models::bake::transformed(mesh, seat);
+            let (lo, hi) = crate::models::shape::bounds(&placed).unwrap();
+            let shoulder = seat.transform_point3(paw.shoulder);
+            assert!(
+                shoulder.cmpge(lo).all() && shoulder.cmple(hi).all(),
+                "{name} at {size}: {shoulder} out of {lo}..{hi}"
+            );
+            // Its left (+X in its file) on the kart's left, on its side.
+            let middle = (lo + hi) / 2.0;
+            assert!(
+                shoulder.x < middle.x - 0.3 * (hi.x - middle.x),
+                "{name} at {size}: {shoulder}"
+            );
+            let up = (shoulder.y - lo.y) / (hi.y - lo.y);
+            assert!((0.2..0.5).contains(&up), "{name} at {size}: {up}");
+            if name == "Poussin" && size == character.size {
+                // The shoulder of before (the same for everyone): off a small one's body.
+                let before = seat.inverse().transform_point3(Vec3::new(-0.4, 0.62, 0.15));
+                assert!(!inside_mesh(mesh, before), "{before}");
+            }
+        }
+        // Its colors, taken on its model.
+        let expected = if character.paw == PawShape::Wing {
+            let wing = animal
+                .nodes
+                .iter()
+                .find(|n| n.name == "wing-left")
+                .unwrap_or_else(|| panic!("{name}: no wing"));
+            let colors = wing_colors(wing.mesh.as_ref().unwrap()).unwrap();
+            // The hand is the wing itself, in its colors.
+            let wing_mesh = wing.mesh.as_ref().unwrap();
+            assert!(
+                paw.hand.colors.iter().all(|c| wing_mesh.colors.contains(c)),
+                "{name}: its wing"
+            );
+            colors
+        } else {
+            let leg = animal
+                .legs
+                .iter()
+                .find(|n| n.name == "leg-front-left")
+                .unwrap();
+            let colors = leg_colors(leg.mesh.as_ref().unwrap()).unwrap();
+            assert!(paw.hand.colors.contains(&colors.foot), "{name}: its foot");
+            colors
+        };
+        assert_eq!(paw.colors, expected, "{name}");
+        assert!(
+            paw.arm.colors.contains(&expected.fur),
+            "{name}: the arm of its fur"
+        );
+        let apart = |a: [f32; 4], b: [f32; 4]| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<f32>();
+        assert!(apart(expected.fur, cream.fur) > 0.05, "{name}: not cream");
+        seen.push((name.clone(), character.paw, expected.fur, expected.foot));
+    }
+    assert_eq!(seen.len(), 9);
+    for (i, a) in seen.iter().enumerate() {
+        for b in &seen[i + 1..] {
+            assert!(
+                a.1 != b.1 || a.2 != b.2 || a.3 != b.3,
+                "{} and {} have the same paw",
+                a.0,
+                b.0
+            );
+        }
+    }
+}
+
+/// Issue #169, in the whole game with the models (headless, Bevy's animations on): every kart's
+/// arm is its animal's (its arm's and its hand's meshes, one per animal, shared by the karts it
+/// drives, in the models' shared material), and **comes out of its driver's body as it is this
+/// frame** (its clip and its wobble moving it): the arm starts inside the body's mesh where the
+/// body is drawn, whatever the driver's size; a bird's wing leaves its body on that side.
+#[test]
+fn every_arm_is_its_animal_s_and_comes_out_of_its_body() {
+    use crate::characters::{AnimalRoot, Animals};
+    use crate::interactions::{Paw, PawArm, PawMotion};
+    let mut app = crate::tests::game_app_unloaded(crate::track::TrackChoice::default(), 11);
+    load_gltf_headless(&mut app);
+    wait_for_the_drivers(&mut app);
+    for _ in 0..5 {
+        app.update();
+    }
+    for frame in 0..4 {
+        // Every paw raised (half of them on the left), as the button does.
+        let world = app.world_mut();
+        let karts: Vec<Entity> = world
+            .query_filtered::<Entity, With<Paw>>()
+            .iter(world)
+            .collect();
+        for (i, kart) in karts.iter().enumerate() {
+            let mut paw = world.get_mut::<Paw>(*kart).unwrap();
+            paw.motion = PawMotion::Raised { ticks: 1 };
+            paw.aim = if i % 2 == 0 { -1.0 } else { 1.0 };
+        }
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .set_relative_speed(0.0);
+        app.update();
+        let world = app.world_mut();
+        let roots: Vec<AnimalRoot> = world.query::<&AnimalRoot>().iter(world).copied().collect();
+        assert_eq!(roots.len(), 12);
+        let animals = world.resource::<Animals>().clone();
+        let shared = world.resource::<ModelMaterials>().vertex_colors.id();
+        let arms: Vec<(
+            PawArm,
+            Visibility,
+            GlobalTransform,
+            AssetId<Mesh>,
+            AssetId<StandardMaterial>,
+        )> = world
+            .query::<(
+                &PawArm,
+                &Visibility,
+                &GlobalTransform,
+                &Mesh3d,
+                &MeshMaterial3d<StandardMaterial>,
+            )>()
+            .iter(world)
+            .map(|(a, v, g, m, mat)| (*a, *v, *g, m.0.id(), mat.0.id()))
+            .collect();
+        let mut out = 0;
+        for (arm, visibility, global, mesh, material) in &arms {
+            if *visibility == Visibility::Hidden {
+                continue;
+            }
+            let root = roots.iter().find(|r| r.kart == arm.body).unwrap();
+            let animal = animals.get(root.character).unwrap();
+            let paw = animal.paw.as_ref().unwrap();
+            let wanted = if arm.paw { &paw.hand } else { &paw.arm };
+            assert_eq!(*mesh, wanted.id(), "its animal's");
+            assert_eq!(*material, shared);
+            if arm.paw {
+                continue;
+            }
+            out += 1;
+            let body = world.get::<GlobalTransform>(root.body.unwrap()).unwrap();
+            let shoulder = body
+                .affine()
+                .inverse()
+                .transform_point3(global.translation());
+            let body_mesh = animal.data.nodes[paw.body].mesh.as_ref().unwrap();
+            assert!(
+                inside_mesh(body_mesh, shoulder),
+                "frame {frame}, character {}: the arm starts at {shoulder}, off its body",
+                root.character
+            );
+            // A bird: the wing on that side leaves its body, the other stays.
+            if let [Some(left), Some(right)] = root.wings {
+                let side = global.translation() - body.translation();
+                let on_left = body.affine().inverse().transform_vector3(side).x > 0.0;
+                let (gone, kept) = if on_left {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                assert_eq!(world.get::<Visibility>(gone), Some(&Visibility::Hidden));
+                assert_eq!(world.get::<Visibility>(kept), Some(&Visibility::Inherited));
+            }
+        }
+        assert_eq!(out, 12, "frame {frame}: every arm out");
+        // One arm mesh per animal.
+        let meshes: BTreeSet<AssetId<Mesh>> = arms
+            .iter()
+            .filter(|(a, ..)| !a.paw)
+            .map(|(.., m, _)| *m)
+            .collect();
+        let characters: BTreeSet<usize> = roots.iter().map(|r| r.character).collect();
+        assert_eq!(meshes.len(), characters.len());
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .set_relative_speed(1.0);
+        for _ in 0..7 {
+            app.update();
+        }
+    }
+}
+
 /// Issue #12: with the animals (headless, their clips playing), every body, tail and wing carries
 /// its wobble's layer, for its own driver, and the driver knows where its tail and wings hang
 /// (the elephant's trunk ahead, the other tails behind; the left wing on the kart's left). A kart

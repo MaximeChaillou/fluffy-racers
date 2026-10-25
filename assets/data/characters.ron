@@ -16,65 +16,69 @@
 // - model : son modèle 3D, « pack/nom » (le fichier `assets/models/pack/nom.glb`, issue #69) ;
 // - color et ears : le pilote en primitives, tant que son modèle n'est pas là (ou sans lui) :
 //   sa couleur (rouge, vert, bleu, de 0 à 1, une par animal) et ses oreilles (Round : rondes,
-//   Long : longues, Pointy : pointues, None : aucune).
+//   Long : longues, Pointy : pointues, None : aucune) ;
+// - paw : sa patte (issue #169), celle du coup de patte et de l'attrape : Toes (ronde, quatre
+//   doigts et leurs coussinets), Long (longue, trois doigts), Hoof (un sabot fendu), Stomp (un gros
+//   pied rond et ses ongles), Wing (l'aile de l'oiseau). Ses couleurs sont prises sur le modèle
+//   (sa patte avant, ou son aile), son épaule mesurée sur son corps. Omise : Toes.
 (
     default: "Chat",
     characters: [
         // Légers : accélération, maniabilité et mini-turbo ; peu de vitesse et de poids.
         (
             name: "Poussin", class: Light, size: 0.75, model: "cube-pets/animal-chick",
-            color: (1.00, 0.86, 0.25), ears: None,
+            color: (1.00, 0.86, 0.25), ears: None, paw: Wing,
             stats: (speed: 2, acceleration: 6, weight: 1, handling: 6, traction: 5, mini_turbo: 6, invincibility: 6,
                    water_speed: 1, water_handling: 5, air_speed: 3, air_handling: 7, anti_gravity_speed: 2, anti_gravity_handling: 6),
         ),
         (
             name: "Pingouin", class: Light, size: 0.82, model: "cube-pets/animal-penguin",
-            color: (0.20, 0.22, 0.30), ears: None,
+            color: (0.20, 0.22, 0.30), ears: None, paw: Wing,
             stats: (speed: 2, acceleration: 7, weight: 2, handling: 5, traction: 5, mini_turbo: 5, invincibility: 6,
                    water_speed: 4, water_handling: 7, air_speed: 1, air_handling: 4, anti_gravity_speed: 2, anti_gravity_handling: 5),
         ),
         (
             name: "Perroquet", class: Light, size: 0.78, model: "cube-pets/animal-parrot",
-            color: (0.90, 0.22, 0.18), ears: None,
+            color: (0.90, 0.22, 0.18), ears: None, paw: Wing,
             stats: (speed: 3, acceleration: 5, weight: 2, handling: 5, traction: 6, mini_turbo: 6, invincibility: 5,
                    water_speed: 2, water_handling: 4, air_speed: 4, air_handling: 7, anti_gravity_speed: 3, anti_gravity_handling: 5),
         ),
         // Moyens : équilibrés. Le chat est le milieu exact.
         (
             name: "Chat", class: Medium, size: 1.0, model: "cube-pets/animal-cat",
-            color: (0.98, 0.62, 0.30), ears: Pointy,
+            color: (0.98, 0.62, 0.30), ears: Pointy, paw: Toes,
             stats: (speed: 4, acceleration: 4, weight: 4, handling: 4, traction: 4, mini_turbo: 4, invincibility: 4,
                    water_speed: 4, water_handling: 4, air_speed: 4, air_handling: 4, anti_gravity_speed: 4, anti_gravity_handling: 4),
         ),
         (
             name: "Lapin", class: Medium, size: 0.96, model: "cube-pets/animal-bunny",
-            color: (0.96, 0.84, 0.88), ears: Long,
+            color: (0.96, 0.84, 0.88), ears: Long, paw: Long,
             stats: (speed: 4, acceleration: 5, weight: 3, handling: 4, traction: 3, mini_turbo: 5, invincibility: 4,
                    water_speed: 3, water_handling: 4, air_speed: 4, air_handling: 5, anti_gravity_speed: 4, anti_gravity_handling: 4),
         ),
         (
             name: "Renard", class: Medium, size: 1.0, model: "cube-pets/animal-fox",
-            color: (0.88, 0.36, 0.12), ears: Pointy,
+            color: (0.88, 0.36, 0.12), ears: Pointy, paw: Toes,
             stats: (speed: 5, acceleration: 3, weight: 4, handling: 5, traction: 4, mini_turbo: 3, invincibility: 4,
                    water_speed: 4, water_handling: 4, air_speed: 5, air_handling: 5, anti_gravity_speed: 5, anti_gravity_handling: 6),
         ),
         // Lourds : vitesse et poids ; moins d'accélération, de maniabilité et de mini-turbo.
         (
             name: "Cochon", class: Heavy, size: 1.22, model: "cube-pets/animal-pig",
-            color: (0.98, 0.66, 0.72), ears: Pointy,
+            color: (0.98, 0.66, 0.72), ears: Pointy, paw: Hoof,
             stats: (speed: 6, acceleration: 2, weight: 7, handling: 2, traction: 3, mini_turbo: 2, invincibility: 2,
                    water_speed: 6, water_handling: 3, air_speed: 5, air_handling: 2, anti_gravity_speed: 6, anti_gravity_handling: 2),
         ),
         (
             name: "Vache", class: Heavy, size: 1.25, model: "cube-pets/animal-cow",
-            color: (0.97, 0.97, 0.97), ears: Round,
+            color: (0.97, 0.97, 0.97), ears: Round, paw: Hoof,
             stats: (speed: 5, acceleration: 3, weight: 7, handling: 3, traction: 4, mini_turbo: 2, invincibility: 2,
                    water_speed: 5, water_handling: 3, air_speed: 4, air_handling: 3, anti_gravity_speed: 5, anti_gravity_handling: 3),
         ),
         // L'éléphant est le plus lourd.
         (
             name: "Éléphant", class: Heavy, size: 1.3, model: "cube-pets/animal-elephant",
-            color: (0.62, 0.64, 0.72), ears: Round,
+            color: (0.62, 0.64, 0.72), ears: Round, paw: Stomp,
             stats: (speed: 6, acceleration: 2, weight: 8, handling: 2, traction: 2, mini_turbo: 2, invincibility: 3,
                    water_speed: 7, water_handling: 3, air_speed: 5, air_handling: 1, anti_gravity_speed: 6, anti_gravity_handling: 2),
         ),

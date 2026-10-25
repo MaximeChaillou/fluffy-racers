@@ -9,8 +9,8 @@
 //!   for the others: **its animal on its legs** (`characters::spawn_animal_on_foot`: the `walk` and
 //!   `run` clips at the pace of its steps, `idle` standing, the legs paddling while it tumbles, a
 //!   shake of the head once up; the wobble of #12 over them, kicked by each fall), **a party hat
-//!   of its player's color**, its paw (a capsule and a ball, like the karts' arms) and a « pof »
-//!   where a strike lands. Headless (no model), primitives: a box and the hat.
+//!   of its player's color**, its paw (issue #169: its animal's own, out of its body, like the
+//!   karts' arms: `characters::AnimalPaw`) and a « pof » where a strike lands. Headless (no model), primitives: a box and the hat.
 //! - **Its pseudo over it** ([`WalkerTag`]), the karts' tags (`net::tags`): ours too.
 //! - **The camera** ([`film_the_salon`]): it follows ours from a fixed angle, behind and above
 //!   (up on the screen is away from it: `walk.rs`).
@@ -36,10 +36,11 @@ use super::walk::{
 };
 use crate::camera::ChaseCamera;
 use crate::characters::{
-    AnimalAnimation, Animals, AnimationNodes, DriverLooks, DriverTuning, DriverWobble, Knock,
-    PlayerColor, PlayerLoadout, Ragdoll, RagdollPhase, RagdollTuning, Roster, WobbleInput,
-    WobbleTuning, spawn_animal_on_foot,
+    AnimalAnimation, AnimalPart, Animals, AnimationNodes, DriverLooks, DriverTuning, DriverWobble,
+    Knock, PlayerColor, PlayerLoadout, Ragdoll, RagdollPhase, RagdollTuning, Roster, WobbleInput,
+    WobbleTuning, paw_nodes, primitive_paw, spawn_animal_on_foot, transform_in,
 };
+use crate::interactions::arm_and_hand;
 use crate::interpolation::{InterpolatedFrom, PhysicsPose};
 use crate::kart::{KartColor, KeyboardLayout, combine, gamepad_input, keyboard_input};
 use crate::level::LevelScoped;
@@ -50,6 +51,7 @@ use crate::net::{
     character_name, foot::foot_position, foot::strike_direction, tags,
 };
 use crate::options::OptionsMenu;
+use crate::track::circuit::to_mesh;
 
 /// A character's body at size 1 (half its extents, m): its animal's block on its legs, about a
 /// meter high (`DriverTuning::model_scale` times a Cube Pet's 1.25 × 1.58 × 1.35).
@@ -141,6 +143,10 @@ pub struct WalkerFigure {
     pub playing: AnimalAnimation,
     pub speed: f32,
     pub nodes: Option<AnimationNodes>,
+    /// Issue #169: its animal's body (where its paw comes out) and a bird's wings (its left, then
+    /// its right), which its paw replaces while out.
+    pub body: Option<Entity>,
+    pub wings: [Option<Entity>; 2],
 }
 
 /// The party hat of a character (its body), its player's color.
@@ -150,7 +156,7 @@ pub struct WalkerHat {
     pub color: KartColor,
 }
 
-/// A part of a character's paw (the arm, or the ball at its end), and its « pof».
+/// A part of a character's paw (the arm, or the hand at its end), and its « pof».
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WalkerPaw {
     pub ball: bool,
@@ -180,8 +186,10 @@ pub struct SalonAssets {
     hat: Handle<Mesh>,
     pompom: Handle<Mesh>,
     block: Handle<Mesh>,
+    /// The paw of a character in primitives (issue #169: an animal's is its own).
     arm: Handle<Mesh>,
     ball: Handle<Mesh>,
+    paw_length: f32,
     pof: Handle<Mesh>,
     /// A hat's material per color of the palette.
     hats: Vec<Handle<StandardMaterial>>,
@@ -315,20 +323,22 @@ fn salon_assets(
     if let Some(made) = made.as_ref() {
         return made.clone();
     }
+    let paw = primitive_paw();
     let assets = SalonAssets {
         hat: meshes.add(Cone::new(HAT_RADIUS, HAT_HEIGHT)),
         pompom: meshes.add(Sphere::new(0.12)),
         block: meshes.add(Cuboid::from_size(WALKER_HALF * 2.0)),
-        // A capsule along Y, 1 m between its caps: scaled to the arm's length.
-        arm: meshes.add(Capsule3d::new(0.07, 1.0)),
-        ball: meshes.add(Sphere::new(0.13)),
+        arm: meshes.add(to_mesh(&paw.arm)),
+        ball: meshes.add(to_mesh(&paw.hand)),
+        paw_length: paw.hand_length,
         pof: meshes.add(Cuboid::new(1.0, 1.0, 0.08)),
         hats: KartColor::ALL
             .iter()
             .map(|color| materials.add(color.color()))
             .collect(),
         white: materials.add(Color::WHITE),
-        paw: materials.add(Color::srgb(0.98, 0.9, 0.78)),
+        // The primitives' paw is cream in its vertex colors.
+        paw: materials.add(Color::WHITE),
         pof_material: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.95, 0.35),
             unlit: true,
@@ -399,6 +409,8 @@ pub fn dress_walkers(
             playing: AnimalAnimation::Idle,
             speed: 1.0,
             nodes: None,
+            body: None,
+            wings: [None; 2],
         };
         match animals.get(walker.character) {
             Some(animal) => {
@@ -410,6 +422,10 @@ pub fn dress_walkers(
                 };
                 let phase =
                     (of.body.to_bits() as u32).wrapping_mul(2_654_435_761) as f32 / u32::MAX as f32;
+                let figure = WalkerFigure {
+                    nodes: animal.graph.as_ref().map(|(_, nodes)| *nodes),
+                    ..figure
+                };
                 let (root, nodes) = spawn_animal_on_foot(
                     &mut commands,
                     animal,
@@ -417,11 +433,15 @@ pub fn dress_walkers(
                     visual,
                     visual,
                     phase,
-                    WalkerFigure {
-                        nodes: animal.graph.as_ref().map(|(_, nodes)| *nodes),
-                        ..figure
-                    },
+                    figure,
                 );
+                // Issue #169: where its paw comes out.
+                let (body, wings) = paw_nodes(animal, &nodes);
+                commands.entity(root).insert(WalkerFigure {
+                    body,
+                    wings,
+                    ..figure
+                });
                 // Its hat on the top of its head: under the body's node, which the clips and
                 // the wobble move.
                 let head = animal
@@ -499,6 +519,13 @@ fn spawn_paw(commands: &mut Commands, assets: &SalonAssets, visual: Entity, size
         Visibility::Hidden,
         ChildOf(visual),
     ));
+    // Its meshes' lengths, for its pose (`pose_walker_paws`).
+    commands.entity(visual).insert(PrimitivePaw {
+        arm: assets.arm.clone(),
+        hand: assets.ball.clone(),
+        material: assets.paw.clone(),
+        length: assets.paw_length,
+    });
     commands.spawn((
         WalkerPof::default(),
         Mesh3d(assets.pof.clone()),
@@ -874,30 +901,85 @@ pub fn step_walker_wobbles(
     }
 }
 
+/// Issue #169: a visual's paw in primitives (its meshes and their material, how long its hand
+/// is), for a character without its animal (headless, a missing file).
+#[derive(Component, Clone, Debug)]
+pub struct PrimitivePaw {
+    arm: Handle<Mesh>,
+    hand: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    length: f32,
+}
+
 /// The paws and the « pof »: the arm reaches out on its side and comes back over a swing; the
-/// « pof » pops where a fall starts. Hidden otherwise.
+/// « pof » pops where a fall starts. Hidden otherwise. Issue #169: the paw is its animal's, out
+/// of its body (as its clips and its wobble move it this frame), at its size; a bird's wing
+/// leaves its body while it is the paw.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn pose_walker_paws(
     time: Res<Time>,
-    tuning: Res<SalonTuning>,
-    visuals: Query<&WalkerVisual>,
+    (tuning, driver_tuning, animals): (Res<SalonTuning>, Res<DriverTuning>, Res<Animals>),
+    visuals: Query<(&WalkerVisual, &PrimitivePaw, &Children)>,
     walkers: Query<(&Walker, &WalkerLook)>,
-    mut paws: Query<(&ChildOf, &WalkerPaw, &mut Transform, &mut Visibility), Without<WalkerPof>>,
+    figures: Query<&WalkerFigure>,
+    nodes: Query<(&Transform, &ChildOf), (Without<WalkerPaw>, Without<WalkerPof>)>,
+    mut wings: Query<&mut Visibility, (With<AnimalPart>, Without<WalkerPaw>, Without<WalkerPof>)>,
+    mut paws: Query<
+        (
+            &ChildOf,
+            &WalkerPaw,
+            &mut Transform,
+            &mut Visibility,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        Without<WalkerPof>,
+    >,
     mut pofs: Query<
         (&ChildOf, &mut WalkerPof, &mut Transform, &mut Visibility),
         Without<WalkerPaw>,
     >,
 ) {
     let swing_ticks = (tuning.paw_swing * crate::TICK_HZ as f32).max(1.0);
-    for (child_of, paw, mut transform, mut visibility) in &mut paws {
-        let Some((walker, look)) = visuals
-            .get(child_of.parent())
-            .ok()
-            .and_then(|visual| walkers.get(visual.body).ok())
+    let model_scale = driver_tuning.model_scale.max(0.01);
+    for (child_of, paw, mut transform, mut visibility, mut mesh, mut material) in &mut paws {
+        let visual = child_of.parent();
+        let Some((walker, look, primitive, children)) =
+            visuals
+                .get(visual)
+                .ok()
+                .and_then(|(of, primitive, children)| {
+                    let (walker, look) = walkers.get(of.body).ok()?;
+                    Some((walker, look, primitive, children))
+                })
         else {
             continue;
         };
-        let Some((ticks, right)) = look.swing.filter(|_| look.phase == RagdollPhase::Upright)
-        else {
+        let size = walker.size;
+        // Its animal's paw, out of its body; or its primitives'.
+        let figure = children.iter().find_map(|c| figures.get(c).ok());
+        let animal = figure.and_then(|figure| {
+            let animal = animals.get(figure.character)?;
+            let paw = animal.paw.as_ref()?;
+            let body = transform_in(figure.body?, visual, &nodes)?;
+            Some((paw.shoulders(&body), paw, &animal.material, figure.wings))
+        });
+        let swing = look.swing.filter(|_| look.phase == RagdollPhase::Upright);
+        if !paw.ball
+            && let Some((_, _, _, wing_nodes)) = &animal
+        {
+            for (i, wing) in wing_nodes.iter().enumerate() {
+                let out = swing.is_some_and(|(_, right)| usize::from(right) == i);
+                if let Some(mut shown) = wing.and_then(|w| wings.get_mut(w).ok()) {
+                    shown.set_if_neq(if out {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Inherited
+                    });
+                }
+            }
+        }
+        let Some((ticks, right)) = swing else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
@@ -909,20 +991,39 @@ pub fn pose_walker_paws(
             1.0 - (t - 0.35) / 0.65
         }
         .clamp(0.0, 1.0);
-        let size = walker.size;
         let side = if right { 1.0 } else { -1.0 };
-        let shoulder = Vec3::new(0.32 * side, 0.15, -0.2) * size;
-        let reach = Vec3::new(0.25 * side, 0.1, -1.0).normalize() * (0.2 + 1.1 * out) * size;
-        let hand = shoulder + reach;
-        let next = if paw.ball {
-            Transform::from_translation(hand).with_scale(Vec3::splat(size))
-        } else {
-            let length = reach.length().max(0.01);
-            Transform::from_translation(shoulder + reach / 2.0)
-                .with_rotation(Quat::from_rotation_arc(Vec3::Y, reach / length))
-                .with_scale(Vec3::new(size, length, size))
+        let (shoulder, hand_length, arm_mesh, hand_mesh, shared) = match &animal {
+            Some((shoulders, paw, shared, _)) => (
+                shoulders[usize::from(right)],
+                paw.hand_length,
+                &paw.arm,
+                &paw.hand,
+                *shared,
+            ),
+            None => (
+                Vec3::new(0.32 * side, 0.15, -0.2) * size,
+                primitive.length,
+                &primitive.arm,
+                &primitive.hand,
+                &primitive.material,
+            ),
         };
-        transform.set_if_neq(next);
+        let reach = Vec3::new(0.25 * side, 0.1, -1.0).normalize() * (0.2 + 1.1 * out) * size;
+        let (arm_at, hand_at) = arm_and_hand(
+            shoulder,
+            shoulder + reach,
+            side,
+            model_scale * size,
+            hand_length,
+        );
+        let wanted = if paw.ball { hand_mesh } else { arm_mesh };
+        if mesh.0 != *wanted {
+            mesh.0 = wanted.clone();
+        }
+        if material.0 != *shared {
+            material.0 = shared.clone();
+        }
+        transform.set_if_neq(if paw.ball { hand_at } else { arm_at });
         visibility.set_if_neq(Visibility::Inherited);
     }
     let dt = time.delta_secs();
@@ -930,7 +1031,7 @@ pub fn pose_walker_paws(
         let Some((walker, look)) = visuals
             .get(child_of.parent())
             .ok()
-            .and_then(|visual| walkers.get(visual.body).ok())
+            .and_then(|(visual, ..)| walkers.get(visual.body).ok())
         else {
             continue;
         };

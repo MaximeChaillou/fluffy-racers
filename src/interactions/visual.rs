@@ -2,18 +2,23 @@
 //! driver's mini-ragdoll is the soft characters', `characters::wobble`, issue #12). Every kart's
 //! visual gets, once:
 //!
-//! - an **arm** (a capsule) ending in a **paw** (a ball), hidden at rest. It rises as soon as the
-//!   Interaction button is down, swings at the kart struck (or into thin air, then windmills off
-//!   balance with the driver leaning out), reaches out while grabbing, and during a tether
-//!   stretches from the driver to the kart held: the elastic band. It comes back with a "boing"
-//!   when it lets go. The kart held turns its driver toward the grabber, outraged;
+//! - an **arm** ending in a **paw**, hidden at rest. It rises as soon as the Interaction button is
+//!   down, swings at the kart struck (or into thin air, then windmills off balance with the driver
+//!   leaning out), reaches out while grabbing, and during a tether stretches from the driver to
+//!   the kart held: the elastic band. It comes back with a "boing" when it lets go. The kart held
+//!   turns its driver toward the grabber, outraged. Issue #169: **the animal's own paw**
+//!   (`characters::PawModel`: its shape, its colors taken on its model, a bird's wing, which
+//!   leaves the bird's body while it is out), coming out of **its body** (its shoulder measured
+//!   on its model, followed through its clip, its wobble and its acting each frame, at its
+//!   size); a driver in primitives gets a cream paw out of its ball;
 //! - a **"pof"** (a flat yellow diamond) that pops on the side of a kart struck.
 //!
 //! The player's camera shakes when its kart is struck (`camera::CameraShake`), and the HUD gets
 //! the paw's recharge: a gauge under the item slots that fills up (GD § 14).
 //!
-//! One mesh and one material per part, shared by every kart; nothing is spawned or despawned
-//! while racing. Everything is read from the simulation (`Paw`) and from where the karts are
+//! One mesh per part and per animal (and one for the primitives), the models' shared material,
+//! shared by every kart; the stretch is the arm's transform; nothing is spawned or despawned
+//! while racing, nothing allocated. Everything is read from the simulation (`Paw`) and from where the karts are
 //! shown (their visuals: interpolated, or placed by the network for another peer's kart):
 //! nothing here touches the simulation.
 //!
@@ -23,23 +28,36 @@
 
 use std::f32::consts::PI;
 
+use bevy::app::AnimationSystems;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::logic::{Paw, PawMotion, SwingKind, max_arm_length};
 use super::tuning::InteractionTuning;
 use crate::camera::CameraShake;
+use crate::characters::{
+    ActingSystems, AnimalPart, AnimalRoot, Animals, DriverTuning, WobbleSystems, primitive_paw,
+    transform_in,
+};
 use crate::interpolation::{InterpolatedFrom, InterpolationSystems};
-use crate::kart::{DriverVisual, KartBodyPivot, PlayerKart};
+use crate::kart::{DRIVER_RADIUS, DriverVisual, KartBodyPivot, PlayerKart};
+use crate::track::circuit::to_mesh;
 use crate::ui::{HudRoot, SLOT_SIZES, SLOTS_TOP};
 
-/// The arm's radius and the paw's (m).
-const ARM_RADIUS: f32 = 0.07;
-const PAW_RADIUS: f32 = 0.13;
-/// Where the arms start on a kart's pivot: the shoulders of a medium driver, to its sides.
+/// Where the arms start on a kart's pivot without a driver: the shoulders of a medium driver, to
+/// its sides (issue #169: a driver's are its animal's, or its ball's).
 const SHOULDER: Vec3 = Vec3::new(0.4, 0.62, 0.15);
+/// Issue #169: where a driver in primitives' arm comes out of its ball (in the driver's frame,
+/// on its right, at size 1): on its side, at its middle's height, just inside.
+const BALL_SHOULDER: Vec3 = Vec3::new(DRIVER_RADIUS * 0.85, DRIVER_RADIUS, 0.0);
+/// Issue #169: the palm of a hand (its pads) faces back toward the chase camera, and a little up,
+/// as far as its arm lets it: where the back of the hand faces, in the pivot's frame.
+const HAND_BACK: Vec3 = Vec3::new(0.0, -0.351_123_4, -0.936_329_2);
 /// Where the other kart's driver is, above its body's center (m): what a paw reaches for.
 const DRIVER_HEIGHT: f32 = 0.6;
+/// Issue #169: a paw lands on the other driver, this far short of its middle (m): on its body,
+/// not inside it.
+pub(crate) const LANDS_SHORT: f32 = 0.55;
 /// A swing reaches its target in this long (s), then the arm comes back in `RETURN_TIME`.
 const SWING_TIME: f32 = 0.1;
 const RETURN_TIME: f32 = 0.2;
@@ -57,8 +75,8 @@ const GAUGE_SIZE: f32 = 40.0;
 const GAUGE_READY: Color = Color::srgb(1.0, 0.86, 0.55);
 const GAUGE_LOADING: Color = Color::srgb(0.55, 0.52, 0.6);
 
-/// A part of a kart's arm: the arm itself (a capsule) or the paw at its end (a ball), under the
-/// kart visual's pivot.
+/// A part of a kart's arm: the arm itself or the paw at its end (its hand), under the kart
+/// visual's pivot.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PawArm {
     pub body: Entity,
@@ -79,11 +97,14 @@ pub struct PawGauge;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PawGaugeFill;
 
-/// Meshes and materials shared by every kart's arm and "pof".
+/// Meshes and materials shared by every kart's arm and "pof": the arm and the paw of a driver in
+/// primitives (issue #169: an animal's are its own, `characters::AnimalPaw`).
 #[derive(Resource, Clone, Debug)]
 pub struct PawVisualAssets {
     arm: Handle<Mesh>,
     paw: Handle<Mesh>,
+    /// How long the primitives' paw is (in the animals' units).
+    paw_length: f32,
     pof: Handle<Mesh>,
     paw_material: Handle<StandardMaterial>,
     pof_material: Handle<StandardMaterial>,
@@ -107,7 +128,16 @@ impl Plugin for InteractionVisualPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (pose_arms, pop_pofs, pose_drivers)
+                (
+                    (pop_pofs, pose_drivers),
+                    // Issue #169: once the driver and its animal are posed for this frame (the
+                    // clips, the wobble, the acting): the arm follows its body.
+                    pose_arms
+                        .after(pose_drivers)
+                        .after(AnimationSystems)
+                        .after(WobbleSystems)
+                        .after(ActingSystems),
+                )
                     .after(InterpolationSystems)
                     .before(TransformSystems::Propagate),
             );
@@ -119,13 +149,15 @@ fn create_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let paw = primitive_paw();
     commands.insert_resource(PawVisualAssets {
-        // A capsule along Y, 1 m between its caps: scaled to the arm's length.
-        arm: meshes.add(Capsule3d::new(ARM_RADIUS, 1.0)),
-        paw: meshes.add(Sphere::new(PAW_RADIUS)),
+        // Issue #169: the paw of a driver in primitives (cream, in its vertex colors).
+        arm: meshes.add(to_mesh(&paw.arm)),
+        paw: meshes.add(to_mesh(&paw.hand)),
+        paw_length: paw.hand_length,
         // A flat square, turned into a diamond.
         pof: meshes.add(Cuboid::new(1.0, 1.0, 0.08)),
-        paw_material: materials.add(Color::srgb(0.98, 0.9, 0.78)),
+        paw_material: materials.add(Color::WHITE),
         pof_material: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.95, 0.35),
             unlit: true,
@@ -175,29 +207,50 @@ fn attach_arms(
     }
 }
 
-/// Where a kart's paw is, in its pivot's frame (the shoulder is [`SHOULDER`] on the side): `None`
-/// when the arm is down (hidden). `other`: where the kart it goes for is (its driver), in the
-/// same frame; `now`: the clock, for the wobbles; `max_length`: the longest arm
-/// (`logic::max_arm_length`).
+/// The shoulder of `shoulders` (the left one, then the right one) on `side` (-1 or 1).
+fn on_side(shoulders: [Vec3; 2], side: f32) -> Vec3 {
+    shoulders[usize::from(side >= 0.0)]
+}
+
+/// Where a kart's paw is, in its pivot's frame: `None` when the arm is down (hidden).
+/// `shoulders`: where its arms come out, in the same frame (its left one, then its right one;
+/// issue #169: its driver's, `size` big, which scales the paw raised and windmilling); `other`:
+/// where the kart it goes for is (its driver), in the same frame; `now`: the clock, for the
+/// wobbles; `max_length`: the longest arm (`logic::max_arm_length`).
 ///
 /// Issue #81: the arm is hidden when it would be longer than `max_length` (whatever the paw
 /// says, that tether is broken), when the kart held is not shown (`other` is `None`), or when
 /// anything is not finite.
-pub fn paw_tip(paw: &Paw, other: Option<Vec3>, now: f32, max_length: f32) -> Option<(f32, Vec3)> {
-    let (side, tip) = paw_tip_unchecked(paw, other, now)?;
-    let reach = tip.distance(SHOULDER * Vec3::new(side, 1.0, 1.0));
+pub fn paw_tip(
+    paw: &Paw,
+    shoulders: [Vec3; 2],
+    size: f32,
+    other: Option<Vec3>,
+    now: f32,
+    max_length: f32,
+) -> Option<(f32, Vec3)> {
+    let (side, tip) = paw_tip_unchecked(paw, shoulders, size, other, now)?;
+    let reach = tip.distance(on_side(shoulders, side));
     (tip.is_finite() && side.is_finite() && reach <= max_length).then_some((side, tip))
 }
 
 /// [`paw_tip`], before its checks.
-fn paw_tip_unchecked(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> {
-    let shoulder = |side: f32| SHOULDER * Vec3::new(side, 1.0, 1.0);
+fn paw_tip_unchecked(
+    paw: &Paw,
+    shoulders: [Vec3; 2],
+    size: f32,
+    other: Option<Vec3>,
+    now: f32,
+) -> Option<(f32, Vec3)> {
+    let shoulder = |side: f32| on_side(shoulders, side);
     let seconds = |ticks: u32| ticks as f32 / crate::TICK_HZ as f32;
+    // Raised (GD § 15), on its side: above its shoulder, as high as the driver is big.
+    let raised = |side: f32| shoulder(side) + Vec3::new(side * 0.2, 0.5, 0.05) * size;
     match paw.motion {
         // Raised as soon as the button is down (GD § 15), on the side it will strike.
         PawMotion::Raised { .. } => {
             let side = side_of(paw.aim);
-            return Some((side, shoulder(side) + Vec3::new(side * 0.2, 0.5, 0.05)));
+            return Some((side, raised(side)));
         }
         // Reaching out, the paw groping around.
         PawMotion::Reaching { ticks } => {
@@ -217,13 +270,16 @@ fn paw_tip_unchecked(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, V
         let side = paw.off_balance_side;
         let angle = now * WINDMILL_SPEED;
         let circle = Vec3::new(side * angle.cos().abs(), angle.sin(), 0.0) * WINDMILL_REACH;
-        return Some((side, shoulder(side) + Vec3::X * side * 0.2 + circle));
+        return Some((
+            side,
+            shoulder(side) + (Vec3::X * side * 0.2 + circle) * size,
+        ));
     }
     // A swing: out to its target (or into thin air), then back with a "boing".
     let swing = paw.swing?;
     let t = seconds(swing.ticks);
     let side = swing.side;
-    let start = shoulder(side) + Vec3::new(side * 0.2, 0.5, 0.05);
+    let start = raised(side);
     let reach = match swing.kind {
         SwingKind::Strike | SwingKind::Throw | SwingKind::LetGo => {
             other.unwrap_or(shoulder(side) + Vec3::X * side * 2.0)
@@ -257,16 +313,40 @@ fn side_of(aim: f32) -> f32 {
     if aim < 0.0 { -1.0 } else { 1.0 }
 }
 
-/// The arm's transform from `shoulder` to `tip` (a capsule 1 m long along Y, scaled).
-pub fn arm_transform(shoulder: Vec3, tip: Vec3) -> Transform {
+/// Issue #169: the arm's and the hand's transforms, from `shoulder` to `tip` on `side`: the hand
+/// (its mesh centered on its middle, along +Y, `hand_length` long, its palm -Z) on `tip`, its
+/// palm toward the camera ([`HAND_BACK`]) as far as the arm lets it; the arm (its mesh 1
+/// long along +Y) from the shoulder to the wrist: stretched by its scale, never remade. Both
+/// `scale` big (the animal's).
+pub fn arm_and_hand(
+    shoulder: Vec3,
+    tip: Vec3,
+    side: f32,
+    scale: f32,
+    hand_length: f32,
+) -> (Transform, Transform) {
     let along = tip - shoulder;
-    let length = along.length().max(0.05);
-    Transform::from_translation((shoulder + tip) * 0.5)
-        .with_rotation(Quat::from_rotation_arc(
-            Vec3::Y,
-            along.normalize_or(Vec3::Y),
-        ))
-        .with_scale(Vec3::new(1.0, length, 1.0))
+    let toward = along.normalize_or(Vec3::X * side_of(side));
+    let across = HAND_BACK - toward * HAND_BACK.dot(toward);
+    let back = if across.length_squared() > 1e-4 {
+        across.normalize()
+    } else {
+        toward.any_orthonormal_vector()
+    };
+    let rotation = Quat::from_mat3(&Mat3::from_cols(toward.cross(back), toward, back));
+    let half = hand_length * scale / 2.0;
+    let length = (along.length() - half).max(0.01);
+    let arm = Transform {
+        translation: shoulder,
+        rotation,
+        scale: Vec3::new(scale, length, scale),
+    };
+    let hand = Transform {
+        translation: tip,
+        rotation,
+        scale: Vec3::splat(scale),
+    };
+    (arm, hand)
 }
 
 /// The "pof"'s size `t` s after a strike (0 when gone): pops up, then shrinks.
@@ -278,52 +358,159 @@ pub fn pof_size(t: f32) -> f32 {
     POF_SIZE * (PI * x.sqrt()).sin()
 }
 
-/// Every kart's arm and paw.
+/// A kart's driver as its arms see it: where its shoulders are in its pivot's frame (its left
+/// one, then its right one), how big its paw is (its animal's scale), how long its hand, which
+/// meshes and material they are, and a bird's wings (its left one, then its right one).
+struct ArmsOf<'a> {
+    shoulders: [Vec3; 2],
+    size: f32,
+    scale: f32,
+    hand_length: f32,
+    arm: &'a Handle<Mesh>,
+    hand: &'a Handle<Mesh>,
+    material: &'a Handle<StandardMaterial>,
+    wings: [Option<Entity>; 2],
+}
+
+/// Every kart's arm and paw (issue #169: its animal's, out of its body).
+#[allow(clippy::too_many_arguments)]
 fn pose_arms(
     time: Res<Time>,
-    tuning: Res<InteractionTuning>,
+    (tuning, driver_tuning): (Res<InteractionTuning>, Option<Res<DriverTuning>>),
+    (assets, animals): (Option<Res<PawVisualAssets>>, Option<Res<Animals>>),
     paws: Query<&Paw>,
     roots: Query<&Transform, (With<InterpolatedFrom>, Without<PawArm>)>,
-    pivots: Query<(&KartBodyPivot, &Transform, &ChildOf), Without<PawArm>>,
-    mut arms: Query<(&PawArm, &ChildOf, &mut Transform, &mut Visibility)>,
+    pivots: Query<(&KartBodyPivot, &Transform, &ChildOf, &Children), Without<PawArm>>,
+    drivers: Query<(&DriverVisual, &Transform, Option<&Children>), Without<PawArm>>,
+    animal_roots: Query<&AnimalRoot>,
+    nodes: Query<(&Transform, &ChildOf), Without<PawArm>>,
+    mut wings: Query<&mut Visibility, (With<AnimalPart>, Without<PawArm>)>,
+    mut arms: Query<(
+        &PawArm,
+        &ChildOf,
+        &mut Transform,
+        &mut Visibility,
+        &mut Mesh3d,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
 ) {
+    let Some(assets) = assets else {
+        return;
+    };
     let now = time.elapsed_secs();
     let max_length = max_arm_length(&tuning);
+    let model_scale = driver_tuning.map_or(0.62, |t| t.model_scale.max(0.01));
     // Where a kart's driver is shown (issue #81): above its visual, interpolated for our karts,
     // placed by the network for another peer's (which has no `PhysicsPose`).
     let shown = |kart: Entity| {
-        let (_, _, pivot_of) = pivots.iter().find(|(pivot, ..)| pivot.body == kart)?;
+        let (_, _, pivot_of, _) = pivots.iter().find(|(pivot, ..)| pivot.body == kart)?;
         let root = roots.get(pivot_of.parent()).ok()?;
         Some(root.translation + Vec3::Y * DRIVER_HEIGHT)
     };
-    for (arm, child_of, mut transform, mut visibility) in &mut arms {
+    // The driver under `pivot` and its arms: its animal's paw out of its body, or the
+    // primitives' out of its ball.
+    let arms_of = |pivot: Entity, children: &Children| {
+        let primitive = |shoulders: [Vec3; 2], size: f32| ArmsOf {
+            shoulders,
+            size,
+            scale: model_scale * size,
+            hand_length: assets.paw_length,
+            arm: &assets.arm,
+            hand: &assets.paw,
+            material: &assets.paw_material,
+            wings: [None; 2],
+        };
+        let Some((driver, at, below)) = children.iter().find_map(|c| drivers.get(c).ok()) else {
+            return primitive([SHOULDER * Vec3::new(-1.0, 1.0, 1.0), SHOULDER], 1.0);
+        };
+        let size = driver.size;
+        let animal = below
+            .into_iter()
+            .flat_map(|below| below.iter())
+            .find_map(|c| animal_roots.get(c).ok())
+            .and_then(|root| {
+                let animal = animals.as_ref()?.get(root.character)?;
+                let paw = animal.paw.as_ref()?;
+                let body = transform_in(root.body?, pivot, &nodes)?;
+                Some(ArmsOf {
+                    shoulders: paw.shoulders(&body),
+                    size,
+                    scale: model_scale * size,
+                    hand_length: paw.hand_length,
+                    arm: &paw.arm,
+                    hand: &paw.hand,
+                    material: &animal.material,
+                    wings: root.wings,
+                })
+            });
+        animal.unwrap_or_else(|| {
+            let ball = |x: f32| at.transform_point(BALL_SHOULDER * Vec3::new(x, 1.0, 1.0));
+            primitive([ball(-1.0), ball(1.0)], size)
+        })
+    };
+    for (arm, child_of, mut transform, mut visibility, mut mesh, mut material) in &mut arms {
         let Ok(paw) = paws.get(arm.body) else {
             continue;
         };
+        let Ok((_, pivot, pivot_of, children)) = pivots.get(child_of.parent()) else {
+            continue;
+        };
+        let of = arms_of(child_of.parent(), children);
         // The kart it goes for, in the pivot's frame.
         let target = match paw.motion {
             PawMotion::Holding { target, .. } => Some(target),
             _ => paw.swing.and_then(|s| s.target),
         };
-        let other = target
-            .and_then(shown)
-            .zip(pivots.get(child_of.parent()).ok())
-            .and_then(|(world, (_, pivot, pivot_of))| {
-                let root = roots.get(pivot_of.parent()).ok()?;
-                let frame = root.mul_transform(*pivot);
-                Some(frame.compute_affine().inverse().transform_point3(world))
-            });
-        let Some((side, tip)) = paw_tip(paw, other, now, max_length) else {
+        let other = target.and_then(shown).and_then(|world| {
+            let root = roots.get(pivot_of.parent()).ok()?;
+            let frame = root.mul_transform(*pivot);
+            Some(frame.compute_affine().inverse().transform_point3(world))
+        });
+        // On the other driver's body, not inside it.
+        let other = other.map(|at| {
+            let from = on_side(of.shoulders, at.x);
+            let toward = at - from;
+            let length = toward.length();
+            if length > 2.0 * LANDS_SHORT {
+                at - toward * (LANDS_SHORT / length)
+            } else {
+                at
+            }
+        });
+        let tip = paw_tip(paw, of.shoulders, of.size, other, now, max_length);
+        // A bird's wing leaves its body while it is the arm (its arm part says so).
+        if !arm.paw {
+            for (i, wing) in of.wings.iter().enumerate() {
+                let out = tip.is_some_and(|(side, _)| usize::from(side >= 0.0) == i);
+                if let Some(mut shown) = wing.and_then(|w| wings.get_mut(w).ok()) {
+                    shown.set_if_neq(if out {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Inherited
+                    });
+                }
+            }
+        }
+        let Some((side, tip)) = tip else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         visibility.set_if_neq(Visibility::Inherited);
-        let shoulder = SHOULDER * Vec3::new(side, 1.0, 1.0);
-        *transform = if arm.paw {
-            Transform::from_translation(tip)
-        } else {
-            arm_transform(shoulder, tip)
-        };
+        let wanted = if arm.paw { of.hand } else { of.arm };
+        if mesh.0 != *wanted {
+            mesh.0 = wanted.clone();
+        }
+        if material.0 != *of.material {
+            material.0 = of.material.clone();
+        }
+        let (arm_at, hand_at) = arm_and_hand(
+            on_side(of.shoulders, side),
+            tip,
+            side,
+            of.scale,
+            of.hand_length,
+        );
+        transform.set_if_neq(if arm.paw { hand_at } else { arm_at });
     }
 }
 
@@ -550,10 +737,15 @@ mod tests {
         (seconds * crate::TICK_HZ as f32).round() as u32
     }
 
-    /// [`paw_tip`] with the default longest arm.
+    /// A medium driver's shoulders (its left one, then its right one).
+    const SHOULDERS: [Vec3; 2] = [Vec3::new(-0.4, 0.62, 0.15), SHOULDER];
+
+    /// [`paw_tip`] for a medium driver, with the default longest arm.
     fn tip(paw: &Paw, other: Option<Vec3>, now: f32) -> Option<(f32, Vec3)> {
         paw_tip(
             paw,
+            SHOULDERS,
+            1.0,
             other,
             now,
             max_arm_length(&InteractionTuning::default()),
@@ -646,19 +838,104 @@ mod tests {
         };
         assert!(tip(&striking, Some(Vec3::new(-2.5, 0.6, 0.0)), 0.0).is_some());
         assert_eq!(tip(&striking, Some(Vec3::new(-200.0, 0.6, 0.0)), 0.0), None);
-        // The arm itself: finite, even with its paw on the shoulder.
-        let arm = arm_transform(SHOULDER, SHOULDER);
-        assert!(arm.translation.is_finite() && arm.rotation.is_finite() && arm.scale.is_finite());
+        // The arm itself and its hand: finite, even with its paw on the shoulder (or straight
+        // up, along the back of the hand).
+        for tip in [SHOULDER, SHOULDER + HAND_BACK] {
+            for part in <[Transform; 2]>::from(arm_and_hand(SHOULDER, tip, 1.0, 0.62, 0.4)) {
+                assert!(
+                    part.translation.is_finite()
+                        && part.rotation.is_normalized()
+                        && part.scale.is_finite(),
+                    "{part:?}"
+                );
+            }
+        }
     }
 
+    /// Issue #169: the arm goes from the shoulder to the wrist, the hand from the wrist on,
+    /// centered on the tip (where the paw is: the kart held); both at the animal's scale, the arm
+    /// stretched by its transform alone; the palm (the pads) toward the camera, a little up.
     #[test]
     fn the_arm_goes_from_the_shoulder_to_the_paw() {
+        let (scale, hand_length) = (0.5, 0.4);
         let shoulder = Vec3::new(0.4, 0.6, 0.0);
-        let tip = Vec3::new(2.4, 0.6, 0.0);
-        let arm = arm_transform(shoulder, tip);
-        assert!((arm.translation - Vec3::new(1.4, 0.6, 0.0)).length() < 1e-5);
-        assert!((arm.scale.y - 2.0).abs() < 1e-5);
-        assert!((arm.rotation * Vec3::Y - Vec3::X).length() < 1e-4);
+        for (tip, side) in [
+            (Vec3::new(2.4, 0.6, 0.0), 1.0),
+            (Vec3::new(-3.0, 1.0, 2.0), -1.0),
+            (Vec3::new(0.6, 1.2, 0.1), 1.0),
+        ] {
+            let (arm, hand) = arm_and_hand(shoulder, tip, side, scale, hand_length);
+            let toward = (tip - shoulder).normalize();
+            assert!(
+                (arm.translation - shoulder).length() < 1e-5,
+                "from the shoulder"
+            );
+            let wrist = arm.transform_point(Vec3::Y);
+            let hand_wrist = hand.transform_point(Vec3::NEG_Y * hand_length / 2.0);
+            assert!((wrist - hand_wrist).length() < 1e-4, "to the wrist");
+            assert!(
+                (hand.translation - tip).length() < 1e-5,
+                "the hand on the tip"
+            );
+            assert!(
+                (arm.scale.y - (tip.distance(shoulder) - scale * hand_length / 2.0)).abs() < 1e-4
+            );
+            assert_eq!((arm.scale.x, arm.scale.z), (scale, scale));
+            assert_eq!(hand.scale, Vec3::splat(scale));
+            assert!((arm.rotation * Vec3::Y - toward).length() < 1e-4);
+            assert_eq!(arm.rotation, hand.rotation);
+            let palm = hand.rotation * Vec3::NEG_Z;
+            assert!(palm.dot(toward).abs() < 1e-4 && palm.z > 0.0, "{palm}");
+        }
+        // Sideways, the palm faces back (toward the chase camera), a little up: the camera
+        // sees its pads.
+        let (_, hand) = arm_and_hand(shoulder, Vec3::new(2.4, 0.6, 0.0), 1.0, scale, hand_length);
+        let palm = hand.rotation * Vec3::NEG_Z;
+        assert!(palm.z > 0.9 && palm.y > 0.3, "{palm}");
+    }
+
+    /// Issue #169: the paw comes out of the shoulders it is given (its driver's), on its side,
+    /// and a small driver raises it and windmills less far than a big one; the reach (the kart
+    /// struck, the one held) does not change.
+    #[test]
+    fn the_paw_leaves_the_driver_s_own_shoulders() {
+        let small = [Vec3::new(-0.22, 0.33, 0.1), Vec3::new(0.22, 0.33, 0.1)];
+        let max = max_arm_length(&InteractionTuning::default());
+        let raised = Paw {
+            motion: PawMotion::Raised { ticks: 1 },
+            aim: -1.0,
+            ..default()
+        };
+        let (side, at) = paw_tip(&raised, small, 0.75, None, 0.0, max).unwrap();
+        assert_eq!(side, -1.0);
+        assert!((at - small[0] - Vec3::new(-0.15, 0.375, 0.0375)).length() < 1e-5);
+        let (_, big) = paw_tip(&raised, SHOULDERS, 1.3, None, 0.0, max).unwrap();
+        assert!(big.y - SHOULDERS[0].y > at.y - small[0].y);
+        // Back with a boing: on its own shoulder.
+        let mut back = Paw {
+            swing: Some(Swing {
+                kind: SwingKind::Whiff,
+                side: 1.0,
+                target: None,
+                ticks: tick_seconds(SWING_TIME + RETURN_TIME * 0.9),
+            }),
+            ..default()
+        };
+        let (_, home) = paw_tip(&back, small, 0.75, None, 0.0, max).unwrap();
+        assert!(home.distance(small[1]) < 0.1, "{home}");
+        // The kart held is where it is, whoever holds it.
+        back.swing = None;
+        back.motion = PawMotion::Holding {
+            target: Entity::PLACEHOLDER,
+            ticks: 10,
+            rest: 2.0,
+            side: 1.0,
+        };
+        let held = Vec3::new(3.0, 0.6, 0.5);
+        assert_eq!(
+            paw_tip(&back, small, 0.75, Some(held), 0.0, max),
+            Some((1.0, held))
+        );
     }
 
     #[test]

@@ -115,7 +115,7 @@ const INVINCIBLE_BLINK_HZ: f32 = 10.0;
 /// The driver's ball: radius at size 1 (m), and where it sits on the body (its bottom on the
 /// seat, whatever its size; issue #98: the « Pilote » screen's preview seats its soft driver
 /// there in primitives).
-const DRIVER_RADIUS: f32 = 0.45;
+pub const DRIVER_RADIUS: f32 = 0.45;
 pub const DRIVER_SEAT: Vec3 = Vec3::new(0.0, 0.15, 0.15);
 /// The driver's eyes: their size, and how far apart and how high on the ball (at size 1; the
 /// front of the ball is -Z).

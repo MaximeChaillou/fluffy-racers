@@ -14,7 +14,7 @@ use super::socket::memory::Hub;
 use super::*;
 use crate::bots::{Bot, BotDifficulty, BotTuning, bot, bot_seed};
 use crate::interactions::{
-    InteractionTuning, Paw, PawArm, PawMotion, PawStats, max_arm_length, shown_arms,
+    InteractionTuning, LANDS_SHORT, Paw, PawArm, PawMotion, PawStats, max_arm_length, shown_arms,
 };
 use crate::kart::{Kart, KartInput, KartSystems, PlayerKart, Shove, SpawnPoint};
 use crate::options::{OptionsAction, OptionsMenu};
@@ -983,16 +983,21 @@ fn a_paw_on_another_peers_kart_reaches_where_it_is_shown() {
     let mut paws = bob
         .try_query::<(&PawArm, &Visibility, &GlobalTransform)>()
         .unwrap();
-    let paw = paws
-        .iter(bob)
-        .find(|(part, visibility, _)| {
-            part.paw && part.body == bob_kart && **visibility != Visibility::Hidden
-        })
-        .map(|(_, _, global)| global.translation())
-        .expect("Bob's paw shows");
+    let mut shown = |paw: bool| {
+        paws.iter(bob)
+            .find(|(part, visibility, _)| {
+                part.paw == paw && part.body == bob_kart && **visibility != Visibility::Hidden
+            })
+            .map(|(_, _, global)| global.translation())
+    };
+    let paw = shown(true).expect("Bob's paw shows");
+    // Issue #169: the paw lands on Ana's driver where it is shown (`LANDS_SHORT` before its
+    // middle, along Bob's arm), not inside it.
+    let shoulder = shown(false).expect("Bob's arm shows");
+    let landing = driver - (driver - shoulder).normalize() * LANDS_SHORT;
     assert!(
-        paw.distance(driver) < 0.3,
-        "Bob's paw at {paw}, Ana's driver shown at {driver}"
+        paw.distance(landing) < 0.3,
+        "Bob's paw at {paw}, Ana's driver shown at {driver}, the paw landing at {landing}"
     );
     // On Ana's screen, Bob's arm leaves from his left shoulder: she is on his left.
     let ana = room.view(ANA).world();

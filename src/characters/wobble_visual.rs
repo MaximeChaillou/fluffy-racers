@@ -120,6 +120,10 @@ impl WobbleLayer {
     }
 }
 
+/// The wobble's systems (issue #169: the arms follow the bodies once it is laid over them).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WobbleSystems;
+
 pub struct WobblePlugin;
 
 impl Plugin for WobblePlugin {
@@ -128,6 +132,7 @@ impl Plugin for WobblePlugin {
             PostUpdate,
             (layer_primitives, step_wobbles, lay_wobbles)
                 .chain()
+                .in_set(WobbleSystems)
                 // The karts' visuals placed for this frame, the clips played: then the wobble,
                 // before the transforms are propagated.
                 .after(InterpolationSystems)
