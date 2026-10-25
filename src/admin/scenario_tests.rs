@@ -196,6 +196,14 @@ fn switching_the_circuit_builds_the_chosen_one() {
     update_until(&mut app, "the race", |w| level_ready(w, 2));
     run(&mut app, 0.5);
     let first = census(&mut app);
+    // Issue #148: the panels' system is installed once, with the first circuit that has a panel
+    // (`track::hazards::install_panel_systems`, its marker a resource, an entity), and stays: the
+    // Anneau Guimauve redrawn has one, Prairie Pompon none.
+    let panels_installed = |app: &App| {
+        app.world()
+            .contains_resource::<crate::track::hazards::PanelSystemsInstalled>()
+    };
+    assert!(!panels_installed(&app));
     // Issue #108: the croquettes of Prairie Pompon redrawn (22 before).
     let prairie_croquettes = count::<With<CroquetteSpot>>(app.world_mut());
     assert_eq!(prairie_croquettes, 28);
@@ -209,8 +217,10 @@ fn switching_the_circuit_builds_the_chosen_one() {
     run(&mut app, 0.5);
     let world = app.world_mut();
     assert_eq!(*world.resource::<TrackChoice>(), ring.choice());
-    assert_eq!(count::<With<CroquetteSpot>>(world), 10);
-    assert_eq!(count::<With<BoostPad>>(world), 1);
+    // Issue #148: the croquettes and the boost pads of the Anneau Guimauve redrawn (10 and 1
+    // before).
+    assert_eq!(count::<With<CroquetteSpot>>(world), 21);
+    assert_eq!(count::<With<BoostPad>>(world), 2);
     assert_eq!(count::<With<Kart>>(world), 3);
     let names: Vec<String> = world
         .query::<&Name>()
@@ -257,7 +267,10 @@ fn switching_the_circuit_builds_the_chosen_one() {
             && level_ready(w, 2)
     });
     run(&mut app, 0.5);
-    assert_eq!(census(&mut app), first);
+    // Exactly the first level again, but for the panels' system installed by the Anneau (its
+    // marker: one entity more, nothing else).
+    assert!(panels_installed(&app));
+    assert_eq!(census(&mut app), (first.0 + 1, first.1, first.2));
 }
 
 /// « Roulage libre »: the circuit without race nor bots, the player on the pole drives at once

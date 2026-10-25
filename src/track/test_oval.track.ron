@@ -1,0 +1,55 @@
+// Issue #148: the oval of the unit tests (`crate::track::test_oval`), not a circuit of the game:
+// the layout the Anneau Guimauve had from issue #36 to issue #148, kept as it was.
+//
+// "Anneau Guimauve": a simple oval to try things out (issue #36, admin panel). Original layout:
+// two straights of 140 m and two flat half circles of 35 m radius, about 500 m a lap. Flat out
+// in the turns without drifting; a drift in a turn gives a blue or an orange mini-turbo.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Anneau Guimauve",
+    // Dressing (issue #11): a pastry land (`assets/data/biomes.ron`), the same every time (seed),
+    // and pieces placed by hand: a giant cake in the infield, gingerbread men at the start line.
+    biome: "Guimauve",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "sky-blue-street",
+    decor_seed: 5,
+    props: [
+        (model: "food-kit/cake-birthday", at: 9.0, side: Right, height: 5.0, radius: 6.5, gap: 15.0),
+        (model: "holiday-kit/gingerbread-man", at: 0.15, side: Both, height: 3.5, radius: 1.2, gap: 0.4),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        // 0-3: start straight, heading north.
+        (pos: (0.0, 0.0, 25.0)),
+        (pos: (0.0, 0.0, -10.0)),
+        (pos: (0.0, 0.0, -45.0)),
+        (pos: (0.0, 0.0, -70.0)),
+        // 4-6: first half circle, to the right (center (35, -70)).
+        (pos: (10.25, 0.0, -94.75)),
+        (pos: (35.0, 0.0, -105.0)),
+        (pos: (59.75, 0.0, -94.75)),
+        // 7-11: back straight, heading south, with a boost pad.
+        (pos: (70.0, 0.0, -70.0)),
+        (pos: (70.0, 0.0, -35.0)),
+        (pos: (70.0, 0.0, 0.0)),
+        (pos: (70.0, 0.0, 35.0)),
+        (pos: (70.0, 0.0, 70.0)),
+        // 12-14: second half circle (center (35, 70)).
+        (pos: (59.75, 0.0, 94.75)),
+        (pos: (35.0, 0.0, 105.0)),
+        (pos: (10.25, 0.0, 94.75)),
+        // 15-16: back on the start straight (the grid sits between 15 and 0).
+        (pos: (0.0, 0.0, 70.0)),
+        (pos: (0.0, 0.0, 50.0)),
+    ],
+    boost_pads: [
+        (at: 9.0, offset: 0.0),
+    ],
+    // Croquettes on both straights, off the middle of the road.
+    croquettes: [
+        (from: 1.5, count: 5, spacing: 3.0, offset: 0.45),
+        (from: 8.0, count: 5, spacing: 3.0, offset: -0.45),
+    ],
+)

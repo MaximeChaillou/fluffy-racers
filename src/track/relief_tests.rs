@@ -1,6 +1,7 @@
 //! Issue #180 acceptance: headless scenarios of the bumps and the drops (the whole game,
 //! `GamePlugin` with `MinimalPlugins`, one fixed tick per `app.update()`) on Prairie Pompon, their
-//! demonstration circuit, and its mirror image. A kart at full speed takes off from a bump and
+//! demonstration circuit, and its mirror image (issue #148: and on the circuits redrawn with
+//! theirs, [`RELIEF_CIRCUITS`]). A kart at full speed takes off from a bump and
 //! lands on the road, upright, between its walls; a slow one rolls over it on its wheels; a trick
 //! off its crest gives the trick boost; a drop is driven off at every speed, drifting too, and a
 //! trick off its edge gives the boost: never the pelican, never through the road.
@@ -14,12 +15,25 @@ use crate::kart::{Boost, KartInput, KartState, KartTuning, KartWheels, PlayerKar
 use crate::race::{Course, Race, RaceProgress, Tow};
 use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
 
-const PRAIRIE: &str = "tracks/prairie.track.ron";
+/// The circuits of these scenarios, and their bumps and drops: Prairie Pompon (issue #180), the
+/// Anneau Guimauve and the Crique Câline (issue #148, redrawn with theirs).
+const RELIEF_CIRCUITS: [(&str, (usize, usize)); 3] = [
+    ("tracks/prairie.track.ron", (2, 1)),
+    ("tracks/anneau.track.ron", (2, 1)),
+    ("tracks/crique.track.ron", (2, 1)),
+];
 
-/// The game on Prairie Pompon (its mirror image or not), the player's kart alone, its race
-/// started (the test drives it).
-fn game_on(mirrored: bool) -> (App, Entity) {
-    let mut app = game_app_unloaded(TrackChoice::Circuit(PRAIRIE.into()), 0);
+/// Every circuit of [`RELIEF_CIRCUITS`] and its mirror image: (its file, mirrored).
+fn relief_runs() -> impl Iterator<Item = (&'static str, bool)> {
+    RELIEF_CIRCUITS
+        .iter()
+        .flat_map(|(path, _)| [(*path, false), (*path, true)])
+}
+
+/// The game on the circuit file `path` (its mirror image or not), the player's kart alone, its
+/// race started (the test drives it).
+fn game_on(path: &str, mirrored: bool) -> (App, Entity) {
+    let mut app = game_app_unloaded(TrackChoice::Circuit(path.into()), 0);
     app.insert_resource(MirrorMode(mirrored));
     single_threaded(&mut app);
     wait_for_the_player(&mut app);
@@ -242,16 +256,14 @@ fn trick_press() -> impl FnMut(u32, &TrickTracker) -> Option<KartInput> {
     }
 }
 
-/// The bumps and the drops of Prairie Pompon (its mirror image or not), and the game on it.
-fn relief(mirrored: bool) -> (App, Entity, Vec<BumpSpan>, Vec<Cliff>) {
-    let (app, kart) = game_on(mirrored);
+/// The bumps and the drops of the circuit file `path` (its mirror image or not, as many as
+/// [`RELIEF_CIRCUITS`] says), and the game on it.
+fn relief(path: &str, mirrored: bool) -> (App, Entity, Vec<BumpSpan>, Vec<Cliff>) {
+    let (app, kart) = game_on(path, mirrored);
     let center = &app.world().resource::<TrackLayout>().center;
     let (bumps, cliffs) = (center.bumps().to_vec(), center.cliffs().to_vec());
-    assert_eq!(
-        (bumps.len(), cliffs.len()),
-        (2, 1),
-        "Prairie Pompon's relief"
-    );
+    let expected = RELIEF_CIRCUITS.iter().find(|(p, _)| *p == path).unwrap().1;
+    assert_eq!((bumps.len(), cliffs.len()), expected, "{path}'s relief");
     (app, kart, bumps, cliffs)
 }
 
@@ -281,18 +293,21 @@ fn assert_sane(run: &Run, what: &str, air: u32, highest: f32) {
 
 /// Issue #180 acceptance (« un kart à pleine vitesse décolle sur une bosse et atterrit sur la
 /// route »): at full speed, and boosted, a kart takes off from each bump of Prairie Pompon and its
-/// mirror (half a second in the air at least), lands on the road a few meters after it, upright,
+/// mirror (issue #148: of every circuit of [`RELIEF_CIRCUITS`]) (half a second in the air at least), lands on the road a few meters after it, upright,
 /// between its walls, and drives on: never thrown absurdly high (its center 5 m above the road
 /// at most at full speed, 6.5 m boosted by 30 %, 37 m/s), never through the road, its springs never bottomed out.
 #[test]
 fn a_fast_kart_takes_off_a_bump_and_lands_on_the_road() {
-    for mirrored in [false, true] {
-        let (mut app, kart, bumps, _) = relief(mirrored);
+    for (path, mirrored) in relief_runs() {
+        let (mut app, kart, bumps, _) = relief(path, mirrored);
         for bump in &bumps {
             for pace in [Pace::Full, Pace::Boosted] {
                 place(&mut app, kart, bump.from - 25.0, 0.0, 28.5);
                 let run = drive(&mut app, kart, pace, 3.5, no_press);
-                let what = format!("bump at {:.0} m, {pace:?}, mirror {mirrored}", bump.from);
+                let what = format!(
+                    "{path}: bump at {:.0} m, {pace:?}, mirror {mirrored}",
+                    bump.from
+                );
                 println!(
                     "{what}: {run:?}, landed {:.1} m in",
                     run.landing - bump.from
@@ -315,13 +330,16 @@ fn a_fast_kart_takes_off_a_bump_and_lands_on_the_road() {
 /// springs never bottomed out.
 #[test]
 fn a_slow_kart_rolls_over_a_bump_on_its_wheels() {
-    for mirrored in [false, true] {
-        let (mut app, kart, bumps, _) = relief(mirrored);
+    for (path, mirrored) in relief_runs() {
+        let (mut app, kart, bumps, _) = relief(path, mirrored);
         for bump in &bumps {
             for speed in [12.0, 16.0] {
                 place(&mut app, kart, bump.from - 15.0, 0.0, speed);
                 let run = drive(&mut app, kart, Pace::Hold(speed), 6.0, no_press);
-                let what = format!("bump at {:.0} m, {speed} m/s, mirror {mirrored}", bump.from);
+                let what = format!(
+                    "{path}: bump at {:.0} m, {speed} m/s, mirror {mirrored}",
+                    bump.from
+                );
                 assert!(run.air_ticks <= 2, "{what}: took off: {run:?}");
                 assert!(run.highest < 1.0 && run.lowest >= 0.3, "{what}: {run:?}");
                 assert!(run.deepest < 0.58 && !run.towed, "{what}: {run:?}");
@@ -339,8 +357,8 @@ fn a_slow_kart_rolls_over_a_bump_on_its_wheels() {
 /// off the edge of a drop too.
 #[test]
 fn a_trick_off_a_bump_or_a_drop_gives_the_boost() {
-    for mirrored in [false, true] {
-        let (mut app, kart, bumps, cliffs) = relief(mirrored);
+    for (path, mirrored) in relief_runs() {
+        let (mut app, kart, bumps, cliffs) = relief(path, mirrored);
         let starts = bumps
             .iter()
             .map(|b| b.from)
@@ -348,7 +366,7 @@ fn a_trick_off_a_bump_or_a_drop_gives_the_boost() {
         for start in starts {
             place(&mut app, kart, start - 25.0, 0.0, 28.5);
             let run = drive(&mut app, kart, Pace::Full, 3.5, trick_press());
-            let what = format!("at {start:.0} m, mirror {mirrored}");
+            let what = format!("{path}: at {start:.0} m, mirror {mirrored}");
             assert!(
                 run.tricked && run.trick_boost,
                 "{what}: no trick boost: {run:?}"
@@ -363,7 +381,8 @@ fn a_trick_off_a_bump_or_a_drop_gives_the_boost() {
 }
 
 /// Issue #180 acceptance (« un décrochage se descend sans pélican, à plusieurs vitesses, en drift
-/// et en miroir »): off the drop of Prairie Pompon (4 m) and its mirror, boosted, at full speed,
+/// et en miroir »): off the drop of Prairie Pompon (2.5 m; issue #148: and the 4 m of the Anneau
+/// Guimauve's and the Crique Câline's drops, [`RELIEF_CIRCUITS`]) and its mirror, boosted, at full speed,
 /// at 18, 8 and 3 m/s (rolling off its edge, its nose first), the kart falls to the road below and
 /// drives on: never towed, never counted fallen by the race (its height above the road it is
 /// counted on never below `-fall_depth`), never through the road, between the walls, on its four
@@ -371,8 +390,8 @@ fn a_trick_off_a_bump_or_a_drop_gives_the_boost() {
 #[test]
 fn a_drop_is_driven_off_at_every_speed_without_the_pelican() {
     let fall_depth = crate::race::RaceTuning::default().fall_depth;
-    for mirrored in [false, true] {
-        let (mut app, kart, _, cliffs) = relief(mirrored);
+    for (path, mirrored) in relief_runs() {
+        let (mut app, kart, _, cliffs) = relief(path, mirrored);
         let cliff = cliffs[0];
         for (pace, speed, seconds) in [
             (Pace::Boosted, 28.5, 3.5),
@@ -384,7 +403,7 @@ fn a_drop_is_driven_off_at_every_speed_without_the_pelican() {
             place(&mut app, kart, cliff.at - 20.0, 0.0, speed);
             let passed = app.world().get::<RaceProgress>(kart).unwrap().passed;
             let run = drive(&mut app, kart, pace, seconds, no_press);
-            let what = format!("{pace:?}, mirror {mirrored}");
+            let what = format!("{path}: {pace:?}, mirror {mirrored}");
             println!(
                 "{what}: {run:?}, landed {:.1} m below",
                 run.landing - cliff.at
@@ -420,9 +439,9 @@ fn a_drop_is_driven_off_at_every_speed_without_the_pelican() {
 #[test]
 fn a_drop_is_driven_off_drifting() {
     let fall_depth = crate::race::RaceTuning::default().fall_depth;
-    for mirrored in [false, true] {
+    for (path, mirrored) in relief_runs() {
         for side in [-1.0f32, 1.0] {
-            let (mut app, kart, _, cliffs) = relief(mirrored);
+            let (mut app, kart, _, cliffs) = relief(path, mirrored);
             let cliff = cliffs[0];
             place(&mut app, kart, cliff.at - 30.0, 0.0, 26.0);
             // A hop steered to `side`, then the button held, the kart steered down the road.
@@ -434,7 +453,7 @@ fn a_drop_is_driven_off_drifting() {
                 })
             };
             let run = drive(&mut app, kart, Pace::Full, 3.0, drift);
-            let what = format!("drifting to {side}, mirror {mirrored}");
+            let what = format!("{path}: drifting to {side}, mirror {mirrored}");
             assert!(
                 run.drifting_off,
                 "{what}: not drifting off the edge: {run:?}"

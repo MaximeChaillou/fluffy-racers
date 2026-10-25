@@ -2427,10 +2427,13 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 /// one of #107; the circuits redone or added after it join the list: issue #108, Prairie Pompon;
 /// issue #109, the Col des Moufles; issue #119, the Échappée Pissenlit, the first long race:
 /// its figures per section; issue #110, the Forêt Frimousse and the Falaises Flanelle; issue #111,
-/// the Coteau Citrouille and the Périple Polochon, the second long race). Their races check the
-/// guide's figures too ([`guide_checks`]).
-pub(crate) const GUIDE_CIRCUITS: [&str; 8] = [
+/// the Coteau Citrouille and the Périple Polochon, the second long race; issue #148, the Anneau
+/// Guimauve and the Crique Câline redrawn). Their races check the guide's figures too
+/// ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 10] = [
     "Prairie Pompon",
+    "Anneau Guimauve",
+    "Crique Câline",
     "Col des Moufles",
     "Corniche Cannelle",
     "Échappée Pissenlit",
