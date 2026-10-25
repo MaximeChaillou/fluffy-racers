@@ -258,8 +258,8 @@ fn palette_of(ui: &SoloUi, tracks: &Assets<TrackData>, circuit: usize) -> Palett
     ui.tracks
         .get(circuit)
         .and_then(|handle| tracks.get(handle))
-        .and_then(|data| data.biome())
-        .map_or_else(Palette::default, |biome| biome.palette)
+        // Issue #187: its road's own colors in its biome's.
+        .map_or_else(Palette::default, |data| data.palette())
 }
 
 /// The shape of the tree for the menu now.

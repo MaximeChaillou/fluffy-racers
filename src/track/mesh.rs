@@ -10,6 +10,7 @@ use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
 use super::biome::{Palette, Rgb};
 use super::data::{OffroadZone, ShortcutKind, TrackData};
 use super::layout::{CenterLine, TrackSample};
+use super::paving::{self, BORDER_TILE, PAVING_TILE};
 use super::shortcut::{OpenEdge, Shortcut, walled};
 use super::water::{Gap, Lake, ground_height};
 
@@ -184,6 +185,125 @@ impl MeshData {
     }
 }
 
+/// Issue #187: triangles drawn with a texture: a [`MeshData`] (flat normals, vertex colors) and
+/// the UVs of its vertices. Drawn only (with a renderer): the colliders are the [`TrackMeshes`]'
+/// own meshes, unchanged.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PaintedMesh {
+    pub mesh: MeshData,
+    pub uvs: Vec<[f32; 2]>,
+}
+
+impl PaintedMesh {
+    /// Adds the quad a → b → c → d, its UVs `uvs` at its corners.
+    pub fn quad(&mut self, corners: [Vec3; 4], color: [f32; 4], uvs: [[f32; 2]; 4]) {
+        self.mesh.quad(corners, color);
+        self.uvs.extend_from_slice(&uvs);
+    }
+
+    /// A strip along consecutive samples, like [`MeshData::strip_where`]: `u(s)` gives the `u` of
+    /// its two edges at a sample, `v[i]` the `v` at sample `i` (one more than the samples when
+    /// `closed`: the end of the last quad), `color(i)` the color of the quad from sample `i`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn strip_where(
+        &mut self,
+        samples: &[TrackSample],
+        closed: bool,
+        a: impl Fn(&TrackSample) -> Vec3,
+        b: impl Fn(&TrackSample) -> Vec3,
+        u: impl Fn(&TrackSample) -> (f32, f32),
+        v: &[f32],
+        color: impl Fn(usize) -> [f32; 4],
+        keep: impl Fn(&TrackSample, &TrackSample) -> bool,
+    ) {
+        let n = samples.len();
+        let segments = if closed { n } else { n.saturating_sub(1) };
+        for i in 0..segments {
+            let (s0, s1) = (&samples[i], &samples[(i + 1) % n]);
+            if keep(s0, s1) {
+                let ((ua0, ub0), (ua1, ub1)) = (u(s0), u(s1));
+                let (v0, v1) = (v[i], v[i + 1]);
+                self.quad(
+                    [a(s0), b(s0), b(s1), a(s1)],
+                    color(i),
+                    [[ua0, v0], [ub0, v0], [ub1, v1], [ua1, v1]],
+                );
+            }
+        }
+    }
+
+    /// The same strip, its UVs the ground's own meters divided by `tile` (`x` and `z`: issue
+    /// #187, a paving that lies on the ground whatever way the road goes).
+    pub fn planar_strip_where(
+        &mut self,
+        samples: &[TrackSample],
+        closed: bool,
+        a: impl Fn(&TrackSample) -> Vec3,
+        b: impl Fn(&TrackSample) -> Vec3,
+        tile: f32,
+        color: impl Fn(usize) -> [f32; 4],
+        keep: impl Fn(&TrackSample, &TrackSample) -> bool,
+    ) {
+        let n = samples.len();
+        let segments = if closed { n } else { n.saturating_sub(1) };
+        let uv = |p: Vec3| [p.x / tile, p.z / tile];
+        for i in 0..segments {
+            let (s0, s1) = (&samples[i], &samples[(i + 1) % n]);
+            if keep(s0, s1) {
+                let corners = [a(s0), b(s0), b(s1), a(s1)];
+                self.quad(corners, color(i), corners.map(uv));
+            }
+        }
+    }
+
+    pub fn append(&mut self, other: &PaintedMesh) {
+        self.mesh.append(&other.mesh);
+        self.uvs.extend_from_slice(&other.uvs);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mesh.indices.is_empty()
+    }
+
+    /// In square tiles, like [`MeshData::tiles`] (each quad's vertices are its own: a triangle's
+    /// UVs go with its vertices).
+    pub fn tiles(&self, size: f32) -> Vec<PaintedMesh> {
+        type Tile = (PaintedMesh, std::collections::HashMap<u32, u32>);
+        let mut tiles: std::collections::BTreeMap<(i32, i32), Tile> = default();
+        let m = &self.mesh;
+        for triangle in m.indices.as_chunks::<3>().0 {
+            let first = m.positions[triangle[0] as usize];
+            let key = (
+                (first[2] / size).floor() as i32,
+                (first[0] / size).floor() as i32,
+            );
+            let (tile, remap) = tiles.entry(key).or_default();
+            for &i in triangle {
+                let index = *remap.entry(i).or_insert_with(|| {
+                    let k = i as usize;
+                    tile.mesh.positions.push(m.positions[k]);
+                    tile.mesh.normals.push(m.normals[k]);
+                    tile.mesh.colors.push(m.colors[k]);
+                    tile.uvs.push(self.uvs[k]);
+                    tile.mesh.positions.len() as u32 - 1
+                });
+                tile.mesh.indices.push(index);
+            }
+        }
+        tiles.into_values().map(|(tile, _)| tile).collect()
+    }
+}
+
+/// Issue #187: what is drawn of the circuit, with a renderer: its road's paving and its borders
+/// with their textures (`super::paving`), and the rest plain (vertex colors), the same triangles
+/// as [`TrackMeshes::combined`] (the anti-gravity zones' blue and white curbs in the plain one).
+#[derive(Clone, Debug, Default)]
+pub struct DrawnTrack {
+    pub plain: MeshData,
+    pub paving: PaintedMesh,
+    pub borders: PaintedMesh,
+}
+
 /// The generated circuit, split by surface (one collider each) plus decoration.
 #[derive(Clone, Debug, Default)]
 pub struct TrackMeshes {
@@ -216,6 +336,19 @@ pub struct TrackMeshes {
     /// Issue #180: the faces of the drops (`Surface::Wall`, drawn and solid, apart from the low
     /// walls: not a wall a kart sees the road over). Empty on a circuit without a drop.
     pub cliffs: MeshData,
+    /// Issue #187: the road's surface (the road's, the anti-gravity zones', the trick stretches',
+    /// the shortcuts' roads) as it is drawn with its paving, its UVs in meters divided by
+    /// `paving::PAVING_TILE` (the ground's `x` and `z` for a paving that lies on the ground;
+    /// across and along the centerline for one that follows the road, and in the anti-gravity
+    /// zones), and its curbs (out of the
+    /// anti-gravity zones) as drawn with their border, `u` from 0 by the road to 1 outside, `v`
+    /// along their middle in meters divided by `paving::BORDER_TILE`. Drawn only: the same
+    /// triangles as in the meshes above, which stay the colliders.
+    pub paving: PaintedMesh,
+    pub borders: PaintedMesh,
+    /// The anti-gravity zones' blue and white curbs, drawn plain (their triangles in
+    /// `anti_gravity_road` too).
+    pub blue_curbs: MeshData,
 }
 
 impl TrackMeshes {
@@ -234,6 +367,29 @@ impl TrackMeshes {
         all.append(&self.trick_offroad);
         all.append(&self.cliffs);
         all
+    }
+
+    /// Issue #187: what is drawn with a renderer: the road's paving and its borders apart, with
+    /// their UVs, and the rest plain (every triangle of [`combined`](Self::combined) in one of
+    /// the three, once).
+    pub fn drawn(&self) -> DrawnTrack {
+        let mut plain = self.offroad.clone();
+        for part in [
+            &self.walls,
+            &self.decor,
+            &self.blue_curbs,
+            &self.anti_gravity_offroad,
+            &self.shortcut_grass,
+            &self.trick_offroad,
+            &self.cliffs,
+        ] {
+            plain.append(part);
+        }
+        DrawnTrack {
+            plain,
+            paving: self.paving.clone(),
+            borders: self.borders.clone(),
+        }
     }
 }
 
@@ -353,6 +509,9 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         s0.up.y >= -FACING_UP_TOLERANCE && s1.up.y >= -FACING_UP_TOLERANCE
     };
     let mut meshes = TrackMeshes::default();
+    // Issue #187: whether the road's paving lies on the ground (its UVs the ground's meters)
+    // rather than following the road (in the anti-gravity zones, it always follows it).
+    let planar = !data.road_look().paving.follows_the_road();
     let (asphalt, grass, sand, skirt) = (
         rgba(palette.asphalt),
         rgba(palette.shoulder),
@@ -379,17 +538,37 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         .collect();
     for (samples, closed) in runs(center, &cuts) {
         let (samples, closed) = (&samples[..], closed);
+        // Issue #187: the UVs and the tint of the paving and of the borders along this run.
+        let along = Along::new(center, samples, closed);
         // Road and curbs; in the anti-gravity zones (issue #78), in their own mesh, the curbs
         // blue and white.
-        for (road, keep, stripe) in [
+        for (road, keep, stripe, blue) in [
             (
                 &mut meshes.road,
                 &unzoned as &dyn Fn(&TrackSample, &TrackSample) -> bool,
                 &stripe as &dyn Fn(usize) -> [f32; 4],
+                false,
             ),
-            (&mut meshes.anti_gravity_road, &zoned, &blue_stripe),
-            (&mut meshes.trick_road, &tricky, &stripe),
+            (&mut meshes.anti_gravity_road, &zoned, &blue_stripe, true),
+            (&mut meshes.trick_road, &tricky, &stripe, false),
         ] {
+            // Issue #187: drawn with its paving, and its curbs with their border (the
+            // anti-gravity zones' plain, blue and white): the same quads.
+            along.paving(&mut meshes.paving, samples, closed, keep, planar && !blue);
+            if blue {
+                for side in [-1.0f32, 1.0] {
+                    meshes.blue_curbs.strip_where(
+                        samples,
+                        closed,
+                        |s| s.point(side.min(0.0) * CURB_WIDTH + side * s.half_width, 0.0),
+                        |s| s.point(side.max(0.0) * CURB_WIDTH + side * s.half_width, 0.0),
+                        stripe,
+                        keep,
+                    );
+                }
+            } else {
+                along.borders(&mut meshes.borders, samples, closed, keep);
+            }
             road.strip_where(
                 samples,
                 closed,
@@ -564,6 +743,21 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         let lift = |s: &TrackSample, lateral: f32| s.point(lateral, SHORTCUT_LIFT);
         match shortcut.kind {
             ShortcutKind::Road => {
+                // Issue #187: drawn with the paving and the borders of the circuit's road.
+                let along = Along::of_path(samples, inner_width(half));
+                along.paving_between(
+                    &mut meshes.paving,
+                    samples,
+                    inner_width(half),
+                    SHORTCUT_LIFT,
+                    planar,
+                );
+                along.borders_between(
+                    &mut meshes.borders,
+                    samples,
+                    inner_width(half),
+                    SHORTCUT_LIFT,
+                );
                 let road = &mut meshes.shortcut_road;
                 let inner = half - CURB_WIDTH;
                 road.strip(
@@ -705,6 +899,259 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
     }
 
     meshes
+}
+
+/// A shortcut's road's half width without its curbs.
+fn inner_width(half: f32) -> f32 {
+    half - CURB_WIDTH
+}
+
+/// Issue #187: the UVs of a run of samples (`v` at each sample, its end too when it is closed),
+/// for the paving (meters along the centerline, so many tiles that the loop closes on a whole
+/// number of them) and for each border (meters along its middle, likewise), and the paving's tint
+/// of each quad ([`paving::tint_along`]).
+struct Along {
+    road: Vec<f32>,
+    left: Vec<f32>,
+    right: Vec<f32>,
+    tint: Vec<[f32; 4]>,
+}
+
+impl Along {
+    fn new(center: &CenterLine, samples: &[TrackSample], closed: bool) -> Self {
+        let length = center.length();
+        let n = samples.len();
+        let ends = if closed { n + 1 } else { n };
+        // Along the centerline, a meter of road is a meter of texture; in a turn, a little less
+        // ([`paving_rate`]): its outer edge is stretched as much as its inner one is squeezed.
+        let mut road = Vec::with_capacity(ends);
+        let mut along = 0.0;
+        let mut distance = samples.first().map_or(0.0, |s| s.distance);
+        let mut tint = Vec::with_capacity(ends);
+        for i in 0..ends {
+            if i > 0 {
+                let (s0, s1) = (&samples[i - 1], &samples[i % n]);
+                let step = center.wrap(s1.distance - s0.distance);
+                tint.push(grey(paving::tint_along(distance + step / 2.0, length)));
+                distance += step;
+                along += step * paving_rate(s0, s1, step);
+            }
+            road.push(along);
+        }
+        // So many tiles that a loop closes on a whole number of them; a run between gaps starts
+        // where the centerline is (its meters along it).
+        let start = samples.first().map_or(0.0, |s| s.distance);
+        let k = if closed && along > 0.0 {
+            (along / PAVING_TILE).round().max(1.0) * PAVING_TILE / along
+        } else {
+            1.0
+        };
+        let road = road.iter().map(|a| (start + a * k) / PAVING_TILE).collect();
+        let side = |sign: f32| {
+            arc(samples, closed, |s| {
+                s.point(sign * (s.half_width + CURB_WIDTH / 2.0), 0.0)
+            })
+        };
+        Self {
+            road,
+            left: side(-1.0),
+            right: side(1.0),
+            tint,
+        }
+    }
+
+    /// The same along a shortcut's path (open, its own start): its road `inner` m each way from
+    /// its middle, its curbs beyond.
+    fn of_path(samples: &[TrackSample], inner: f32) -> Self {
+        let road = arc(samples, false, |s| s.position)
+            .iter()
+            .map(|v| v * BORDER_TILE / PAVING_TILE)
+            .collect();
+        let tint = vec![grey(1.0); samples.len()];
+        let side = |sign: f32| {
+            arc(samples, false, |s| {
+                s.point(sign * (inner + CURB_WIDTH / 2.0), 0.0)
+            })
+        };
+        Self {
+            road,
+            left: side(-1.0),
+            right: side(1.0),
+            tint,
+        }
+    }
+
+    /// The road between its edges, with its paving: its UVs along the road, or the ground's
+    /// (`planar`: `Paving::follows_the_road`).
+    fn paving(
+        &self,
+        paving: &mut PaintedMesh,
+        samples: &[TrackSample],
+        closed: bool,
+        keep: &dyn Fn(&TrackSample, &TrackSample) -> bool,
+        planar: bool,
+    ) {
+        if planar {
+            paving.planar_strip_where(
+                samples,
+                closed,
+                |s| s.point(-s.half_width, 0.0),
+                |s| s.point(s.half_width, 0.0),
+                PAVING_TILE,
+                |i| self.tint[i],
+                keep,
+            );
+            return;
+        }
+        paving.strip_where(
+            samples,
+            closed,
+            |s| s.point(-s.half_width, 0.0),
+            |s| s.point(s.half_width, 0.0),
+            |s| (-s.half_width / PAVING_TILE, s.half_width / PAVING_TILE),
+            &self.road,
+            |i| self.tint[i],
+            keep,
+        );
+    }
+
+    /// Its two curbs, with their border (`u` 0 by the road, 1 outside).
+    fn borders(
+        &self,
+        borders: &mut PaintedMesh,
+        samples: &[TrackSample],
+        closed: bool,
+        keep: &dyn Fn(&TrackSample, &TrackSample) -> bool,
+    ) {
+        let white = |_| grey(1.0);
+        borders.strip_where(
+            samples,
+            closed,
+            |s| s.point(-s.half_width - CURB_WIDTH, 0.0),
+            |s| s.point(-s.half_width, 0.0),
+            |_| (1.0, 0.0),
+            &self.left,
+            white,
+            keep,
+        );
+        borders.strip_where(
+            samples,
+            closed,
+            |s| s.point(s.half_width, 0.0),
+            |s| s.point(s.half_width + CURB_WIDTH, 0.0),
+            |_| (0.0, 1.0),
+            &self.right,
+            white,
+            keep,
+        );
+    }
+
+    /// A shortcut's road (`inner` m each way, `lift` above its path), with the paving.
+    fn paving_between(
+        &self,
+        paving: &mut PaintedMesh,
+        samples: &[TrackSample],
+        inner: f32,
+        lift: f32,
+        planar: bool,
+    ) {
+        if planar {
+            paving.planar_strip_where(
+                samples,
+                false,
+                |s| s.point(-inner, lift),
+                |s| s.point(inner, lift),
+                PAVING_TILE,
+                |i| self.tint[i],
+                |_, _| true,
+            );
+            return;
+        }
+        paving.strip_where(
+            samples,
+            false,
+            |s| s.point(-inner, lift),
+            |s| s.point(inner, lift),
+            |_| (-inner / PAVING_TILE, inner / PAVING_TILE),
+            &self.road,
+            |i| self.tint[i],
+            |_, _| true,
+        );
+    }
+
+    /// Its curbs, with their border.
+    fn borders_between(
+        &self,
+        borders: &mut PaintedMesh,
+        samples: &[TrackSample],
+        inner: f32,
+        lift: f32,
+    ) {
+        let white = |_| grey(1.0);
+        let half = inner + CURB_WIDTH;
+        borders.strip_where(
+            samples,
+            false,
+            |s| s.point(-half, lift),
+            |s| s.point(-inner, lift),
+            |_| (1.0, 0.0),
+            &self.left,
+            white,
+            |_, _| true,
+        );
+        borders.strip_where(
+            samples,
+            false,
+            |s| s.point(inner, lift),
+            |s| s.point(half, lift),
+            |_| (0.0, 1.0),
+            &self.right,
+            white,
+            |_, _| true,
+        );
+    }
+}
+
+/// Issue #187: how many meters of the paving's texture a meter of the centerline is, between two
+/// samples `step` m apart: 1 on a straight; in a turn, `sqrt(1 - (w κ)²)` (`w` the half width,
+/// `κ` the turn's curvature in the road's plane), so that its outer edge (`1 + w κ` meters of
+/// road a meter of the centerline) is stretched along the texture as much as its inner one
+/// (`1 - w κ`) is squeezed: in the tightest hairpins, the square root of what following the
+/// centerline alone would give. Never below a half.
+fn paving_rate(s0: &TrackSample, s1: &TrackSample, step: f32) -> f32 {
+    if step <= 1e-4 {
+        return 1.0;
+    }
+    let w = (s0.half_width + s1.half_width) / 2.0;
+    let curvature = (s1.forward - s0.forward).dot(s0.right).abs() / step;
+    (1.0 - (w * curvature).powi(2)).max(0.25).sqrt()
+}
+
+/// A grey vertex color (sRGB `k`, opaque): it multiplies a texture.
+fn grey(k: f32) -> [f32; 4] {
+    [k, k, k, 1.0]
+}
+
+/// The `v` of a border at each sample: meters along the line `point` makes through them,
+/// divided by [`BORDER_TILE`]; one more for a closed run (its end), so many tiles that the loop
+/// closes on a whole number of them.
+fn arc(samples: &[TrackSample], closed: bool, point: impl Fn(&TrackSample) -> Vec3) -> Vec<f32> {
+    let n = samples.len();
+    let ends = if closed { n + 1 } else { n };
+    let mut out = Vec::with_capacity(ends);
+    let mut length = 0.0;
+    for i in 0..ends {
+        if i > 0 {
+            length += point(&samples[i % n]).distance(point(&samples[i - 1]));
+        }
+        out.push(length);
+    }
+    let k = if closed && length > 0.0 {
+        (length / BORDER_TILE).round().max(1.0) * BORDER_TILE / length
+    } else {
+        1.0
+    };
+    out.iter().map(|l| l * k / BORDER_TILE).collect()
 }
 
 /// Issue #119: a barrier across the road at `s`, [`WALL_HEIGHT`] high and [`WALL_THICKNESS`]
@@ -931,6 +1378,68 @@ mod tests {
     /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     pub(crate) fn test_track() -> TrackData {
         crate::track::test_circuit()
+    }
+
+    /// Issue #187: what is drawn with a renderer (the paving, the borders and the rest plain) is
+    /// exactly what was drawn before, in one mesh (`combined`): every triangle once, none more,
+    /// on circuits with anti-gravity zones (their blue curbs plain), shortcuts, bumps and drops,
+    /// gaps; and the paving's and borders' triangles are the road's surface and its curbs.
+    #[test]
+    fn the_drawn_road_is_the_same_triangles_as_before() {
+        let key = |m: &MeshData, t: &[u32; 3]| {
+            let mut corners: Vec<[i64; 3]> = t
+                .iter()
+                .map(|i| m.positions[*i as usize].map(|c| (c * 1000.0).round() as i64))
+                .collect();
+            corners.sort();
+            corners
+        };
+        let triangles = |meshes: &[&MeshData]| {
+            let mut all: Vec<Vec<[i64; 3]>> = meshes
+                .iter()
+                .flat_map(|m| m.indices.as_chunks::<3>().0.iter().map(|t| key(m, t)))
+                .collect();
+            all.sort();
+            all
+        };
+        let files = [
+            "prairie.track.ron",
+            "ruban.track.ron",
+            "corniche.track.ron",
+            "lagon.track.ron",
+            "echappee.track.ron",
+        ];
+        for file in files {
+            let path = format!("{}/assets/tracks/{file}", env!("CARGO_MANIFEST_DIR"));
+            let data = TrackData::from_ron(&std::fs::read_to_string(path).unwrap()).unwrap();
+            let center = CenterLine::of(&data);
+            let meshes = generate(&center, &data, &data.palette());
+            let drawn = meshes.drawn();
+            assert_eq!(
+                triangles(&[&drawn.plain, &drawn.paving.mesh, &drawn.borders.mesh]),
+                triangles(&[&meshes.combined()]),
+                "{file}"
+            );
+            assert_eq!(drawn.paving.uvs.len(), drawn.paving.mesh.positions.len());
+            assert_eq!(drawn.borders.uvs.len(), drawn.borders.mesh.positions.len());
+            // The paving and the borders: the road's triangles (and the shortcuts' roads).
+            let road = triangles(&[
+                &meshes.road,
+                &meshes.anti_gravity_road,
+                &meshes.trick_road,
+                &meshes.shortcut_road,
+            ]);
+            for t in triangles(&[&drawn.paving.mesh, &drawn.borders.mesh]) {
+                assert!(road.binary_search(&t).is_ok(), "{file}: {t:?}");
+            }
+            assert!(
+                !drawn.paving.is_empty() && !drawn.borders.is_empty(),
+                "{file}"
+            );
+            if !data.anti_gravity.is_empty() {
+                assert!(!meshes.blue_curbs.indices.is_empty(), "{file}");
+            }
+        }
     }
 
     /// Issue #119: on an open circuit, nothing is built on the way back (no road, no shoulder, no

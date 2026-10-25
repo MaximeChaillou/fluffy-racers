@@ -172,7 +172,8 @@ mod tests {
 
     /// GD § 14: what lies on the track or flies over it (the dangers, the boxes, the croquettes)
     /// stands out from the decor: its colors far from every biome's road, grass, shoulder and
-    /// sand.
+    /// sand. Issue #187: the road as drawn (its paving's mean, and its accent), the circuits' own
+    /// roads too; the same threshold.
     #[test]
     fn the_items_on_the_track_stand_out_from_the_decor() {
         let on_track = [
@@ -186,25 +187,50 @@ mod tests {
             Look::GiftBox,
             Look::DoubleGiftBox,
         ];
+        // Issue #187: the road's color is its paving's mean (`track::paving`); its accent too (the
+        // moss, the leaves, the sugar's stripes), and the circuits' own roads (the Ruban
+        // Réglisse's liquorice).
+        let mut grounds: Vec<(String, &str, (f32, f32, f32))> = Vec::new();
+        for biome in biomes() {
+            let p = biome.palette;
+            for (name, color) in [
+                ("road", p.asphalt),
+                ("grass", p.ground),
+                ("shoulder", p.shoulder),
+                ("sand", p.sand),
+            ] {
+                grounds.push((biome.name.clone(), name, color));
+            }
+            if let Some(accent) = biome.road.accent {
+                grounds.push((biome.name.clone(), "road's accent", accent));
+            }
+        }
+        for entry in crate::admin::tracks::circuits() {
+            let path = format!(
+                "{}/assets/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                entry.asset_path()
+            );
+            let data =
+                crate::track::TrackData::from_ron(&std::fs::read_to_string(path).unwrap()).unwrap();
+            if let Some(road) = data.road {
+                grounds.push((entry.name.clone(), "road", data.palette().asphalt));
+                if let Some(accent) = road.accent {
+                    grounds.push((entry.name.clone(), "road's accent", accent));
+                }
+            }
+        }
         let mut too_close = Vec::new();
         for look in on_track {
             let seen = render(look, &model(look)).mean_color();
             let mut closest = (f32::MAX, String::new());
-            for biome in biomes() {
-                let p = biome.palette;
-                for (name, (r, g, b)) in [
-                    ("road", p.asphalt),
-                    ("grass", p.ground),
-                    ("shoulder", p.shoulder),
-                    ("sand", p.sand),
-                ] {
-                    let apart = seen.distance(Vec3::new(r, g, b));
-                    if apart < closest.0 {
-                        closest = (apart, format!("{}'s {name}", biome.name));
-                    }
-                    if apart <= 0.2 {
-                        too_close.push(format!("{look:?} on {}'s {name}: {apart}", biome.name));
-                    }
+            for (place, name, (r, g, b)) in &grounds {
+                let apart = seen.distance(Vec3::new(*r, *g, *b));
+                if apart < closest.0 {
+                    closest = (apart, format!("{place}'s {name}"));
+                }
+                if apart <= 0.2 {
+                    too_close.push(format!("{look:?} on {place}'s {name}: {apart}"));
                 }
             }
             println!(

@@ -17,6 +17,7 @@ mod hazard_visual;
 pub mod hazards;
 pub mod layout;
 pub mod mesh;
+pub mod paving;
 pub mod shortcut;
 pub mod start_line;
 pub mod test_ground;
