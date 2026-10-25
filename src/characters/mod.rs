@@ -46,6 +46,7 @@ mod acting;
 mod acting_visual;
 mod animation;
 mod model;
+mod paw;
 pub mod ragdoll;
 mod roster;
 mod ui;
@@ -70,6 +71,10 @@ pub(crate) use acting_visual::act;
 pub use acting_visual::{Acting, ActingPlugin, ActingSystems};
 pub use animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation, sulks};
 pub use model::{AnimalModelData, AnimalNode, AnimalPart, animal_model_data};
+pub use paw::{
+    PawColors, PawModel, PawShape, leg_colors, paw_colors, paw_meshes, paw_model, primitive_paw,
+    rest_transform, shoulder, wing_colors,
+};
 pub use ragdoll::{
     Knock, Ragdoll, RagdollChange, RagdollPhase, RagdollPlugin, RagdollSystems, RagdollTuning,
 };
@@ -79,8 +84,8 @@ pub use roster::{
 };
 pub use ui::CharacterUiPlugin;
 pub use visual::{
-    AnimalRoot, AnimalSlot, AnimalVisual, AnimalVisualPlugin, Animals, AnimationNodes,
-    DriverDressed, spawn_animal_on_foot, spawn_animal_still,
+    AnimalPaw, AnimalRoot, AnimalSlot, AnimalVisual, AnimalVisualPlugin, Animals, AnimationNodes,
+    DriverDressed, paw_nodes, spawn_animal_on_foot, spawn_animal_still, transform_in,
 };
 pub use wobble::{
     LayerPivot, SpringTuning, WobbleInput, WobbleLevers, WobblePose, WobbleState, WobbleTuning,
@@ -88,7 +93,7 @@ pub use wobble::{
 };
 /// Issue #101: the lobby's characters step their wobble before it is laid over their parts.
 pub(crate) use wobble_visual::lay_wobbles;
-pub use wobble_visual::{DriverWobble, WobbleLayer, WobblePlugin, WobbleSlot};
+pub use wobble_visual::{DriverWobble, WobbleLayer, WobblePlugin, WobbleSlot, WobbleSystems};
 
 use bevy::prelude::*;
 

@@ -24,12 +24,15 @@ use std::time::Duration;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::app::AnimationSystems;
+use bevy::ecs::query::QueryFilter;
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::Roster;
 use super::animation::{AnimalAnimation, DriverFacts, DriverTuning, Finish, driver_animation};
-use super::model::{AnimalModelData, AnimalPart, animal_model_data};
+use super::model::{AnimalModelData, AnimalPart, BODY, animal_model_data};
+use super::paw::{PawShape, paw_model};
 use super::wobble::{LayerPivot, WobbleLevers, WobbleState};
 use super::wobble_visual::{DriverWobble, WobbleLayer};
 use crate::interactions::Paw;
@@ -56,6 +59,35 @@ pub struct AnimalVisual {
     /// How long its idle lasts (s): each kart starts it at its own moment.
     pub idle_seconds: f32,
     pub material: Handle<StandardMaterial>,
+    /// Issue #169: its paw (its arm and its hand, in its colors), shared by every kart it drives
+    /// and every character of the lobby; None without a body.
+    pub paw: Option<AnimalPaw>,
+}
+
+/// Issue #169: an animal's paw on screen (`paw.rs`): its arm's and its hand's meshes (in the
+/// models' shared material), how long its hand is (in the animal's units), where its arm comes
+/// out (in its body's node, on its left: [`super::PawModel::shoulder`]), and the nodes it hangs from:
+/// its body, and a bird's wings (its left, then its right), which its arm replaces while out.
+#[derive(Clone, Debug)]
+pub struct AnimalPaw {
+    pub arm: Handle<Mesh>,
+    pub hand: Handle<Mesh>,
+    pub hand_length: f32,
+    pub shoulder: Vec3,
+    /// Its body's node and its wings' (indices in `AnimalModelData::nodes`).
+    pub body: usize,
+    pub wings: [Option<usize>; 2],
+}
+
+impl AnimalPaw {
+    /// Its shoulders in the frame where `body` (its body's node) is `at`: on the left of that
+    /// frame (-X: the animal's left, turned to face -Z), then on its right.
+    pub fn shoulders(&self, at: &Affine3A) -> [Vec3; 2] {
+        [
+            at.transform_point3(self.shoulder),
+            at.transform_point3(self.shoulder * Vec3::new(-1.0, 1.0, 1.0)),
+        ]
+    }
 }
 
 /// Where a character's animal is.
@@ -98,13 +130,16 @@ pub struct DriverDressed;
 
 /// The animal under a driver: where it sits (its `Transform`), its `AnimationPlayer`. `kart`:
 /// the kart it drives (its simulated body, or the body of another peer's kart); `playing`: what
-/// it plays; `nodes`: its graph's node of each animation.
+/// it plays; `nodes`: its graph's node of each animation. Issue #169: `body`, its body's entity
+/// (where its arms come out), and a bird's wings (its left, then its right).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct AnimalRoot {
     pub kart: Entity,
     pub character: usize,
     pub playing: AnimalAnimation,
     pub nodes: Option<AnimationNodes>,
+    pub body: Option<Entity>,
+    pub wings: [Option<Entity>; 2],
 }
 
 /// The node of each animation in an animal's graph (`AnimalAnimation::index`).
@@ -167,6 +202,7 @@ fn request_animals(
 /// missing, or that is not a Cube Pet, leaves its drivers in primitives (said once).
 fn prepare_animals(
     models: Res<Models>,
+    roster: Res<Roster>,
     shared: Option<Res<ModelMaterials>>,
     mut animals: ResMut<Animals>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -176,7 +212,7 @@ fn prepare_animals(
     let Some(shared) = shared else {
         return;
     };
-    for slot in &mut animals.0 {
+    for (character, slot) in animals.0.iter_mut().enumerate() {
         let AnimalSlot::Waiting(id) = slot else {
             continue;
         };
@@ -222,7 +258,24 @@ fn prepare_animals(
         let idle_seconds = clip(AnimalAnimation::Idle)
             .and_then(|idle| clips.as_ref()?.get(&idle).map(|c| c.duration()))
             .unwrap_or(1.0);
+        // Issue #169: its paw, in its colors.
+        let shape = roster
+            .characters
+            .get(character)
+            .map_or(PawShape::default(), |c| c.paw);
+        let paw = paw_model(&data, shape).and_then(|paw| {
+            let wing = |part: AnimalPart| data.nodes.iter().position(|n| n.part == Some(part));
+            Some(AnimalPaw {
+                arm: meshes.add(to_mesh(&paw.arm)),
+                hand: meshes.add(to_mesh(&paw.hand)),
+                hand_length: paw.hand_length,
+                shoulder: paw.shoulder,
+                body: data.node(BODY)?,
+                wings: [wing(AnimalPart::LeftWing), wing(AnimalPart::RightWing)],
+            })
+        });
         let animal = AnimalVisual {
+            paw,
             meshes: data
                 .nodes
                 .iter()
@@ -307,17 +360,7 @@ fn spawn_animal(
     commands
         .entity(driver)
         .insert(DriverWobble(WobbleState::new(levers(animal, &placement))));
-    let mut root = commands.spawn((
-        AnimalRoot {
-            kart,
-            character,
-            playing: AnimalAnimation::Idle,
-            nodes: animal.graph.as_ref().map(|(_, nodes)| *nodes),
-        },
-        placement,
-        Visibility::default(),
-        ChildOf(driver),
-    ));
+    let mut root = commands.spawn((placement, Visibility::default(), ChildOf(driver)));
     if let Some((graph, nodes)) = &animal.graph {
         let mut player = AnimationPlayer::default();
         let mut transitions = AnimationTransitions::new();
@@ -355,6 +398,49 @@ fn spawn_animal(
         }
         spawned.push(entity.id());
     }
+    let (body, wings) = paw_nodes(animal, &spawned);
+    commands.entity(root).insert(AnimalRoot {
+        kart,
+        character,
+        playing: AnimalAnimation::Idle,
+        nodes: animal.graph.as_ref().map(|(_, nodes)| *nodes),
+        body,
+        wings,
+    });
+}
+
+/// Issue #169: `node`'s transform in the frame of its ancestor `frame`, from their `Transform`s
+/// as they are now (this frame's clip, wobble and acting, before they are propagated): what a
+/// paw follows. None when `frame` is not one of its ancestors (16 levels up at most).
+pub fn transform_in<F: QueryFilter>(
+    node: Entity,
+    frame: Entity,
+    nodes: &Query<(&Transform, &ChildOf), F>,
+) -> Option<Affine3A> {
+    let mut at = Affine3A::IDENTITY;
+    let mut entity = node;
+    for _ in 0..16 {
+        let (transform, child_of) = nodes.get(entity).ok()?;
+        at = transform.compute_affine() * at;
+        if child_of.parent() == frame {
+            return Some(at);
+        }
+        entity = child_of.parent();
+    }
+    None
+}
+
+/// Issue #169: the entities of `animal`'s body and wings among its `spawned` nodes (in
+/// `AnimalModelData::nodes`' order), where its paw hangs from.
+pub fn paw_nodes(
+    animal: &AnimalVisual,
+    spawned: &[Entity],
+) -> (Option<Entity>, [Option<Entity>; 2]) {
+    let Some(paw) = &animal.paw else {
+        return (None, [None; 2]);
+    };
+    let at = |i: Option<usize>| i.and_then(|i| spawned.get(i).copied());
+    (at(Some(paw.body)), paw.wings.map(at))
 }
 
 /// Where the tail and the wings of `animal` hang once placed by `placement`, in its wobble's

@@ -13,6 +13,8 @@ use crate::kart::{
 };
 use crate::track::biome::is_model_id;
 
+use super::paw::PawShape;
+
 /// The four RON files, compiled into the game.
 pub const CHARACTERS_RON: &str = include_str!("../../assets/data/characters.ron");
 pub const KARTS_RON: &str = include_str!("../../assets/data/karts.ron");
@@ -57,6 +59,10 @@ pub struct CharacterData {
     pub color: (f32, f32, f32),
     /// Its ears in primitives.
     pub ears: DriverEars,
+    /// Issue #169: what its paw looks like (`characters::PawShape`): left out, a round paw with
+    /// toes.
+    #[serde(default)]
+    pub paw: PawShape,
     pub stats: StatPoints,
 }
 
@@ -195,6 +201,7 @@ impl Roster {
                 model: None,
                 color: (0.95, 0.65, 0.35),
                 ears: DriverEars::Pointy,
+                paw: PawShape::Toes,
                 stats: StatPoints::uniform(4),
             }],
             karts: vec![part("Caisse à savon", 3)],
