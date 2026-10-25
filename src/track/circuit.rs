@@ -10,10 +10,11 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use super::biome::{Palette, Rgb};
+use super::biome::{Palette, Rgb, RoadLook};
 use super::data::TrackData;
 use super::layout::{TrackLayout, TrackSample};
-use super::mesh::{self, GROUND_HEIGHT, MeshData};
+use super::mesh::{self, GROUND_HEIGHT, MeshData, PaintedMesh};
+use super::paving;
 use super::start_line::StartLine;
 use super::water;
 use super::{
@@ -141,6 +142,11 @@ pub fn build_circuit_when_loaded(
     no_boxes: Option<Res<NoItemBoxes>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    // Issue #187: with a renderer's storage of images (never headless: the bot races' world has
+    // none), the road drawn with its paving and its borders; the materials of the last few
+    // roads' looks kept for the next circuits of the same looks.
+    mut images: Option<ResMut<Assets<Image>>>,
+    mut road_materials: Local<Vec<RoadMaterials>>,
 ) {
     let Some(file) = tracks.get(&handle.0) else {
         return;
@@ -153,7 +159,8 @@ pub fn build_circuit_when_loaded(
         file
     };
     let layout = TrackLayout::new(data);
-    let palette = data.biome().map_or_else(Palette::default, |b| b.palette);
+    // Issue #187: its biome's colors, its own road's in them.
+    let palette = data.palette();
     let generated = mesh::generate(&layout.center, data, &palette);
     light_the_sky(&mut commands, &palette);
 
@@ -164,14 +171,25 @@ pub fn build_circuit_when_loaded(
         perceptual_roughness: 0.9,
         ..default()
     });
-    let mut drawn = generated.combined();
+    // Issue #187: with a renderer, the road's paving and its borders apart, with their
+    // textures; the rest in the one mesh. Headless, everything in the one mesh, as before.
+    let painted = images.as_deref_mut().map(|images| {
+        let look = data.road_look();
+        let road = RoadMaterials::of(&mut road_materials, images, &mut materials, look, &palette);
+        (generated.drawn(), road)
+    });
+    let mut drawn = match &painted {
+        Some((parts, _)) => parts.plain.clone(),
+        None => generated.combined(),
+    };
     // Issue #119: and an open circuit's finish line.
     for line in StartLine::all(&layout.center) {
         drawn.append(&line.mesh(&palette, &layout.lakes));
     }
     // Issue #119: a long open circuit in tiles, each culled on its own (`TILE_SIZE`); a circuit
     // of laps in one mesh, as before.
-    let tiles = if layout.open().is_some() {
+    let open = layout.open().is_some();
+    let tiles = if open {
         drawn.tiles(TILE_SIZE)
     } else {
         vec![drawn]
@@ -184,6 +202,30 @@ pub fn build_circuit_when_loaded(
             MeshMaterial3d(track_material.clone()),
             Transform::default(),
         ));
+    }
+    if let Some((parts, road)) = &painted {
+        for (what, part, material) in [
+            ("paving", &parts.paving, &road.paving),
+            ("borders", &parts.borders, &road.borders),
+        ] {
+            if part.is_empty() {
+                continue;
+            }
+            let tiles = if open {
+                part.tiles(TILE_SIZE)
+            } else {
+                vec![part.clone()]
+            };
+            for tile in &tiles {
+                commands.spawn((
+                    LevelScoped,
+                    Name::new(format!("Track {what}: {}", layout.name)),
+                    Mesh3d(meshes.add(to_painted_mesh(tile))),
+                    MeshMaterial3d(material.clone()),
+                    Transform::default(),
+                ));
+            }
+        }
     }
 
     // Colliders, one per surface. Internal edges are fixed so karts slide along triangle
@@ -334,6 +376,127 @@ pub fn to_mesh(data: &MeshData) -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, data.colors.clone())
     .with_inserted_indices(Indices::U32(data.indices.clone()))
+}
+
+/// Issue #187: a mesh of [`PaintedMesh`]: flat normals, vertex colors and its UVs, for the
+/// materials of the road's paving and borders.
+pub fn to_painted_mesh(data: &PaintedMesh) -> Mesh {
+    let mesh = &data.mesh;
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, mesh.positions.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, mesh.normals.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.clone())
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, mesh.colors.clone())
+    .with_inserted_indices(Indices::U32(mesh.indices.clone()))
+}
+
+/// Issue #187: the materials of a road's look: its paving's and its borders', each with its
+/// texture (`super::paving`, made here), shared by every mesh of the road. Those of the last
+/// [`KEPT_ROADS`] looks are kept for the next circuits that have them (their textures are not made
+/// again: the menu's background races go from circuit to circuit).
+pub struct RoadMaterials {
+    look: RoadLook,
+    asphalt: Rgb,
+    curbs: (Rgb, Rgb),
+    pub paving: Handle<StandardMaterial>,
+    pub borders: Handle<StandardMaterial>,
+}
+
+impl RoadMaterials {
+    /// Those of `look` in `palette`'s colors: the ones kept if they are, else made (and kept,
+    /// first, the oldest dropped beyond [`KEPT_ROADS`]).
+    pub fn of<'a>(
+        kept: &'a mut Vec<RoadMaterials>,
+        images: &mut Assets<Image>,
+        materials: &mut Assets<StandardMaterial>,
+        look: RoadLook,
+        palette: &Palette,
+    ) -> &'a RoadMaterials {
+        let same = kept.iter().position(|k| {
+            k.look == look && k.asphalt == palette.asphalt && k.curbs == palette.curbs
+        });
+        if let Some(i) = same {
+            let found = kept.remove(i);
+            kept.insert(0, found);
+        } else {
+            let started = bevy::platform::time::Instant::now();
+            let paving = paving::paving_texture(look.paving, palette.asphalt, look.accent);
+            let borders = paving::border_texture(look.border, palette.curbs);
+            let made = started.elapsed();
+            let bytes = paving.data.len() + borders.data.len();
+            info!(
+                "road: {:?} and {:?}, textures made in {:.1} ms ({:.1} MB with their mipmaps)",
+                look.paving,
+                look.border,
+                made.as_secs_f64() * 1000.0,
+                bytes as f64 / 1e6
+            );
+            let paving_material = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(texture_image(&paving, true))),
+                perceptual_roughness: paving::roughness(look.paving),
+                ..default()
+            });
+            let borders_material = materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(texture_image(&borders, false))),
+                perceptual_roughness: 0.85,
+                ..default()
+            });
+            kept.insert(
+                0,
+                RoadMaterials {
+                    look,
+                    asphalt: palette.asphalt,
+                    curbs: palette.curbs,
+                    paving: paving_material,
+                    borders: borders_material,
+                },
+            );
+            kept.truncate(KEPT_ROADS);
+        }
+        &kept[0]
+    }
+}
+
+/// Issue #187: how many roads' materials are kept (about 2 MB of textures each).
+pub const KEPT_ROADS: usize = 4;
+
+/// Issue #187: a texture of `super::paving` as an image: sRGB, its mipmaps, filtered (and
+/// anisotropic where the GPU can: a road seen at a grazing angle stays sharp), repeating along
+/// (and across when `repeat_across`: the paving; a border is its whole width).
+fn texture_image(texture: &paving::Texture, repeat_across: bool) -> Image {
+    use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: texture.width,
+            height: texture.height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.data = Some(texture.data.clone());
+    image.texture_descriptor.mip_level_count = texture.mips;
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: if repeat_across {
+            ImageAddressMode::Repeat
+        } else {
+            ImageAddressMode::ClampToEdge
+        },
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: 8,
+        ..default()
+    });
+    image
 }
 
 fn spawn_trimesh(
@@ -525,6 +688,15 @@ fn spawn_glide_ramps(
     }
 }
 
+/// The boost pads' color (sRGB), orange (issue #187: it stands out on every road, a test).
+pub const BOOST_PAD_COLOR: Rgb = (1.0, 0.55, 0.1);
+/// The anti-gravity zones' pads' color (sRGB, issue #78), cyan blue.
+pub const ANTI_GRAVITY_PAD_COLOR: Rgb = (0.1, 0.65, 1.0);
+
+fn srgb((r, g, b): Rgb) -> Color {
+    Color::srgb(r, g, b)
+}
+
 fn spawn_trick_ramps(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -617,7 +789,7 @@ fn spawn_spots(
 
     let pad_mesh = meshes.add(Cuboid::new(BOOST_PAD_SIZE.x, 0.04, BOOST_PAD_SIZE.y));
     let pad_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.55, 0.1),
+        base_color: srgb(BOOST_PAD_COLOR),
         emissive: LinearRgba::rgb(0.6, 0.25, 0.0),
         ..default()
     });
@@ -637,7 +809,7 @@ fn spawn_spots(
             zone_pad_material
                 .get_or_insert_with(|| {
                     materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.1, 0.65, 1.0),
+                        base_color: srgb(ANTI_GRAVITY_PAD_COLOR),
                         emissive: LinearRgba::rgb(0.05, 0.35, 0.8),
                         ..default()
                     })

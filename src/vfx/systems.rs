@@ -1063,8 +1063,11 @@ pub(super) fn follow_the_ground(
     let palette = layout
         .and(handle)
         .zip(tracks)
-        .and_then(|(handle, tracks)| tracks.get(&handle.0)?.biome())
-        .map(|biome| biome.palette);
+        // Issue #187: its road's own colors in its biome's (the dust of its paving).
+        .and_then(|(handle, tracks)| {
+            let data = tracks.get(&handle.0)?;
+            data.biome().map(|_| data.palette())
+        });
     let ground = palette.map(|palette| ground_dust(&palette, tuning.world.ground_lighten));
     // Issue #174: the road's too (the tint of the tyres' smoke on it).
     let road = palette.map(|palette| road_dust(&palette, tuning.world.ground_lighten));

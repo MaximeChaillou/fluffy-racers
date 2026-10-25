@@ -15,6 +15,15 @@
 //   for the small ones: they cost little without shadows.
 // - `rows`: pieces in a row along the walls, every `spacing` meters from `offset`, facing the
 //   track (`yaw` in degrees turns them more), `gap` m beyond the walls. `models` in turn.
+// - `road` (issue #187, required): how its road is dressed, **purely what it looks like** (the
+//   grip, the speed, the off-road, the sounds and the bots are the same on every road): its
+//   `paving` (Asphalt, Dirt, Cobbles, Flagstones, Planks, PackedSand, CrackedEarth, ForestPath,
+//   Sugar, Licorice, GroomedSnow, Leaves), its `border` in place of the curbs (Stripes, Logs,
+//   Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
+//   moss, the leaves). The palette's `asphalt` is the paving's mean color (its texture is drawn
+//   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
+//   own (`road` in its file, its `asphalt` and `curbs` too). Readability first: the road's color
+//   stays far from the ground's, the shoulders' and the sand's, and the items' (tests).
 // - `music` (issue #104): the music of its circuits that name none of their own, a piece of
 //   `assets/data/music.ron`.
 // - Pieces never stand on the road, the curbs, the shoulders or the walls: where there is no
@@ -49,14 +58,17 @@
             ambient: (0.92, 0.96, 1.0),
             ambient_brightness: 700.0,
             ground: (0.42, 0.72, 0.40),
-            asphalt: (0.42, 0.43, 0.48),
-            curbs: ((0.85, 0.20, 0.20), (0.95, 0.95, 0.95)),
+            asphalt: (0.70, 0.64, 0.55),
+            curbs: ((0.42, 0.29, 0.18), (0.86, 0.70, 0.48)),
             shoulder: (0.40, 0.70, 0.36),
             sand: (0.90, 0.80, 0.55),
             walls: ((0.95, 0.95, 0.96), (0.91, 0.36, 0.34)),
             wall_top: (0.98, 0.98, 0.98),
             skirt: (0.62, 0.50, 0.40),
         ),
+        // Issue #187: a country lane of pale packed earth and pebbles (browner, the Cac's and
+        // the croquettes would melt into it), logs along it.
+        road: (paving: Dirt, border: Logs),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -115,14 +127,16 @@
             ambient: (1.0, 0.92, 0.96),
             ambient_brightness: 750.0,
             ground: (0.96, 0.74, 0.84),
-            asphalt: (0.47, 0.37, 0.45),
-            curbs: ((0.96, 0.45, 0.66), (0.98, 0.96, 0.97)),
+            asphalt: (0.88, 0.55, 0.66),
+            curbs: ((0.36, 0.70, 0.93), (0.99, 0.97, 0.95)),
             shoulder: (0.66, 0.90, 0.80),
             sand: (0.98, 0.94, 0.86),
             walls: ((0.99, 0.97, 0.98), (0.95, 0.52, 0.70)),
             wall_top: (0.99, 0.97, 0.98),
             skirt: (0.52, 0.33, 0.27),
         ),
+        // Issue #187: a band of raspberry sugar striped with white, sky blue sweets along it.
+        road: (paving: Sugar, border: Candies, accent: (1.0, 0.98, 0.96)),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -184,7 +198,7 @@
             ambient: (0.90, 0.95, 1.0),
             ambient_brightness: 760.0,
             ground: (0.92, 0.94, 0.98),
-            asphalt: (0.36, 0.38, 0.46),
+            asphalt: (0.74, 0.72, 0.68),
             curbs: ((0.80, 0.16, 0.22), (0.97, 0.97, 0.98)),
             shoulder: (0.84, 0.89, 0.95),
             sand: (0.98, 0.99, 1.0),
@@ -192,6 +206,9 @@
             wall_top: (0.98, 0.99, 1.0),
             skirt: (0.52, 0.50, 0.54),
         ),
+        // Issue #187: trodden groomed snow, a warm grey (lighter, it would melt into the snow
+        // beside; bluer, the gift boxes into it), red and white markers along it.
+        road: (paving: GroomedSnow, border: Stripes),
         far: (
             fog: (200.0, 1200.0),
             layers: [
@@ -260,7 +277,7 @@
             ambient: (1.0, 0.97, 0.90),
             ambient_brightness: 720.0,
             ground: (0.93, 0.84, 0.62),
-            asphalt: (0.50, 0.48, 0.50),
+            asphalt: (0.56, 0.50, 0.46),
             curbs: ((0.15, 0.55, 0.85), (0.97, 0.97, 0.97)),
             shoulder: (0.86, 0.78, 0.55),
             sand: (0.97, 0.90, 0.70),
@@ -268,6 +285,9 @@
             wall_top: (0.98, 0.98, 0.97),
             skirt: (0.66, 0.52, 0.36),
         ),
+        // Issue #187: the weathered grey planks of a boardwalk (browner, the croquettes and the
+        // bee would melt into them), a blue and white border like the beach towels.
+        road: (paving: Planks, border: Stripes),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -326,14 +346,17 @@
             ambient: (0.94, 1.0, 0.98),
             ambient_brightness: 730.0,
             ground: (0.80, 0.84, 0.52),
-            asphalt: (0.46, 0.44, 0.52),
-            curbs: ((0.10, 0.70, 0.66), (0.97, 0.97, 0.97)),
+            asphalt: (0.58, 0.50, 0.42),
+            curbs: ((0.62, 0.60, 0.58), (0.95, 0.93, 0.88)),
             shoulder: (0.52, 0.76, 0.40),
             sand: (0.96, 0.88, 0.66),
             walls: ((0.97, 0.96, 0.92), (0.96, 0.46, 0.40)),
             wall_top: (0.99, 0.98, 0.95),
             skirt: (0.58, 0.50, 0.44),
         ),
+        // Issue #187: damp packed sand, rippled, darker and greyer than the dry sand of its
+        // patches (and than the bee); white pebbles along it.
+        road: (paving: PackedSand, border: Stones),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -399,14 +422,17 @@
             ambient: (1.0, 0.92, 0.84),
             ambient_brightness: 700.0,
             ground: (0.88, 0.70, 0.62),
-            asphalt: (0.32, 0.29, 0.31),
-            curbs: ((0.95, 0.50, 0.22), (0.98, 0.94, 0.86)),
+            asphalt: (0.66, 0.44, 0.46),
+            curbs: ((0.55, 0.45, 0.40), (0.85, 0.75, 0.62)),
             shoulder: (0.47, 0.62, 0.40),
             sand: (0.93, 0.80, 0.62),
             walls: ((0.97, 0.93, 0.85), (0.88, 0.44, 0.26)),
             wall_top: (0.99, 0.97, 0.93),
             skirt: (0.72, 0.38, 0.26),
         ),
+        // Issue #187: the rose clay of the canyon, dried and cracked (redder or browner, the Cac's
+        // and the croquettes would melt into it), its stones along it.
+        road: (paving: CrackedEarth, border: Stones),
         far: (
             fog: (240.0, 1400.0),
             layers: [
@@ -469,14 +495,17 @@
             ambient: (0.86, 0.96, 0.88),
             ambient_brightness: 720.0,
             ground: (0.30, 0.50, 0.30),
-            asphalt: (0.37, 0.33, 0.30),
-            curbs: ((0.86, 0.28, 0.32), (0.97, 0.95, 0.88)),
+            asphalt: (0.30, 0.25, 0.21),
+            curbs: ((0.40, 0.44, 0.34), (0.66, 0.66, 0.58)),
             shoulder: (0.36, 0.56, 0.30),
             sand: (0.50, 0.52, 0.40),
             walls: ((0.95, 0.92, 0.84), (0.82, 0.30, 0.32)),
             wall_top: (0.98, 0.96, 0.90),
             skirt: (0.45, 0.35, 0.25),
         ),
+        // Issue #187: a forest path: dark humus (lighter, the Cac's would melt into it), dark moss
+        // (lighter, it would melt into the grass) and roots, mossy stones along it.
+        road: (paving: ForestPath, border: Stones, accent: (0.26, 0.32, 0.12)),
         far: (
             fog: (190.0, 1150.0),
             layers: [
@@ -538,14 +567,17 @@
             ambient: (1.0, 0.88, 0.84),
             ambient_brightness: 700.0,
             ground: (0.62, 0.52, 0.52),
-            asphalt: (0.41, 0.37, 0.43),
-            curbs: ((0.56, 0.40, 0.78), (0.97, 0.95, 0.98)),
+            asphalt: (0.40, 0.34, 0.40),
+            curbs: ((0.70, 0.62, 0.66), (0.92, 0.88, 0.86)),
             shoulder: (0.46, 0.62, 0.40),
             sand: (0.92, 0.84, 0.74),
             walls: ((0.97, 0.95, 0.97), (0.60, 0.44, 0.80)),
             wall_top: (0.99, 0.98, 0.99),
             skirt: (0.86, 0.82, 0.78),
         ),
+        // Issue #187: slabs of dark plum slate (the ground around is a mauve grey: darker, the
+        // road stands out), pale stones along it.
+        road: (paving: Flagstones, border: Stones),
         far: (
             fog: (240.0, 1400.0),
             layers: [
@@ -609,7 +641,7 @@
             ambient: (1.0, 0.86, 0.78),
             ambient_brightness: 680.0,
             ground: (0.46, 0.54, 0.30),
-            asphalt: (0.36, 0.33, 0.40),
+            asphalt: (0.33, 0.24, 0.22),
             curbs: ((0.96, 0.56, 0.16), (0.24, 0.18, 0.30)),
             shoulder: (0.40, 0.50, 0.30),
             sand: (0.86, 0.70, 0.46),
@@ -617,6 +649,9 @@
             wall_top: (0.99, 0.93, 0.82),
             skirt: (0.52, 0.40, 0.30),
         ),
+        // Issue #187: dark earth strewn with red fallen leaves (orange ones, the croquettes and
+        // the boomerang would melt into them), a border of pumpkin orange and night purple.
+        road: (paving: Leaves, border: Stripes, accent: (0.66, 0.18, 0.12)),
         far: (
             fog: (200.0, 1250.0),
             layers: [
@@ -684,7 +719,7 @@
             ambient: (0.94, 0.95, 1.0),
             ambient_brightness: 700.0,
             ground: (0.47, 0.70, 0.38),
-            asphalt: (0.50, 0.46, 0.44),
+            asphalt: (0.66, 0.58, 0.52),
             curbs: ((0.30, 0.42, 0.82), (0.99, 0.86, 0.40)),
             shoulder: (0.44, 0.68, 0.36),
             sand: (0.90, 0.82, 0.62),
@@ -692,6 +727,8 @@
             wall_top: (0.97, 0.93, 0.85),
             skirt: (0.66, 0.60, 0.54),
         ),
+        // Issue #187: the cobbles of the kingdom, a border in its colors, blue and gold.
+        road: (paving: Cobbles, border: Stripes),
         far: (
             fog: (220.0, 1300.0),
             layers: [

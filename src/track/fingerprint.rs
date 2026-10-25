@@ -25,14 +25,18 @@
 //! - **Computed once, when the circuit's file is read** (`TrackData::from_ron`, so the asset
 //!   loader too): nothing during the race.
 
-use super::biome::{BiomeData, Palette, PropRow, Rgb, ScatterGroup, Side};
+use super::biome::{
+    BiomeData, Border, Palette, Paving, PropRow, Rgb, RoadLook, ScatterGroup, Side,
+};
 use super::far::{FarDecor, FarLayer};
 
 /// The version of what is hashed: the first bytes of every fingerprint. To change only if the
 /// encoding below changes (every record then starts from zero, which is fine: Max, #157).
 /// Issue #146: version 2, the biome's far decor hashed too (every biome got one: every record
-/// started from zero anyway).
-const ENCODING: &[u8] = b"fluffy-racers circuit fingerprint 2\n";
+/// started from zero anyway). Issue #187: version 3, the biome's road (its paving, its borders)
+/// hashed too (every biome got one, and new colors for its road: every record started from zero
+/// anyway).
+const ENCODING: &[u8] = b"fluffy-racers circuit fingerprint 3\n";
 
 /// FNV-1a, 64 bits (the parameters of its authors: offset basis and prime).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +169,7 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
         // The music: not part of the circuit (Max, #157).
         music: _,
         far,
+        road,
     } = biome;
     hasher.str(name);
     let Palette {
@@ -233,6 +238,40 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
     hasher.u64(layers.len() as u64);
     for layer in layers {
         write_far_layer(hasher, layer);
+    }
+    // Issue #187: its road, after the rest.
+    write_road(hasher, road);
+}
+
+/// A road's look (issue #187): its paving and its border (their place in `Paving::ALL` and
+/// `Border::ALL`), then its colors, each `None` as a 0 and `Some` as a 1 before it.
+fn write_road(hasher: &mut Fnv1a, road: &RoadLook) {
+    let RoadLook {
+        paving,
+        border,
+        accent,
+        asphalt,
+        curbs,
+    } = *road;
+    let place = |all: &[bool]| all.iter().position(|b| *b).unwrap_or(0) as u8;
+    hasher.u8(place(&Paving::ALL.map(|p| p == paving)));
+    hasher.u8(place(&Border::ALL.map(|b| b == border)));
+    for color in [accent, asphalt] {
+        match color {
+            None => hasher.u8(0),
+            Some(rgb) => {
+                hasher.u8(1);
+                hasher.rgb(rgb);
+            }
+        }
+    }
+    match curbs {
+        None => hasher.u8(0),
+        Some((a, b)) => {
+            hasher.u8(1);
+            hasher.rgb(a);
+            hasher.rgb(b);
+        }
     }
 }
 
@@ -437,18 +476,27 @@ mod tests {
                     },
                 ],
             },
+            // Issue #187: a road with an accent.
+            road: RoadLook {
+                paving: Paving::Planks,
+                border: Border::Logs,
+                accent: Some((0.6, 0.45, 0.3)),
+                asphalt: None,
+                curbs: None,
+            },
         };
         // Checked by a second implementation of the encoding, outside the game (Python: the
-        // same bytes, `struct.pack('<f')` for the floats): the same values.
+        // same bytes, `struct.pack('<f')` for the floats): the same values. Issue #187: encoding
+        // 3 (the road), written anew and checked again the same way.
         assert_eq!(
             circuit_fingerprint(text, Some(&biome)),
-            0xe934_1559_e008_891c,
+            0xbb4b_dd31_3fbe_51be,
             "{:#018x}",
             circuit_fingerprint(text, Some(&biome))
         );
         assert_eq!(
             circuit_fingerprint(text, None),
-            0x03d2_8d6b_f0e6_5e70,
+            0x6d40_754e_a452_87ad,
             "{:#018x}",
             circuit_fingerprint(text, None)
         );
@@ -457,7 +505,7 @@ mod tests {
         music.music = None;
         assert_eq!(
             circuit_fingerprint(&text.replace('\n', "\r\n"), Some(&music)),
-            0xe934_1559_e008_891c
+            0xbb4b_dd31_3fbe_51be
         );
     }
 
@@ -575,6 +623,12 @@ mod tests {
             }),
             ("the sky's color", &|b| b.palette.sky.2 -= 0.01),
             ("the light", &|b| b.palette.ambient_brightness += 1.0),
+            // Issue #187: its road's look.
+            ("the road's paving", &|b| b.road.paving = Paving::Cobbles),
+            ("the road's border", &|b| b.road.border = Border::Candies),
+            ("the road's accent", &|b| {
+                b.road.accent = Some((0.5, 0.5, 0.5))
+            }),
             // Issue #146: its far decor.
             ("the fog", &|b| b.far.fog.1 += 10.0),
             ("a far range higher", &|b| {

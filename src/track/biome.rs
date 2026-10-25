@@ -64,6 +64,148 @@ impl Default for Palette {
     }
 }
 
+/// Issue #187: **the drawing of a road's surface** (GD § 16: « le revêtement est un habillage »):
+/// purely what it looks like. The grip, the speed, the off-road, the sounds and the bots are the
+/// same on every one. Its mean color is the palette's `asphalt` (the texture is drawn around it:
+/// `super::paving`), so the vignette, the dust and the readability tests see the road as drawn.
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Paving {
+    /// A fine grained asphalt (a circuit without biome: the tests' circuits).
+    #[default]
+    Asphalt,
+    /// Packed earth, strewn with small pebbles (a country lane).
+    Dirt,
+    /// Rounded cobbles, in rows across the road (a town's street).
+    Cobbles,
+    /// Big irregular stone slabs, their joints dark.
+    Flagstones,
+    /// Planks across the road, a dark gap between them, their ends staggered (a pontoon).
+    Planks,
+    /// Damp packed sand, rippled across the road, a few shells.
+    PackedSand,
+    /// Red earth, dried and cracked in plates.
+    CrackedEarth,
+    /// A forest path: dark earth, patches of moss (the `accent`), roots across.
+    ForestPath,
+    /// A band of sugar, striped along the road (the `accent` its second color), sparkling.
+    Sugar,
+    /// Shiny liquorice, its ridges along the road.
+    Licorice,
+    /// Groomed snow, its fine ridges along the road, sparkling.
+    GroomedSnow,
+    /// Earth strewn with fallen leaves (the `accent`).
+    Leaves,
+}
+
+impl Paving {
+    /// Whether its drawing follows the road (its UVs along and across it: planks and cobbles in
+    /// rows across it, fanning out in a turn as they are laid; stripes and ridges along it) or
+    /// lies on the ground whatever way the road goes (its UVs the ground's own meters, east and
+    /// south: never stretched in a turn; earth, sand, slabs, cracks, leaves, moss). In the
+    /// anti-gravity zones (a road on a wall, a ceiling), every paving follows the road.
+    pub fn follows_the_road(self) -> bool {
+        matches!(
+            self,
+            Paving::Cobbles
+                | Paving::Planks
+                | Paving::Sugar
+                | Paving::Licorice
+                | Paving::GroomedSnow
+        )
+    }
+
+    pub const ALL: [Paving; 12] = [
+        Paving::Asphalt,
+        Paving::Dirt,
+        Paving::Cobbles,
+        Paving::Flagstones,
+        Paving::Planks,
+        Paving::PackedSand,
+        Paving::CrackedEarth,
+        Paving::ForestPath,
+        Paving::Sugar,
+        Paving::Licorice,
+        Paving::GroomedSnow,
+        Paving::Leaves,
+    ];
+}
+
+/// Issue #187: the drawing of the road's borders (the curbs), in the palette's two `curbs` colors.
+/// Purely what they look like, like the [`Paving`]: a border is a curb to the karts whatever it is
+/// drawn as. The anti-gravity zones keep their blue and white curbs (`mesh::ANTI_GRAVITY_CURBS`).
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Border {
+    /// Stripes of the two colors, 2 m long, rounded like a racing curb.
+    #[default]
+    Stripes,
+    /// Logs lying across the border, their cut ends outside (the first color their bark, the
+    /// second their wood).
+    Logs,
+    /// A row of rounded stones, in shades between the two colors.
+    Stones,
+    /// Round sweets with a swirl (the first color, and shades of it) on a ground of sugar (the
+    /// second).
+    Candies,
+}
+
+impl Border {
+    pub const ALL: [Border; 4] = [
+        Border::Stripes,
+        Border::Logs,
+        Border::Stones,
+        Border::Candies,
+    ];
+}
+
+/// Issue #187: how a road is dressed: its [`Paving`] and its [`Border`]. A biome has one
+/// (`road` in `biomes.ron`); a circuit may have its own (`road` in its file), which may also
+/// change the colors of its biome's road (`asphalt`, `curbs`: its mean color and its borders').
+/// Purely what it looks like: nothing of it reaches the race.
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoadLook {
+    pub paving: Paving,
+    #[serde(default)]
+    pub border: Border,
+    /// The paving's second color, for those that have one (`Sugar`'s stripes, `ForestPath`'s moss,
+    /// `Leaves`' leaves). None: a shade of its mean color.
+    #[serde(default)]
+    pub accent: Option<Rgb>,
+    /// Only in a circuit's file: its road's mean color, in place of its biome's `asphalt`.
+    #[serde(default)]
+    pub asphalt: Option<Rgb>,
+    /// Only in a circuit's file: its borders' colors, in place of its biome's `curbs`.
+    #[serde(default)]
+    pub curbs: Option<(Rgb, Rgb)>,
+}
+
+impl RoadLook {
+    /// `palette` with this road's colors, if it has its own (a circuit's road).
+    pub fn paint(&self, palette: &Palette) -> Palette {
+        Palette {
+            asphalt: self.asphalt.unwrap_or(palette.asphalt),
+            curbs: self.curbs.unwrap_or(palette.curbs),
+            ..*palette
+        }
+    }
+
+    /// Checks its colors (each from 0 to 1).
+    pub fn validate(&self) -> Result<(), String> {
+        let colors = self
+            .accent
+            .into_iter()
+            .chain(self.asphalt)
+            .chain(self.curbs.into_iter().flat_map(|(a, b)| [a, b]));
+        if colors
+            .clone()
+            .any(|(r, g, b)| [r, g, b].iter().any(|v| !(0.0..=1.0).contains(v)))
+        {
+            return Err("road: a color out of 0..=1".to_string());
+        }
+        Ok(())
+    }
+}
+
 /// The ambient light without a biome (the test ground too), cd/m².
 pub const DEFAULT_AMBIENT_BRIGHTNESS: f32 = 600.0;
 
@@ -161,6 +303,9 @@ pub struct BiomeData {
     /// Issue #146: its far decor (`super::far`): the ground beyond, what closes the horizon,
     /// the pieces at mid-distance, the fog. Every biome has one.
     pub far: FarDecor,
+    /// Issue #187: its road's look (required): its paving and its borders, in its palette's
+    /// `asphalt` and `curbs`.
+    pub road: RoadLook,
 }
 
 impl BiomeData {
@@ -214,6 +359,10 @@ impl BiomeData {
             check_footprint(row.radius, row.gap, row.gap).or_else(fail)?;
         }
         self.far.validate().or_else(fail)?;
+        self.road.validate().or_else(fail)?;
+        if self.road.asphalt.is_some() || self.road.curbs.is_some() {
+            return fail("road: its colors are its palette's (asphalt, curbs)".to_string());
+        }
         for group in &self.scatter {
             check_models(&group.models).or_else(fail)?;
             let (low, high) = group.height;
@@ -392,10 +541,13 @@ mod tests {
             // the far decor is required, its fog written, no layer).
             let one = |b: &BiomeData| {
                 format!(
-                    "(name: {:?}, palette: {}, far: (fog: {:?}, layers: []), scatter: [{}])",
+                    "(name: {:?}, palette: {}, far: (fog: {:?}, layers: []), road: (paving: \
+                     {:?}, border: {:?}), scatter: [{}])",
                     b.name,
                     palette_ron(&b.palette),
                     b.far.fog,
+                    b.road.paving,
+                    b.road.border,
                     b.scatter
                         .iter()
                         .map(|g| format!(

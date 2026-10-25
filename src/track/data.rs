@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use super::biome::{self, BiomeData, Side};
+use super::biome::{self, BiomeData, Palette, RoadLook, Side};
 use super::far::FarLayer;
 use super::fingerprint;
 
@@ -121,6 +121,10 @@ pub struct TrackData {
     /// placed after it. Only on a circuit with a biome.
     #[serde(default)]
     pub far_decor: Vec<FarLayer>,
+    /// Issue #187: its own road's look (`super::biome::RoadLook`: its paving, its borders, and
+    /// maybe their colors), in place of its biome's. None: its biome's. Purely what it looks like.
+    #[serde(default)]
+    pub road: Option<RoadLook>,
     /// Issue #119 (GD § 1, « Les courses longues »): an **open** circuit, a long race from its
     /// start to a finish elsewhere, in sections instead of laps (`open: (finish: 600.0, ...)`).
     /// None: a circuit of laps, as before.
@@ -839,6 +843,10 @@ impl TrackData {
         self.validate_hazards()?;
         self.validate_open()?;
         self.validate_relief()?;
+        // Issue #187: its own road's look.
+        if let Some(road) = &self.road {
+            road.validate().or_else(fail)?;
+        }
         // Issue #146: its own far decor, on top of its biome's.
         if !self.far_decor.is_empty() && self.biome.is_none() {
             return fail("far_decor without a biome".to_string());
@@ -1339,6 +1347,21 @@ impl TrackData {
     /// Issue #146: its far decor, its biome's and its own layers (None without a biome).
     pub fn far_decor(&self) -> Option<super::far::FarDecor> {
         super::far::far_decor_of(self.biome(), &self.far_decor)
+    }
+
+    /// Issue #187: the look of its road: its own (`road` in its file), else its biome's, else the
+    /// asphalt of a circuit without biome.
+    pub fn road_look(&self) -> RoadLook {
+        self.road
+            .or_else(|| self.biome().map(|biome| biome.road))
+            .unwrap_or_default()
+    }
+
+    /// Its colors: its biome's palette (or the one without biome), its road's own colors in it
+    /// (issue #187: a circuit's `road` may change its `asphalt` and its `curbs`).
+    pub fn palette(&self) -> Palette {
+        let palette = self.biome().map_or_else(Palette::default, |b| b.palette);
+        self.road.map_or(palette, |road| road.paint(&palette))
     }
 
     /// The circuit's biome (None: no biome, or one the game does not have, which `validate`

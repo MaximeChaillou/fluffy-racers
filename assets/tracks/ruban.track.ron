@@ -17,6 +17,10 @@
     // Dressing (issue #11): the pastry land (`assets/data/biomes.ron`), the same every time
     // (seed), and a giant cake in the infield.
     biome: "Guimauve",
+    // Issue #187: its own road, of shiny liquorice (its ribbon), sweets along it; the anti-gravity
+    // zones keep their blue and white curbs and stripes.
+    road: (paving: Licorice, border: Candies, asphalt: (0.30, 0.20, 0.32),
+           curbs: ((0.98, 0.55, 0.75), (0.99, 0.96, 0.90))),
     // Issue #104: its music (`assets/data/music.ron`).
     music: "fever-stadium",
     decor_seed: 78,

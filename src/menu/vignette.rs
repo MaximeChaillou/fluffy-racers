@@ -760,9 +760,9 @@ fn srgb(color: bevy::color::Color) -> [f32; 3] {
     [c.red, c.green, c.blue]
 }
 
-/// The colors of a vignette of a circuit of `palette`: its asphalt for the road; the charter's
-/// Prune for the anti-gravity, Lagon for the water, Mangue for the glider; a white edge, the
-/// Myrtille ink.
+/// The colors of a vignette of a circuit of `palette`: its asphalt for the road (issue #187: its
+/// paving's mean color, the circuit's own road's in `TrackData::palette`); the charter's Prune for
+/// the anti-gravity, Lagon for the water, Mangue for the glider; a white edge, the Myrtille ink.
 pub fn map_colors(palette: &Palette) -> MapColors {
     let (r, g, b) = palette.asphalt;
     MapColors {
@@ -781,7 +781,8 @@ pub fn map_colors(palette: &Palette) -> MapColors {
 pub fn draw(data: &TrackData, mirror: bool, big: bool) -> MapImage {
     let style = map_style(big);
     let aspect = (style.width as f32 * style.inner.x) / (style.height as f32 * style.inner.y);
-    let palette = data.biome().map_or_else(Palette::default, |b| b.palette);
+    // Issue #187: its road's color, its own if it has one (`TrackData::palette`).
+    let palette = data.palette();
     render(
         &track_map(data, mirror, aspect),
         &style,
@@ -1072,7 +1073,8 @@ mod tests {
     }
 
     /// Issue #181: the special stretches in color on the line: the anti-gravity (Prune), the
-    /// water (Lagon), the glider (Mangue); the road in its biome's asphalt.
+    /// water (Lagon), the glider (Mangue); the road in its biome's asphalt. Issue #187: in the
+    /// color of its paving (its mean), the circuit's own road's if it has one.
     #[test]
     fn the_special_stretches_are_colored() {
         let wanted = [
@@ -1080,10 +1082,12 @@ mod tests {
             ("lagon.track.ron", Zone::Water),
             ("lagon.track.ron", Zone::Glide),
             ("prairie.track.ron", Zone::Road),
+            // Issue #187: a road of its own (the liquorice), in its own color.
+            ("ruban.track.ron", Zone::Road),
         ];
         for (file, zone) in wanted {
             let data = circuit(file);
-            let palette = data.biome().unwrap().palette;
+            let palette = data.palette();
             let colors = map_colors(&palette);
             let style = map_style(true);
             let map = track_map(&data, false, aspect(&style));
@@ -1120,6 +1124,25 @@ mod tests {
         let col = map_colors(&circuit("col.track.ron").biome().unwrap().palette);
         let prairie = map_colors(&circuit("prairie.track.ron").biome().unwrap().palette);
         assert_ne!(col.road, prairie.road, "each biome its asphalt");
+        // Issue #187: the road's color is its paving's (its mean), the circuit's own if it has
+        // one: the Ruban Réglisse's liquorice, not its biome's sugar.
+        for file in ["prairie.track.ron", "ruban.track.ron", "col.track.ron"] {
+            let data = circuit(file);
+            let look = data.road_look();
+            let mean = crate::track::paving::paving_texture(
+                look.paving,
+                data.palette().asphalt,
+                look.accent,
+            )
+            .mean();
+            let road = map_colors(&data.palette()).road;
+            for (c, m) in road.iter().zip([mean.0, mean.1, mean.2]) {
+                assert!((c - m).abs() < 0.02, "{file}: {road:?} {mean:?}");
+            }
+        }
+        let ruban = map_colors(&circuit("ruban.track.ron").palette());
+        let anneau = map_colors(&circuit("anneau.track.ron").palette());
+        assert_ne!(ruban.road, anneau.road, "the liquorice, not the sugar");
     }
 
     /// Issue #181: the start line is a checker on a circuit of laps (light and dark cells); a
