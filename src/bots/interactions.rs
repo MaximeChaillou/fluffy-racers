@@ -5,7 +5,8 @@
 //! - **an occasion** is a kart coming in reach while the paw is ready (GD § 15). It strikes in
 //!   `strike_chance` of them (Easy 10 %, Normal 30 %, Hard 60 %), never in its own drift or hop
 //!   (it keeps its line), never at the same kart twice within `interaction_retarget` (5 s). A Hard
-//!   bot prefers to push toward the nearer edge of the track (`strike_edge_bias`);
+//!   bot prefers to push toward the nearer edge of the track (`strike_edge_bias`), and strikes
+//!   almost always a kart its push would take off the road (issue #196: `strike_payoff_chance`);
 //! - **it grabs** a faster kart passing it (`grab_min_speed_gain`, a boost) in `grab_chance` of
 //!   the occasions (Easy never), holds it `grab_hold`, then lets go; a Hard bot throws it away
 //!   from itself (`throw`);
@@ -34,6 +35,9 @@ pub struct ReachKart {
     pub faster_by: f32,
     /// It is on the side of the track's nearer edge (a wall, the grass, the void).
     pub toward_edge: bool,
+    /// Issue #196: a strike would push it off the road (it is near the edge on the side of the
+    /// push: into the grass, the void, against a wall).
+    pub pays_off: bool,
 }
 
 /// What the bot knows about its paw and the karts in reach this tick.
@@ -241,10 +245,12 @@ pub fn paw_buttons(
         } else {
             1.0 - skill.strike_edge_bias
         };
-        if brain
-            .rng
-            .chance((skill.strike_chance * bias).clamp(0.0, 1.0))
-        {
+        let mut chance = skill.strike_chance * bias;
+        // Issue #196: where the push takes it off the road, a Hard bot (almost) always strikes.
+        if kart.pays_off {
+            chance = chance.max(skill.strike_payoff_chance);
+        }
+        if brain.rng.chance(chance.clamp(0.0, 1.0)) {
             brain.went_for(kart.entity);
             brain.strikes += 1;
             brain.plan = PawPlan::Tap;
@@ -273,6 +279,7 @@ mod tests {
             ahead: false,
             faster_by: 0.0,
             toward_edge: false,
+            pays_off: false,
         }
     }
 
@@ -291,6 +298,11 @@ mod tests {
     /// Share of the occasions a bot of `difficulty` strikes at: a new kart comes in reach every
     /// other tick.
     fn strike_rate(difficulty: BotDifficulty, toward_edge: bool) -> f32 {
+        strike_rate_where(difficulty, toward_edge, false)
+    }
+
+    /// [`strike_rate`], the push taking the kart off the road (`pays_off`) or not.
+    fn strike_rate_where(difficulty: BotDifficulty, toward_edge: bool, pays_off: bool) -> f32 {
         let tuning = BotTuning::default();
         let skill = *tuning.skill(difficulty);
         let mut struck = 0;
@@ -299,6 +311,7 @@ mod tests {
             let mut brain = BotPawBrain::new(seed);
             let kart = ReachKart {
                 toward_edge,
+                pays_off,
                 ..beside(7)
             };
             let buttons = paw_buttons(&mut brain, &skill, &tuning, &senses(&[kart]));
@@ -328,6 +341,25 @@ mod tests {
             strike_rate(BotDifficulty::Normal, false),
         );
         assert!((normal.0 - normal.1).abs() < 0.04, "{normal:?}");
+    }
+
+    /// Issue #196 (« les bots Difficile utilisent la patte aux endroits où elle rapporte »): a
+    /// Hard bot strikes 90 % of the karts its push would take off the road (the grass, the void,
+    /// a wall), against 60 % on average elsewhere; the Easy and Normal bots make no difference.
+    #[test]
+    fn hard_bots_strike_where_the_push_takes_a_kart_off_the_road() {
+        let hard = strike_rate_where(BotDifficulty::Hard, true, true);
+        assert!((hard - 0.9).abs() < 0.03, "{hard}");
+        assert!(hard > strike_rate(BotDifficulty::Hard, true) + 0.05);
+        for difficulty in [BotDifficulty::Easy, BotDifficulty::Normal] {
+            for toward_edge in [false, true] {
+                assert_eq!(
+                    strike_rate_where(difficulty, toward_edge, true),
+                    strike_rate(difficulty, toward_edge),
+                    "{difficulty:?}"
+                );
+            }
+        }
     }
 
     /// A strike is a press of one tick (released at once, the strike goes on the release); a

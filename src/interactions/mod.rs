@@ -90,7 +90,8 @@ pub struct KartStruck {
     pub striker_position: Vec3,
     /// Direction of the push: horizontal, unit (world).
     pub direction: Vec3,
-    /// Push speed (m/s): `strike_push_speed`, the Weights and a throw's factor applied.
+    /// Push speed (m/s): `strike_push_speed`, the Weights and a throw's factor applied (the kart
+    /// struck caps it at `strike_push_max`).
     pub push: f32,
     pub throw: bool,
 }
@@ -633,7 +634,9 @@ fn receive_interactions(
         let keep = 1.0 - tuning.strike_speed_loss.clamp(0.0, 1.0);
         let v = velocity.linear;
         velocity.linear = Vec3::new(v.x * keep, v.y, v.z * keep);
-        shove.start(strike.direction, strike.push, tuning.strike_push_time);
+        // Issue #196: a real shift to the side, bounded (never a flight).
+        let push = strike.push.min(tuning.strike_push_max);
+        shove.start(strike.direction, push, tuning.strike_push_time);
         paw.protected = ticks(tuning.strike_protection);
         paw.struck_count += 1;
         paw.struck_ticks = 0;

@@ -258,13 +258,22 @@ pub struct KartTuning {
     /// physics step, its share kept (rad/s); the turn of that step too (this × the step).
     pub bump_spin_max: f32,
 
-    // --- Hit by an item (GD § 8, issue #16) -----------------------------------------------------
-    /// Deceleration of a kart spinning out (`KartState::Hit`, light items: pelure, abeille), the
-    /// accelerator and the steering ignored (m/s², à régler): from top speed, about a quarter of
-    /// it is left after the 1 s spin. How long the spin lasts is the item's
-    /// (`ItemTuning::spin_time`).
+    // --- Hit by an item (GD § 8, issues #16 and #196) -------------------------------------------
+    /// Issue #196 (Max: « je veux que le personnage se retrouve quasiment à l'arrêt »): at the end
+    /// of a spin out (`KartState::Hit`, light items: Cac's, abeille, boomerang-os), the kart has
+    /// at most this share of its speed at the impact left (à régler, GD: 10 to 15 %). It slows
+    /// down fast from the impact, never to a dead stop at once: the speed fades exponentially,
+    /// at the rate that leaves this share at the end of the hit (`ItemTuning::spin_time`).
+    pub hit_spin_keep: f32,
+    /// Same for a tumble (heavy items: pelote, bombe, oreiller, a kart in super câlin or in a
+    /// fusée), which stops a little more (à régler).
+    pub hit_tumble_keep: f32,
+    /// On top of the fade, a spinning kart slows down at least this much (m/s², à régler): what
+    /// brings a slow kart to rest (#16 slowed every kart this way, 21 m/s²: about a quarter of
+    /// the top speed left after the 1 s spin). Neither applies on a trick ramp nor in the air:
+    /// a kart hit there keeps the speed of its jump (it never falls short into a void).
     pub hit_spin_decel: f32,
-    /// Same for a tumble (heavy items: pelote), which stops the kart (m/s², à régler).
+    /// Same for a tumble (m/s², à régler): it stops the kart before the end of the tumble.
     pub hit_tumble_decel: f32,
 
     // --- Special environments (GD § 10, issue #20) ----------------------------------------------
@@ -368,7 +377,9 @@ impl Default for KartTuning {
             bump_spin_keep: 0.1,
             bump_spin_max: 0.5,
 
-            hit_spin_decel: 21.0,
+            hit_spin_keep: 0.12,
+            hit_tumble_keep: 0.08,
+            hit_spin_decel: 6.0,
             hit_tumble_decel: 26.0,
             environment: EnvironmentTuning::default(),
         }

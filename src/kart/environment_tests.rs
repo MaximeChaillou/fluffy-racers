@@ -766,3 +766,88 @@ fn a_bump_in_the_air_does_not_spin_the_glider() {
         assert!(!log.towed, "kick {kick}: towed");
     }
 }
+
+/// Issue #196 (« un kart touché en l'air ou sur un tremplin ne doit pas tomber dans le vide à
+/// cause de cet arrêt »): a kart flat out toward the glide ramp at the edge of the cliff, hit by a
+/// pelote (a tumble, the hit that stops the most) on the ramp, just after the takeoff, or in the
+/// middle of the glide, still flies over the lagoon and lands on the beach: no pelican. On the
+/// ramp, its speed is the one it had (not braked to a standstill).
+#[test]
+fn a_kart_hit_on_the_glide_ramp_or_in_the_air_still_lands_on_the_beach() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum When {
+        OnTheRamp,
+        AfterTakeoff,
+        Gliding,
+    }
+    let mut failures = Vec::new();
+    let mut lagoon = Lagoon::new(false, None);
+    let top = lagoon.top_speed(Pace::Top);
+    for when in [When::OnTheRamp, When::AfterTakeoff, When::Gliding] {
+        let (gap, lip) = (lagoon.gap, lagoon.gap.from);
+        lagoon.place(lip - 70.0, 0.0, top);
+        let mut log = new_log();
+        let (mut hit_at, mut landed_at) = (None, None);
+        let mut ramp_speed = (0.0f32, f32::MAX);
+        let mut gliding_ticks = 0;
+        for _ in 0..(25 * 60) {
+            let input = lagoon.autopilot(top);
+            let tricks = *lagoon.app.world().get::<TrickTracker>(lagoon.kart).unwrap();
+            let env = lagoon.environment();
+            gliding_ticks += u32::from(env.gliding);
+            let now = match when {
+                When::OnTheRamp => tricks.on_ramp(),
+                When::AfterTakeoff => tricks.ticks_since_takeoff() == Some(3),
+                When::Gliding => gliding_ticks == 40,
+            };
+            if now && hit_at.is_none() {
+                let speed = lagoon.velocity().dot(*lagoon.transform().forward());
+                hit_at = Some(speed);
+                lagoon.app.world_mut().write_message(crate::items::ItemHit {
+                    kart: lagoon.kart,
+                    by: Entity::PLACEHOLDER,
+                    item: crate::items::ItemKind::Pelote,
+                    object: None,
+                });
+            }
+            lagoon.tick(input, &mut log);
+            if hit_at.is_some() && lagoon.state().is_hit() && tricks.on_ramp() {
+                let speed = lagoon.velocity().dot(*lagoon.transform().forward());
+                ramp_speed = (ramp_speed.0.max(speed), ramp_speed.1.min(speed));
+            }
+            if !log.closed.is_empty() && landed_at.is_none() {
+                landed_at = Some(lagoon.distance());
+            }
+            if landed_at.is_some() && log.ticks > log.closed[0] + 60 {
+                break;
+            }
+        }
+        let landed = landed_at.unwrap_or(f32::NAN);
+        let after_gap = lagoon.layout.center.wrap(landed - gap.to);
+        println!(
+            "{when:?}: hit at {hit_at:?} m/s, on the ramp {ramp_speed:?}, landed {after_gap:.0} m \
+             after the gap, opened {:?}, closed {:?}",
+            log.opened, log.closed
+        );
+        let checks = [
+            (hit_at.is_some(), "hit"),
+            (!log.towed, "no pelican"),
+            (log.opened.len() == 1, "the glider opens once"),
+            (
+                after_gap > 0.0 && after_gap < 200.0,
+                "it lands on the beach",
+            ),
+            (log.lowest > 0.2, "never through the road"),
+            (
+                when != When::OnTheRamp || ramp_speed.1 > 0.8 * hit_at.unwrap_or(0.0),
+                "not braked on the ramp",
+            ),
+        ];
+        for (ok, what) in checks {
+            if !ok {
+                failures.push(format!("{when:?}: {what} ({log:?}, hit at {hit_at:?})"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
