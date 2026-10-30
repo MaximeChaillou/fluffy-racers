@@ -456,7 +456,7 @@ fn no_smoke_is_a_3d_shape() {
         (
             "glide",
             false,
-            Box::new(|p| emit::glide_wind(p, &frame, 4, dt)),
+            Box::new(|p| emit::glide_wind(p, &frame, 4, 1.0, dt)),
         ),
         (
             "speed lines",

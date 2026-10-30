@@ -31,7 +31,8 @@ use super::line::RacingLine;
 use super::rng::BotRng;
 use super::tuning::{BotSkill, BotTuning};
 use crate::kart::{
-    DriftMotion, DriftSide, KartInput, KartState, KartTuning, MiniTurbo, drift_yaw_rate,
+    DriftMotion, DriftSide, EnvironmentTuning, KartInput, KartState, KartTuning, MiniTurbo,
+    drift_yaw_rate,
 };
 use crate::track::ShortcutKind;
 use crate::track::shortcut::OnPath;
@@ -615,7 +616,15 @@ pub fn drive(
     let speed = senses.velocity.dot(senses.forward);
     let ticks_per_second = 1.0 / dt;
     if let Some(turn_rate) = senses.glide_turn_rate {
-        return glide(brain, skill, line, senses, &here, turn_rate, speed);
+        return glide(
+            brain,
+            (skill, tuning, &kart.environment),
+            line,
+            senses,
+            &here,
+            turn_rate,
+            speed,
+        );
     }
     // Issue #107: the shortcuts, on a circuit that has some: the lane toward one, or along it.
     let mut route_lane = None;
@@ -1309,10 +1318,12 @@ fn follow_branch(
 
 /// One tick of a bot under its glider (GD § 10, issue #20): it steers to its lane ahead like on
 /// the ground (with the glide's turn rate), and dives (Up) while it is high above its line,
-/// climbs (Down) when below: it follows the line down to the landing.
+/// climbs (Down) when below: it follows the line down to the landing. Issue #197: a bot that
+/// plans its glide ([`BotSkill::glide_plan`], the Hard ones), over the gap, dives as long as a
+/// dive still reaches the landing ([`glide_plan_pitch`]).
 fn glide(
     brain: &mut BotBrain,
-    skill: &BotSkill,
+    (skill, tuning, environment): (&BotSkill, &BotTuning, &EnvironmentTuning),
     line: &RacingLine,
     senses: &Senses,
     here: &super::line::Located,
@@ -1334,12 +1345,41 @@ fn glide(
     } else {
         (yaw_right / turn_rate.max(0.05)).clamp(-1.0, 1.0)
     };
-    let pitch = ((senses.position.y - target.y - GLIDE_HEIGHT) / GLIDE_PITCH_SPAN).clamp(-1.0, 1.0);
+    let planned = skill
+        .glide_plan
+        .then(|| line.glide_landing(here.distance, senses.position))
+        .flatten()
+        .map(|(ahead, above)| glide_plan_pitch(tuning, environment, ahead, above));
+    let pitch = planned.unwrap_or_else(|| {
+        ((senses.position.y - target.y - GLIDE_HEIGHT) / GLIDE_PITCH_SPAN).clamp(-1.0, 1.0)
+    });
     KartInput {
         throttle: pitch.max(0.0),
         brake: (-pitch).max(0.0),
         steer,
         ..default()
+    }
+}
+
+/// Issue #197: the pitch of a bot that plans its glide, `ahead` meters before the end of the gap
+/// and `above` meters above the road there: a full dive (+1, the fastest way down) while a dive's
+/// descent to there, with [`BotTuning::glide_dive_margin`], still leaves it
+/// [`BotTuning::glide_clearance`] above the landing; a full climb (-1) when even a level glide
+/// would not; in between, level (0).
+pub fn glide_plan_pitch(
+    tuning: &BotTuning,
+    environment: &EnvironmentTuning,
+    ahead: f32,
+    above: f32,
+) -> f32 {
+    let room = above - tuning.glide_clearance;
+    let ahead = ahead.max(0.0);
+    if room > environment.glide_dive_slope * ahead * tuning.glide_dive_margin.max(1.0) {
+        1.0
+    } else if room < environment.glide_slope * ahead {
+        -1.0
+    } else {
+        0.0
     }
 }
 
@@ -2156,6 +2196,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Issue #197 (GD § 10): a Hard bot plans its glide over a gap: it dives while a dive still
+    /// reaches the landing with room to spare, glides level when only a level glide does, and
+    /// climbs when even that would not; the others follow their line (no plan).
+    #[test]
+    fn hard_bots_dive_when_they_can_and_climb_to_reach_the_landing() {
+        let t = BotTuning::default();
+        let env = EnvironmentTuning::default();
+        assert!(t.skill(BotDifficulty::Hard).glide_plan);
+        assert!(!t.skill(BotDifficulty::Normal).glide_plan);
+        assert!(!t.skill(BotDifficulty::Easy).glide_plan);
+        let ahead = 40.0;
+        let dive_needs = t.glide_clearance + env.glide_dive_slope * ahead * t.glide_dive_margin;
+        let level_needs = t.glide_clearance + env.glide_slope * ahead;
+        assert_eq!(glide_plan_pitch(&t, &env, ahead, dive_needs + 0.5), 1.0);
+        assert_eq!(glide_plan_pitch(&t, &env, ahead, dive_needs - 0.5), 0.0);
+        assert_eq!(glide_plan_pitch(&t, &env, ahead, level_needs + 0.5), 0.0);
+        assert_eq!(glide_plan_pitch(&t, &env, ahead, level_needs - 0.5), -1.0);
+        // At the end of the gap, high enough: down.
+        assert_eq!(
+            glide_plan_pitch(&t, &env, 0.0, t.glide_clearance + 0.1),
+            1.0
+        );
+        // Diving takes it down faster than a level glide, which takes it lower than a climb:
+        // the plan never dives where a level glide would fall short.
+        assert!(env.glide_dive_slope > env.glide_slope && env.glide_slope > env.glide_climb_slope);
     }
 
     /// Issue #13: right after leaving a trick ramp, a bot presses jump/drift once (Hard always).

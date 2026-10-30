@@ -118,6 +118,13 @@ pub struct BotSkill {
     pub throw: bool,
     /// Held by another kart, it jumps free after this long (s, GD: about 1 / 0.5 / 0.25 s).
     pub escape_delay: f32,
+
+    // --- The glider (GD § 10, issue #197) -------------------------------------------------------
+    /// Over a gap, it plans its glide (GD: Hard): it dives as long as a dive still reaches the
+    /// landing (the fastest way down), climbs when even a level glide would not
+    /// ([`BotTuning::glide_clearance`], [`BotTuning::glide_dive_margin`]). Otherwise it follows its
+    /// line down (as before issue #197).
+    pub glide_plan: bool,
 }
 
 /// All the knobs of the bots.
@@ -208,6 +215,12 @@ pub struct BotTuning {
     /// pack, no longer scattered by its bumps, stays closer and found fewer boxes)...
     pub item_box_pull: f32,
     pub item_box_range: f32,
+    /// Issue #197: a bot that plans its glide (`BotSkill::glide_plan`) wants to cross the end of
+    /// the gap this high above the landing (m)...
+    pub glide_clearance: f32,
+    /// ...and dives only while a dive's descent to there, times this, still leaves it that high
+    /// (the dive's slope is a target: the glider takes 0.3 s to reach it).
+    pub glide_dive_margin: f32,
     // Issue #18.
     /// A bombe thrown ahead lands about 13 m ahead and blows 6 m around: it goes at a kart this
     /// far ahead (m), within `BotSkill::item_aim` × `item_bomb_cone`.
@@ -319,6 +332,7 @@ impl Default for BotTuning {
                     grab_hold: 1.0,
                     throw: false,
                     escape_delay: 1.0,
+                    glide_plan: false,
                 },
                 // Normal: good line, aims for orange.
                 BotSkill {
@@ -351,6 +365,7 @@ impl Default for BotTuning {
                     grab_hold: 1.2,
                     throw: false,
                     escape_delay: 0.5,
+                    glide_plan: false,
                 },
                 // Hard: full racing line, late braking, orange, purple when the turn allows it.
                 BotSkill {
@@ -383,6 +398,7 @@ impl Default for BotTuning {
                     grab_hold: 1.6,
                     throw: true,
                     escape_delay: 0.25,
+                    glide_plan: true,
                 },
             ],
 
@@ -419,6 +435,8 @@ impl Default for BotTuning {
             item_piment_straight: 45.0,
             item_box_pull: 4.5,
             item_box_range: 35.0,
+            glide_clearance: 2.5,
+            glide_dive_margin: 1.25,
             item_bomb_range: [7.0, 24.0],
             item_bomb_cone: 3.0,
             item_golden_straight: 0.5,

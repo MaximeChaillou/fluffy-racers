@@ -69,7 +69,7 @@ pub struct EnvironmentTuning {
     /// Forward speed of a level glide, as a share of the kart's top speed (its Speed « air »,
     /// its croquettes, a boost): 0.95.
     pub glide_speed: f32,
-    /// The same diving (Up held): 1.2, faster.
+    /// The same diving (Up held): 1.25, faster (issue #197: 1.2 before).
     pub glide_dive_speed: f32,
     /// The same climbing (Down held): 0.7, slower.
     pub glide_climb_speed: f32,
@@ -79,15 +79,29 @@ pub struct EnvironmentTuning {
     /// Slope of a level glide: meters down per meter ahead (0.1: a slow descent, the same
     /// whatever the speed).
     pub glide_slope: f32,
-    /// The same diving: steeper.
+    /// The same diving: 0.2, twice as steep (issue #197: 0.17 before; the steepest that still
+    /// reaches the landing of every glider of the game, diving from the lip, with 2 m to spare).
     pub glide_dive_slope: f32,
-    /// The same climbing: the glide stays higher, but slower.
+    /// The same climbing: 0.078 (issue #197: 0.08 before), but slower: with the rise
+    /// below, a climb flies about a quarter farther than before.
     pub glide_climb_slope: f32,
-    /// A glide always comes down at least this fast (m/s): a slow climb ends too.
+    /// A glide always comes down at least this fast (m/s): a slow climb ends too (issue #197:
+    /// 0.8; 1.2 before, which flattened every climb).
     pub glide_min_sink: f32,
     /// How fast the vertical speed reaches the glide's slope (1/s): the jump off the ramp fades
     /// into the glide.
     pub glide_vertical_response: f32,
+    /// Issue #197: the glider's attitude (from a full dive, +1, to a full climb, -1) follows the
+    /// stick at this rate (1/s): 3.3, from level to a full dive or climb in 0.3 s. The speed and
+    /// the slope follow the attitude: no sudden change.
+    pub glide_attitude_rate: f32,
+    /// Issue #197: climbing faster than the climb's speed (off a dive, off the ramp at full
+    /// speed), the glider trades its speed for height: each m/s of forward speed it loses gives it
+    /// this much upward speed (m/s per m/s), times how much it climbs...
+    pub glide_climb_lift: f32,
+    /// ...up to this upward speed (m/s): a short rise, bounded (its speed falls to the climb's at
+    /// `glide_accel`, in a second or two), then a slow descent.
+    pub glide_climb_max_rise: f32,
     /// Turn rate at full lock (rad/s), times the Handling « air »'s steering factor.
     pub glide_turn_rate: f32,
     /// How fast the turn rate follows the stick (1/s), times the Handling « air »'s
@@ -96,7 +110,8 @@ pub struct EnvironmentTuning {
     /// The wing grips the air: sideways speed fades at this rate (1/s).
     pub glide_side_grip: f32,
     /// Shown only: the kart pitches up to this angle (rad), nose down when it sinks faster than a
-    /// level glide, up when slower...
+    /// level glide (fully at the dive's slope), up when slower (fully at the climb's, or rising):
+    /// 0.45 (issue #197: 0.3 before, against the dive's slope both ways)...
     pub glide_pitch: f32,
     /// ...and banks into its turns, up to this angle at full lock (rad).
     pub glide_bank: f32,
@@ -147,18 +162,21 @@ impl Default for EnvironmentTuning {
             glide_open_window: 0.5,
             glide_open_ticks: 3,
             glide_speed: 0.95,
-            glide_dive_speed: 1.2,
+            glide_dive_speed: 1.25,
             glide_climb_speed: 0.7,
             glide_accel: 9.0,
             glide_slope: 0.1,
-            glide_dive_slope: 0.17,
-            glide_climb_slope: 0.08,
-            glide_min_sink: 1.2,
+            glide_dive_slope: 0.2,
+            glide_climb_slope: 0.078,
+            glide_min_sink: 0.8,
             glide_vertical_response: 2.5,
+            glide_attitude_rate: 3.3,
+            glide_climb_lift: 1.0,
+            glide_climb_max_rise: 2.0,
             glide_turn_rate: 1.1,
             glide_turn_response: 4.0,
             glide_side_grip: 6.0,
-            glide_pitch: 0.3,
+            glide_pitch: 0.45,
             glide_bank: 0.5,
             wing_open_seconds: 0.3,
 
@@ -185,6 +203,10 @@ pub struct KartEnvironment {
     pub gliding: bool,
     /// Ticks since a wheel last touched a glide ramp (`u32::MAX`: never).
     pub since_glide_ramp: u32,
+    /// Issue #197: under its glider, its attitude ([`next_glide_attitude`]): +1 a full dive, -1
+    /// a full climb, 0 level (and always 0 with the glider closed). Its own kart's only: the other
+    /// peers do not need it (they see its velocity).
+    pub glide_attitude: f32,
     /// Issue #78: in an anti-gravity zone (a wheel last touched its road).
     pub anti_gravity: bool,
     /// Issue #78: its up, where its gravity pulls away from: the world's up, but in anti-gravity
@@ -199,6 +221,7 @@ impl Default for KartEnvironment {
             underwater: false,
             gliding: false,
             since_glide_ramp: u32::MAX,
+            glide_attitude: 0.0,
             anti_gravity: false,
             up: Vec3::Y,
         }
@@ -347,43 +370,61 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+/// Issue #197: the glider's attitude after a tick of `dt`: from `attitude` toward the stick's
+/// `pitch` ([`glide_pitch`]) at `glide_attitude_rate`, -1 to +1.
+pub fn next_glide_attitude(tuning: &EnvironmentTuning, attitude: f32, pitch: f32, dt: f32) -> f32 {
+    let step = tuning.glide_attitude_rate.max(0.0) * dt;
+    let attitude = attitude.clamp(-1.0, 1.0);
+    attitude + (pitch.clamp(-1.0, 1.0) - attitude).clamp(-step, step)
+}
+
 /// The glide's forward speed (a share of the kart's top speed) and slope (meters down per meter
-/// ahead) at `pitch`.
-pub fn glide_targets(tuning: &EnvironmentTuning, pitch: f32) -> (f32, f32) {
-    let pitch = pitch.clamp(-1.0, 1.0);
-    if pitch >= 0.0 {
+/// ahead) at `attitude` (+1 a full dive, -1 a full climb).
+pub fn glide_targets(tuning: &EnvironmentTuning, attitude: f32) -> (f32, f32) {
+    let attitude = attitude.clamp(-1.0, 1.0);
+    if attitude >= 0.0 {
         (
-            lerp(tuning.glide_speed, tuning.glide_dive_speed, pitch),
-            lerp(tuning.glide_slope, tuning.glide_dive_slope, pitch),
+            lerp(tuning.glide_speed, tuning.glide_dive_speed, attitude),
+            lerp(tuning.glide_slope, tuning.glide_dive_slope, attitude),
         )
     } else {
         (
-            lerp(tuning.glide_speed, tuning.glide_climb_speed, -pitch),
-            lerp(tuning.glide_slope, tuning.glide_climb_slope, -pitch),
+            lerp(tuning.glide_speed, tuning.glide_climb_speed, -attitude),
+            lerp(tuning.glide_slope, tuning.glide_climb_slope, -attitude),
         )
     }
 }
 
-/// One tick of `dt` of the glide: the new forward (level) and vertical speeds (m/s). The forward
-/// speed moves toward its share of `top_speed` at `glide_accel`; the vertical speed fades toward
-/// the glide's slope times the forward speed, `glide_min_sink` at least (the jump off the ramp
-/// turns into the glide's slow descent, at the same angle at every speed).
+/// One tick of `dt` of the glide at `attitude` ([`next_glide_attitude`]): the new forward
+/// (level) and vertical speeds (m/s). The forward speed moves toward its share of `top_speed` at
+/// `glide_accel`; the vertical speed fades toward the glide's slope times the forward speed,
+/// `glide_min_sink` at least (the jump off the ramp turns into the glide's slow descent, at the
+/// same angle at every speed). Issue #197: climbing faster than the climb's speed, the speed it
+/// loses lifts it (`glide_climb_lift`, up to `glide_climb_max_rise`): it trades its speed for
+/// height, and rises a little for a short while.
 pub fn glide_speeds(
     tuning: &EnvironmentTuning,
     top_speed: f32,
     forward: f32,
     vertical: f32,
-    pitch: f32,
+    attitude: f32,
     dt: f32,
 ) -> (f32, f32) {
-    let (share, slope) = glide_targets(tuning, pitch);
+    let (share, slope) = glide_targets(tuning, attitude);
     let target = top_speed.max(0.0) * share;
     let step = tuning.glide_accel.max(0.0) * dt;
-    let forward = forward + (target - forward).clamp(-step, step);
-    let sink = (slope.max(0.0) * forward.max(0.0)).max(tuning.glide_min_sink);
+    let slowed = forward + (target - forward).clamp(-step, step);
+    let sink = (slope.max(0.0) * slowed.max(0.0)).max(tuning.glide_min_sink);
     let fade = (-tuning.glide_vertical_response.max(0.0) * dt).exp();
-    let vertical = -sink + (vertical + sink) * fade;
-    (forward, vertical)
+    let mut vertical = -sink + (vertical + sink) * fade;
+    // Climbing, the speed it loses lifts it (never beyond the rise's cap).
+    let climbing = (-attitude).clamp(0.0, 1.0);
+    let rise = tuning.glide_climb_max_rise.max(0.0);
+    if climbing > 0.0 && vertical < rise {
+        let lift = tuning.glide_climb_lift.max(0.0) * (forward - slowed).max(0.0) * climbing;
+        vertical = (vertical + lift).min(rise);
+    }
+    (slowed, vertical)
 }
 
 /// The glide's target yaw rate (rad/s, right turns negative like the ground's): the stick times
@@ -399,10 +440,15 @@ pub fn glide_yaw_target(tuning: &EnvironmentTuning, steer: f32, steer_rate: f32)
 /// or still rising off the ramp); banked into its turns.
 pub fn glide_pose(tuning: &EnvironmentTuning, velocity: Vec3, yaw_rate: f32) -> (f32, f32) {
     let slope = -velocity.y / velocity.xz().length().max(1.0);
-    let span = (tuning.glide_dive_slope - tuning.glide_slope)
-        .abs()
-        .max(0.01);
-    let pitch = ((tuning.glide_slope - slope) / span).clamp(-1.0, 1.0) * tuning.glide_pitch;
+    // Issue #197: a full dive shows the nose fully down, a full climb fully up (each against its
+    // own slope), a rise (off the ramp, trading speed for height) fully up too.
+    let below = slope - tuning.glide_slope;
+    let span = if below > 0.0 {
+        tuning.glide_dive_slope - tuning.glide_slope
+    } else {
+        tuning.glide_slope - tuning.glide_climb_slope
+    };
+    let pitch = (-below / span.abs().max(0.01)).clamp(-1.0, 1.0) * tuning.glide_pitch;
     let turn = tuning.glide_turn_rate.abs().max(0.1);
     // A right turn is a negative yaw rate: roll to the right.
     let bank = (-yaw_rate / turn).clamp(-1.0, 1.0) * tuning.glide_bank;
@@ -733,12 +779,15 @@ mod tests {
         // A flight from a lip 11.7 m above the landing, off a 12° ramp at `speed`, with a top
         // speed of `top` (the kart's: its Speed « air », its croquettes, a boost): how far, at
         // what speeds, and how high after 61 m.
+        // Issue #197: the attitude follows the stick (from level as the glider opens).
         let flight = |pitch: f32, speed: f32, top: f32| {
             let (mut forward, mut vertical) = (speed, speed * 12f32.to_radians().sin());
             let (mut height, mut distance, mut ticks) = (11.7f32, 0.0f32, 0u32);
             let mut over_the_gap = f32::MAX;
+            let mut attitude = 0.0;
             while height > 0.0 {
-                (forward, vertical) = glide_speeds(&t, top, forward, vertical, pitch, DT);
+                attitude = next_glide_attitude(&t, attitude, pitch, DT);
+                (forward, vertical) = glide_speeds(&t, top, forward, vertical, attitude, DT);
                 height += vertical * DT;
                 distance += forward * DT;
                 if distance <= 61.0 {
@@ -757,9 +806,27 @@ mod tests {
                 dive_distance < level_distance && level_distance < climb_distance,
                 "{top}"
             );
-            assert!((dive_speed - top * dive).abs() < 0.5, "{dive_speed}");
+            // Issue #197: off the ramp at 20 m/s, a dive (steeper) lands before it reaches its
+            // speed at the highest top speeds: it speeds up toward it all along; off the ramp at
+            // its top speed, it reaches it.
+            assert!(
+                dive_speed > 20.0 + 0.6 * (top * dive - 20.0) && dive_speed <= top * dive + 0.01,
+                "{dive_speed}"
+            );
+            let (_, full_dive_speed, full_dive_vertical, _) = flight(1.0, top, top);
+            assert!(
+                (full_dive_speed - top * dive).abs() < 0.5,
+                "{full_dive_speed}"
+            );
+            assert!((full_dive_vertical + dive_slope * full_dive_speed).abs() < 0.3);
             assert!((level_speed - top * level).abs() < 0.5, "{level_speed}");
-            assert!((dive_vertical + dive_slope * dive_speed).abs() < 0.3);
+            // Still speeding up, the 20 m/s dive comes down steeper than a level glide, and no
+            // steeper than its dive.
+            assert!(
+                dive_vertical < -level_slope * dive_speed
+                    && dive_vertical > -dive_slope * dive_speed - 0.3,
+                "{top}: {dive_vertical}"
+            );
             let level_sink = (level_slope * level_speed).max(t.glide_min_sink);
             assert!((level_vertical + level_sink).abs() < 0.3);
             // Even a full dive off the ramp at 20 m/s, at any top speed, is still 3 m up after the
@@ -784,6 +851,15 @@ mod tests {
         assert!(cleared > 3.0, "{top}: {cleared}");
         assert!(level_distance < 200.0, "{top}: {level_distance}");
         assert!(climb_distance < 280.0, "{top}: {climb_distance}");
+        // Issue #197: the player chooses where it lands, the three well apart, at every top
+        // speed: diving lands within 70 % of a level glide's way, climbing beyond 130 % of it.
+        for top in [21.4, 28.5, 35.6, 44.0] {
+            let (dive, ..) = flight(1.0, top, top);
+            let (level, ..) = flight(0.0, top, top);
+            let (climb, ..) = flight(-1.0, top, top);
+            assert!(dive < 0.7 * level, "{top}: dive {dive}, level {level}");
+            assert!(climb > 1.3 * level, "{top}: climb {climb}, level {level}");
+        }
         // However slow, a glide comes down.
         let (_, vertical) = glide_speeds(&t, 5.0, 2.0, -0.1, -1.0, 10.0);
         assert!((vertical + t.glide_min_sink).abs() < 1e-3, "{vertical}");
@@ -799,6 +875,75 @@ mod tests {
         );
     }
 
+    /// Issue #197: the attitude follows the stick in 0.3 s, from level to a full dive or climb
+    /// (1 s from a full dive to a full climb at most), never past it; the speed and the slope
+    /// follow it, so nothing changes at once.
+    #[test]
+    fn the_glider_attitude_follows_the_stick_in_a_third_of_a_second() {
+        let t = EnvironmentTuning::default();
+        let ticks_to = |from: f32, pitch: f32| {
+            let (mut attitude, mut ticks) = (from, 0);
+            while (attitude - pitch).abs() > 1e-4 {
+                let next = next_glide_attitude(&t, attitude, pitch, DT);
+                assert!((next - attitude).abs() <= t.glide_attitude_rate * DT + 1e-6);
+                assert!((pitch - next) * (pitch - attitude) >= 0.0, "past the stick");
+                attitude = next;
+                ticks += 1;
+                assert!(ticks < 600);
+            }
+            ticks
+        };
+        for pitch in [1.0, -1.0] {
+            let ticks = ticks_to(0.0, pitch);
+            assert!((15..=21).contains(&ticks), "{pitch}: {ticks} ticks");
+        }
+        assert!(ticks_to(1.0, -1.0) <= 60);
+        assert!(ticks_to(0.5, 0.5) == 0);
+        assert_eq!(next_glide_attitude(&t, 3.0, 9.0, DT), 1.0);
+        // Half a tick of the stick moves the speed and the slope by a little only.
+        let (s0, k0) = glide_targets(&t, 0.0);
+        let (s1, k1) = glide_targets(&t, next_glide_attitude(&t, 0.0, 1.0, DT));
+        assert!((s1 - s0).abs() < 0.03 && (k1 - k0).abs() < 0.01);
+    }
+
+    /// Issue #197: climbing faster than the climb's speed (off a dive), the glider trades its
+    /// speed for height: once the dive's descent is stopped, it rises a little, for a short while
+    /// (bounded: more than 0.5 m, less than 3 m, for less than 2 s), then comes down slowly, at the
+    /// climb's slope. Climbing at the climb's speed,
+    /// it never rises. Diving never rises.
+    #[test]
+    fn climbing_fast_trades_speed_for_a_bounded_rise() {
+        let t = EnvironmentTuning::default();
+        for top in [21.4f32, 28.5, 35.6, 44.0] {
+            // Settled in a full dive, then Down held.
+            let (dive_share, dive_slope) = glide_targets(&t, 1.0);
+            let (mut forward, mut vertical) = (top * dive_share, -dive_slope * top * dive_share);
+            let mut attitude = 1.0;
+            let (mut height, mut lowest, mut rise, mut rising) = (0.0f32, 0.0f32, 0.0f32, 0u32);
+            for _ in 0..(6 * 60) {
+                attitude = next_glide_attitude(&t, attitude, -1.0, DT);
+                (forward, vertical) = glide_speeds(&t, top, forward, vertical, attitude, DT);
+                assert!(vertical <= t.glide_climb_max_rise + 1e-4);
+                height += vertical * DT;
+                lowest = lowest.min(height);
+                rise = rise.max(height - lowest);
+                rising += u32::from(vertical > 0.0);
+            }
+            assert!(rise > 0.5, "{top}: rose {rise} m");
+            assert!(rise < 3.0, "{top}: rose {rise} m");
+            assert!(rising < 2 * 60, "{top}: rose for {rising} ticks");
+            let (climb_share, climb_slope) = glide_targets(&t, -1.0);
+            assert!((forward - top * climb_share).abs() < 0.1, "{forward}");
+            let sink = (climb_slope * forward).max(t.glide_min_sink);
+            assert!((vertical + sink).abs() < 0.05, "{top}: {vertical}");
+            // At the climb's speed, no rise; diving, no rise.
+            for (attitude, share) in [(-1.0, climb_share), (1.0, dive_share)] {
+                let (_, vertical) = glide_speeds(&t, top, top * share, -1.0, attitude, DT * 120.0);
+                assert!(vertical < 0.0, "{top} at {attitude}: {vertical}");
+            }
+        }
+    }
+
     /// Shown only: nose down diving, up climbing or rising off the ramp, level in a level glide;
     /// banked into the turns.
     #[test]
@@ -810,8 +955,23 @@ mod tests {
         assert!((dive + t.glide_pitch).abs() < 1e-5, "{dive}");
         let (rise, _) = glide_pose(&t, Vec3::new(0.0, 6.0, -28.0), 0.0);
         assert_eq!(rise, t.glide_pitch);
+        // Issue #197: fully up at the climb's slope (each way against its own slope), halfway
+        // up halfway there.
         let (climb, _) = glide_pose(&t, Vec3::new(0.0, -t.glide_climb_slope * 20.0, -20.0), 0.0);
-        assert!(climb > 0.0 && climb < t.glide_pitch);
+        assert!((climb - t.glide_pitch).abs() < 1e-5, "{climb}");
+        let half = (t.glide_slope + t.glide_climb_slope) / 2.0;
+        let (half, _) = glide_pose(&t, Vec3::new(0.0, -half * 20.0, -20.0), 0.0);
+        assert!((half - t.glide_pitch / 2.0).abs() < 1e-4, "{half}");
+        let (half, _) = glide_pose(
+            &t,
+            Vec3::new(
+                0.0,
+                -(t.glide_slope + t.glide_dive_slope) / 2.0 * 30.0,
+                -30.0,
+            ),
+            0.0,
+        );
+        assert!((half + t.glide_pitch / 2.0).abs() < 1e-4, "{half}");
         let (_, right) = glide_pose(&t, Vec3::NEG_Z, -t.glide_turn_rate);
         assert_eq!(right, t.glide_bank);
         let (_, left) = glide_pose(&t, Vec3::NEG_Z, 5.0);

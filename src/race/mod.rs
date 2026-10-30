@@ -561,7 +561,13 @@ fn update_progress(
     ) in &mut racers
     {
         let projection = course.project(progress.passed, transform.translation);
-        progress.update(&course, &projection, race_ticks, !tow.is_carrying());
+        // Issue #197: a glider crosses a gate at any height, as over a gap: climbing, it flies
+        // more than `RaceTuning::gate_height` above the road beyond the gap (it lands far).
+        let gate = Projection {
+            gap: projection.gap || environment.gliding,
+            ..projection
+        };
+        progress.update(&course, &gate, race_ticks, !tow.is_carrying());
 
         if let Some(mut carry) = tow.carry {
             // Carried: follow the pelican's path; dropped at a standstill on the drop point.

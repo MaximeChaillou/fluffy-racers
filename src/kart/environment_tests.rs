@@ -2,7 +2,8 @@
 //! whole game (`GamePlugin`) with `MinimalPlugins`, the player alone, its race started, one fixed
 //! tick per `app.update()`. The acceptance criteria: for the glider and the water, the way in and
 //! the way out, and no fall through the track, at several speeds (issue #118: up to the top speed
-//! and boosted beyond it), and drifting.
+//! and boosted beyond it), and drifting. Issue #197: the glider on every circuit that has one
+//! ([`Lagoon::on`]).
 
 use bevy_rapier3d::prelude::{GravityScale, Velocity};
 
@@ -30,14 +31,19 @@ enum Pace {
     Boosted,
 }
 
-/// The Lagon Duvet, the player alone on the grid, its race started.
+/// The Lagon Duvet (or, issue #197, another circuit: [`Lagoon::on`]), the player alone on the
+/// grid, its race started.
 struct Lagoon {
     app: App,
     kart: Entity,
     layout: TrackLayout,
     course: Course,
     gap: Gap,
-    lake: Lake,
+    /// Its first lake (the lagoon), if any.
+    lake: Option<Lake>,
+    /// Issue #197: where along the road the kart is, when the scenario tracks it
+    /// ([`Lagoon::tracked_distance`]): its height is measured above the road there.
+    tracked: Option<f32>,
 }
 
 /// What the scenario saw, tick by tick.
@@ -70,7 +76,13 @@ struct Log {
 
 impl Lagoon {
     fn new(mirrored: bool, loadout: Option<Loadout>) -> Self {
-        let mut app = game_app_unloaded(TrackChoice::Circuit(LAGOON.into()), 0);
+        Self::on(LAGOON, mirrored, loadout)
+    }
+
+    /// The same on the circuit of the file `track` (issue #197: every circuit with a glider),
+    /// its first gap.
+    fn on(track: &str, mirrored: bool, loadout: Option<Loadout>) -> Self {
+        let mut app = game_app_unloaded(TrackChoice::Circuit(track.into()), 0);
         app.insert_resource(MirrorMode(mirrored));
         if let Some(loadout) = loadout {
             app.insert_resource(PlayerLoadout(loadout));
@@ -91,7 +103,7 @@ impl Lagoon {
         let layout = app.world().resource::<TrackLayout>().clone();
         let course = app.world().resource::<Course>().clone();
         assert_eq!(layout.mirrored, mirrored);
-        let (gap, lake) = (layout.gaps[0], layout.lakes[0]);
+        let (gap, lake) = (layout.gaps[0], layout.lakes.first().copied());
         Self {
             app,
             kart,
@@ -99,6 +111,7 @@ impl Lagoon {
             course,
             gap,
             lake,
+            tracked: None,
         }
     }
 
@@ -192,7 +205,14 @@ impl Lagoon {
     fn height(&self) -> Option<f32> {
         let center = &self.layout.center;
         let position = self.transform().translation;
-        let s = center.samples()[center.nearest_index(position)];
+        let samples = center.samples();
+        let s = match self.tracked {
+            Some(distance) => {
+                let step = center.length() / samples.len() as f32;
+                samples[(center.wrap(distance) / step) as usize % samples.len()]
+            }
+            None => samples[center.nearest_index(position)],
+        };
         gap_at(&self.layout.gaps, center, s.distance)
             .is_none()
             .then(|| (position - s.position).dot(s.up))
@@ -434,7 +454,7 @@ fn the_kart_dives_into_the_lagoon_and_comes_out_of_it() {
             .iter()
             .find(|s| {
                 let kart = s.position + s.up * crate::track::GRID_HEIGHT;
-                lagoon.lake.depth(kart).is_some_and(|d| d > margin)
+                lagoon.lake.unwrap().depth(kart).is_some_and(|d| d > margin)
             })
             .unwrap()
             .distance;
@@ -849,5 +869,216 @@ fn a_kart_hit_on_the_glide_ramp_or_in_the_air_still_lands_on_the_beach() {
             }
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+impl Lagoon {
+    /// Issue #197: centerline distance of where the kart is, searched near `last` (from 20 m
+    /// behind to 60 m ahead): along the road it follows, not another road that passes near.
+    fn tracked_distance(&self, last: f32) -> f32 {
+        let center = &self.layout.center;
+        let position = self.transform().translation;
+        center
+            .samples()
+            .iter()
+            .filter(|s| {
+                let ahead = center.wrap(s.distance - last + 20.0);
+                ahead < 80.0
+            })
+            .min_by(|a, b| {
+                let da = a.position.distance_squared(position);
+                let db = b.position.distance_squared(position);
+                da.total_cmp(&db)
+            })
+            .map_or(last, |s| s.distance)
+    }
+
+    /// The test autopilot along the centerline from `distance` (tracked), at `speed` at most.
+    fn autopilot_from(&self, distance: f32, speed: f32) -> KartInput {
+        let transform = self.transform();
+        let forward = self.velocity().dot(*transform.forward());
+        let target = self
+            .layout
+            .center
+            .at(distance + 6.0 + 0.4 * forward)
+            .position;
+        let to_target = target - transform.translation;
+        let angle = to_target
+            .dot(*transform.right())
+            .atan2(to_target.dot(*transform.forward()));
+        KartInput {
+            throttle: if forward > speed || (angle.abs() > 0.25 && forward > 16.0) {
+                0.0
+            } else {
+                1.0
+            },
+            brake: if angle.abs() > 0.5 && forward > 12.0 {
+                1.0
+            } else {
+                0.0
+            },
+            steer: (angle * 3.0).clamp(-1.0, 1.0),
+            ..default()
+        }
+    }
+}
+
+/// One flight of [`every_glider_lands_diving_level_and_climbing`]: where it landed (m after the
+/// lip, along the road), how long it flew (s), how high it rose above the lip (m).
+#[derive(Clone, Copy, Debug)]
+struct Flight {
+    landed: f32,
+    seconds: f32,
+    peak: f32,
+}
+
+/// Off the glide ramp at `speed` (boosted with `pace`), the stick held at `pitch` all the flight,
+/// steering along the road: the flight, or what went wrong.
+fn fly(glider: &mut Lagoon, pace: Pace, speed: f32, pitch: Pitch) -> Result<Flight, String> {
+    let (gap, lip) = (glider.gap, glider.gap.from);
+    let center = glider.layout.center.clone();
+    let lip_height = center.at(lip).position.y;
+    let mut tracked = center.wrap(lip - 70.0);
+    glider.place(tracked, 0.0, speed);
+    glider.boost(pace);
+    let mut log = new_log();
+    let (mut landed, mut flying, mut peak) = (None, 0u32, f32::MIN);
+    for _ in 0..(30 * 60) {
+        let mut input = glider.autopilot_from(tracked, speed);
+        if glider.environment().gliding {
+            flying += 1;
+            peak = peak.max(glider.transform().translation.y - lip_height);
+            (input.throttle, input.brake) = match pitch {
+                Pitch::Dive => (1.0, 0.0),
+                Pitch::Level => (0.0, 0.0),
+                Pitch::Climb => (0.0, 1.0),
+            };
+        }
+        glider.tracked = Some(tracked);
+        glider.tick(input, &mut log);
+        tracked = glider.tracked_distance(tracked);
+        if !log.closed.is_empty() && landed.is_none() {
+            landed = Some(tracked);
+        }
+        // A second on the road after the landing.
+        if landed.is_some() && log.ticks > log.closed[0] + 60 {
+            break;
+        }
+    }
+    glider.tracked = None;
+    let landed = landed.ok_or("never landed")?;
+    let after_gap = center.wrap(landed - gap.to);
+    let lateral = glider.lateral();
+    let wall = crate::track::mesh::wall_offset(&center.at(glider.distance()));
+    let checks = [
+        (log.opened.len() == 1, "the glider opens once"),
+        (log.closed.len() == 1, "and closes once"),
+        (after_gap < 400.0, "it lands after the gap, on its road"),
+        (
+            !log.towed,
+            "no pelican, in the air and 1 s after the landing",
+        ),
+        (log.lowest > 0.2, "never through the road"),
+        (lateral.abs() < wall, "between the walls"),
+    ];
+    for (ok, what) in checks {
+        if !ok {
+            return Err(format!(
+                "{what} (landed {after_gap:.0} m after the gap, lateral {lateral:.1}, {log:?})"
+            ));
+        }
+    }
+    Ok(Flight {
+        landed: center.wrap(landed - lip),
+        seconds: flying as f32 / 60.0,
+        peak,
+    })
+}
+
+/// Issue #197 acceptance (GD § 10): every glider of the game (the Lagon Duvet's and the
+/// guide's: the Corniche Cannelle and the circuits that took its piece), and its mirror image:
+/// off the ramp at the kart's top speed, the stick held all the flight, the kart lands on the
+/// road after the gap diving, gliding level and climbing (no pelican, between the walls), also
+/// diving off the ramp at 20 m/s and climbing boosted (the shortest and the longest flights).
+/// The three landings are well apart: diving lands within 65 % of a level glide's way, climbing
+/// beyond 130 % of it (before issue #197: 65 to 67 % and 118 to 149 %); the climb's rise stays
+/// bounded (the kart never flies 7 m above the lip; 4.5 m off the ramp, its center, gliding level).
+#[test]
+fn every_glider_lands_diving_level_and_climbing() {
+    let entries: Vec<_> = crate::admin::tracks::circuits()
+        .into_iter()
+        .filter(|entry| {
+            let path = format!(
+                "{}/assets/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                entry.asset_path()
+            );
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            !crate::track::TrackData::from_ron(&text)
+                .unwrap()
+                .glide_ramps
+                .is_empty()
+        })
+        .collect();
+    assert!(
+        entries.len() >= 5,
+        "{} circuits with a glider",
+        entries.len()
+    );
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let threads: Vec<_> = entries
+            .iter()
+            .flat_map(|entry| [false, true].map(|mirrored| (entry, mirrored)))
+            .map(|(entry, mirrored)| {
+                scope.spawn(move || {
+                    let name = format!("{}{}", entry.name, if mirrored { " (mirror)" } else { "" });
+                    let mut glider = Lagoon::on(&entry.asset_path(), mirrored, None);
+                    let top = glider.top_speed(Pace::Top);
+                    let boosted = glider.top_speed(Pace::Boosted);
+                    let mut failures = Vec::new();
+                    let mut flights = Vec::new();
+                    for (pace, speed, pitch) in [
+                        (Pace::Top, top, Pitch::Dive),
+                        (Pace::Top, top, Pitch::Level),
+                        (Pace::Top, top, Pitch::Climb),
+                        (Pace::Top, 20.0, Pitch::Dive),
+                        (Pace::Boosted, boosted, Pitch::Climb),
+                    ] {
+                        match fly(&mut glider, pace, speed, pitch) {
+                            Ok(flight) => {
+                                println!(
+                                    "{name}, {pace:?} at {speed:.1} m/s, {pitch:?}: landed {:.0} m \
+                                     after the lip, {:.2} s in the air, {:.1} m above the lip",
+                                    flight.landed, flight.seconds, flight.peak
+                                );
+                                if flight.peak > 7.0 {
+                                    failures.push(format!(
+                                        "{name}, {pace:?} {pitch:?}: {:.1} m above the lip",
+                                        flight.peak
+                                    ));
+                                }
+                                flights.push(flight.landed);
+                            }
+                            Err(what) => {
+                                failures.push(format!("{name}, {pace:?} at {speed:.1}, {pitch:?}: {what}"));
+                                flights.push(f32::NAN);
+                            }
+                        }
+                    }
+                    let (dive, level, climb) = (flights[0], flights[1], flights[2]);
+                    if !(dive < 0.65 * level && climb > 1.3 * level) {
+                        failures.push(format!(
+                            "{name}: landings not apart: dive {dive:.0}, level {level:.0}, climb {climb:.0} m"
+                        ));
+                    }
+                    failures
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    });
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
