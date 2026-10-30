@@ -148,6 +148,9 @@ impl Plugin for GamePlugin {
             // Issue #102: the roulette of the item slots as a slot machine's reel. Only on screen:
             // the headless HUD keeps its single icon, the bot races their world.
             app.add_plugins(ui::RoulettePlugin);
+            // Issue #194: the chantilly's cream drawn as splats of whipped cream. Only on screen:
+            // the headless HUD keeps its plain blobs, the bot races their world.
+            app.add_plugins(ui::CreamPlugin);
             // Issue #103: the sound design (engines, drift, boosts, items, hits, cries, screens).
             // Only on screen: nothing audio in the bot races' world.
             app.add_plugins(audio::SoundDesignPlugin);
