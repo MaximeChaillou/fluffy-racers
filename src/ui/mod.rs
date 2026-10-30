@@ -3,7 +3,8 @@
 //! triple; issue #102: the roulette is a slot machine's reel, `roulette.rs`, drawn with a renderer
 //! by [`RoulettePlugin`]), the croquettes held (issue #14: the counter pops at
 //! each pick-up, shakes when some are lost, turns gold at 10), the lap counter (issue #79: it pops
-//! in gold at each new lap), the chantilly's cream over the screen (issue #18), and the results
+//! in gold at each new lap), the chantilly's cream over the screen (issue #18; issue #194: drawn
+//! as splats of whipped cream by [`CreamPlugin`], `cream.rs`, with a renderer), and the results
 //! screen (issue #70: live, until the race closes them).
 //!
 //! It follows the local player's racer (or, without one, the pole sitter) and only reads the
@@ -18,6 +19,9 @@
 //! The results screen follows the charter: over the veil, its title, a cream panel of lines, the
 //! player's in Mangue, each place on its badge (gold, silver, bronze, then blue).
 
+pub mod cream;
+#[cfg(test)]
+mod cream_tests;
 pub mod debug;
 pub mod format;
 pub mod pop;
@@ -28,6 +32,7 @@ pub mod roulette;
 #[cfg(test)]
 mod roulette_tests;
 
+pub use cream::CreamPlugin;
 pub use debug::{DEBUG_OVERLAY_KEY, DebugOverlay, DebugOverlayPlugin, SimulationCost};
 pub use reel::{Reel, ReelCell, RoulettePlugin};
 
@@ -108,6 +113,7 @@ pub struct ItemCount {
 }
 
 /// The chantilly's cream over the screen (issue #18): shown while the followed racer is creamed.
+/// Headless, seven plain blobs; with a renderer, the splats of `cream.rs` (issue #194).
 #[derive(Component, Clone, Copy, Debug)]
 pub struct CreamOverlay;
 
