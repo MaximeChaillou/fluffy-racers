@@ -104,6 +104,11 @@ pub struct BotSkill {
     /// Preference for pushing toward the nearer edge of the track (GD: Hard): the chance is
     /// `× (1 + bias)` for a kart on that side, `× (1 − bias)` for one on the other side.
     pub strike_edge_bias: f32,
+    /// Issue #196 (« les bots Difficile utilisent la patte aux endroits où elle rapporte »): the
+    /// chance to strike a kart its push would take off the road (into the grass, the void or
+    /// against a wall: [`BotTuning::strike_payoff_room`]), at least (GD: Hard; 0: no
+    /// preference beyond `strike_edge_bias`).
+    pub strike_payoff_chance: f32,
     /// Chance to grab a faster kart passing it (GD: Easy never, Normal sometimes, Hard to get
     /// towed)...
     pub grab_chance: f32,
@@ -225,6 +230,10 @@ pub struct BotTuning {
     /// A kart counts as "faster, passing" (worth grabbing) when it goes at least this much
     /// faster along the bot's heading (m/s): a boost, mostly.
     pub grab_min_speed_gain: f32,
+    /// Issue #196: a strike "pays off" on a kart with less than this room between it and the
+    /// edge of its lane limits on the side of the push (m, à régler): about the shift of a strike
+    /// (`InteractionTuning`: 3.5 m at equal Weights), a little less.
+    pub strike_payoff_room: f32,
 
     // --- Shortcuts (issue #107) -----------------------------------------------------------------
     /// A bot decides whether it takes a shortcut this far before it (m), and moves to its lane.
@@ -305,6 +314,7 @@ impl Default for BotTuning {
                     item_shield: 0.2,
                     strike_chance: 0.1,
                     strike_edge_bias: 0.0,
+                    strike_payoff_chance: 0.0,
                     grab_chance: 0.0,
                     grab_hold: 1.0,
                     throw: false,
@@ -336,6 +346,7 @@ impl Default for BotTuning {
                     item_shield: 0.6,
                     strike_chance: 0.3,
                     strike_edge_bias: 0.0,
+                    strike_payoff_chance: 0.0,
                     grab_chance: 0.3,
                     grab_hold: 1.2,
                     throw: false,
@@ -367,6 +378,7 @@ impl Default for BotTuning {
                     item_shield: 0.9,
                     strike_chance: 0.6,
                     strike_edge_bias: 0.33,
+                    strike_payoff_chance: 0.9,
                     grab_chance: 0.7,
                     grab_hold: 1.6,
                     throw: true,
@@ -416,6 +428,7 @@ impl Default for BotTuning {
 
             interaction_retarget: 5.0,
             grab_min_speed_gain: 2.0,
+            strike_payoff_room: 3.0,
 
             shortcut_lookahead: 45.0,
             grass_boost_share: 0.75,
@@ -472,6 +485,11 @@ mod tests {
         assert!(t.skill(BotDifficulty::Normal).grab_chance > 0.0);
         let hard = t.skill(BotDifficulty::Hard);
         assert!(hard.throw && hard.strike_edge_bias > 0.0);
+        // Issue #196: a Hard bot strikes almost always where its push takes a kart off the road.
+        assert_eq!(hard.strike_payoff_chance, 0.9);
+        assert!(hard.strike_payoff_chance > hard.strike_chance * (1.0 + hard.strike_edge_bias));
+        assert_eq!(t.skill(BotDifficulty::Normal).strike_payoff_chance, 0.0);
+        assert_eq!(t.strike_payoff_room, 3.0);
         assert!(!t.skill(BotDifficulty::Normal).throw);
         let escapes: Vec<f32> = t.skills.iter().map(|s| s.escape_delay).collect();
         assert_eq!(escapes, [1.0, 0.5, 0.25]);

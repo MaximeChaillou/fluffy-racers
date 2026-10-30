@@ -664,6 +664,110 @@ fn a_risky_jump_too_slow_falls_to_the_pelican() {
     }
 }
 
+/// Issue #196 (« un kart touché en l'air ou sur un tremplin ne doit pas tomber dans le vide à
+/// cause de cet arrêt »): a Hard bot that makes a risky jump with its boost (as in the test
+/// above), hit by a pelote (a tumble, the hit that stops the most) on the jump's ramp, or just
+/// after its takeoff over the void, still makes it: no pelican, it reaches the road after the
+/// jump; on every circuit with shortcuts and its mirror. On the ramp, it keeps the speed of its
+/// jump (not braked, its boost lost all the same).
+#[test]
+fn a_kart_hit_on_a_risky_jump_still_makes_it() {
+    let mut failures = Vec::new();
+    for (circuit, mirrored) in wanted().flat_map(|c| [(c, false), (c, true)]) {
+        for on_the_ramp in [true, false] {
+            let mut canyon = Canyon::new(circuit, mirrored);
+            let path = canyon.shortcut(ShortcutKind::Jump);
+            let approach = circuit.approach(0);
+            let lead = BOOST_LEAD[0].min(approach);
+            let seconds = canyon.boost_for(&path, lead);
+            let skill = canyon.skill_for(Some(ShortcutKind::Jump));
+            canyon.becomes_a_bot(skill);
+            canyon.place(path.from - approach, 26.0);
+            let kart = canyon.kart;
+            let name = format!(
+                "{} (mirror {mirrored}), hit {}",
+                circuit.name,
+                if on_the_ramp {
+                    "on the ramp"
+                } else {
+                    "after the takeoff"
+                }
+            );
+            let mut boost_at = Some(path.from - lead);
+            let mut hit_at = None;
+            let mut slowest_on_ramp = f32::MAX;
+            let mut took_off = false;
+            let goal = path.from + path.span + 20.0;
+            let mut tows = Vec::new();
+            let mut reached = false;
+            for _ in 0..(20 * 60) {
+                let world = canyon.app.world();
+                let distance = world.get::<RaceProgress>(kart).unwrap().distance;
+                let tricks = *world.get::<crate::kart::TrickTracker>(kart).unwrap();
+                let speed = {
+                    let transform = world.get::<Transform>(kart).unwrap();
+                    world
+                        .get::<Velocity>(kart)
+                        .unwrap()
+                        .linear
+                        .dot(*transform.forward())
+                };
+                if boost_at.is_some_and(|at| distance >= at) {
+                    canyon.boost(seconds);
+                    boost_at = None;
+                }
+                let now = if on_the_ramp {
+                    tricks.on_ramp()
+                } else {
+                    tricks.ticks_since_takeoff() == Some(3)
+                };
+                if now && hit_at.is_none() {
+                    hit_at = Some(speed);
+                    canyon.app.world_mut().write_message(crate::items::ItemHit {
+                        kart,
+                        by: Entity::PLACEHOLDER,
+                        item: crate::items::ItemKind::Pelote,
+                        object: None,
+                    });
+                }
+                // On the jump's ramp, until it takes off (a trick ramp further on does not count).
+                if hit_at.is_some() && tricks.on_ramp() && !took_off {
+                    slowest_on_ramp = slowest_on_ramp.min(speed);
+                }
+                took_off |= hit_at.is_some() && tricks.ticks_since_takeoff().is_some();
+                canyon.app.update();
+                let world = canyon.app.world();
+                if let Some(carry) = world.get::<Tow>(kart).unwrap().carry
+                    && !tows.contains(&carry.reason)
+                {
+                    tows.push(carry.reason);
+                }
+                if world.get::<RaceProgress>(kart).unwrap().distance >= goal {
+                    reached = true;
+                    break;
+                }
+            }
+            println!(
+                "{name}: hit at {hit_at:?} m/s, slowest on the ramp {slowest_on_ramp:.1}, tows \
+                 {tows:?}, reached {reached}"
+            );
+            let Some(speed) = hit_at else {
+                failures.push(format!("{name}: never hit"));
+                continue;
+            };
+            if !tows.is_empty() || !reached {
+                failures.push(format!("{name}: tows {tows:?}, reached {reached}"));
+            }
+            if on_the_ramp && slowest_on_ramp < 0.8 * speed {
+                failures.push(format!(
+                    "{name}: braked on the ramp, {slowest_on_ramp:.1} from {speed:.1} m/s"
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 /// Issue #107 acceptance (« l'herbe autorisée ne déclenche pas le pélican »), issue #156: a
 /// shortcut closed by a panel: a kart that drives it from its start without a boost, the panel
 /// standing, never gets past the panel (it bounces off it, or is stuck and towed), on every

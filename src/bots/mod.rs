@@ -597,12 +597,26 @@ fn drive_bots(
                             other.position,
                         )?;
                         let side = if reach.lateral >= 0.0 { 1.0 } else { -1.0 };
+                        // Issue #196: its room to the edge of its lane limits on the side of the
+                        // push (seen along the track, which the bot drives along): a strike
+                        // takes it off the road there. Only for the bots that care.
+                        let pays_off = skill.strike_payoff_chance > 0.0 && !reach.ahead && {
+                            let there = line.locate(other.position, brain.sample);
+                            let [left, right] = line.limits(there.index);
+                            let room = if side > 0.0 {
+                                right - there.lateral
+                            } else {
+                                there.lateral - left
+                            };
+                            room < tuning.strike_payoff_room
+                        };
                         Some(ReachKart {
                             entity: other.entity,
                             side,
                             ahead: reach.ahead,
                             faster_by: other.velocity.dot(forward) - speed,
                             toward_edge: edge != 0.0 && side == edge,
+                            pays_off,
                         })
                     }),
             );

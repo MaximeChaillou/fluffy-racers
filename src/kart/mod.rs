@@ -866,7 +866,9 @@ fn drive_karts(
         // button edges still follow the real input.
         let driver = *input;
         let hit = match *state {
-            KartState::Hit { reaction, .. } => Some(reaction),
+            KartState::Hit {
+                reaction, duration, ..
+            } => Some((reaction, duration as f32 * dt)),
             _ => None,
         };
         // A fusée (issue #18) drives itself: deaf to its driver too.
@@ -1216,9 +1218,14 @@ fn drive_karts(
                 forward_speed,
                 pull.tow_speed,
             );
-            // Hit by an item: it slows down hard, boost or not (GD § 8).
-            let new_forward = match hit {
-                Some(reaction) => hit_forward_speed(tuning, forward_speed, reaction, dt),
+            // Hit by an item: it slows down hard, boost or not (GD § 8), to almost a standstill
+            // (#196). Not on a trick ramp: it keeps the speed of its jump, and never falls short
+            // into the void of a risky jump (nor in the air: no ground handling there).
+            let new_forward = match hit.filter(|_| !on_trick_ramp) {
+                Some((reaction, seconds)) => {
+                    hit_forward_speed(tuning, forward_speed, reaction, seconds, dt)
+                }
+                None if hit.is_some() => forward_speed,
                 // Issue #171: on the grass, it brakes down to its top speed at once.
                 None => next_forward_speed_on(
                     tuning,

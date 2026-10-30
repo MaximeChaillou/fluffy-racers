@@ -156,8 +156,9 @@ impl Knob {
                  des figures et de l'aspiration."
             }
             Knob::Bumps => {
-                "Les chocs entre karts (le pivotement gardé) et le coup de patte (poussée, \
-                 vitesse perdue, embardée, jet, attrape lâchée)."
+                "Les chocs entre karts (le pivotement gardé), le coup de patte (poussée, \
+                 vitesse perdue, embardée, jet, attrape lâchée) et la vitesse gardée quand un \
+                 objet touche."
             }
             Knob::Bots => {
                 "Leur niveau (précision, vitesse, drifts), leur rattrapage et leur agressivité \
@@ -281,7 +282,7 @@ pub const LINKS: &[Link] = &[
     ),
     link(Boosts, "ItemTuning.piment_duration", 0.6, 1.5),
     link(Boosts, "ItemTuning.piment_strength", 0.6, 1.4),
-    // --- Chocs: the bumps between karts (#154) and the paw (#34) ----------------------------------
+    // --- Chocs: the bumps between karts (#154), the paw (#34), the hits of the items (#196) -----
     bounded(Bumps, "KartTuning.bump_spin_keep", 0.3, 3.0, 1.0),
     link(Bumps, "KartTuning.bump_spin_max", 0.4, 2.5),
     link(Bumps, "InteractionTuning.strike_push_speed", 0.5, 1.6),
@@ -292,6 +293,11 @@ pub const LINKS: &[Link] = &[
     link(Bumps, "InteractionTuning.strike_swerve", 0.5, 1.5),
     bounded(Bumps, "InteractionTuning.release_speed_loss", 0.5, 1.5, 1.0),
     link(Bumps, "InteractionTuning.throw_push_factor", 0.7, 1.4),
+    // Issue #196: the shift's cap follows the push; a kart hit by an item keeps less of its speed
+    // the harder it hits (12 % / 8 % in the middle: 19 % / 13 % at 0, 6 % / 4 % at 100).
+    link(Bumps, "InteractionTuning.strike_push_max", 0.5, 1.6),
+    bounded(Bumps, "KartTuning.hit_spin_keep", 1.6, 0.5, 1.0),
+    bounded(Bumps, "KartTuning.hit_tumble_keep", 1.6, 0.5, 1.0),
     // --- Bots: level, catch-up and aggressiveness, the three levels together ----------------------
     link(Bots, "BotTuning.skills[*].wobble", 1.6, 0.5),
     bounded(Bots, "BotTuning.skills[*].cruise_speed", 0.95, 1.03, 1.0),

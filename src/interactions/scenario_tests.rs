@@ -11,7 +11,7 @@ use crate::SimulationPlugin;
 use crate::croquettes::{CroquettePlugin, Croquettes};
 use crate::interpolation::PhysicsPose;
 use crate::kart::{
-    Boost, DriftSide, KartStats, KartTuning, Stat, StatsTuning, kart_body_with_stats,
+    Boost, DriftSide, KartStats, KartTuning, KartWheels, Stat, StatsTuning, kart_body_with_stats,
 };
 use crate::track::{Surface, WALL_RESTITUTION, spawn_static_box};
 
@@ -37,6 +37,16 @@ struct Arena {
 
 impl Arena {
     fn new() -> Self {
+        Self::with_ground(&[(
+            Vec3::new(0.0, -0.5, 0.0),
+            Vec3::new(500.0, 0.5, 500.0),
+            Surface::Road,
+        )])
+    }
+
+    /// Issue #196: the karts on these slabs (center, half size, surface) instead of one large
+    /// road: a road with grass beyond its edges, or one that ends over the void.
+    fn with_ground(slabs: &[(Vec3, Vec3, Surface)]) -> Self {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -50,13 +60,15 @@ impl Arena {
         app.cleanup();
         let world = app.world_mut();
         let mut commands = world.commands();
-        spawn_static_box(
-            &mut commands,
-            Transform::from_xyz(0.0, -0.5, 0.0),
-            Vec3::new(500.0, 0.5, 500.0),
-            Surface::Road,
-            0.0,
-        );
+        for (center, half, surface) in slabs {
+            spawn_static_box(
+                &mut commands,
+                Transform::from_translation(*center),
+                *half,
+                *surface,
+                0.0,
+            );
+        }
         world.flush();
         app.update();
         Self { app }
@@ -151,9 +163,19 @@ impl Arena {
 /// Two karts side by side at full speed on a straight line, `b` `gap` m to the right of `a`
 /// (heading -Z, the right is +X), Weights `a_weight` and `b_weight`; `b` holds 3 croquettes.
 fn side_by_side(a_weight: u8, b_weight: u8, gap: f32) -> (Arena, Entity, Entity) {
-    let mut arena = Arena::new();
-    let a = arena.kart(0.0, 0.0, a_weight);
-    let b = arena.kart(gap, 0.0, b_weight);
+    side_by_side_on(Arena::new(), 0.0, a_weight, b_weight, gap)
+}
+
+/// [`side_by_side`] in `arena`, `a` at `x`.
+fn side_by_side_on(
+    mut arena: Arena,
+    x: f32,
+    a_weight: u8,
+    b_weight: u8,
+    gap: f32,
+) -> (Arena, Entity, Entity) {
+    let a = arena.kart(x, 0.0, a_weight);
+    let b = arena.kart(x + gap, 0.0, b_weight);
     arena.run(0.5, &[]);
     arena.run(3.0, &[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
     // Given now: they make it faster (+1 % each), it would have pulled ahead.
@@ -199,7 +221,8 @@ fn strike_effect(a_weight: u8, b_weight: u8, gap: f32) -> StrikeEffect {
     }
 }
 
-/// Issue #34 acceptance: a strike on a kart in reach pushes it sideways (about 1.4 m, GD § 15),
+/// Issue #34 acceptance: a strike on a kart in reach pushes it sideways (about 3.5 m since #196,
+/// GD § 15, Max: « je veux que les coups de pattes créent un vrai décalage »; 1.4 m before),
 /// slows it down (−35 % since #193, Max: « là les karts continuent de rouler à la même vitesse »;
 /// −10 % before) and costs it 1 croquette. It keeps control (no spin), and the striker rests for
 /// 1.5 s.
@@ -218,7 +241,7 @@ fn a_strike_in_reach_pushes_the_kart_aside_slows_it_and_costs_a_croquette() {
 
     let effect = strike_effect(10, 10, 2.2);
     assert!(
-        (1.1..=1.7).contains(&effect.moved),
+        (3.0..=4.0).contains(&effect.moved),
         "pushed {:.2} m aside",
         effect.moved
     );
@@ -746,42 +769,163 @@ fn letting_go_while_steering_throws_the_kart_held() {
     );
 }
 
-/// Issue #154: a paw strike or a throw, the heaviest on the lightest, at full speed in the middle
-/// of a straight (the two karts on either side of its middle line), never throws the kart off the
-/// road (12 m wide, the narrowest main road), even with the wheel held straight; and it still
-/// pushes it aside. Measured (#154 does not change it): 1.74 m for the strike, 2.56 m for the
-/// throw; from its lane, 1.1 m off the middle, the kart has 4.2 m before the edge.
+/// Issue #196 (Max, 2026-10-25: « ça peut faire tomber, ou décaler vers l'herbe du bord de
+/// piste, c'est ça l'idée »; it replaces #154's rule for the paw, which still holds for the bumps
+/// between karts, `kart::clash_tests`): a paw strike or a throw at full speed shifts the kart
+/// away from the striker, from the left as from the right, within the tuned range: at equal
+/// Weights 3 to 4 m, the Weight counting (a heavy striker on a light kart further, the other
+/// way round less), never more than the cap (`strike_push_max`: 5.25 m) whatever the Weights or
+/// a throw; a bounded push to the side, not a flight: the kart keeps its heading (under 10°,
+/// the wheel held straight), on its wheels, on the ground.
 #[test]
-fn a_strike_or_a_throw_in_the_middle_of_a_straight_keeps_the_kart_on_the_road() {
-    let middle = 1.1;
-    let on_the_road = 6.0 - crate::kart::KART_HALF_EXTENTS.x;
-    for throw in [false, true] {
-        let (mut arena, a, b) = side_by_side(20, 0, 2.2);
-        let start = arena.position(b).x;
-        if throw {
-            arena.run(0.8, &[(a, PAW), (b, FULL_THROTTLE)]);
-            let right = KartInput {
-                steer: 1.0,
-                ..FULL_THROTTLE
-            };
-            arena.tick(&[(a, right), (b, FULL_THROTTLE)]);
-            assert_eq!(arena.stats(a).throws, 1);
-        } else {
+fn a_strike_or_a_throw_shifts_the_kart_away_within_its_tuned_range() {
+    let tuning = InteractionTuning::default();
+    let most = tuning.strike_push_max * tuning.strike_push_time / 2.0;
+    for (a_weight, b_weight) in [(10, 10), (20, 0), (0, 20)] {
+        for gap in [2.2, -2.2] {
+            let mut shifts = [0.0f32; 2];
+            for (i, throw) in [false, true].into_iter().enumerate() {
+                let (mut arena, a, b) = side_by_side(a_weight, b_weight, gap);
+                let (mut control, ca, cb) = side_by_side(a_weight, b_weight, gap);
+                if throw {
+                    let away = KartInput {
+                        steer: gap.signum(),
+                        ..FULL_THROTTLE
+                    };
+                    arena.run(0.8, &[(a, PAW), (b, FULL_THROTTLE)]);
+                    arena.tick(&[(a, away), (b, FULL_THROTTLE)]);
+                    control.run(0.8 + 1.0 / TICKS_PER_SECOND, &[(ca, FULL_THROTTLE)]);
+                    assert_eq!(arena.stats(a).throws, 1);
+                } else {
+                    tap(&mut arena, a, &[b]);
+                    control.run(2.0 / TICKS_PER_SECOND, &[(ca, FULL_THROTTLE)]);
+                }
+                let name = format!("{a_weight} on {b_weight}, gap {gap}, throw {throw}");
+                assert_eq!(arena.stats(b).struck, 1, "{name}");
+                let heading = *arena.get::<Transform>(b).forward();
+                // Away from the striker (to the right of a kart struck from its left), from where
+                // it was on the strike (a tether pulled it a little toward its grabber).
+                let offset = |arena: &Arena, control: &Arena| {
+                    (arena.position(b).x - control.position(cb).x) * gap.signum()
+                };
+                let start = offset(&arena, &control);
+                let (mut farthest, mut back) = (0.0f32, 0.0f32);
+                for _ in 0..120 {
+                    arena.tick(&[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
+                    control.tick(&[(ca, FULL_THROTTLE), (cb, FULL_THROTTLE)]);
+                    let shift = offset(&arena, &control) - start;
+                    farthest = farthest.max(shift);
+                    back = back.min(shift);
+                    let transform = arena.get::<Transform>(b);
+                    assert!(transform.translation.y < 0.9, "{name}: lifted");
+                    assert!(transform.up().y > 0.9, "{name}: tipped");
+                    let turned = transform.forward().angle_between(heading).to_degrees();
+                    assert!(turned < 10.0, "{name}: turned {turned:.1}°");
+                }
+                println!("{name}: shifted {farthest:.2} m");
+                assert!(back > -0.1, "{name}: toward the striker {back}");
+                assert!(
+                    farthest <= most + 0.1,
+                    "{name}: {farthest:.2} m (cap {most:.2})"
+                );
+                if (a_weight, b_weight) == (10, 10) && !throw {
+                    assert!((3.0..=4.0).contains(&farthest), "{name}: {farthest:.2} m");
+                }
+                assert!(farthest > 2.0, "{name}: {farthest:.2} m");
+                shifts[i] = farthest;
+            }
+            assert!(
+                shifts[1] > shifts[0] - 0.05,
+                "{a_weight} on {b_weight}: {shifts:?}"
+            );
+        }
+    }
+}
+
+/// Issue #196 (« un coup près du bord envoie la cible dans l'herbe »): side by side at full speed
+/// on a road 12 m wide (the narrowest main road) with grass beyond its edges, the kart struck
+/// 2.1 m from the edge on the side of the push ends up with its wheels in the grass; the same
+/// race without the strike stays on the road.
+#[test]
+fn a_strike_near_the_edge_sends_the_kart_into_the_grass() {
+    let half = 6.0;
+    let ground = [
+        (
+            Vec3::new(0.0, -0.5, 0.0),
+            Vec3::new(half, 0.5, 500.0),
+            Surface::Road,
+        ),
+        (
+            Vec3::new(half + 100.0, -0.5, 0.0),
+            Vec3::new(100.0, 0.5, 500.0),
+            Surface::Offroad,
+        ),
+        (
+            Vec3::new(-half - 100.0, -0.5, 0.0),
+            Vec3::new(100.0, 0.5, 500.0),
+            Surface::Offroad,
+        ),
+    ];
+    // The kart struck 3.2 m right of the middle: 2.1 m of road between its side and the edge.
+    let x = 1.0;
+    for strike in [true, false] {
+        let arena = Arena::with_ground(&ground);
+        let (mut arena, a, b) = side_by_side_on(arena, x, 10, 10, 2.2);
+        assert_eq!(arena.get::<KartWheels>(b).offroad_ratio, 0.0);
+        if strike {
             tap(&mut arena, a, &[b]);
+            assert_eq!(arena.stats(b).struck, 1);
         }
-        assert_eq!(arena.stats(b).struck, 1, "throw: {throw}");
-        let mut farthest = 0.0f32;
-        for _ in 0..120 {
+        let mut grass = 0.0f32;
+        for _ in 0..90 {
             arena.tick(&[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
-            farthest = farthest.max(arena.position(b).x - middle);
+            grass = grass.max(arena.get::<KartWheels>(b).offroad_ratio);
         }
-        let pushed = farthest - (start - middle);
-        println!("throw {throw}: pushed {pushed:.2} m, {farthest:.2} m from the middle");
-        assert!(pushed > 1.0, "throw {throw}: pushed {pushed} m");
-        assert!(
-            farthest < on_the_road,
-            "throw {throw}: {farthest} m from the middle"
-        );
+        let at = arena.position(b);
+        println!("strike {strike}: at {at}, wheels in the grass {grass:.2}");
+        if strike {
+            assert!(
+                grass >= 0.5,
+                "struck: {grass} of its wheels in the grass, at {at}"
+            );
+            assert!(at.x > half, "struck: at {at}");
+        } else {
+            assert_eq!(grass, 0.0, "not struck: at {at}");
+        }
+        assert!(at.y > 0.2, "strike {strike}: fell, at {at}");
+    }
+}
+
+/// Issue #196 (« un coup près d'un bord sans muret peut la faire tomber »): the same on a road
+/// whose edge on the side of the push drops into the void: struck there, the kart falls (the
+/// pelican's work, in a race); the same race without the strike stays on the road.
+#[test]
+fn a_strike_near_an_edge_without_a_wall_can_make_the_kart_fall() {
+    let half = 6.0;
+    let ground = [(
+        Vec3::new(half - 250.0, -0.5, 0.0),
+        Vec3::new(250.0, 0.5, 500.0),
+        Surface::Road,
+    )];
+    // The kart struck 3.4 m right of the middle: 1.9 m of road between its side and the edge.
+    let x = 1.2;
+    for strike in [true, false] {
+        let arena = Arena::with_ground(&ground);
+        let (mut arena, a, b) = side_by_side_on(arena, x, 10, 10, 2.2);
+        if strike {
+            tap(&mut arena, a, &[b]);
+            assert_eq!(arena.stats(b).struck, 1);
+        }
+        arena.run(2.0, &[(a, FULL_THROTTLE), (b, FULL_THROTTLE)]);
+        let at = arena.position(b);
+        println!("strike {strike}: at {at}");
+        if strike {
+            assert!(at.y < -3.0 && at.x > half, "struck: at {at}");
+        } else {
+            assert!(at.y > 0.2 && at.x < half, "not struck: at {at}");
+        }
+        // The striker drives on, on the road.
+        assert!(arena.position(a).y > 0.2);
     }
 }
 

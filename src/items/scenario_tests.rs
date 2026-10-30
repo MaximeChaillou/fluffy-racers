@@ -629,6 +629,78 @@ fn a_hit_spins_or_tumbles_the_kart_then_it_is_invincible() {
     }
 }
 
+/// Issue #196 (Max: « je veux que le personnage se retrouve quasiment à l'arrêt »): for every
+/// item that hits (the Cac's, the pelote, the abeille, the bombe, the oreiller géant, the
+/// boomerang-os, a kart in super câlin or in a fusée), a kart flat out (and boosted) is almost at
+/// a standstill at the end of its spin out or tumble: at most `KartTuning::hit_spin_keep` (12 %)
+/// or `hit_tumble_keep` (8 %) of its speed at the impact; it slows down from the impact on
+/// (under 80 % of it after 0.2 s), never at once (more than half of it left after 2 ticks).
+#[test]
+fn every_item_that_hits_leaves_the_kart_almost_at_a_standstill() {
+    for item in [
+        ItemKind::Pelure,
+        ItemKind::Pelote,
+        ItemKind::Abeille,
+        ItemKind::Bombe,
+        ItemKind::OreillerGeant,
+        ItemKind::Boomerang,
+        ItemKind::SuperCalin,
+        ItemKind::Fusee,
+    ] {
+        for boosted in [false, true] {
+            let mut arena = Arena::new();
+            let kart = arena.kart;
+            arena.run(2.5, &[(kart, FULL_THROTTLE)]);
+            if boosted {
+                arena
+                    .app
+                    .world_mut()
+                    .get_mut::<Boost>(kart)
+                    .unwrap()
+                    .add(0.3, 2.0);
+                arena.run(1.0, &[(kart, FULL_THROTTLE)]);
+            }
+            let before = arena.forward_speed(kart);
+            assert!(before > 25.0, "{item:?}: {before}");
+            arena.app.world_mut().write_message(ItemHit {
+                kart,
+                by: Entity::PLACEHOLDER,
+                item,
+                object: None,
+            });
+            let tuning = arena.app.world().resource::<KartTuning>().clone();
+            let keep = match crate::items::reaction_to(item) {
+                HitReaction::Spin => tuning.hit_spin_keep,
+                HitReaction::Tumble => tuning.hit_tumble_keep,
+            };
+            let mut ticks = 0;
+            let mut speeds = Vec::new();
+            loop {
+                arena.tick(&[(kart, FULL_THROTTLE)]);
+                speeds.push(arena.forward_speed(kart));
+                if !arena.state(kart).is_hit() {
+                    break;
+                }
+                ticks += 1;
+                assert!(ticks < 200, "{item:?}");
+            }
+            let name = format!("{item:?} (boosted {boosted})");
+            let after = speeds[speeds.len() - 2];
+            println!(
+                "{name}: {before:.1} m/s, {after:.2} m/s at the end of the hit ({:.0} %)",
+                100.0 * after / before
+            );
+            assert!(ticks > 30, "{name}: hit {ticks} ticks");
+            assert!(
+                after <= keep * before + 0.2,
+                "{name}: {after} from {before}"
+            );
+            assert!(speeds[1] > 0.5 * before, "{name}: {speeds:?}");
+            assert!(speeds[11] < 0.8 * before, "{name}: {speeds:?}");
+        }
+    }
+}
+
 /// Acceptance criterion of #16: a pelure dropped on the ground spins out the next kart running
 /// over it (and goes away); its owner can run over it too once it is out of its way.
 #[test]

@@ -171,14 +171,32 @@ fn approach(value: f32, target: f32, max_delta: f32) -> f32 {
     }
 }
 
-/// Forward speed after one tick of `dt` seconds of a kart hit by an item (`KartState::Hit`): it
-/// slows down toward a standstill, whatever its driver does, boost or not (GD § 8).
-pub fn hit_forward_speed(tuning: &KartTuning, speed: f32, reaction: HitReaction, dt: f32) -> f32 {
-    let decel = match reaction {
-        HitReaction::Spin => tuning.hit_spin_decel,
-        HitReaction::Tumble => tuning.hit_tumble_decel,
+/// Forward speed after one tick of `dt` seconds of a kart hit by an item (`KartState::Hit`) that
+/// lasts `seconds` in all: it slows down toward a standstill, whatever its driver does, boost or
+/// not (GD § 8). Issue #196: fast from the impact, never at once: the speed fades exponentially,
+/// at the rate that leaves `hit_spin_keep` (`hit_tumble_keep`) of it at the end of the hit, and
+/// at least by `hit_spin_decel` (`hit_tumble_decel`), which brings a slow kart to rest. Whatever
+/// the speed at the impact, at most that share of it is left at the end.
+pub fn hit_forward_speed(
+    tuning: &KartTuning,
+    speed: f32,
+    reaction: HitReaction,
+    seconds: f32,
+    dt: f32,
+) -> f32 {
+    let (keep, decel) = match reaction {
+        HitReaction::Spin => (tuning.hit_spin_keep, tuning.hit_spin_decel),
+        HitReaction::Tumble => (tuning.hit_tumble_keep, tuning.hit_tumble_decel),
     };
-    approach(speed, 0.0, decel.max(0.0) * dt)
+    // ln(1 / keep) per hit: e^(−rate × seconds) = keep.
+    let rate = -keep.clamp(1e-4, 1.0).ln() / seconds.max(dt).max(1e-3);
+    let faded = speed * (-rate * dt).exp();
+    let braked = approach(speed, 0.0, decel.max(0.0) * dt);
+    if speed >= 0.0 {
+        faded.min(braked)
+    } else {
+        faded.max(braked)
+    }
 }
 
 /// Forward speed after one tick of `dt` seconds.
@@ -347,7 +365,7 @@ mod tests {
         let after = |reaction, seconds: f32| {
             let mut speed = t.max_speed;
             for _ in 0..(seconds / DT).round() as usize {
-                speed = hit_forward_speed(&t, speed, reaction, DT);
+                speed = hit_forward_speed(&t, speed, reaction, seconds, DT);
             }
             speed
         };
@@ -356,7 +374,10 @@ mod tests {
         assert!(spin > 0.0 && spin < 0.35 * t.max_speed, "{spin}");
         assert!(tumble < spin, "{tumble} {spin}");
         assert_eq!(after(HitReaction::Tumble, 1.6), 0.0);
-        assert_eq!(hit_forward_speed(&t, -3.0, HitReaction::Spin, 1.0), 0.0);
+        assert_eq!(
+            hit_forward_speed(&t, -3.0, HitReaction::Spin, 1.0, 1.0),
+            0.0
+        );
         // The state lasts whole ticks, at least one.
         assert_eq!(
             KartState::hit(HitReaction::Tumble, 1.6, 60.0),
@@ -367,6 +388,49 @@ mod tests {
             }
         );
         assert!(KartState::hit(HitReaction::Spin, 0.0, 60.0).is_hit());
+    }
+
+    /// Issue #196 (« quasiment à l'arrêt »): whatever its speed at the impact (a boost, the top
+    /// speed, a slow kart), a hit leaves at most `hit_spin_keep` (12 %) of it at the end of a 1 s
+    /// spin and `hit_tumble_keep` (8 %) at the end of a 1.6 s tumble; it slows down fast from
+    /// the impact (more than a quarter lost in the first 0.2 s), never at once (no tick loses more
+    /// than a tenth of the speed).
+    #[test]
+    fn a_hit_leaves_at_most_its_share_of_the_speed_and_fades_from_the_impact() {
+        let t = KartTuning::default();
+        assert_eq!((t.hit_spin_keep, t.hit_tumble_keep), (0.12, 0.08));
+        assert!((0.1..=0.15).contains(&t.hit_spin_keep));
+        assert!(t.hit_tumble_keep < t.hit_spin_keep);
+        for (reaction, seconds, keep) in [
+            (HitReaction::Spin, 1.0, t.hit_spin_keep),
+            (HitReaction::Tumble, 1.6, t.hit_tumble_keep),
+        ] {
+            for start in [8.0, 20.0, t.max_speed, 40.0] {
+                let mut speed = start;
+                let mut early = start;
+                let ticks = (seconds / DT).round() as usize;
+                for tick in 0..ticks {
+                    let next = hit_forward_speed(&t, speed, reaction, seconds, DT);
+                    assert!(next <= speed && next >= 0.0);
+                    assert!(
+                        speed - next <= 0.1 * start,
+                        "{reaction:?} from {start}: {speed} to {next} in one tick"
+                    );
+                    speed = next;
+                    if tick + 1 == 12 {
+                        early = speed;
+                    }
+                }
+                assert!(
+                    speed <= keep * start + 1e-3,
+                    "{reaction:?} from {start}: {speed} left"
+                );
+                assert!(
+                    early < 0.75 * start,
+                    "{reaction:?} from {start}: {early} after 0.2 s"
+                );
+            }
+        }
     }
 
     fn input(throttle: f32, brake: f32, steer: f32) -> KartInput {

@@ -44,11 +44,16 @@ pub struct InteractionTuning {
     pub side_steer: f32,
 
     // --- Paw strike (GD § 15) -------------------------------------------------------------------
-    /// The target is pushed sideways at this speed, in the direction of the strike (GD: 7 m/s),
-    /// times the Weight factor (`kart::strike_push_factor`)...
+    /// The target is pushed sideways at this speed, in the direction of the strike (GD: 9.5 m/s
+    /// since #196, Max: « je veux que les coups de pattes créent un vrai décalage »; 7 m/s
+    /// before), times the Weight factor (`kart::strike_push_factor`)...
     pub strike_push_speed: f32,
-    /// ...fading out in this long (GD: 0.4 s; about 1.4 m in all).
+    /// ...fading out in this long (GD: 0.75 s since #196, 0.4 s before; about 3.5 m in all at
+    /// equal Weights, half a lane: 1.4 m before)...
     pub strike_push_time: f32,
+    /// ...and never faster than this (m/s), the Weights and a throw's factor applied (#196: a
+    /// shift bounded and easy to read, never a flight; at most about 5.3 m).
+    pub strike_push_max: f32,
     /// The target loses this share of its speed, whatever the Weights (GD: 35 % since #193, Max:
     /// « là les karts continuent de rouler à la même vitesse »; 10 % before). A throw too.
     pub strike_speed_loss: f32,
@@ -134,8 +139,9 @@ impl Default for InteractionTuning {
             front_max_lateral: 1.4,
             side_steer: 0.3,
 
-            strike_push_speed: 7.0,
-            strike_push_time: 0.4,
+            strike_push_speed: 9.5,
+            strike_push_time: 0.75,
+            strike_push_max: 14.0,
             strike_speed_loss: 0.35,
             strike_swerve: 0.35,
             strike_swerve_time: 0.6,
@@ -183,10 +189,16 @@ mod tests {
         assert_eq!(t.max_height_difference, 1.5);
         assert_eq!((t.front_max_gap, t.front_max_lateral), (2.5, 1.4));
         assert_eq!(t.side_steer, 0.3);
-        assert_eq!((t.strike_push_speed, t.strike_push_time), (7.0, 0.4));
-        // About 1.5 m sideways (a push fading out linearly).
+        assert_eq!((t.strike_push_speed, t.strike_push_time), (9.5, 0.75));
+        // Issue #196: about 3 to 4 m sideways (a push fading out linearly; 1.4 m before), never
+        // more than about 5.3 m whatever the Weights or a throw.
         let moved = t.strike_push_speed * t.strike_push_time / 2.0;
-        assert!((1.3..=1.6).contains(&moved), "{moved}");
+        assert!((3.0..=4.0).contains(&moved), "{moved}");
+        assert_eq!(t.strike_push_max, 14.0);
+        let most = t.strike_push_max * t.strike_push_time / 2.0;
+        assert!(most > moved && most < 5.5, "{most}");
+        // A throw at equal Weights is still stronger than a strike.
+        assert!(t.strike_push_max > t.strike_push_speed * 1.3);
         // Issue #193: 35 % (10 % before), within the issue's 30 to 40 %; a swerve of 20° seen
         // only; 10 % when let go.
         assert_eq!(t.strike_speed_loss, 0.35);
