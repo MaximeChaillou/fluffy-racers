@@ -50,7 +50,8 @@ pub use effects::{Autopilot, ItemEffects, autopilot_yaw_rate};
 pub use environment::{
     EnvironmentTuning, GLIDERS, GRAVITY, KartEnvironment, anti_gravity_force, anti_gravity_guide,
     glide_pitch, glide_pose, glide_speeds, glide_targets, glide_yaw_target, glider_groups,
-    groups_meet, next_anti_gravity, next_gliding, next_underwater, water_tuning,
+    groups_meet, next_anti_gravity, next_glide_attitude, next_gliding, next_underwater,
+    water_tuning,
 };
 pub use environment_visual::{Bubble, WaterEffects, Wing, wing_opening};
 pub use input::{
@@ -977,6 +978,17 @@ fn drive_karts(
             false,
             dt,
         );
+        // Issue #197: under the glider, its attitude follows the stick (level as it opens).
+        env.glide_attitude = if env.gliding {
+            next_glide_attitude(
+                environment_tuning,
+                env.glide_attitude,
+                glide_pitch(input),
+                dt,
+            )
+        } else {
+            0.0
+        };
         // Issue #78: in anti-gravity on the road of a zone; its vertical, the road's normal: under
         // its wheels, or in the air the normal of the zone's road below it (the road twists away
         // under a kart in the air: its gravity, and the frame it drives in, turn with it; one
@@ -1186,7 +1198,7 @@ fn drive_karts(
                 top,
                 forward_speed,
                 linvel.y,
-                glide_pitch(input),
+                env.glide_attitude,
                 dt,
             );
             let side = linvel - level * forward_speed - Vec3::Y * linvel.y;

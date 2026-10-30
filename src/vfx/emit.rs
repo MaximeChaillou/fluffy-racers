@@ -1161,8 +1161,15 @@ pub fn anti_gravity_sparks(pool: &mut ParticlePool, frame: &KartFrame, count: u3
     }
 }
 
-/// The glider's wind (GD § 10): white streaks off its wing tips, left behind.
-pub fn glide_wind(pool: &mut ParticlePool, frame: &KartFrame, count: u32, dt: f32) {
+/// The glider's wind (GD § 10): white streaks off its wing tips, left behind. Issue #197: they
+/// follow the speed: `speed_ratio` (the kart's speed over its top speed) stretches them.
+pub fn glide_wind(
+    pool: &mut ParticlePool,
+    frame: &KartFrame,
+    count: u32,
+    speed_ratio: f32,
+    dt: f32,
+) {
     let forward = frame.forward();
     for i in 0..count {
         let side = if (pool.spawned + u64::from(i)).is_multiple_of(2) {
@@ -1185,7 +1192,7 @@ pub fn glide_wind(pool: &mut ParticlePool, frame: &KartFrame, count: u32, dt: f3
         streak.curve = Curve::Flash;
         streak.carrier = frame.velocity * 0.7;
         streak.axis = forward;
-        streak.stretch = 25.0;
+        streak.stretch = 25.0 * speed_ratio.clamp(0.5, 1.6);
         pool.spawn(streak);
     }
 }

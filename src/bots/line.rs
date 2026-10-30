@@ -24,7 +24,9 @@ use bevy::prelude::*;
 
 use crate::kart::DriftSide;
 use crate::track::mesh::wall_offset;
-use crate::track::{CenterLine, Shortcut, ShortcutKind, TrackLayout, TrackSample, anti_gravity_at};
+use crate::track::{
+    CenterLine, Gap, Shortcut, ShortcutKind, TrackLayout, TrackSample, anti_gravity_at,
+};
 
 /// A curvature below this (radius above 70 m) is a straight for the turn detection (1/m).
 const TURN_MIN_CURVATURE: f32 = 1.0 / 70.0;
@@ -90,6 +92,8 @@ pub struct RacingLine {
     /// from sample 0 over two laps (`air[i]`: how many of samples `0..i` are), to know how much of
     /// the way to a turn it cannot brake on. Empty on a circuit without bump nor drop.
     air: Vec<u32>,
+    /// Issue #197: the circuit's gaps (glided over).
+    gaps: Vec<Gap>,
 }
 
 /// Issue #180: a kart at speed leaves a bump this far into it (a share of its length)...
@@ -100,6 +104,8 @@ const BUMP_LANDING: f32 = 3.0;
 /// Issue #180: a kart at full speed lands this far below the edge of a drop (m): 20 m off the 4 m
 /// of Prairie Pompon.
 const DROP_LANDING: f32 = 20.0;
+/// Issue #197: a glider this far before a gap (m, on its ramp: it opens at the lip) is over it.
+const GLIDE_RAMP_REACH: f32 = 12.0;
 
 /// Issue #107: a shortcut of the circuit (`TrackLayout::shortcuts`), as a bot follows it: its
 /// path, the lane to be in before it, and how its path turns.
@@ -411,7 +417,20 @@ impl RacingLine {
             turn_of,
             branches,
             air,
+            gaps: layout.gaps.clone(),
         }
+    }
+
+    /// Issue #197: for a glider at `position`, `distance` along the centerline, over a gap or on
+    /// its ramp (up to [`GLIDE_RAMP_REACH`] before it): how far ahead along the track the gap ends
+    /// (m), and how high above the road there it is (m). `None` elsewhere (past the gap).
+    pub fn glide_landing(&self, distance: f32, position: Vec3) -> Option<(f32, f32)> {
+        let center = &self.center;
+        self.gaps.iter().find_map(|gap| {
+            let ahead = center.wrap(gap.to - distance);
+            (ahead <= gap.length(center) + GLIDE_RAMP_REACH)
+                .then(|| (ahead, position.y - center.at(gap.to).position.y))
+        })
     }
 
     /// Issue #180: whether a turn of `angle` (rad) or more is under way at sample `i` or starts

@@ -1456,13 +1456,14 @@ pub(super) fn emit_karts(
             max,
         );
         emit::anti_gravity_sparks(pool, &frame, n, dt);
+        // Issue #197: more streaks, and longer, the faster it flies (a dive, a climb).
         let rate = if environment.gliding {
-            world.glide_wind_rate * 2.0
+            world.glide_wind_rate * 2.0 * speed_ratio.clamp(0.3, 1.6)
         } else {
             0.0
         };
         let n = take(&mut carry[GLIDE], rate, dt, max);
-        emit::glide_wind(pool, &frame, n, dt);
+        emit::glide_wind(pool, &frame, n, speed_ratio, dt);
         // The bursts of the ticks gone by.
         let landing = if offroad { ground } else { Paint::Dust };
         let surface = water.map(|(_, level)| root.translation.with_y(level));

@@ -145,7 +145,7 @@ fn the_pool_and_the_emitters_allocate_nothing() {
         emit::embers(pool, frame, Paint::Flame, 1.0, boost, n, dt);
         emit::trail(pool, frame, Paint::Orange, (0.3, 0.13), 1, dt);
         emit::anti_gravity_sparks(pool, frame, 1, dt);
-        emit::glide_wind(pool, frame, 1, dt);
+        emit::glide_wind(pool, frame, 1, 1.0, dt);
         let n = take(&mut carry[3], boost.speed_line_rate, dt, 12);
         emit::speed_lines(pool, frame.position, Vec3::NEG_Z, frame.velocity, boost, n);
         if k.is_multiple_of(30) {
