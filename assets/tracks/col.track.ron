@@ -3,7 +3,8 @@
 // turning left: the start straight in the valley; three switchbacks up the face of the mountain
 // (hairpins to the left, the right and the left: a lacet), 58 m up to the pass (12 m before issue
 // #202, 24 m before issue #204, 42 m before issue #206: its legs 48 m longer, climbing at up to
-// 35 %, and the pad before the jump 8 m longer); on the pass, the corner of the risky jump (to the right, its inside a drop down to the
+// 35 %, and the pad before the jump 8 m longer; issue #208: the third climb ends on a bridge over
+// a ravine); on the pass, the corner of the risky jump (to the right, its inside a drop down to the
 // mountain's slope, 6 m at least) and the summit, the high point with a view over the valley; a
 // tight left turn, then the way down (54 m up, then down to the valley): a bulge (right 70°, left 140°, right 70°) whose hidden road runs
 // straight behind a bank of snow; two more switchbacks at the foot of the mountain (left, right);
@@ -299,17 +300,25 @@
     // Issue #204: the road cut into the mountain, a wall of rock rising over the road beyond its
     // walls on the uphill side: the start straight (issue #206: from behind the grid, under the
     // first climb that now runs along all of it) and the first two climbs (up to the next leg
-    // of the switchbacks), past the landing of the jump the summit and the head of the way down
+    // of the switchbacks; the second up to its bridge, issue #208), past the landing of the jump
+    // the summit and the head of the way down
     // (the view over the valley on the left), the way north after the fourth switchback (up to
     // the hidden road) and the way south after the fifth. Wherever the chase camera would look
     // through it at the road ahead, the wall stays under its sight.
     cuttings: [
         (from: 182.0, to: 9.8, side: Left),
         (from: 14.0, to: 34.0, side: Right),
-        (from: 38.0, to: 58.0, side: Left),
+        (from: 38.0, to: 51.0, side: Left),
         (from: 79.2, to: 94.0, side: Right),
         (from: 127.0, to: 141.727, side: Left),
         (from: 153.2, to: 158.8, side: Right),
+    ],
+    // Issue #208: a bridge over a ravine, at the head of the third climb (up to the third
+    // switchback, 43 to 52 m up): the first climb runs 44 m east of it and 40 m lower, and the
+    // mountain could not carry it there. Under it, the ravine falls away down to the valley; the
+    // skirts give way to its deck and its pillars. Walled on both sides.
+    bridges: [
+        (from: 51.5, to: 58.0),
     ],
     shortcuts: [
         // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.

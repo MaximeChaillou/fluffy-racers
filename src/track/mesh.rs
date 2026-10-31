@@ -12,6 +12,7 @@ use super::data::{OffroadZone, ShortcutKind, TrackData};
 use super::layout::{CenterLine, TrackSample};
 use super::paving::{self, BORDER_TILE, PAVING_TILE};
 use super::shortcut::{OpenEdge, Shortcut, walled};
+use super::terrain::{Bridge, bridge_at};
 use super::water::{Gap, Lake, ground_height};
 
 /// Width of the red and white curbs (m).
@@ -417,6 +418,29 @@ pub fn wall_offset(sample: &TrackSample) -> f32 {
     sample.half_width + CURB_WIDTH + sample.shoulder
 }
 
+/// Issue #208: a bridge's deck is this thick (m): its underside, facing down, from one wall's
+/// outer face to the other's, and its two edges, in place of the skirts.
+pub const BRIDGE_DECK: f32 = 1.2;
+/// Issue #208: a bridge stands on bents of pillars at most this far apart (m along the
+/// centerline), none at its abutments...
+pub const PILLAR_SPACING: f32 = 15.0;
+/// ...two per bent, this far from the middle of the road (a share of its half width)...
+pub const PILLAR_SPREAD: f32 = 0.6;
+/// ...each a square pillar this wide (m), from inside the deck down to the ground (the ravine's
+/// slopes hide what is below them). Drawn only: the bridge is walled, a kart never falls among
+/// them.
+pub const PILLAR_WIDTH: f32 = 2.4;
+
+/// Issue #208: where the bents of a bridge's pillars stand (m along the centerline): evenly
+/// spaced, [`PILLAR_SPACING`] apart at most, none at its abutments.
+pub fn pillar_bents(center: &CenterLine, bridge: &Bridge) -> Vec<f32> {
+    let length = bridge.length(center);
+    let spans = (length / PILLAR_SPACING).ceil().max(2.0) as usize;
+    (1..spans)
+        .map(|k| center.wrap(bridge.from + length * k as f32 / spans as f32))
+        .collect()
+}
+
 /// Issue #180: the road is cut this far (m) each way around the step of a drop: the upper road
 /// ends just before it, the lower one starts just after it.
 pub const CLIFF_CUT: f32 = 0.01;
@@ -502,10 +526,22 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         center.on_a_trick_stretch(&stretches, middle)
     };
     let unzoned = |s0: &TrackSample, s1: &TrackSample| !zoned(s0, s1) && !tricky(s0, s1);
-    // Issue #94: whether the road between two samples faces up (banked to 90° at most).
+    // Issue #208: whether the quad between two samples is on a bridge (its middle).
+    let bridges: Vec<Bridge> = data
+        .bridges
+        .iter()
+        .map(|b| Bridge::new(center, b))
+        .collect();
+    let bridged = |s0: &TrackSample, s1: &TrackSample| {
+        let middle = s0.distance + center.wrap(s1.distance - s0.distance) / 2.0;
+        bridge_at(&bridges, center, middle).is_some()
+    };
+    // Issue #94: whether the road between two samples faces up (banked to 90° at most). Issue
+    // #208: the skirts hang only there, and off the bridges.
     let faces_up = |s0: &TrackSample, s1: &TrackSample| {
         s0.up.y >= -FACING_UP_TOLERANCE && s1.up.y >= -FACING_UP_TOLERANCE
     };
+    let skirted = |s0: &TrackSample, s1: &TrackSample| faces_up(s0, s1) && !bridged(s0, s1);
     let mut meshes = TrackMeshes::default();
     // Issue #187: whether the road's paving lies on the ground (its UVs the ground's meters)
     // rather than following the road (in the anti-gravity zones, it always follows it).
@@ -679,7 +715,7 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             |s| s.point(outer(s), 0.0),
             |s| ground(s.point(outer(s), 0.0)),
             |_| skirt,
-            faces_up,
+            skirted,
         );
         decor.strip_where(
             samples,
@@ -687,7 +723,33 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             |s| ground(s.point(-outer(s), 0.0)),
             |s| s.point(-outer(s), 0.0),
             |_| skirt,
-            faces_up,
+            skirted,
+        );
+        // Issue #208: on a bridge, its deck instead: its underside, `BRIDGE_DECK` under the road
+        // from one wall's outer face to the other's, facing down, and its two edges facing out.
+        decor.strip_where(
+            samples,
+            closed,
+            |s| s.point(outer(s), -BRIDGE_DECK),
+            |s| s.point(-outer(s), -BRIDGE_DECK),
+            |_| skirt,
+            bridged,
+        );
+        decor.strip_where(
+            samples,
+            closed,
+            |s| s.point(outer(s), 0.0),
+            |s| s.point(outer(s), -BRIDGE_DECK),
+            |_| skirt,
+            bridged,
+        );
+        decor.strip_where(
+            samples,
+            closed,
+            |s| s.point(-outer(s), -BRIDGE_DECK),
+            |s| s.point(-outer(s), 0.0),
+            |_| skirt,
+            bridged,
         );
         // Issue #94: in the anti-gravity zones, the ribbon's back, `RIBBON_THICKNESS` behind the
         // road from one wall's outer face to the other's, and its two edges: seen from outside
@@ -764,6 +826,26 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             |s| lift(s, -half),
             |_| skirt,
         );
+    }
+
+    // Issue #208: the pillars of the bridges, two per bent, from inside the deck down to the
+    // ground (the ravine's slopes hide what is below them).
+    for bridge in &bridges {
+        for at in pillar_bents(center, bridge) {
+            let s = center.at(at);
+            let f = Vec3::new(s.forward.x, 0.0, s.forward.z).normalize_or(Vec3::Z);
+            let r = f.cross(Vec3::Y);
+            let half = PILLAR_WIDTH / 2.0;
+            for side in [-1.0f32, 1.0] {
+                let top = s.point(side * PILLAR_SPREAD * s.half_width, -BRIDGE_DECK / 2.0);
+                // Each face (its outward direction, the way along it that makes it face out).
+                for (out, along) in [(r, f), (f, -r), (-r, -f), (-f, r)] {
+                    let base = top + out * half;
+                    let (a, b) = (base - along * half, base + along * half);
+                    meshes.decor.quad([a, ground(a), ground(b), b], skirt);
+                }
+            }
+        }
     }
 
     // Issue #20: each end of the road at a gap is closed, from the top of its walls down to the
@@ -1774,6 +1856,112 @@ mod tests {
                 ceilings += usize::from(s.up.y < -0.999);
             }
             assert!(ceilings >= 25, "{ceilings}");
+        }
+    }
+
+    /// Issue #208: on the Col des Moufles and its mirror, a bridge has no skirt down to the ground:
+    /// it has its deck (its underside `BRIDGE_DECK` under the road, facing down, at every sample)
+    /// and its pillars (two per bent, `PILLAR_SPACING` apart at most, none at its abutments), and
+    /// whatever of it reaches the ground is the foot of a pillar. Its walls stand on both sides.
+    #[test]
+    fn a_bridge_stands_on_pillars_instead_of_skirts() {
+        let data = TrackData::from_ron(include_str!("../../assets/tracks/col.track.ron")).unwrap();
+        assert!(!data.bridges.is_empty());
+        for data in [data.clone(), data.mirrored()] {
+            let center = CenterLine::of(&data);
+            let meshes = generate(&center, &data, &Palette::default());
+            let decor = &meshes.decor;
+            let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
+            let facing = |p: Vec3, toward: Vec3| {
+                decor.positions.iter().zip(&decor.normals).any(|(q, n)| {
+                    Vec3::from_array(*q).distance(p) < 1e-3
+                        && Vec3::from_array(*n).dot(toward) > 0.95
+                })
+            };
+            for bridge in data.bridges.iter().map(|b| Bridge::new(&center, b)) {
+                let length = bridge.length(&center);
+                let bents = pillar_bents(&center, &bridge);
+                assert!(bents.len() >= 2, "{} bents", bents.len());
+                let mut last = bridge.from;
+                for at in bents.iter().chain([&center.wrap(bridge.from + length)]) {
+                    let span = center.wrap(at - last);
+                    assert!(
+                        span > 1.0 && span <= PILLAR_SPACING + 1e-3,
+                        "a span of {span} m"
+                    );
+                    last = *at;
+                }
+                let axes: Vec<Vec3> = bents
+                    .iter()
+                    .flat_map(|at| {
+                        let s = center.at(*at);
+                        [-1.0f32, 1.0].map(|side| {
+                            s.point(side * PILLAR_SPREAD * s.half_width, -BRIDGE_DECK / 2.0)
+                        })
+                    })
+                    .collect();
+                // The deck under every sample of the bridge (its quads: from the second to the
+                // one before the last), facing down; no skirt hanging from its edges.
+                let samples: Vec<&TrackSample> = center
+                    .samples()
+                    .iter()
+                    .filter(|s| {
+                        bridge
+                            .along(&center, s.distance)
+                            .is_some_and(|x| x > 1.0 && x < length - 1.0)
+                    })
+                    .collect();
+                assert!(samples.len() as f32 >= length - 4.0, "{}", samples.len());
+                for s in &samples {
+                    for side in [-1.0f32, 1.0] {
+                        let under = s.point(side * outer(s), -BRIDGE_DECK);
+                        assert!(facing(under, -s.up), "no deck at {:.0} m", s.distance);
+                        assert!(
+                            facing(under, side * s.right),
+                            "no edge at {:.0} m",
+                            s.distance
+                        );
+                    }
+                }
+                // No skirt hangs from its edges down to the ground; the pillars stand there
+                // instead, on their feet (two per face, four faces).
+                let on_ground = |p: Vec3| {
+                    decor.positions.iter().any(|q| {
+                        let q = Vec3::from_array(*q);
+                        (q.y - GROUND_HEIGHT).abs() < 1e-4 && q.xz().distance(p.xz()) < 1e-3
+                    })
+                };
+                for s in &samples {
+                    for side in [-1.0f32, 1.0] {
+                        let edge = s.point(side * outer(s), 0.0);
+                        assert!(
+                            !on_ground(edge),
+                            "a skirt under the bridge at {:.0} m",
+                            s.distance
+                        );
+                    }
+                }
+                for axis in &axes {
+                    let feet = decor
+                        .positions
+                        .iter()
+                        .map(|q| Vec3::from_array(*q))
+                        .filter(|q| {
+                            (q.y - GROUND_HEIGHT).abs() < 1e-4
+                                && q.xz().distance(axis.xz()) <= PILLAR_WIDTH * 0.71
+                        })
+                        .count();
+                    assert_eq!(feet, 2 * 4, "the feet of the pillar at {axis}");
+                }
+                // Walled on both sides.
+                assert!(
+                    data.open_edges.iter().all(|e| {
+                        let e = OpenEdge::new(&center, e);
+                        bents.iter().all(|at| !e.contains(&center, *at))
+                    }),
+                    "a bridge without its walls"
+                );
+            }
         }
     }
 
