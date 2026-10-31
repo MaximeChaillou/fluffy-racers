@@ -34,6 +34,11 @@
 //!   every void a kart falls into: beside a side without wall, over a gap, under a risky jump's
 //!   flight, the terrain stays [`OPEN_FALL`] meters under the road at least (more than
 //!   `RaceTuning::fall_depth`); flat over the lakes and around the anti-gravity zones.
+//! - Issue #204: **a road cut into the mountain** (`TrackData::cuttings`, on a terrain that
+//!   hugs the road): on the side of a cutting, beyond the berm, the relief of the mountain rises
+//!   over the road, at [`CUT_RISE`] at most. On a circuit with cuttings, whatever rises beyond the
+//!   rules of #202 (the wall, the embankment inside the tight turns) stays under every sight line
+//!   of the chase camera (`sight_bound`): the camera never loses the road behind it.
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -94,6 +99,32 @@ pub const JUMP_REACH: f32 = 4.0;
 /// Issue #202: the steepest that what bounds the terrain (the road above it, a void beside it)
 /// lets it rise away from there (rise over run).
 const BOUND_RISE: f32 = 1.0;
+
+/// Issue #204: in a cutting (`TrackData::cuttings`), the steepest the wall of rock rises above
+/// the road beyond its berm (rise over run: about 68°, a wall), up to the relief of the mountain.
+pub const CUT_RISE: f32 = 2.5;
+
+/// Issue #204: over this many meters at each end of a cutting, its wall comes up from the
+/// embankment to its full height (along the road): no sheer face across the road's way.
+pub const CUT_FADE: f32 = 16.0;
+
+/// Issue #204: the chase camera the cuttings keep the road in sight of (`CameraTuning`'s
+/// defaults, checked by a test): this far behind the kart (m) and this high above it (m), the
+/// kart this high above the road (m).
+pub const CHASE_DISTANCE: f32 = 6.0;
+pub const CHASE_HEIGHT: f32 = 2.4;
+const KART_HEIGHT: f32 = 0.55;
+
+/// Issue #204: where the camera looks from (the kart across the road, a share of its half width)
+/// and at (the road ahead, every [`SIGHT_STEP`] meters up to [`SIGHT_REACH`], across it): wider,
+/// finer and further than the camera test, so that what passes between them is in sight too.
+const SIGHT_KARTS: [f32; 5] = [-0.8, -0.4, 0.0, 0.4, 0.8];
+const SIGHT_TARGETS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
+const SIGHT_STEP: f32 = 2.0;
+const SIGHT_REACH: f32 = 66.0;
+
+/// Issue #204: how far under a sight line of the chase camera a cutting stays (m).
+const SIGHT_MARGIN: f32 = 0.3;
 
 /// Mixed into the decor's seed: the terrain's noise is not the decor's draws.
 const SEED_SALT: u64 = 0x0195_7E44_A1A0_0195;
@@ -383,9 +414,32 @@ impl Terrain {
         }
         if terrain.embank > 0.0 {
             let grid = Grid { origin, cols, rows };
-            let (bank, bound) = hug(terrain.embank, &grid, center, (shortcuts, lakes, edges));
-            for ((h, bank), bound) in heights.iter_mut().zip(&bank).zip(&bound) {
+            let wide = start + terrain.rise;
+            let shape = (terrain.embank, wide, terrain.height);
+            let hugged = hug(shape, &grid, center, (shortcuts, lakes, edges));
+            for ((h, bank), bound) in heights.iter_mut().zip(&hugged.bank).zip(&hugged.bound) {
                 *h = h.max(bank.min(*bound));
+            }
+            // Issue #204: in a cutting, the relief of the mountain right up to the berm, under
+            // its bound (the wall's slope from the road, the voids, the tight turns) and under
+            // every sight line of the chase camera.
+            // Inside the tight turns too, the embankment then rises to its road's level (no
+            // terrace at the lowest of the turn and its exit), under the same sight lines.
+            if let Some(cut) = &hugged.cut {
+                let sight = sight_bound(&grid, center);
+                for k in 0..cols * rows {
+                    let w = cut.weight[k];
+                    let relief = if w > 0.0 {
+                        terrain.height
+                            * terrain.shape(fbm(seed, at(k % cols, k / cols), terrain.scale))
+                            * w
+                            - SINK
+                    } else {
+                        -SINK
+                    };
+                    let raised = relief.max(hugged.bank[k]).min(cut.bound[k]).min(sight[k]);
+                    heights[k] = heights[k].max(raised);
+                }
             }
         }
         Self {
@@ -555,6 +609,28 @@ pub struct RoadEdges<'a> {
     pub open: &'a [OpenEdge],
     pub gaps: &'a [Gap],
     pub zones: &'a [AntiGravityZone],
+    /// Issue #204: its cuttings (the side cut into the hillside).
+    pub cuts: &'a [OpenEdge],
+}
+
+/// Issue #202: the terrain that hugs the road, at every vertex of a grid (m above the ground).
+struct Hugged {
+    /// The embankment, and what bounds it.
+    bank: Vec<f32>,
+    bound: Vec<f32>,
+    /// Issue #204: with cuttings, where they are and what bounds them.
+    cut: Option<Cut>,
+}
+
+/// Issue #204: the cuttings of a road, at every vertex of a grid.
+struct Cut {
+    /// How much of the mountain's relief stands there (0: none, 1: all of it): beside a cutting,
+    /// on its side, fading in and out at its ends ([`CUT_FADE`]).
+    weight: Vec<f32>,
+    /// What bounds it (m above the ground): the bound of the embankment, the road's level rising
+    /// at [`CUT_RISE`] beyond the berm of a cutting on its side instead of 45°, and no terrace
+    /// inside the tight turns (the chase camera's sight bounds them instead, `sight_bound`).
+    bound: Vec<f32>,
 }
 
 /// The vertices of a heightfield: its first one (file frame, ground plane), how many across and
@@ -566,6 +642,71 @@ struct Grid {
 }
 
 impl Grid {
+    /// Issue #204: stamps a bound (the lowest) into the embankment's `bound` and, with cuttings,
+    /// into theirs (`cut`, empty without).
+    fn bound(
+        &self,
+        bound: &mut [f32],
+        cut: &mut [f32],
+        disc: (Vec2, f32),
+        value: impl Fn(Vec2) -> f32,
+    ) {
+        self.stamp(bound, disc, true, &value);
+        if !cut.is_empty() {
+            self.stamp(cut, disc, true, &value);
+        }
+    }
+
+    /// Issue #204: every vertex of every cell the segment `from` → `to` crosses (seen from
+    /// above) gets the lowest height of the segment over that cell (m above the ground, less
+    /// [`SIGHT_MARGIN`]) if it is lower than what it has.
+    fn under_line(&self, values: &mut [f32], from: Vec3, to: Vec3) {
+        let a = (from.xz() - self.origin) / CELL;
+        let d = (to.xz() - self.origin) / CELL - a;
+        let height = |t: f32| from.y + (to.y - from.y) * t - GROUND_HEIGHT - SIGHT_MARGIN;
+        let (mut i, mut j) = (a.x.floor() as i64, a.y.floor() as i64);
+        // Where the segment crosses the next column and the next row (its share), and how much
+        // of it a cell takes.
+        let first = |a: f32, d: f32, cell: i64| {
+            if d > 0.0 {
+                ((cell + 1) as f32 - a) / d
+            } else if d < 0.0 {
+                (cell as f32 - a) / d
+            } else {
+                f32::INFINITY
+            }
+        };
+        let (mut next_i, mut next_j) = (first(a.x, d.x, i), first(a.y, d.y, j));
+        let (delta_i, delta_j) = (1.0 / d.x.abs(), 1.0 / d.y.abs());
+        let (step_i, step_j) = (
+            if d.x > 0.0 { 1 } else { -1 },
+            if d.y > 0.0 { 1 } else { -1 },
+        );
+        let mut t = 0.0;
+        loop {
+            let out = next_i.min(next_j).min(1.0);
+            let low = height(t).min(height(out));
+            for (ci, cj) in [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)] {
+                if ci < 0 || cj < 0 || ci as usize >= self.cols || cj as usize >= self.rows {
+                    continue;
+                }
+                let slot = &mut values[cj as usize * self.cols + ci as usize];
+                *slot = slot.min(low);
+            }
+            if out >= 1.0 {
+                break;
+            }
+            t = out;
+            if next_i < next_j {
+                i += step_i;
+                next_i += delta_i;
+            } else {
+                j += step_j;
+                next_j += delta_j;
+            }
+        }
+    }
+
     /// Every vertex within `radius` of `p` (a square around it) gets `value(vertex)` if it is
     /// lower (`lowest`) or higher (else) than what it has.
     fn stamp(
@@ -621,14 +762,18 @@ fn hug_level(sample: &TrackSample) -> f32 {
 /// the road (its corners within a diagonal of any point of it) stays under that point's level:
 /// the terrain never comes through the road, wherever the road bends up or steps down.
 fn hug(
-    slope: f32,
+    (slope, wide, ceiling): (f32, f32, f32),
     grid: &Grid,
     center: &CenterLine,
     (shortcuts, lakes, edges): (&[Shortcut], &[Lake], &RoadEdges),
-) -> (Vec<f32>, Vec<f32>) {
+) -> Hugged {
     let n = grid.cols * grid.rows;
     let mut bank = vec![-SINK; n];
     let mut bound = vec![f32::MAX; n];
+    // Issue #204: the cuttings (none: nothing of theirs is computed).
+    let cutting = !edges.cuts.is_empty();
+    let mut weight = vec![0.0; if cutting { n } else { 0 }];
+    let mut cut_bound = vec![f32::MAX; weight.len()];
     let diagonal = CELL * std::f32::consts::SQRT_2;
     let window = diagonal + 0.5;
     let road = center.road_samples();
@@ -644,6 +789,9 @@ fn hug(
         .map(hug_level)
         .fold(0.0, f32::max)
         + 1.0;
+    // Issue #204: a cutting's wall rises up to the relief of the mountain, over the road: every
+    // bound reaches as far as it may bound it.
+    let top = if cutting { top.max(ceiling) } else { top };
     let special = |s: &TrackSample| {
         gap_at(edges.gaps, center, s.distance).is_some()
             || anti_gravity_at(edges.zones, center, s.distance).is_some()
@@ -664,7 +812,7 @@ fn hug(
             let keep = keep_out(s);
             if on_road && special(s) {
                 let (disc, value) = rising(p, keep + diagonal, -SINK);
-                grid.stamp(&mut bound, disc, true, value);
+                grid.bound(&mut bound, &mut cut_bound, disc, value);
                 continue;
             }
             // The road's slope (rise over horizontal run) at the sample.
@@ -688,12 +836,33 @@ fn hug(
                 (along.abs() <= window).then(|| (level + gradient * along, d.dot(across).abs()))
             };
             let reach = keep + diagonal + (top - level).max(0.0) / BOUND_RISE;
+            let rise = |level: f32, lateral: f32, slope: f32| {
+                level.max(-SINK) + slope * (lateral - keep - diagonal).max(0.0)
+            };
             grid.stamp(&mut bound, (p, reach), true, |v| match place(v) {
-                Some((level, lateral)) => {
-                    level.max(-SINK) + BOUND_RISE * (lateral - keep - diagonal).max(0.0)
-                }
+                Some((level, lateral)) => rise(level, lateral, BOUND_RISE),
                 None => f32::MAX,
             });
+            // Issue #204: on the side of a cutting, its wall rises at `CUT_RISE` beyond the berm
+            // (and the mountain's relief stands there, `wide` meters beyond the walls at most).
+            if cutting {
+                let cut = |sign: f32| cut_weight(edges.cuts, center, s.distance, sign);
+                let sides = [cut(-1.0), cut(1.0)];
+                let side = move |v: Vec2| sides[usize::from((v - p).dot(across) > 0.0)];
+                grid.stamp(&mut cut_bound, (p, reach), true, |v| match place(v) {
+                    Some((level, lateral)) if on_road && side(v) > 0.0 => {
+                        rise(level, lateral, CUT_RISE)
+                    }
+                    Some((level, lateral)) => rise(level, lateral, BOUND_RISE),
+                    None => f32::MAX,
+                });
+                if on_road && sides.iter().any(|w| *w > 0.0) {
+                    grid.stamp(&mut weight, (p, keep + wide), false, |v| match place(v) {
+                        Some((_, lateral)) if lateral <= keep + wide => side(v),
+                        _ => 0.0,
+                    });
+                }
+            }
             if level > 0.0 {
                 let berm = keep + diagonal;
                 grid.stamp(
@@ -716,7 +885,8 @@ fn hug(
                 }
                 let base = level + EMBANK_LIP - OPEN_FALL;
                 let keep = wall_offset(s) + OPEN_REACH + diagonal;
-                grid.stamp(&mut bound, (p, keep + top / BOUND_RISE), true, |v: Vec2| {
+                let disc = (p, keep + top / BOUND_RISE);
+                grid.bound(&mut bound, &mut cut_bound, disc, |v: Vec2| {
                     let d = v - p;
                     let along = d.dot(forward);
                     let lateral = d.dot(across) * sign;
@@ -748,6 +918,8 @@ fn hug(
         // reaches far across the infield, `decor::hides_a_turn`).
         let (disc, value) = rising(c, r, lowest.max(-SINK));
         let near = turn.at;
+        // Issue #204: with cuttings, the chase camera's sight bounds what rises inside a tight
+        // turn (`sight_bound`), not this terrace.
         grid.stamp(&mut bound, disc, true, |v: Vec2| {
             if v.distance(near) <= r {
                 value(v)
@@ -767,19 +939,69 @@ fn hug(
         for s in jump.samples().iter().filter(beyond) {
             let keep = s.half_width + JUMP_REACH + diagonal;
             let (disc, value) = rising(s.position.xz(), keep, base);
-            grid.stamp(&mut bound, disc, true, value);
+            grid.bound(&mut bound, &mut cut_bound, disc, value);
         }
     }
     for lake in lakes {
         let (lo, hi) = (lake.min, lake.max);
         let middle = (lo + hi) / 2.0;
         let radius = (hi - lo).length() / 2.0 + diagonal + top / BOUND_RISE;
-        grid.stamp(&mut bound, (middle, radius), true, |v: Vec2| {
+        grid.bound(&mut bound, &mut cut_bound, (middle, radius), |v: Vec2| {
             let d = (lo - v).max(v - hi).max(Vec2::ZERO).length();
             -SINK + BOUND_RISE * (d - diagonal).max(0.0)
         });
     }
-    (bank, bound)
+    let cut = cutting.then_some(Cut {
+        weight,
+        bound: cut_bound,
+    });
+    Hugged { bank, bound, cut }
+}
+
+/// Issue #204: how much of a cutting's wall stands at centerline distance `distance` on the side
+/// `sign` (-1 left, 1 right): 1 in a cutting on that side, coming in and going out over
+/// [`CUT_FADE`] meters at its ends; 0 elsewhere.
+fn cut_weight(cuts: &[OpenEdge], center: &CenterLine, distance: f32, sign: f32) -> f32 {
+    cuts.iter()
+        .filter(|c| c.side.opens(sign) && c.contains(center, distance))
+        .map(|c| {
+            let into = center.wrap(distance - c.from);
+            let left = center.wrap(c.to - distance);
+            smoothstep(0.0, CUT_FADE, into.min(left))
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Issue #204: the lowest of the sight lines of the chase camera over every vertex of `grid` (m
+/// above the ground, [`SIGHT_MARGIN`] under them; `f32::MAX` where none passes): from every
+/// sample of the road, the kart across it
+/// ([`SIGHT_KARTS`]), to the road ahead ([`SIGHT_STEP`] to [`SIGHT_REACH`], across it). A
+/// terrain whose every vertex is under it never comes over a sight line: each line bounds the four
+/// corners of every cell it crosses by its lowest point over that cell.
+fn sight_bound(grid: &Grid, center: &CenterLine) -> Vec<f32> {
+    let mut sight = vec![f32::MAX; grid.cols * grid.rows];
+    let steps = (SIGHT_REACH / SIGHT_STEP).round() as usize;
+    for sample in &center.road_samples() {
+        let flat = Vec3::new(sample.forward.x, 0.0, sample.forward.z).normalize_or_zero();
+        let eyes = SIGHT_KARTS.map(|kart| {
+            sample.point(kart * sample.half_width, KART_HEIGHT) - flat * CHASE_DISTANCE
+                + Vec3::Y * CHASE_HEIGHT
+        });
+        for k in 1..=steps {
+            let distance = sample.distance + k as f32 * SIGHT_STEP;
+            if !center.on_the_road(center.wrap(distance)) {
+                continue;
+            }
+            let s = center.at(distance);
+            for across in SIGHT_TARGETS {
+                let target = s.point(across * s.half_width, 0.0);
+                for eye in &eyes {
+                    grid.under_line(&mut sight, *eye, target);
+                }
+            }
+        }
+    }
+    sight
 }
 
 /// How far from a sample's centerline its walls' outer face is (m).
@@ -931,12 +1153,19 @@ mod tests {
                 .iter()
                 .map(|s| Shortcut::new(&center, s))
                 .collect();
+            // Issue #204: beside a cutting, on its side, its wall: never steeper than `CUT_RISE`
+            // over the road.
+            let cuts: Vec<OpenEdge> = data
+                .cuttings
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect();
             let road = center.road_samples();
             let paths = shortcuts.iter().flat_map(|s| {
                 let jump = (s.kind == ShortcutKind::Jump).then_some(s.low);
-                s.samples().iter().map(move |sample| (sample, jump))
+                s.samples().iter().map(move |sample| (sample, jump, false))
             });
-            for (sample, jump) in road.iter().map(|s| (s, None)).chain(paths) {
+            for (sample, jump, on_road) in road.iter().map(|s| (s, None, true)).chain(paths) {
                 let keep = keep_out(sample);
                 let reach = keep + style.clear - 0.5;
                 let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
@@ -953,7 +1182,17 @@ mod tests {
                         None if lateral.abs() <= keep => {
                             GROUND_HEIGHT.max(surface - EMBANK_LIP + HUG_SLACK)
                         }
-                        None => GROUND_HEIGHT.max(surface + (lateral.abs() - keep)),
+                        None => {
+                            let side = lateral.signum();
+                            let rise = if on_road
+                                && cut_weight(&cuts, &center, sample.distance, side) > 0.0
+                            {
+                                CUT_RISE
+                            } else {
+                                1.0
+                            };
+                            GROUND_HEIGHT.max(surface + rise * (lateral.abs() - keep))
+                        }
                     };
                     let p = sample.position + right * lateral;
                     if let Some(y) = terrain.surface(p.xz())
@@ -1018,33 +1257,8 @@ mod tests {
         let mut failures = Vec::new();
         let mut views = 0usize;
         for (name, data, terrain) in terrains() {
-            let center = CenterLine::of(&data);
-            let mut hidden = 0usize;
-            let mut example = None;
-            let road = center.road_samples();
-            for sample in road.iter().step_by(2) {
-                let flat = Vec3::new(sample.forward.x, 0.0, sample.forward.z).normalize_or_zero();
-                for kart in [-0.6, 0.0, 0.6] {
-                    let at = sample.point(kart * sample.half_width, 0.55);
-                    let eye = at - flat * tuning.distance + Vec3::Y * tuning.height;
-                    for k in 0..20 {
-                        let ahead = 3.0 + 3.0 * k as f32;
-                        let distance = sample.distance + ahead;
-                        if !center.on_the_road(center.wrap(distance)) {
-                            continue;
-                        }
-                        let s = center.at(distance);
-                        for across in [-0.8, 0.0, 0.8] {
-                            let target = s.point(across * s.half_width, 0.05);
-                            views += 1;
-                            if under_the_terrain(&terrain, &center, eye, target) {
-                                hidden += 1;
-                                example.get_or_insert((sample.distance, ahead));
-                            }
-                        }
-                    }
-                }
-            }
+            let (seen, hidden, example) = hidden_from_the_chase_camera(&tuning, &data, &terrain);
+            views += seen;
             if hidden > 0 {
                 failures.push(format!(
                     "{name}: {hidden} sight lines under the terrain, first at {example:?}"
@@ -1053,6 +1267,44 @@ mod tests {
         }
         assert!(views > 100_000, "{views}");
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The sight lines of the chase camera to the road ahead on a circuit (every 2 m of the road,
+    /// the kart in the middle of the road or near either edge, the road from 3 to 60 m ahead, in
+    /// its middle and near its edges): how many, how many pass under the terrain, the first of
+    /// them (the kart's distance, how far ahead).
+    fn hidden_from_the_chase_camera(
+        tuning: &CameraTuning,
+        data: &TrackData,
+        terrain: &Terrain,
+    ) -> (usize, usize, Option<(f32, f32)>) {
+        let center = CenterLine::of(data);
+        let (mut views, mut hidden, mut example) = (0usize, 0usize, None);
+        let road = center.road_samples();
+        for sample in road.iter().step_by(2) {
+            let flat = Vec3::new(sample.forward.x, 0.0, sample.forward.z).normalize_or_zero();
+            for kart in [-0.6, 0.0, 0.6] {
+                let at = sample.point(kart * sample.half_width, 0.55);
+                let eye = at - flat * tuning.distance + Vec3::Y * tuning.height;
+                for k in 0..20 {
+                    let ahead = 3.0 + 3.0 * k as f32;
+                    let distance = sample.distance + ahead;
+                    if !center.on_the_road(center.wrap(distance)) {
+                        continue;
+                    }
+                    let s = center.at(distance);
+                    for across in [-0.8, 0.0, 0.8] {
+                        let target = s.point(across * s.half_width, 0.05);
+                        views += 1;
+                        if under_the_terrain(terrain, &center, eye, target) {
+                            hidden += 1;
+                            example.get_or_insert((sample.distance, ahead));
+                        }
+                    }
+                }
+            }
+        }
+        (views, hidden, example)
     }
 
     /// Whether the segment from `eye` to `target` passes under the terrain's surface (every 0.5 m).
@@ -1212,6 +1464,106 @@ mod tests {
             );
         }
         assert!(hugging >= 2, "{hugging} circuits hug their road");
+    }
+
+    /// Issue #204 acceptance (GD § 16, « Notre implémentation (#204) »): a road cut into the
+    /// hillside. On a circuit with cuttings (the Col des Moufles and its mirror), along each of
+    /// them (where its wall stands whole, every meter), on its side, the terrain rises above the
+    /// road beyond its walls: within [`CUT_PROBE`] meters of their outer face, it stands at least
+    /// [`CUT_WALL`] meters above the road on most of the cutting (before #204: nowhere, the
+    /// terrain stayed under the road), and its wall is a wall somewhere ([`CUT_TOP`] meters up).
+    /// The road is never hidden for all that (`the_terrain_never_hides_the_road_from_the_chase_camera`).
+    #[test]
+    fn the_demonstration_circuit_has_a_road_cut_into_the_hillside() {
+        const CUT_PROBE: f32 = 30.0;
+        const CUT_WALL: f32 = 4.0;
+        const CUT_TOP: f32 = 10.0;
+        let mut cut_circuits = 0;
+        for (name, data, terrain) in terrains() {
+            if data.cuttings.is_empty() {
+                continue;
+            }
+            cut_circuits += 1;
+            let center = CenterLine::of(&data);
+            let cuts: Vec<OpenEdge> = data
+                .cuttings
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect();
+            let (mut whole, mut walled_up, mut top) = (0usize, 0usize, f32::MIN);
+            for sample in center.road_samples() {
+                let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+                for sign in [-1.0f32, 1.0] {
+                    if cut_weight(&cuts, &center, sample.distance, sign) < 1.0 {
+                        continue;
+                    }
+                    whole += 1;
+                    let edge = sample.point(sign * wall_offset(&sample), 0.0).y;
+                    let highest = (0..=CUT_PROBE as usize)
+                        .filter_map(|k| {
+                            let lateral = keep_out(&sample) + k as f32;
+                            terrain.surface((sample.position + right * sign * lateral).xz())
+                        })
+                        .fold(f32::MIN, f32::max)
+                        - edge;
+                    top = top.max(highest);
+                    if highest >= CUT_WALL {
+                        walled_up += 1;
+                    }
+                }
+            }
+            let share = walled_up as f32 / whole.max(1) as f32;
+            println!(
+                "{name}: of {whole} meters of cutting, {walled_up} with a wall {CUT_WALL} m above \
+                 the road at least ({share:.3}), the highest {top:.1} m above it"
+            );
+            assert!(whole >= 100, "{name}: {whole} meters of cutting only");
+            assert!(
+                share >= 0.6,
+                "{name}: a wall on {share} of the cutting only"
+            );
+            assert!(top >= CUT_TOP, "{name}: the wall {top} m high at most");
+        }
+        assert!(cut_circuits >= 2, "{cut_circuits} circuits with a cutting");
+    }
+
+    /// Issue #204: the cuttings keep the road in sight of the chase camera as the game places it.
+    #[test]
+    fn the_cuttings_look_from_where_the_chase_camera_is() {
+        let tuning = CameraTuning::default();
+        assert_eq!(CHASE_DISTANCE, tuning.distance);
+        assert_eq!(CHASE_HEIGHT, tuning.height);
+    }
+
+    /// The sight bound is under every segment it is drawn from, wherever it crosses the grid.
+    #[test]
+    fn a_sight_line_bounds_every_cell_it_crosses() {
+        let grid = Grid {
+            origin: Vec2::new(-30.0, -30.0),
+            cols: 11,
+            rows: 11,
+        };
+        for (from, to) in [
+            (Vec3::new(-20.0, 5.0, -17.0), Vec3::new(22.0, 1.0, 13.0)),
+            (Vec3::new(10.0, 3.0, 20.0), Vec3::new(-25.0, 9.0, -1.0)),
+            (Vec3::new(1.0, 2.0, -20.0), Vec3::new(1.0, 2.0, 25.0)),
+            (Vec3::new(-29.0, 4.0, 0.5), Vec3::new(29.0, 0.0, 0.5)),
+        ] {
+            let mut values = vec![f32::MAX; 121];
+            grid.under_line(&mut values, from, to);
+            for k in 0..=400 {
+                let p = from.lerp(to, k as f32 / 400.0);
+                let c = ((p.xz() - grid.origin) / CELL).floor();
+                let (i, j) = (c.x as usize, c.y as usize);
+                for (ci, cj) in [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)] {
+                    let v = values[cj * 11 + ci];
+                    assert!(
+                        v <= p.y - GROUND_HEIGHT - SIGHT_MARGIN + 1e-4,
+                        "{from} → {to}: {v} at ({ci}, {cj}) under {p}"
+                    );
+                }
+            }
+        }
     }
 
     /// What is solid is what is drawn, near the road: every drawn face within the reach of a

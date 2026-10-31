@@ -71,6 +71,12 @@ pub struct TrackData {
     /// pelican drops it back **before** the stretch (no drop point in it).
     #[serde(default)]
     pub open_edges: Vec<OpenEdgeData>,
+    /// Issue #204: stretches of the road cut into the hillside on `side` (a walled side): there,
+    /// the terrain that hugs the road (`embank`) rises above the road beyond its walls, a wall of
+    /// rock up to the relief of the mountain (`track::terrain::CUT_RISE`), wherever the chase
+    /// camera does not look through it at the road.
+    #[serde(default)]
+    pub cuttings: Vec<OpenEdgeData>,
     /// Issue #107: shortcuts off the centerline (a hidden road, a grass path, a risky jump over
     /// a drop), from the centerline at `from` to the centerline at `to`. The race counts them
     /// right (`crate::race::Course::project`); the bots take them by level (`crate::bots`).
@@ -912,6 +918,46 @@ impl TrackData {
                 ));
             }
         }
+        // Issue #204: a cutting, on a terrain that hugs the road, on a walled side (beside a void,
+        // the void stays), apart from the other cuttings.
+        for (k, cut) in self.cuttings.iter().enumerate() {
+            let length = (cut.to - cut.from).rem_euclid(n);
+            if !(cut.from.is_finite() && cut.to.is_finite()) || length < 0.05 || length > n / 2.0 {
+                return fail(format!(
+                    "cutting {}..{}: empty, or more than half the circuit",
+                    cut.from, cut.to
+                ));
+            }
+            if !self.terrain().is_some_and(|t| t.embank > 0.0) {
+                return fail(format!(
+                    "cutting {}..{}: on a terrain that does not hug the road (no embank)",
+                    cut.from, cut.to
+                ));
+            }
+            let overlaps =
+                |from: f32, to: f32| within(from, to, cut.from) || within(cut.from, cut.to, from);
+            let beside = |side: EdgeSide| {
+                [-1.0f32, 1.0]
+                    .iter()
+                    .any(|sign| side.opens(*sign) && cut.side.opens(*sign))
+            };
+            if self
+                .open_edges
+                .iter()
+                .any(|e| beside(e.side) && overlaps(e.from, e.to))
+                || self.gaps.iter().any(|g| overlaps(g.from, g.to))
+                || self.anti_gravity.iter().any(|z| overlaps(z.from, z.to))
+                || self.cuttings[k + 1..]
+                    .iter()
+                    .any(|c| beside(c.side) && overlaps(c.from, c.to))
+            {
+                return fail(format!(
+                    "cutting {}..{}: beside a side without wall, on a gap, an anti-gravity zone \
+                     or another cutting",
+                    cut.from, cut.to
+                ));
+            }
+        }
         if self.shortcuts.is_empty() {
             return Ok(());
         }
@@ -1156,6 +1202,7 @@ impl TrackData {
                     .map(|z| ("anti-gravity zone", z.from, z.to)),
             )
             .chain(self.open_edges.iter().map(|e| ("open edge", e.from, e.to)))
+            .chain(self.cuttings.iter().map(|e| ("cutting", e.from, e.to)))
             .chain(self.shortcuts.iter().map(|s| ("shortcut", s.from, s.to)))
             .chain(self.offroad.iter().map(|z| ("sand patch", z.from, z.to)));
         for (what, from, to) in ranges {
@@ -1399,10 +1446,17 @@ impl TrackData {
             .iter()
             .map(|z| super::anti_gravity::AntiGravityZone::new(&center, z))
             .collect();
+        // Issue #204: its cuttings.
+        let cuts: Vec<super::shortcut::OpenEdge> = self
+            .cuttings
+            .iter()
+            .map(|e| super::shortcut::OpenEdge::new(&center, e))
+            .collect();
         let edges = super::terrain::RoadEdges {
             open: &open,
             gaps: &gaps,
             zones: &zones,
+            cuts: &cuts,
         };
         Some(super::terrain::Terrain::build(
             &style,
@@ -1477,7 +1531,7 @@ impl TrackData {
         }
         // Issue #107: the stretches without wall on the other side, the shortcuts across the
         // X = 0 plane.
-        for edge in &mut data.open_edges {
+        for edge in data.open_edges.iter_mut().chain(&mut data.cuttings) {
             edge.side = edge.side.mirrored();
         }
         for shortcut in &mut data.shortcuts {
@@ -1693,6 +1747,41 @@ mod tests {
         assert_eq!(mirrored.glide_ramps[0].offset, -0.2);
         assert_eq!(mirrored.validate(), Ok(()));
         assert_eq!(mirrored.mirrored(), base);
+    }
+
+    /// Issue #204: a cutting is a stretch of a walled side, on a terrain that hugs the road;
+    /// mirrored, it changes side.
+    #[test]
+    fn cuttings_that_make_no_sense_are_rejected() {
+        let file = format!("{}/assets/tracks/col.track.ron", env!("CARGO_MANIFEST_DIR"));
+        let col = TrackData::from_ron(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert!(!col.cuttings.is_empty());
+        assert_eq!(col.validate(), Ok(()));
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = col.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.cuttings[0].to = d.cuttings[0].from));
+        assert!(broken(&|d| d.cuttings[0].from = f32::NAN));
+        // Beside a side without wall (the jump's corner opens the right side).
+        assert!(broken(&|d| d.cuttings[0].from = 60.0));
+        assert!(!broken(&|d| {
+            d.cuttings[0].from = 60.0;
+            d.cuttings[0].to = 76.0;
+            d.cuttings[0].side = EdgeSide::Left;
+        }));
+        // On top of another cutting on its side.
+        assert!(broken(&|d| d.cuttings.push(d.cuttings[0])));
+        // Without a terrain that hugs the road.
+        assert!(broken(&|d| {
+            if let Some(t) = &mut d.terrain {
+                t.embank = 0.0;
+            }
+        }));
+        let mirrored = col.mirrored();
+        assert_eq!(mirrored.cuttings[0].side, col.cuttings[0].side.mirrored());
+        assert_eq!(mirrored.validate(), Ok(()));
     }
 
     /// Issue #107: the sides without wall and the shortcuts are checked: a stretch on a side, out
