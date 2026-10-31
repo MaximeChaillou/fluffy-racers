@@ -26,6 +26,13 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "sunny-city",
     decor_seed: 7,
+    // Issue #211: the beach's terrain (`assets/data/biomes.ron`), and it hugs the road: the cape,
+    // 12 m up, the cliff path and the boardwalk stand on sand and rock up to their walls, which
+    // fall away from them (`embank`, rise over run: about 31°), instead of the skirts down to the
+    // beach. The voids stay (the jump's corner, the drop's foot: 6 m under the road at least); the
+    // ford keeps its ground.
+    terrain: (height: 24.0, scale: 120.0, cliffs: 0.4, terrace: 7.0, floor: 0.15, rise: 35.0,
+              rock: (0.64, 0.56, 0.44), steep: 0.8, embank: 0.6),
     props: [
         (model: "pirate-kit/flag-pirate", at: 0.0, side: Both, height: 4.0, radius: 1.0, gap: 1.8),
         (model: "pirate-kit/tower-complete-small", at: 198.435, side: Right, height: 8.0, radius: 2.4, gap: 1.0),

@@ -26,6 +26,13 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "sky-blue-street",
     decor_seed: 5,
+    // Issue #211: the pastry land's terrain (`assets/data/biomes.ron`), and it hugs the road: the
+    // ring of sugar, 10 to 17 m above the pink fields, stands on a bank of marshmallow that comes
+    // up to its walls and falls away from them (`embank`, rise over run: about 31°), instead of the
+    // skirts down to the flat fields. The voids stay (the jump's corner, the drop's foot: 6 m under
+    // the road at least).
+    terrain: (height: 30.0, scale: 140.0, cliffs: 0.3, terrace: 8.0, floor: 0.25,
+              rock: (0.84, 0.56, 0.70), steep: 1.0, embank: 0.6),
     props: [
         (model: "holiday-kit/gingerbread-man", at: 0.0, side: Both, height: 3.5, radius: 1.2, gap: 1.8),
         (model: "food-kit/cake-birthday", at: 39.800, side: Right, height: 22.0, radius: 12.0, gap: 30.0),

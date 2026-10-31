@@ -27,6 +27,11 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "neon-sign-circuit",
     decor_seed: 111,
+    // Issue #211: the pumpkin hillside's terrain (`assets/data/biomes.ron`), and it hugs the road:
+    // the road, 10 to 20 m above the valley all the way round, is carried by the hillside up to its
+    // walls, which falls away from them (`embank`, rise over run: about 31°), instead of the skirts
+    // down to the flat valley. The voids stay (the jump's corner: 6 m under the road at least).
+    terrain: (height: 32.0, scale: 140.0, floor: 0.25, rock: (0.46, 0.37, 0.28), embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "graveyard-kit/pine-crooked", at: 159.216, side: Right, height: 24.0, radius: 3.8, gap: 0.1),

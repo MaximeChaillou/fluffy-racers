@@ -23,6 +23,13 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "hot-roadway",
     decor_seed: 107,
+    // Issue #211: the canyon's terrain (`assets/data/biomes.ron`), and it hugs the road: the rim,
+    // 16 m above the canyon's floor, and the switchbacks back up its wall are carried by the rock
+    // up to their walls, which falls away from them (`embank`, rise over run: about 31°), instead
+    // of the skirts down to the floor. Its sides without walls keep their drops (6 m under the road
+    // at least, 16 m beyond the edge), the gap of the glide its void, the river its ground.
+    terrain: (height: 62.0, scale: 150.0, cliffs: 0.85, terrace: 14.0, floor: 0.25,
+              rock: (0.72, 0.40, 0.28), steep: 0.7, embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "nature-kit/rock_tallH", at: 140.216, side: Right, height: 22.0, radius: 3.8, gap: 0.1),
