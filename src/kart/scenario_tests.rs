@@ -53,6 +53,14 @@ impl Scenario {
     }
 
     fn new(build_arena: impl FnOnce(&mut Commands)) -> Self {
+        let mut scenario = Self::unsettled(build_arena);
+        // Let the suspension settle.
+        scenario.run(0.5, KartInput::default());
+        scenario
+    }
+
+    /// The kart at the origin looking down -Z, before its first tick (nothing settled yet).
+    fn unsettled(build_arena: impl FnOnce(&mut Commands)) -> Self {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin, SimulationPlugin))
             .insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
@@ -70,10 +78,7 @@ impl Scenario {
 
         // First update: startup only, the fixed loop has not accumulated any time yet.
         app.update();
-        let mut scenario = Self { app, kart };
-        // Let the suspension settle.
-        scenario.run(0.5, KartInput::default());
-        scenario
+        Self { app, kart }
     }
 
     fn tuning(&self) -> KartTuning {
@@ -219,6 +224,85 @@ fn kart_settles_on_its_wheels_at_rest() {
     // The body floats on its springs instead of lying on the ground.
     let height = scenario.transform().translation.y;
     assert!(height > 0.4 && height < 0.7, "ride height {height}");
+}
+
+/// Issue #209: where the kart is put, tick after tick, in
+/// `a_level_kart_over_rows_of_the_road_s_vertices_keeps_its_four_wheels_on_it`: its left wheels
+/// over the row `step / 10` of `trimesh_with_rows_under_the_wheels`, at 10 places along it.
+fn level_kart_position(step: usize) -> Vec3 {
+    let (row, along) = (step / 10, step % 10);
+    Vec3::new(
+        0.37 * row as f32 + 0.123,
+        0.55,
+        -0.29 * row as f32 + 0.071 + 0.05 * along as f32,
+    )
+}
+
+/// Issue #209: a bumpy trimesh road (a few centimeters, no two neighboring triangles in the same
+/// plane) with a row of vertices along x = the left wheels' x of each `level_kart_position`.
+fn trimesh_with_rows_under_the_wheels(commands: &mut Commands, rows: usize) {
+    let mut xs = vec![-20.0];
+    xs.extend((0..rows).map(|row| (level_kart_position(10 * row) + WHEEL_ANCHORS[0]).x));
+    xs.push(level_kart_position(10 * rows).x + 20.0);
+    let zs: Vec<f32> = (0..=120).map(|row| -40.0 + 0.6137 * row as f32).collect();
+    let mut vertices = Vec::new();
+    for (j, z) in zs.iter().enumerate() {
+        for (i, x) in xs.iter().enumerate() {
+            let y = 0.02 * (1.7 * i as f32 + 2.3 * j as f32).sin();
+            vertices.push(Vec3::new(*x, y, *z));
+        }
+    }
+    let width = xs.len() as u32;
+    let mut triangles = Vec::new();
+    for row in 0..zs.len() as u32 - 1 {
+        for column in 0..width - 1 {
+            let a = row * width + column;
+            // Their edge along a row is their second one (from their second vertex to their
+            // third), on both sides of the row: the one Parry's triangle test checks with a sum,
+            // which rounds.
+            triangles.push([a + 1, a, a + width]);
+            triangles.push([a + width, a + width + 1, a + 1]);
+        }
+    }
+    commands.spawn((
+        Transform::default(),
+        RigidBody::Fixed,
+        Collider::trimesh(vertices, triangles).unwrap(),
+        Friction::coefficient(0.0),
+        Surface::Road,
+    ));
+}
+
+/// Issue #209: Parry's `cast_ray` tests the boxes of its trees with a slope of about 1e-7 in
+/// place of a zero component of a ray's direction (with the sign of the zero), and its triangles
+/// with the real ray. A ray exactly vertical whose origin is in the plane of a face of a box (a
+/// row of the road's vertices under a level kart's wheel) is then pruned from the boxes on one
+/// side of the row, and only meets the triangle on the other side on its edge, which rounding can
+/// miss. `cast_ray_and_get_normal`, the wheels' ray, tests the boxes with the real ray: it never
+/// misses. Measured: with `cast_ray` for the wheels, 103 of these 1 000 places lose a wheel.
+/// The kart is put exactly level (its rotation the identity, as on its grid square) with its
+/// left wheels over a row, at 1 000 places: every wheel touches the road, every time.
+#[test]
+fn a_level_kart_over_rows_of_the_road_s_vertices_keeps_its_four_wheels_on_it() {
+    const ROWS: usize = 100;
+    const STEPS: usize = 10 * ROWS;
+    let mut scenario =
+        Scenario::unsettled(|commands| trimesh_with_rows_under_the_wheels(commands, ROWS));
+    // The first tick puts the road in the query pipeline.
+    scenario.tick(KartInput::default());
+    let mut missed = Vec::new();
+    for step in 0..STEPS {
+        let world = scenario.app.world_mut();
+        *world.get_mut::<Transform>(scenario.kart).unwrap() =
+            Transform::from_translation(level_kart_position(step));
+        *world.get_mut::<Velocity>(scenario.kart).unwrap() = Velocity::zero();
+        scenario.tick(KartInput::default());
+        let wheels = scenario.wheels();
+        if wheels.wheels_on_ground() < 4 {
+            missed.push((step, wheels.on_ground));
+        }
+    }
+    assert!(missed.is_empty(), "{} of {STEPS}: {missed:?}", missed.len());
 }
 
 #[test]

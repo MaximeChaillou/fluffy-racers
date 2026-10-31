@@ -913,6 +913,12 @@ fn drive_karts(
         let mut on_zone = 0;
         for (i, anchor) in WHEEL_ANCHORS.iter().enumerate() {
             let origin = transform.transform_point(*anchor);
+            // Issue #209: `cast_ray_and_get_normal`, never `cast_ray`. Parry's `cast_ray` tests
+            // the boxes of its trees with a slope of 1e-7 in place of a zero component of the
+            // ray, and its triangles with the real ray: a level kart's ray (exactly vertical)
+            // over a row of the road's vertices misses the road, one wheel in ten in
+            // `a_level_kart_over_rows_of_the_road_s_vertices_keeps_its_four_wheels_on_it`. This
+            // one tests the boxes with the real ray (a zero component exactly).
             let hit = context.cast_ray_and_get_normal(
                 origin,
                 -up,
