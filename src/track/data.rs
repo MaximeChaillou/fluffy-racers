@@ -10,6 +10,7 @@ use serde::Deserialize;
 use super::biome::{self, BiomeData, Palette, RoadLook, Side};
 use super::far::FarLayer;
 use super::fingerprint;
+use super::terrain::TerrainData;
 
 /// A whole circuit, as written in its RON file. The walls are the same on every circuit
 /// (`mesh::WALL_HEIGHT`, `mesh::WALL_THICKNESS`): a file has no say in their height (issue #47).
@@ -125,6 +126,10 @@ pub struct TrackData {
     /// maybe their colors), in place of its biome's. None: its biome's. Purely what it looks like.
     #[serde(default)]
     pub road: Option<RoadLook>,
+    /// Issue #195: its own terrain (`super::terrain`: its hills, cliffs and mountains), in place
+    /// of its biome's. None: its biome's.
+    #[serde(default)]
+    pub terrain: Option<TerrainData>,
     /// Issue #119 (GD § 1, « Les courses longues »): an **open** circuit, a long race from its
     /// start to a finish elsewhere, in sections instead of laps (`open: (finish: 600.0, ...)`).
     /// None: a circuit of laps, as before.
@@ -849,6 +854,10 @@ impl TrackData {
         if let Some(road) = &self.road {
             road.validate().or_else(fail)?;
         }
+        // Issue #195: its own terrain.
+        if let Some(terrain) = &self.terrain {
+            terrain.validate().or_else(fail)?;
+        }
         // Issue #146: its own far decor, on top of its biome's.
         if !self.far_decor.is_empty() && self.biome.is_none() {
             return fail("far_decor without a biome".to_string());
@@ -1349,6 +1358,39 @@ impl TrackData {
     /// Issue #146: its far decor, its biome's and its own layers (None without a biome).
     pub fn far_decor(&self) -> Option<super::far::FarDecor> {
         super::far::far_decor_of(self.biome(), &self.far_decor)
+    }
+
+    /// Issue #195: the shape of its terrain: its own, else its biome's (None without either: a
+    /// flat ground, as before).
+    pub fn terrain(&self) -> Option<TerrainData> {
+        self.terrain
+            .or_else(|| self.biome().and_then(|biome| biome.terrain))
+    }
+
+    /// Issue #195: its terrain, built (pure, deterministic), `mirrored` for the mirror mode:
+    /// always from the file itself, read across the X = 0 plane in the mirror (its exact image).
+    pub fn terrain_built(&self, mirrored: bool) -> Option<super::terrain::Terrain> {
+        if self.mirrored {
+            return self.mirrored().terrain_built(!mirrored);
+        }
+        let style = self.terrain()?;
+        let center = super::layout::CenterLine::of(self);
+        let shortcuts: Vec<super::shortcut::Shortcut> = self
+            .shortcuts
+            .iter()
+            .map(|s| super::shortcut::Shortcut::new(&center, s))
+            .collect();
+        let lakes: Vec<super::water::Lake> =
+            self.lakes.iter().map(super::water::Lake::new).collect();
+        let far = self.far_decor();
+        Some(super::terrain::Terrain::build(
+            &style,
+            &center,
+            &shortcuts,
+            &lakes,
+            far.as_ref(),
+            (&self.palette(), self.decor_seed, mirrored),
+        ))
     }
 
     /// Issue #187: the look of its road: its own (`road` in its file), else its biome's, else the

@@ -24,6 +24,14 @@
 //   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
 //   own (`road` in its file, its `asphalt` and `curbs` too). Readability first: the road's color
 //   stays far from the ground's, the shoulders' and the sand's, and the items' (tests).
+// - `terrain` (issue #195): the hills, cliffs and mountains around its circuits
+//   (src/track/terrain.rs): `height` (m, the highest), `scale` (m, a hill's size), `ridges` (0..1:
+//   sharp crests), `cliffs` (0..1: steps of `terrace` meters with steep faces), `floor` (0..1: the
+//   lowest share of the height between the hills), `clear` (m: the flat band kept beyond the
+//   walls, 24 at least: the road, its decor and the camera's view never change), `rise` (m: from
+//   it to the full height), `rock` (the color of the faces steeper than `steep`, rise over run),
+//   `snow: (color, from)`. Solid within 100 m of the walls, drawn only beyond; it reaches the
+//   foot of the first range (or the beach). A circuit may have its own (`terrain` in its file).
 // - `music` (issue #104): the music of its circuits that name none of their own, a piece of
 //   `assets/data/music.ron`.
 // - Pieces never stand on the road, the curbs, the shoulders or the walls: where there is no
@@ -69,6 +77,8 @@
         // Issue #187: a country lane of pale packed earth and pebbles (browner, the Cac's and
         // the croquettes would melt into it), logs along it.
         road: (paving: Dirt, border: Logs),
+        // Issue #195: its terrain. Rolling green hills and vales close to the road, grey rock on their steep sides.
+        terrain: (height: 34.0, scale: 160.0, floor: 0.25, rise: 50.0, rock: (0.56, 0.53, 0.46)),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -137,6 +147,8 @@
         ),
         // Issue #187: a band of raspberry sugar striped with white, sky blue sweets along it.
         road: (paving: Sugar, border: Candies, accent: (1.0, 0.98, 0.96)),
+        // Issue #195: its terrain. Marshmallow hills in soft layers, like a cake, a darker pink on their steep sides.
+        terrain: (height: 30.0, scale: 140.0, cliffs: 0.3, terrace: 8.0, floor: 0.25, rock: (0.84, 0.56, 0.70), steep: 1.0),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -209,6 +221,8 @@
         // Issue #187: trodden groomed snow, a warm grey (lighter, it would melt into the snow
         // beside; bluer, the gift boxes into it), red and white markers along it.
         road: (paving: GroomedSnow, border: Stripes),
+        // Issue #195: its terrain. Snowy mountains with sharp crests right beside the road, grey rock on their faces.
+        terrain: (height: 75.0, scale: 170.0, ridges: 0.65, floor: 0.2, rise: 60.0, rock: (0.56, 0.57, 0.63), steep: 0.8),
         far: (
             fog: (200.0, 1200.0),
             layers: [
@@ -288,6 +302,8 @@
         // Issue #187: the weathered grey planks of a boardwalk (browner, the croquettes and the
         // bee would melt into them), a blue and white border like the beach towels.
         road: (paving: Planks, border: Stripes),
+        // Issue #195: its terrain. Dunes and low sandy capes before the sea, rock on their steep sides.
+        terrain: (height: 24.0, scale: 120.0, cliffs: 0.4, terrace: 7.0, floor: 0.15, rise: 35.0, rock: (0.64, 0.56, 0.44), steep: 0.8),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -357,6 +373,8 @@
         // Issue #187: damp packed sand, rippled, darker and greyer than the dry sand of its
         // patches (and than the bee); white pebbles along it.
         road: (paving: PackedSand, border: Stones),
+        // Issue #195: its terrain. Jungle cliffs in steps, dark rock on their faces.
+        terrain: (height: 44.0, scale: 130.0, cliffs: 0.6, terrace: 12.0, floor: 0.2, rock: (0.50, 0.46, 0.40), steep: 0.9),
         far: (
             fog: (220.0, 1300.0),
             layers: [
@@ -433,6 +451,8 @@
         // Issue #187: the rose clay of the canyon, dried and cracked (redder or browner, the Cac's
         // and the croquettes would melt into it), its stones along it.
         road: (paving: CrackedEarth, border: Stones),
+        // Issue #195: its terrain. The canyon: mesas and cliffs in steps of 14 m, their faces the color of the rock.
+        terrain: (height: 62.0, scale: 150.0, cliffs: 0.85, terrace: 14.0, floor: 0.25, rock: (0.72, 0.40, 0.28), steep: 0.7),
         far: (
             fog: (240.0, 1400.0),
             layers: [
@@ -506,6 +526,8 @@
         // Issue #187: a forest path: dark humus (lighter, the Cac's would melt into it), dark moss
         // (lighter, it would melt into the grass) and roots, mossy stones along it.
         road: (paving: ForestPath, border: Stones, accent: (0.26, 0.32, 0.12)),
+        // Issue #195: its terrain. Wooded mounds and hollows, dark earth on their steep sides.
+        terrain: (height: 36.0, scale: 130.0, floor: 0.3, rock: (0.40, 0.36, 0.30), steep: 1.0),
         far: (
             fog: (190.0, 1150.0),
             layers: [
@@ -578,6 +600,8 @@
         // Issue #187: slabs of dark plum slate (the ground around is a mauve grey: darker, the
         // road stands out), pale stones along it.
         road: (paving: Flagstones, border: Stones),
+        // Issue #195: its terrain. Pale chalk cliffs in high steps above the mauve heath.
+        terrain: (height: 66.0, scale: 160.0, cliffs: 0.7, terrace: 16.0, floor: 0.2, rock: (0.86, 0.82, 0.78), steep: 0.8),
         far: (
             fog: (240.0, 1400.0),
             layers: [
@@ -652,6 +676,8 @@
         // Issue #187: dark earth strewn with red fallen leaves (orange ones, the croquettes and
         // the boomerang would melt into them), a border of pumpkin orange and night purple.
         road: (paving: Leaves, border: Stripes, accent: (0.66, 0.18, 0.12)),
+        // Issue #195: its terrain. Round hillsides of fields and orchards, brown earth on their steep sides.
+        terrain: (height: 32.0, scale: 140.0, floor: 0.25, rock: (0.46, 0.37, 0.28)),
         far: (
             fog: (200.0, 1250.0),
             layers: [
@@ -729,6 +755,8 @@
         ),
         // Issue #187: the cobbles of the kingdom, a border in its colors, blue and gold.
         road: (paving: Cobbles, border: Stripes),
+        // Issue #195: its terrain. Green hills and a few crests, grey stone on their steep sides.
+        terrain: (height: 36.0, scale: 160.0, ridges: 0.15, floor: 0.25, rock: (0.66, 0.60, 0.54)),
         far: (
             fog: (220.0, 1300.0),
             layers: [

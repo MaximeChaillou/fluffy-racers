@@ -9,7 +9,8 @@
 //!     too: simpler and stricter than a choice of fields);
 //!   - **the data of its biome** in `assets/data/biomes.ron` ([`BiomeData`]): its name, its
 //!     colors and its light, its rows and its scatter of pieces (their models by name, how many,
-//!     how big, where). Not its music (Max: « la musique non »), nor the other biomes.
+//!     how big, where), its far decor (#146), its road (#187) and its terrain (#195). Not its
+//!     music (Max: « la musique non »), nor the other biomes.
 //! - **What it is not made of** (see `STATUS.md`, « Décisions », #157): the manifest
 //!   (`assets/tracks/index.ron`: the names in the menus and the cups, not the circuit; Max: « le
 //!   manifeste non »), the music (`assets/data/music.ron`), the models' files (`.glb`: shared by
@@ -29,6 +30,7 @@ use super::biome::{
     BiomeData, Border, Palette, Paving, PropRow, Rgb, RoadLook, ScatterGroup, Side,
 };
 use super::far::{FarDecor, FarLayer};
+use super::terrain::TerrainData;
 
 /// The version of what is hashed: the first bytes of every fingerprint. To change only if the
 /// encoding below changes (every record then starts from zero, which is fine: Max, #157).
@@ -170,6 +172,7 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
         music: _,
         far,
         road,
+        terrain,
     } = biome;
     hasher.str(name);
     let Palette {
@@ -241,6 +244,45 @@ fn write_biome(hasher: &mut Fnv1a, biome: &BiomeData) {
     }
     // Issue #187: its road, after the rest.
     write_road(hasher, road);
+    // Issue #195: its terrain, last of all, and only when it has one: nothing follows it, so a
+    // biome without a terrain hashes exactly as in encoding 3 (the value written down in the
+    // tests stays), and every biome of the game, which has one, gets a new fingerprint (every
+    // record starts from zero: the ground off the road is solid where it rises).
+    if let Some(terrain) = terrain {
+        write_terrain(hasher, terrain);
+    }
+}
+
+/// A terrain (issue #195): every field in the order of its declaration, the snow `None` as a 0
+/// and `Some` as a 1 before it.
+fn write_terrain(hasher: &mut Fnv1a, terrain: &TerrainData) {
+    let TerrainData {
+        height,
+        scale,
+        ridges,
+        cliffs,
+        terrace,
+        floor,
+        clear,
+        rise,
+        rock,
+        steep,
+        snow,
+    } = *terrain;
+    hasher.u8(1);
+    for value in [height, scale, ridges, cliffs, terrace, floor, clear, rise] {
+        hasher.f32(value);
+    }
+    hasher.rgb(rock);
+    hasher.f32(steep);
+    match snow {
+        None => hasher.u8(0),
+        Some((color, at)) => {
+            hasher.u8(1);
+            hasher.rgb(color);
+            hasher.f32(at);
+        }
+    }
 }
 
 /// A road's look (issue #187): its paving and its border (their place in `Paving::ALL` and
@@ -484,6 +526,8 @@ mod tests {
                 asphalt: None,
                 curbs: None,
             },
+            // Issue #195: no terrain, hashed as nothing (the values below, of encoding 3, stay).
+            terrain: None,
         };
         // Checked by a second implementation of the encoding, outside the game (Python: the
         // same bytes, `struct.pack('<f')` for the floats): the same values. Issue #187: encoding
@@ -645,6 +689,18 @@ mod tests {
                     }
                 }
             }),
+            // Issue #195: its terrain.
+            ("its terrain higher", &|b| {
+                if let Some(t) = &mut b.terrain {
+                    t.height += 1.0;
+                }
+            }),
+            ("its terrain's snow", &|b| {
+                if let Some(t) = &mut b.terrain {
+                    t.snow = Some(((1.0, 1.0, 1.0), 30.0));
+                }
+            }),
+            ("no terrain", &|b| b.terrain = None),
             ("a sea", &|b| {
                 b.far.layers.push(FarLayer::Sea {
                     color: (0.1, 0.5, 0.7),
