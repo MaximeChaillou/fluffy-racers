@@ -943,54 +943,64 @@ mod tests {
 
     /// Issue #181: the line is as thick everywhere (its color twice `line`, give or take a pixel
     /// of its smoothed edge), measured across it wherever no other stretch of the road is near.
+    ///
+    /// Issue #206: the big picture on the Col des Moufles, as before; the small one on the Anneau
+    /// Guimauve: with its longer switchbacks, the Col's small picture has no stretch alone any
+    /// more (its legs side by side, measured: none), the Anneau's has 11.
     #[test]
     fn the_line_keeps_its_thickness() {
-        let data = circuit("col.track.ron");
-        for big in [true, false] {
-            let (map, style, image) = drawn(&data, false, big);
-            let casing = style.line + style.edge;
-            let pixels: Vec<Vec2> = map.points.iter().map(|p| to_pixels(&style, p.at)).collect();
-            let per_meter = pixel_length(&map, &style) / map.length;
-            let mut measured = 0;
-            for i in (40..pixels.len() - 2).step_by(11) {
-                let (at, forward) = (pixels[i], (pixels[i + 1] - pixels[i]).normalize());
-                // On a straight stretch (across a tight turn, the line is wider).
-                let reach = (2.0 * casing / per_meter).ceil() as usize + 1;
-                let (Some(before), Some(after)) = (i.checked_sub(reach), pixels.get(i + reach))
-                else {
-                    continue;
-                };
-                let bend = (at - pixels[before])
-                    .normalize()
-                    .dot((*after - at).normalize());
-                let alone = bend > 0.98
-                    && pixels.iter().enumerate().all(|(j, p)| {
-                        map.apart(map.points[j].along, map.points[i].along)
-                            < 8.0 * casing / per_meter
-                            || p.distance(at) > 4.0 * casing
-                    });
-                if !alone {
-                    continue;
-                }
-                let across = forward.perp();
-                let kinds: Vec<Kind> = (-200..=200)
-                    .map(|k| at + across * (k as f32 * 0.05))
-                    .map(|p| image.kind(p.x as u32, p.y as u32))
-                    .collect();
-                if kinds.contains(&Kind::Mark) {
-                    continue;
-                }
-                let covered =
-                    kinds.iter().filter(|k| matches!(k, Kind::Line(_))).count() as f32 * 0.05;
-                assert!(
-                    (covered - 2.0 * style.line).abs() <= 1.5,
-                    "big {big}: {covered} px across at point {i}, not {}",
-                    2.0 * style.line
-                );
-                measured += 1;
-            }
-            assert!(measured > if big { 20 } else { 5 }, "big {big}: {measured}");
+        for (file, big) in [("col.track.ron", true), ("anneau.track.ron", false)] {
+            let measured = line_thickness_on(&circuit(file), big);
+            assert!(
+                measured > if big { 20 } else { 5 },
+                "big {big}, {file}: {measured}"
+            );
         }
+    }
+
+    /// [`the_line_keeps_its_thickness`] on `data`: how many stretches it measured.
+    fn line_thickness_on(data: &TrackData, big: bool) -> usize {
+        let (map, style, image) = drawn(data, false, big);
+        let casing = style.line + style.edge;
+        let pixels: Vec<Vec2> = map.points.iter().map(|p| to_pixels(&style, p.at)).collect();
+        let per_meter = pixel_length(&map, &style) / map.length;
+        let mut measured = 0;
+        for i in (40..pixels.len() - 2).step_by(11) {
+            let (at, forward) = (pixels[i], (pixels[i + 1] - pixels[i]).normalize());
+            // On a straight stretch (across a tight turn, the line is wider).
+            let reach = (2.0 * casing / per_meter).ceil() as usize + 1;
+            let (Some(before), Some(after)) = (i.checked_sub(reach), pixels.get(i + reach)) else {
+                continue;
+            };
+            let bend = (at - pixels[before])
+                .normalize()
+                .dot((*after - at).normalize());
+            let alone = bend > 0.98
+                && pixels.iter().enumerate().all(|(j, p)| {
+                    map.apart(map.points[j].along, map.points[i].along) < 8.0 * casing / per_meter
+                        || p.distance(at) > 4.0 * casing
+                });
+            if !alone {
+                continue;
+            }
+            let across = forward.perp();
+            let kinds: Vec<Kind> = (-200..=200)
+                .map(|k| at + across * (k as f32 * 0.05))
+                .map(|p| image.kind(p.x as u32, p.y as u32))
+                .collect();
+            if kinds.contains(&Kind::Mark) {
+                continue;
+            }
+            let covered = kinds.iter().filter(|k| matches!(k, Kind::Line(_))).count() as f32 * 0.05;
+            assert!(
+                (covered - 2.0 * style.line).abs() <= 1.5,
+                "big {big}, {}: {covered} px across at point {i}, not {}",
+                data.name,
+                2.0 * style.line
+            );
+            measured += 1;
+        }
+        measured
     }
 
     /// Issue #181: the mirror flips the picture left to right (the road's pixels, nearly all of
