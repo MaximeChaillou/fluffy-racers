@@ -268,6 +268,7 @@ fn write_terrain(hasher: &mut Fnv1a, terrain: &TerrainData) {
         rock,
         steep,
         snow,
+        embank,
     } = *terrain;
     hasher.u8(1);
     for value in [height, scale, ridges, cliffs, terrace, floor, clear, rise] {
@@ -282,6 +283,12 @@ fn write_terrain(hasher: &mut Fnv1a, terrain: &TerrainData) {
             hasher.rgb(color);
             hasher.f32(at);
         }
+    }
+    // Issue #202: hashed only when the terrain hugs the road (the other terrains' bytes, and
+    // their records, are those of #195).
+    if embank > 0.0 {
+        hasher.u8(2);
+        hasher.f32(embank);
     }
 }
 

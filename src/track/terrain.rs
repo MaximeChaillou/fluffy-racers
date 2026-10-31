@@ -26,17 +26,27 @@
 //!   circuit is built; nothing per frame.
 //! - **The decor stands on it** (`dressing.rs`): every piece, near and far, is lifted onto the
 //!   slope under its footprint.
+//! - Issue #202: **a terrain that hugs the road** ([`TerrainData::embank`], on the circuits that
+//!   ask for it): the ground comes up to the walls of a raised road, [`EMBANK_LIP`] under its
+//!   surface, and falls away from them at the slope of an embankment, instead of the skirts down
+//!   to a flat ground: the road climbs the side of a mountain, its switchbacks cut into it. It
+//!   never rises over the road (nor steeper than 45° above it beyond its walls), and it keeps
+//!   every void a kart falls into: beside a side without wall, over a gap, under a risky jump's
+//!   flight, the terrain stays [`OPEN_FALL`] meters under the road at least (more than
+//!   `RaceTuning::fall_depth`); flat over the lakes and around the anti-gravity zones.
 
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
 use super::biome::{Palette, Rgb};
+use super::data::ShortcutKind;
 use super::decor::tight_turns;
 use super::far::{FarDecor, FarLayer, GroundRect};
 use super::layout::{CenterLine, TrackSample};
 use super::mesh::{GROUND_HEIGHT, MeshData, WALL_THICKNESS, wall_offset};
-use super::shortcut::Shortcut;
-use super::water::Lake;
+use super::shortcut::{OpenEdge, Shortcut, walled};
+use super::water::{Gap, Lake, gap_at};
 
 /// How far below the ground the terrain stays where it is flat (m): under the ground's box, never
 /// drawn over it nor in its way.
@@ -62,6 +72,28 @@ pub const COLLIDER_REACH: f32 = 100.0;
 /// rim comes back down to the ground (m, at most).
 pub const MAX_EXTENT: f32 = 160.0;
 const RIM: f32 = 50.0;
+
+/// Issue #202: under the road, its shoulders and its walls, the terrain that hugs the road stays
+/// this far below the road's surface (m), and comes up to there at the outer face of its walls:
+/// the walls stand out of it, a kart's wheels never meet it through the road.
+pub const EMBANK_LIP: f32 = 0.8;
+
+/// Issue #202: beside a side without wall, over a gap and under a risky jump, the terrain that
+/// hugs the road stays at least this far below the road (m): a kart that falls there is seen
+/// fallen (`RaceTuning::fall_depth`, 5 m, and a meter more)...
+pub const OPEN_FALL: f32 = 6.0;
+
+/// ...over this many meters beyond the road's edge (or the jump's path): where a kart that falls
+/// off it lands.
+pub const OPEN_REACH: f32 = 16.0;
+
+/// Issue #202: under a risky jump, from the edge of its path out to this many meters (m), the
+/// same void: a kart that falls short falls along its path.
+pub const JUMP_REACH: f32 = 4.0;
+
+/// Issue #202: the steepest that what bounds the terrain (the road above it, a void beside it)
+/// lets it rise away from there (rise over run).
+const BOUND_RISE: f32 = 1.0;
 
 /// Mixed into the decor's seed: the terrain's noise is not the decor's draws.
 const SEED_SALT: u64 = 0x0195_7E44_A1A0_0195;
@@ -102,6 +134,11 @@ pub struct TerrainData {
     /// Snow above a height (m): its color, the height.
     #[serde(default)]
     pub snow: Option<(Rgb, f32)>,
+    /// Issue #202: the terrain hugs the road, falling away from its walls at this slope (rise
+    /// over run: 0.6 is an embankment of about 31°); 0 (the default): it stays flat under the
+    /// ground beside the road, as in #195.
+    #[serde(default)]
+    pub embank: f32,
 }
 
 fn default_terrace() -> f32 {
@@ -139,6 +176,9 @@ impl TerrainData {
         within("clear", self.clear, (MIN_CLEAR, 120.0))?;
         within("rise", self.rise, (10.0, 200.0))?;
         within("steep", self.steep, (0.1, 10.0))?;
+        if self.embank != 0.0 {
+            within("embank", self.embank, (0.2, 1.5))?;
+        }
         let colors = [Some(self.rock), self.snow.map(|(color, _)| color)];
         if colors
             .iter()
@@ -262,13 +302,12 @@ pub struct Terrain {
 }
 
 impl Terrain {
-    /// The terrain of a circuit (its file, not mirrored: `center` its centerline, `shortcuts`
-    /// and `lakes` the file's), `mirrored` for the mirror mode. None without a terrain.
+    /// The terrain of a circuit (its file, not mirrored: `center` its centerline, `shortcuts`,
+    /// `lakes` and `edges` the file's), `mirrored` for the mirror mode. None without a terrain.
     pub fn build(
         terrain: &TerrainData,
         center: &CenterLine,
-        shortcuts: &[Shortcut],
-        lakes: &[Lake],
+        (shortcuts, lakes, edges): (&[Shortcut], &[Lake], &RoadEdges),
         far: Option<&FarDecor>,
         (palette, seed, mirrored): (&Palette, u64, bool),
     ) -> Self {
@@ -340,6 +379,13 @@ impl Terrain {
                 }
                 let h = terrain.height * terrain.shape(fbm(seed, p, terrain.scale)) * weight;
                 heights[k] = h - SINK;
+            }
+        }
+        if terrain.embank > 0.0 {
+            let grid = Grid { origin, cols, rows };
+            let (bank, bound) = hug(terrain.embank, &grid, center, (shortcuts, lakes, edges));
+            for ((h, bank), bound) in heights.iter_mut().zip(&bank).zip(&bound) {
+                *h = h.max(bank.min(*bound));
             }
         }
         Self {
@@ -502,6 +548,240 @@ impl Terrain {
     }
 }
 
+/// Issue #202: what the terrain that hugs the road keeps (the file's, as built along its
+/// centerline): its sides without wall, its gaps, its anti-gravity zones.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RoadEdges<'a> {
+    pub open: &'a [OpenEdge],
+    pub gaps: &'a [Gap],
+    pub zones: &'a [AntiGravityZone],
+}
+
+/// The vertices of a heightfield: its first one (file frame, ground plane), how many across and
+/// along, [`CELL`] apart.
+struct Grid {
+    origin: Vec2,
+    cols: usize,
+    rows: usize,
+}
+
+impl Grid {
+    /// Every vertex within `radius` of `p` (a square around it) gets `value(vertex)` if it is
+    /// lower (`lowest`) or higher (else) than what it has.
+    fn stamp(
+        &self,
+        values: &mut [f32],
+        (p, radius): (Vec2, f32),
+        lowest: bool,
+        value: impl Fn(Vec2) -> f32,
+    ) {
+        let lo = ((p - Vec2::splat(radius) - self.origin) / CELL).floor();
+        let hi = ((p + Vec2::splat(radius) - self.origin) / CELL).ceil();
+        let (i0, j0) = (lo.x.max(0.0) as usize, lo.y.max(0.0) as usize);
+        let (i1, j1) = (
+            (hi.x.max(0.0) as usize).min(self.cols - 1),
+            (hi.y.max(0.0) as usize).min(self.rows - 1),
+        );
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let v = self.origin + Vec2::new(i as f32, j as f32) * CELL;
+                let slot = &mut values[j * self.cols + i];
+                let x = value(v);
+                if (lowest && x < *slot) || (!lowest && x > *slot) {
+                    *slot = x;
+                }
+            }
+        }
+    }
+}
+
+/// The level of the terrain that hugs the road at a sample (m above the ground): [`EMBANK_LIP`]
+/// under the lower of its surface at the walls and in its middle.
+fn hug_level(sample: &TrackSample) -> f32 {
+    let w = wall_offset(sample);
+    let low = sample
+        .point(-w, 0.0)
+        .y
+        .min(sample.point(w, 0.0).y)
+        .min(sample.position.y);
+    low - GROUND_HEIGHT - EMBANK_LIP
+}
+
+/// Issue #202: the terrain that hugs the road, at every vertex of `grid` (m above the ground):
+/// the embankment (the highest of the road's levels, flat for a cell's diagonal beyond its walls
+/// (a berm), then falling away at `slope`),
+/// and what bounds it (the lowest of: the road's levels, rising away from its walls at
+/// [`BOUND_RISE`]; inside a tight turn, the lowest of its road; [`OPEN_FALL`] under a side
+/// without wall, a gap, a risky jump; the ground on a lake and around an anti-gravity zone).
+///
+/// A vertex takes the road's level from every sample less than a cell's diagonal away along the
+/// road (its window), each one carried to the vertex along the road's slope there (its tangent):
+/// on a straight climb, exactly the road's level beside the vertex; in a dip, at the foot of a
+/// bump, at a drop's step, lower. The bound is the lowest of them, so that every triangle over
+/// the road (its corners within a diagonal of any point of it) stays under that point's level:
+/// the terrain never comes through the road, wherever the road bends up or steps down.
+fn hug(
+    slope: f32,
+    grid: &Grid,
+    center: &CenterLine,
+    (shortcuts, lakes, edges): (&[Shortcut], &[Lake], &RoadEdges),
+) -> (Vec<f32>, Vec<f32>) {
+    let n = grid.cols * grid.rows;
+    let mut bank = vec![-SINK; n];
+    let mut bound = vec![f32::MAX; n];
+    let diagonal = CELL * std::f32::consts::SQRT_2;
+    let window = diagonal + 0.5;
+    let road = center.road_samples();
+    let paths: Vec<&[TrackSample]> = shortcuts
+        .iter()
+        .filter(|s| s.kind != ShortcutKind::Jump)
+        .map(|s| s.samples())
+        .collect();
+    let lines: Vec<&[TrackSample]> = std::iter::once(road.as_slice()).chain(paths).collect();
+    let top = lines
+        .iter()
+        .flat_map(|line| line.iter())
+        .map(hug_level)
+        .fold(0.0, f32::max)
+        + 1.0;
+    let special = |s: &TrackSample| {
+        gap_at(edges.gaps, center, s.distance).is_some()
+            || anti_gravity_at(edges.zones, center, s.distance).is_some()
+            || s.up.y < 0.9
+    };
+    // What rises from `base` at `p` beyond `keep` meters, at the bound's slope (a disc), as far
+    // as it bounds anything.
+    let rising = |p: Vec2, keep: f32, base: f32| {
+        (
+            (p, keep + (top - base).max(0.0) / BOUND_RISE),
+            move |v: Vec2| base + BOUND_RISE * (v.distance(p) - keep).max(0.0),
+        )
+    };
+    for (line_index, line) in lines.iter().enumerate() {
+        let on_road = line_index == 0;
+        for (i, s) in line.iter().enumerate() {
+            let p = s.position.xz();
+            let keep = keep_out(s);
+            if on_road && special(s) {
+                let (disc, value) = rising(p, keep + diagonal, -SINK);
+                grid.stamp(&mut bound, disc, true, value);
+                continue;
+            }
+            // The road's slope (rise over horizontal run) at the sample.
+            let (a, b) = (
+                &line[i.saturating_sub(1)],
+                &line[(i + 1).min(line.len() - 1)],
+            );
+            let run = a.position.xz().distance(b.position.xz());
+            let gradient = if run > 1e-3 {
+                (b.position.y - a.position.y) / run
+            } else {
+                0.0
+            };
+            let forward = Vec2::new(s.forward.x, s.forward.z).normalize_or(Vec2::Y);
+            let across = Vec2::new(-forward.y, forward.x);
+            let level = hug_level(s);
+            // The vertex's place from the sample: along the road (in its window, or none), across.
+            let place = move |v: Vec2| {
+                let d = v - p;
+                let along = d.dot(forward);
+                (along.abs() <= window).then(|| (level + gradient * along, d.dot(across).abs()))
+            };
+            let reach = keep + diagonal + (top - level).max(0.0) / BOUND_RISE;
+            grid.stamp(&mut bound, (p, reach), true, |v| match place(v) {
+                Some((level, lateral)) => {
+                    level.max(-SINK) + BOUND_RISE * (lateral - keep - diagonal).max(0.0)
+                }
+                None => f32::MAX,
+            });
+            if level > 0.0 {
+                let berm = keep + diagonal;
+                grid.stamp(
+                    &mut bank,
+                    (p, berm + level / slope),
+                    false,
+                    |v| match place(v) {
+                        Some((level, lateral)) => level - slope * (lateral - berm).max(0.0),
+                        None => -SINK,
+                    },
+                );
+            }
+            if !on_road {
+                continue;
+            }
+            // A side without wall: a void beside it, from the middle of the road out.
+            for sign in [-1.0f32, 1.0] {
+                if walled(edges.open, center, s.distance, sign) {
+                    continue;
+                }
+                let base = level + EMBANK_LIP - OPEN_FALL;
+                let keep = wall_offset(s) + OPEN_REACH + diagonal;
+                grid.stamp(&mut bound, (p, keep + top / BOUND_RISE), true, |v: Vec2| {
+                    let d = v - p;
+                    let along = d.dot(forward);
+                    let lateral = d.dot(across) * sign;
+                    if along.abs() > window || lateral < 0.0 {
+                        return f32::MAX;
+                    }
+                    (base + gradient * along).max(-SINK) + BOUND_RISE * (lateral - keep).max(0.0)
+                });
+            }
+        }
+    }
+    // Inside a tight turn, no higher than the lowest of its road (GD § 16, règle 3: a change of
+    // level never hides a tight turn): where the road goes down out of it, the slope inside does
+    // not stand in front of the road below.
+    for turn in tight_turns(center).iter().step_by(3) {
+        let (c, r) = (turn.center, turn.radius);
+        // The level of the turn's road there and out of it (a quarter of its circle on): inside
+        // it, the lowest of them.
+        let Some(at) = road.iter().find(|s| s.position.xz() == turn.at) else {
+            continue;
+        };
+        let out = r * std::f32::consts::FRAC_PI_2;
+        let lowest = road
+            .iter()
+            .filter(|s| center.wrap(s.distance - at.distance) <= out)
+            .map(hug_level)
+            .fold(hug_level(at), f32::min);
+        // Near the turn itself (closer to its sample than its radius: a gentle turn's circle
+        // reaches far across the infield, `decor::hides_a_turn`).
+        let (disc, value) = rising(c, r, lowest.max(-SINK));
+        let near = turn.at;
+        grid.stamp(&mut bound, disc, true, |v: Vec2| {
+            if v.distance(near) <= r {
+                value(v)
+            } else {
+                f32::MAX
+            }
+        });
+    }
+    // Under a risky jump's flight (and its ramp): a void.
+    for jump in shortcuts.iter().filter(|s| s.kind == ShortcutKind::Jump) {
+        let base = (jump.low - GROUND_HEIGHT - OPEN_FALL).max(-SINK);
+        // Only where it has left the road (its line-up and its landing are on it).
+        let beyond = |s: &&TrackSample| {
+            let near = center.samples()[center.nearest_index(s.position)];
+            near.position.xz().distance(s.position.xz()) > wall_offset(&near)
+        };
+        for s in jump.samples().iter().filter(beyond) {
+            let keep = s.half_width + JUMP_REACH + diagonal;
+            let (disc, value) = rising(s.position.xz(), keep, base);
+            grid.stamp(&mut bound, disc, true, value);
+        }
+    }
+    for lake in lakes {
+        let (lo, hi) = (lake.min, lake.max);
+        let middle = (lo + hi) / 2.0;
+        let radius = (hi - lo).length() / 2.0 + diagonal + top / BOUND_RISE;
+        grid.stamp(&mut bound, (middle, radius), true, |v: Vec2| {
+            let d = (lo - v).max(v - hi).max(Vec2::ZERO).length();
+            -SINK + BOUND_RISE * (d - diagonal).max(0.0)
+        });
+    }
+    (bank, bound)
+}
+
 /// How far from a sample's centerline its walls' outer face is (m).
 fn keep_out(sample: &TrackSample) -> f32 {
     wall_offset(sample) + WALL_THICKNESS
@@ -512,7 +792,12 @@ mod tests {
     use super::*;
     use crate::admin::tracks::circuits;
     use crate::camera::CameraTuning;
+    use crate::race::RaceTuning;
     use crate::track::TrackData;
+
+    /// Issue #202: how much less than [`EMBANK_LIP`] the terrain that hugs the road may keep under
+    /// it (m): its triangles, 6 m wide, against a road that curves and dips.
+    const HUG_SLACK: f32 = 0.15;
     use crate::track::biome::biomes as all_biomes;
 
     fn circuit(path: &str) -> TrackData {
@@ -561,13 +846,14 @@ mod tests {
     #[test]
     fn broken_terrains_are_refused() {
         let good = all_biomes()[0].terrain.unwrap();
-        let cases: [(&str, fn(&mut TerrainData)); 6] = [
+        let cases: [(&str, fn(&mut TerrainData)); 7] = [
             ("height", |t| t.height = 500.0),
             ("clear", |t| t.clear = MIN_CLEAR - 1.0),
             ("rise", |t| t.rise = 2.0),
             ("ridges", |t| t.ridges = 1.5),
             ("scale", |t| t.scale = 5.0),
             ("color", |t| t.rock = (1.5, 0.0, 0.0)),
+            ("embank", |t| t.embank = 3.0),
         ];
         for (what, change) in cases {
             let mut bad = good;
@@ -600,7 +886,10 @@ mod tests {
     /// heights (its highest point at least 15 m above the ground, and at least 12 m of difference
     /// within 150 m of the walls, where one sees it from the road), and it never touches the road
     /// nor its shoulders, walls and skirts: under the ground within its flat band of the walls of
-    /// the road, of the shortcuts, of the lakes. The mirror is its exact image.
+    /// the road, of the shortcuts, of the lakes. Issue #202, where the terrain hugs the road:
+    /// under the road and its walls, [`EMBANK_LIP`] under the road (to [`HUG_SLACK`]); beyond
+    /// them, within the flat band, never above the road nor steeper than 45° over it; under a
+    /// risky jump's flight, `fall_depth` under it. The mirror is its exact image.
     #[test]
     fn every_circuit_has_real_heights_that_never_touch_the_road() {
         let mut failures = Vec::new();
@@ -633,26 +922,50 @@ mod tests {
                 failures.push(format!("{name}: no real heights ({lo}..{hi})"));
             }
             // Across the road and well beyond its walls, every meter along it: under the ground.
+            // Issue #202, a terrain that hugs the road: under the road, its shoulders and its
+            // walls, `EMBANK_LIP` under the road's surface at least; beyond them, never above it
+            // nor steeper than 45° over it; under a risky jump, a void (`fall_depth` under it).
+            let fall = RaceTuning::default().fall_depth;
             let shortcuts: Vec<Shortcut> = data
                 .shortcuts
                 .iter()
                 .map(|s| Shortcut::new(&center, s))
                 .collect();
             let road = center.road_samples();
-            let paths = shortcuts.iter().flat_map(|s| s.samples().iter());
-            for sample in road.iter().chain(paths) {
-                let reach = keep_out(sample) + style.clear - 0.5;
+            let paths = shortcuts.iter().flat_map(|s| {
+                let jump = (s.kind == ShortcutKind::Jump).then_some(s.low);
+                s.samples().iter().map(move |sample| (sample, jump))
+            });
+            for (sample, jump) in road.iter().map(|s| (s, None)).chain(paths) {
+                let keep = keep_out(sample);
+                let reach = keep + style.clear - 0.5;
                 let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+                let surface = hug_level(sample) + GROUND_HEIGHT + EMBANK_LIP;
                 for k in -20..=20 {
-                    let p = sample.position + right * reach * k as f32 / 20.0;
+                    let lateral = reach * k as f32 / 20.0;
+                    let limit = match jump {
+                        _ if style.embank <= 0.0 => GROUND_HEIGHT,
+                        Some(_) if on_the_road(&center, sample) => continue,
+                        Some(low) if lateral.abs() <= sample.half_width + JUMP_REACH => {
+                            GROUND_HEIGHT.max(low - fall)
+                        }
+                        Some(_) => continue,
+                        None if lateral.abs() <= keep => {
+                            GROUND_HEIGHT.max(surface - EMBANK_LIP + HUG_SLACK)
+                        }
+                        None => GROUND_HEIGHT.max(surface + (lateral.abs() - keep)),
+                    };
+                    let p = sample.position + right * lateral;
                     if let Some(y) = terrain.surface(p.xz())
-                        && y > GROUND_HEIGHT
+                        && y > limit
                     {
                         failures.push(format!(
-                            "{name}: the terrain {:.2} m up at {:.1} m from the road at {:.0}",
+                            "{name}: the terrain {:.2} m up at {:.1} m from the road at {:.0} \
+                             (at most {:.2})",
                             y - GROUND_HEIGHT,
-                            reach * k as f32 / 20.0,
-                            sample.distance
+                            lateral,
+                            sample.distance,
+                            limit - GROUND_HEIGHT
                         ));
                         break;
                     }
@@ -696,7 +1009,9 @@ mod tests {
     /// and its mirror, every 2 m of the road, the camera where the chase puts it (6 m behind and
     /// 2.4 m above the kart, the kart in the middle of the road or near either edge), the road
     /// from 3 to 60 m ahead (in its middle and near its edges): no sight line passes under the
-    /// terrain (stricter than the walls' test, 45 m and 2 %).
+    /// terrain (stricter than the walls' test, 45 m and 2 %). Issue #202: a sight line under the
+    /// road itself (over a crest) is the road's, not the terrain's (the terrain that hugs the road
+    /// is just under it); the terrain is never counted there.
     #[test]
     fn the_terrain_never_hides_the_road_from_the_chase_camera() {
         let tuning = CameraTuning::default();
@@ -722,7 +1037,7 @@ mod tests {
                         for across in [-0.8, 0.0, 0.8] {
                             let target = s.point(across * s.half_width, 0.05);
                             views += 1;
-                            if under_the_terrain(&terrain, eye, target) {
+                            if under_the_terrain(&terrain, &center, eye, target) {
                                 hidden += 1;
                                 example.get_or_insert((sample.distance, ahead));
                             }
@@ -741,7 +1056,10 @@ mod tests {
     }
 
     /// Whether the segment from `eye` to `target` passes under the terrain's surface (every 0.5 m).
-    fn under_the_terrain(terrain: &Terrain, eye: Vec3, target: Vec3) -> bool {
+    /// Issue #202: not where it passes under the road itself (over a crest, the road hides what is
+    /// beyond it, and the terrain that hugs it is under it): that is the road's own view, the
+    /// walls' test's.
+    fn under_the_terrain(terrain: &Terrain, center: &CenterLine, eye: Vec3, target: Vec3) -> bool {
         let steps = (eye.distance(target) / 0.5).ceil() as usize;
         (1..steps).any(|k| {
             let p = eye.lerp(target, k as f32 / steps as f32);
@@ -749,7 +1067,151 @@ mod tests {
             terrain
                 .surface(p.xz())
                 .is_some_and(|y| y > p.y && y > GROUND_HEIGHT)
+                && !under_the_road(center, p)
         })
+    }
+
+    /// Whether a sample of a shortcut's path is on the road (between its walls).
+    fn on_the_road(center: &CenterLine, s: &TrackSample) -> bool {
+        let near = center.samples()[center.nearest_index(s.position)];
+        near.position.xz().distance(s.position.xz()) <= wall_offset(&near)
+    }
+
+    /// Whether `p` is under the road's deck (between its walls, below its surface).
+    fn under_the_road(center: &CenterLine, p: Vec3) -> bool {
+        let near = center.samples()[center.nearest_index(p)];
+        let right = near.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+        let lateral = (p - near.position).dot(right);
+        lateral.abs() <= wall_offset(&near) && p.y < near.point(lateral, 0.0).y
+    }
+
+    /// Issue #202: the terrain that hugs the road keeps every void a kart falls into, on every
+    /// circuit and its mirror: beside a side without wall (from its edge to [`OPEN_REACH`]
+    /// meters beyond, every meter along it) and across a gap, the terrain stays at least
+    /// `RaceTuning::fall_depth` under the road (or under the ground, where the road is lower):
+    /// a kart that falls there is seen fallen, and the pelican comes.
+    #[test]
+    fn the_terrain_keeps_the_voids_beside_the_open_edges_and_in_the_gaps() {
+        let fall = RaceTuning::default().fall_depth;
+        assert!(OPEN_FALL > fall + 0.5, "{OPEN_FALL} for {fall}");
+        let mut failures = Vec::new();
+        let mut checked = 0usize;
+        for (name, data, terrain) in terrains() {
+            let center = CenterLine::of(&data);
+            let open: Vec<OpenEdge> = data
+                .open_edges
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect();
+            let gaps: Vec<Gap> = data.gaps.iter().map(|g| Gap::new(&center, g)).collect();
+            for sample in center.road_samples() {
+                let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+                let gap = gap_at(&gaps, &center, sample.distance);
+                for sign in [-1.0f32, 1.0] {
+                    let w = wall_offset(&sample);
+                    let (from, limit) = if let Some(gap) = gap {
+                        (0.0, gap.low - fall)
+                    } else if !walled(&open, &center, sample.distance, sign) {
+                        (sample.half_width, sample.point(sign * w, 0.0).y - fall)
+                    } else {
+                        continue;
+                    };
+                    let limit = limit.max(GROUND_HEIGHT);
+                    let mut lateral = from;
+                    while lateral <= w + OPEN_REACH {
+                        let p = sample.position + right * sign * lateral;
+                        checked += 1;
+                        if let Some(y) = terrain.surface(p.xz())
+                            && y > limit + 0.01
+                        {
+                            failures.push(format!(
+                                "{name}: the terrain {:.2} m up at {lateral:.1} m from the road \
+                                 at {:.0}, over a void (at most {:.2})",
+                                y - GROUND_HEIGHT,
+                                sample.distance,
+                                limit - GROUND_HEIGHT
+                            ));
+                            break;
+                        }
+                        lateral += 1.0;
+                    }
+                }
+            }
+        }
+        assert!(checked > 10_000, "{checked}");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Issue #202 acceptance (GD § 16, « Notre implémentation (#202) »): on a circuit whose
+    /// terrain hugs the road (the Col des Moufles, the demonstration, and its mirror), the road
+    /// climbs and comes down for real (20 m at least between its lowest and its highest), and the
+    /// ground carries it: beside its walls, wherever the road is raised (4 m and more above the
+    /// ground) and the side is walled, 1 m beyond the walls' outer face, the terrain comes up to
+    /// the walls' foot (within 0.5 m of [`EMBANK_LIP`] under the road) on half of the sides at
+    /// least, and within 4 m of it on three quarters, instead of the skirts down to the ground
+    /// (0 before #202). The others: inside the tight turns (no higher than the lowest of their
+    /// road: a switchback's inside is a terrace at the level of its foot), beside the voids.
+    #[test]
+    fn the_terrain_hugs_the_raised_road_of_the_demonstration_circuit() {
+        let mut hugging = 0;
+        for (name, data, terrain) in terrains() {
+            if data.terrain().unwrap().embank <= 0.0 {
+                continue;
+            }
+            hugging += 1;
+            let center = CenterLine::of(&data);
+            let road = center.road_samples();
+            let (lo, hi) = road.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| {
+                (lo.min(s.position.y), hi.max(s.position.y))
+            });
+            assert!(
+                hi - lo >= 20.0,
+                "{name}: the road climbs {lo} to {hi} m only"
+            );
+            let open: Vec<OpenEdge> = data
+                .open_edges
+                .iter()
+                .map(|e| OpenEdge::new(&center, e))
+                .collect();
+            let (mut raised, mut carried, mut close) = (0usize, 0usize, 0usize);
+            for sample in &road {
+                let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+                for sign in [-1.0f32, 1.0] {
+                    let edge = sample.point(sign * wall_offset(sample), 0.0).y;
+                    if edge - GROUND_HEIGHT < 4.0 || !walled(&open, &center, sample.distance, sign)
+                    {
+                        continue;
+                    }
+                    raised += 1;
+                    let p = sample.position + right * sign * (keep_out(sample) + 1.0);
+                    let y = terrain.surface(p.xz()).unwrap_or(GROUND_HEIGHT);
+                    let under = edge - EMBANK_LIP - y;
+                    if under <= 0.5 {
+                        carried += 1;
+                    }
+                    if under <= 4.0 {
+                        close += 1;
+                    }
+                }
+            }
+            let share = |n: usize| n as f32 / raised.max(1) as f32;
+            println!(
+                "{name}: of {raised} raised walled sides, {carried} carried ({:.3}), {close} \
+                 within 4 m ({:.3}); the road from {lo:.1} to {hi:.1} m",
+                share(carried),
+                share(close)
+            );
+            assert!(raised > 500, "{name}: {raised}");
+            assert!(
+                share(carried) >= 0.5,
+                "{name}: {carried} of {raised} carried"
+            );
+            assert!(
+                share(close) >= 0.75,
+                "{name}: {close} of {raised} within 4 m"
+            );
+        }
+        assert!(hugging >= 2, "{hugging} circuits hug their road");
     }
 
     /// What is solid is what is drawn, near the road: every drawn face within the reach of a
