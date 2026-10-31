@@ -2497,10 +2497,10 @@ const GUIDE_BUMPS: usize = 2;
 const NO_DROP: [(&str, &str); 0] = [];
 
 /// Issue #180: the circuits of the guide that do not have their bumps and drops yet, and the
-/// issue that gives them theirs (Prairie Pompon, the demonstration circuit, has them). Each one
-/// leaves this list with its issue: the test refuses a circuit still listed that has some.
-const RELIEF_PENDING: [(&str, u32); 7] = [
-    ("Col des Moufles", 162),
+/// issue that gives them theirs (Prairie Pompon, the demonstration circuit, has them, and the Col
+/// des Moufles since #211). Each one leaves this list with its issue: the test refuses a circuit
+/// still listed that has some.
+const RELIEF_PENDING: [(&str, u32); 6] = [
     ("Corniche Cannelle", 164),
     ("Échappée Pissenlit", 184),
     ("Forêt Frimousse", 184),

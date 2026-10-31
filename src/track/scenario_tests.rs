@@ -31,6 +31,7 @@ use crate::tests::{
 };
 use crate::track::mesh::{WALL_HEIGHT, WALL_THICKNESS, wall_offset};
 use crate::track::shortcut::walled;
+use crate::track::terrain::Terrain;
 use crate::track::{Surface, TrackChoice, TrackLayout};
 
 /// The kart's parts: the default ones (every stat at the middle), or the roster's lightest and
@@ -848,8 +849,9 @@ fn exact_ray_hit(
 /// Issue #79 acceptance, on every circuit of the game and its mirror, as the game builds them:
 /// the start line's band and arch are drawn with the circuit (each of their vertices is one of
 /// the circuit's mesh), and none of it is solid, so the physics does not change. A ray down each
-/// post (its middle and near its four edges), from above its top to 5 cm above the ground, meets
-/// no collider; nor do rays across the banner from post to post (near its bottom, its middle and
+/// post (its middle and near its four edges), from above its top to 5 cm above the ground (issue
+/// #211: or above the terrain, where it hugs the road and the post stands in its embankment),
+/// meets no collider; nor do rays across the banner from post to post (near its bottom, its middle and
 /// its top, near its two faces and between them); rays down onto the band meet the road itself,
 /// [`LINE_HEIGHT`] under the band, across the road and the curbs.
 #[test]
@@ -958,8 +960,10 @@ fn the_start_line_is_drawn_and_nothing_of_it_is_solid() {
                         let right = s.forward.cross(Vec3::Y).normalize();
                         let back = right.cross(Vec3::Y);
                         let top = s.position.y + line.top();
+                        // Issue #211: where the terrain hugs the road, the posts stand in its
+                        // embankment (their foot is buried in it): the rays stop above it.
+                        let terrain = world.get_resource::<Terrain>();
                         for post in line.posts() {
-                            let ground = ground_height(&layout.lakes, post.xz());
                             let edge = 0.45 * POST_WIDTH;
                             for (a, b) in [
                                 (0.0, 0.0),
@@ -969,6 +973,10 @@ fn the_start_line_is_drawn_and_nothing_of_it_is_solid() {
                                 (1.0, 1.0),
                             ] {
                                 let p = post + right * a * edge + back * b * edge;
+                                let ground = terrain
+                                    .and_then(|t| t.surface(p.xz()))
+                                    .unwrap_or(f32::MIN)
+                                    .max(ground_height(&layout.lakes, p.xz()));
                                 let (from, to) = (p.with_y(top + 1.0), p.with_y(ground + 0.05));
                                 if let Some(hit) = first_hit(from, to) {
                                     failures.push(format!(

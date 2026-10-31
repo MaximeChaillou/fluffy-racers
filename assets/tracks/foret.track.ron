@@ -27,6 +27,12 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "strange-factory",
     decor_seed: 110,
+    // Issue #211: the forest's terrain (`assets/data/biomes.ron`), and it hugs the road: the mossy
+    // ridge, 10 to 14 m above the forest floor, is a real ridge up to its walls, which falls away
+    // from them (`embank`, rise over run: about 31°), instead of the skirts down to the floor. The
+    // voids stay (the jump's corner: 6 m under the road at least); the ford keeps its ground.
+    terrain: (height: 36.0, scale: 130.0, floor: 0.3,
+              rock: (0.40, 0.36, 0.30), steep: 1.0, embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "nature-kit/tree_pineTallC_detailed", at: 142.216, side: Right, height: 24.0, radius: 3.8, gap: 0.1),

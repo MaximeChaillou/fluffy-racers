@@ -4,8 +4,9 @@
 // (hairpins to the left, the right and the left: a lacet), 58 m up to the pass (12 m before issue
 // #202, 24 m before issue #204, 42 m before issue #206: its legs 48 m longer, climbing at up to
 // 35 %, and the pad before the jump 8 m longer; issue #208: the third climb ends on a bridge over
-// a ravine); on the pass, the corner of the risky jump (to the right, its inside a drop down to the
-// mountain's slope, 6 m at least) and the summit, the high point with a view over the valley; a
+// a ravine; issue #211: a second bridge on the way down, two bumps and a drop); on the pass,
+// the corner of the risky jump (to the right, its inside a drop down to the mountain's slope, 6 m
+// at least) and the summit, the high point with a view over the valley; a
 // tight left turn, then the way down (54 m up, then down to the valley): a bulge (right 70°, left 140°, right 70°) whose hidden road runs
 // straight behind a bank of snow; two more switchbacks at the foot of the mountain (left, right);
 // the tight left corner that the snow path cuts, and the last corner. Five hairpins of 180° (a
@@ -165,7 +166,9 @@
         (pos: (-208.95, 58.00, -0.82), width: 14.0, shoulder: 2.0),
         (pos: (-212.50, 58.00, 6.14), width: 14.0, shoulder: 2.0),
         (pos: (-213.72, 58.00, 13.87), width: 14.0, shoulder: 2.0),
-        (pos: (-213.72, 56.00, 21.87), width: 14.0, shoulder: 2.0),
+        // Issue #211: a drop of 4 m, between these two points (the way down started with a
+        // slope of 4 m over 16 m before).
+        (pos: (-213.72, 54.00, 21.87), width: 14.0, shoulder: 2.0),
         // the bulge (right 70°, left 140°, right 70°), 54 m up: the hidden road goes straight behind its bank of snow.
         (pos: (-213.72, 54.00, 29.87), width: 14.0, shoulder: 2.0),
         (pos: (-213.72, 54.00, 37.88), width: 14.0, shoulder: 2.0),
@@ -280,6 +283,24 @@
         (pos: (0.00, 0.00, 15.61), width: 14.0, shoulder: 4.0),
         (pos: (0.00, 0.00, 7.81), width: 14.0, shoulder: 4.0),
     ],
+    // Issue #211 (#162, GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver),
+    // where nothing turns for long after: out of the first switchback, up the first climb (22 m
+    // long, 2 m after the hairpin; its croquettes beyond its landing; the second switchback 90 m
+    // after it), and out of the last corner, before the grid (as on Prairie Pompon; its
+    // croquettes beyond its landing). Not on the descent to the fourth switchback (a kart lands
+    // too close to the hairpin, and the mountain stops carrying the road), nor before a tight
+    // corner. Each bump on the mountain costs the terrain its embankment along it (the bound of
+    // #202 follows the road's tangent, lower over a bump): the first climb's bump is short.
+    bumps: [
+        (at: 20.0, height: 2.2, length: 22.0),
+        (at: 178.6, height: 2.2, length: 30.0),
+    ],
+    // Issue #211: a drop of 4 m at the head of the way down, just out of the tight left turn of
+    // the summit: the road goes on 4 m lower, in its line, into the bulge (a trick off the edge
+    // gives the boost; its croquettes beyond the landing). Not a fall: no pelican.
+    drops: [
+        (at: 87.25, height: 4.0),
+    ],
     offroad: [
         // Deep snow inside the first switchback: cutting the apex costs speed.
         (from: 14.37, to: 18.141, left: -1.0, right: -0.55),
@@ -317,8 +338,11 @@
     // switchback, 43 to 52 m up): the first climb runs 44 m east of it and 40 m lower, and the
     // mountain could not carry it there. Under it, the ravine falls away down to the valley; the
     // skirts give way to its deck and its pillars. Walled on both sides.
+    // Issue #211: a second bridge, on the way down to the fourth switchback (54 to 42 m up): the
+    // mountain did not carry the road there either (4 to 9 m under the foot of its left wall).
     bridges: [
         (from: 51.5, to: 58.0),
+        (from: 107.5, to: 116.0),
     ],
     shortcuts: [
         // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
@@ -385,11 +409,11 @@
     // come back 10 s after being picked up.
     croquettes: [
         (from: 2.8, count: 5, spacing: 3.0, offset: -0.42),
-        (from: 21.5, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 25.0, count: 4, spacing: 3.0, offset: -0.4),
         (from: 52.167, count: 4, spacing: 3.0, offset: 0.4),
-        (from: 87.5, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 89.3, count: 4, spacing: 3.0, offset: 0.4),
         (from: 136.818, count: 4, spacing: 3.0, offset: -0.45),
         (from: 169.3, count: 4, spacing: 3.0, offset: 0.45),
-        (from: 178.5, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 183.5, count: 4, spacing: 3.0, offset: -0.4),
     ],
 )

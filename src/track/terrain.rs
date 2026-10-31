@@ -869,7 +869,14 @@ fn hug(
             let p = s.position.xz();
             let keep = keep_out(s);
             if on_road && special(s) {
-                let (disc, value) = rising(p, keep + diagonal, -SINK);
+                // Issue #211: over a gap, its void reaches as far as beside a side without wall
+                // (`OPEN_REACH` beyond the walls): the embankment never comes up into it.
+                let reach = if gap_at(edges.gaps, center, s.distance).is_some() {
+                    wall_offset(s) + OPEN_REACH
+                } else {
+                    keep
+                };
+                let (disc, value) = rising(p, reach + diagonal, -SINK);
                 grid.bound(&mut bound, &mut cut_bound, disc, value);
                 continue;
             }
@@ -1489,9 +1496,14 @@ mod tests {
     /// road: a switchback's inside is a terrace at the level of its foot), beside the voids.
     /// Issue #208: not on a bridge, which stands on its pillars over its ravine instead
     /// (`the_demonstration_circuit_has_a_bridge_over_a_ravine`).
+    /// Issue #211: every other circuit whose terrain hugs the road (the Anneau Guimauve, the
+    /// Coteau Citrouille, the Falaises Flanelle, the Forêt Frimousse, the Crique Câline and the
+    /// Corniche Cannelle, whose roads run up to 12 to 20 m above their ground) is held to the same
+    /// shares; the climb of 20 m is the demonstration's (theirs are roads at a height, not
+    /// mountain roads).
     #[test]
     fn the_terrain_hugs_the_raised_road_of_the_demonstration_circuit() {
-        let mut hugging = 0;
+        let (mut hugging, mut demonstrations) = (0, 0);
         for (name, data, terrain) in terrains() {
             if data.terrain().unwrap().embank <= 0.0 {
                 continue;
@@ -1502,10 +1514,13 @@ mod tests {
             let (lo, hi) = road.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| {
                 (lo.min(s.position.y), hi.max(s.position.y))
             });
-            assert!(
-                hi - lo >= 20.0,
-                "{name}: the road climbs {lo} to {hi} m only"
-            );
+            if data.name == DEMONSTRATION {
+                demonstrations += 1;
+                assert!(
+                    hi - lo >= 20.0,
+                    "{name}: the road climbs {lo} to {hi} m only"
+                );
+            }
             let open: Vec<OpenEdge> = data
                 .open_edges
                 .iter()
@@ -1557,8 +1572,12 @@ mod tests {
                 "{name}: {close} of {raised} within 4 m"
             );
         }
-        assert!(hugging >= 2, "{hugging} circuits hug their road");
+        assert_eq!(demonstrations, 2, "the {DEMONSTRATION} and its mirror");
+        assert!(hugging >= 14, "{hugging} circuits hug their road");
     }
+
+    /// Issue #202: the demonstration circuit of a terrain that hugs the road.
+    const DEMONSTRATION: &str = "Col des Moufles";
 
     /// Issue #208 acceptance (GD § 16, « Notre implémentation (#208, étape 1) »): a bridge over a
     /// ravine. On a circuit with bridges (the Col des Moufles and its mirror), under every bridge,

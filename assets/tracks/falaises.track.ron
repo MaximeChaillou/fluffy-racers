@@ -27,6 +27,13 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "darkness-road",
     decor_seed: 1010,
+    // Issue #211: the cliffs' terrain (`assets/data/biomes.ron`), and it hugs the road: the cliff
+    // top, 14 m up, and the snake back up from its foot are carried by the chalk up to their walls,
+    // which falls away from them (`embank`, rise over run: about 31°), instead of the skirts down
+    // to the heath. The voids stay (the jump's corner, the glide's drop: 6 m under the road at
+    // least, 16 m beyond the walls).
+    terrain: (height: 66.0, scale: 160.0, cliffs: 0.7, terrace: 16.0, floor: 0.2,
+              rock: (0.86, 0.82, 0.78), steep: 0.8, embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "nature-kit/stone_tallI", at: 166.216, side: Left, height: 22.0, radius: 3.8, gap: 0.1),
