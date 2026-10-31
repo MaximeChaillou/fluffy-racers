@@ -596,6 +596,8 @@ fn update_progress(
                     && course.outside_walls(&watched, tuning.outside_margin),
                 height: watched.height,
                 upside_down: watched.upside_down,
+                grounded_in_a_gap: watched.gap
+                    && matches!(*state, KartState::Grounded | KartState::Drifting { .. }),
             };
             if let Some(reason) = tow.observe(&tuning, &observation) {
                 // Picked up: the drift, its charge and any boost are lost.

@@ -37,6 +37,9 @@ pub struct TowObservation {
     /// Issue #94: the road there is upside down (`Course::project`): a kart falling off it falls
     /// away from it, `height` growing.
     pub upside_down: bool,
+    /// Issue #195: over a gap (`Projection::gap`), its wheels on the ground: on the floor of the
+    /// void, under the road (`height` is then above the gap's lower end).
+    pub grounded_in_a_gap: bool,
 }
 
 /// The tow pelican of a racer: counters that decide when it comes, and the carry in progress.
@@ -67,6 +70,11 @@ impl Tow {
         }
         // Issue #94: off a ceiling, a kart falls toward the world's ground, away from the road.
         if obs.height < -tuning.fall_depth || (obs.upside_down && obs.height > tuning.fall_depth) {
+            return Some(TowReason::Fell);
+        }
+        // Issue #195: on the floor of a void, even a shallow one (the end of a gap less than
+        // `fall_depth` above the ground): it fell into it, rather than drive on under the road.
+        if obs.grounded_in_a_gap && obs.height < -tuning.gap_floor_depth {
             return Some(TowReason::Fell);
         }
         self.outside_ticks = if obs.outside {
@@ -218,7 +226,27 @@ mod tests {
             outside: false,
             height: 0.0,
             upside_down: false,
+            grounded_in_a_gap: false,
         }
+    }
+
+    /// Issue #195: in a void shallower than `fall_depth` (the Périple Polochon's glide gap ends
+    /// 3.1 m above the ground), a kart that landed on its floor fell: the pelican comes at once,
+    /// instead of letting it drive on under the road. On the road beyond the gap, or in the air
+    /// over it (a glider, a jump), it did not.
+    #[test]
+    fn a_kart_on_the_floor_of_a_shallow_gap_fell() {
+        let t = RaceTuning::default();
+        let mut watch = Tow::default();
+        let mut o = obs(Vec3::ZERO, true);
+        o.height = -2.8;
+        assert_eq!(watch.observe(&t, &o), None, "in the air over the gap");
+        o.grounded_in_a_gap = true;
+        assert_eq!(watch.observe(&t, &o), Some(TowReason::Fell), "on its floor");
+        o.height = 0.55;
+        assert_eq!(watch.observe(&t, &o), None, "on the road at its end");
+        o.height = -0.5;
+        assert_eq!(watch.observe(&t, &o), None, "just under its lower end");
     }
 
     #[test]

@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use super::far::FarDecor;
+use super::terrain::TerrainData;
 
 /// The biomes' file, compiled into the game.
 pub const BIOMES_RON: &str = include_str!("../../assets/data/biomes.ron");
@@ -306,6 +307,10 @@ pub struct BiomeData {
     /// Issue #187: its road's look (required): its paving and its borders, in its palette's
     /// `asphalt` and `curbs`.
     pub road: RoadLook,
+    /// Issue #195: its terrain (`super::terrain`): the hills, cliffs and mountains around its
+    /// circuits. Every biome of the game has one (tested); a circuit may have its own instead.
+    #[serde(default)]
+    pub terrain: Option<TerrainData>,
 }
 
 impl BiomeData {
@@ -360,6 +365,9 @@ impl BiomeData {
         }
         self.far.validate().or_else(fail)?;
         self.road.validate().or_else(fail)?;
+        if let Some(terrain) = &self.terrain {
+            terrain.validate().or_else(fail)?;
+        }
         if self.road.asphalt.is_some() || self.road.curbs.is_some() {
             return fail("road: its colors are its palette's (asphalt, curbs)".to_string());
         }

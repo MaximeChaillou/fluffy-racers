@@ -72,6 +72,9 @@ pub struct RaceTuning {
     /// More than this below the road surface: the kart fell, the pelican comes at once. Issue
     /// #94: under a road upside down (a ceiling), more than this away from it, under it.
     pub fall_depth: f32,
+    /// Issue #195: over a gap, a kart on the ground more than this below the gap's lower end
+    /// (m) is on the floor of the void: it fell, however shallow the void.
+    pub gap_floor_depth: f32,
     /// Beyond the outer face of the walls by this much, the kart is out of the track...
     pub outside_margin: f32,
     /// ...and after this long out of the track, the pelican brings it back.
@@ -176,6 +179,7 @@ impl Default for RaceTuning {
             tow_clearance: 1.5,
             tow_drop_lane: 0.4,
             fall_depth: 5.0,
+            gap_floor_depth: 1.0,
             outside_margin: 0.5,
             outside_seconds: 1.0,
             stuck_seconds: 3.0,

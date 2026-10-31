@@ -20,6 +20,7 @@ pub mod mesh;
 pub mod paving;
 pub mod shortcut;
 pub mod start_line;
+pub mod terrain;
 pub mod test_ground;
 pub mod water;
 
@@ -288,3 +289,6 @@ mod hazard_tests;
 
 #[cfg(test)]
 mod relief_tests;
+
+#[cfg(test)]
+mod terrain_tests;

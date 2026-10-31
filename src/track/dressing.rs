@@ -21,6 +21,7 @@ use super::far::place_far_decor;
 use super::layout::{CenterLine, TrackLayout};
 use super::mesh::MeshData;
 use super::shortcut::Shortcut;
+use super::terrain::Terrain;
 use super::water::Lake;
 use crate::camera::ChaseCamera;
 use crate::level::LevelScoped;
@@ -54,6 +55,7 @@ pub fn dress_circuit(
     cameras: Query<Entity, With<ChaseCamera>>,
     mut wanted: Local<Vec<String>>,
     mut pending_fog: Local<Option<DistanceFog>>,
+    terrain: Option<Res<Terrain>>,
 ) {
     if !dressed.is_empty() {
         // The fog of a circuit dressed before its chase camera was there (its models were
@@ -121,11 +123,23 @@ pub fn dress_circuit(
             plan
         }
     });
-    let plan = if layout.mirrored {
+    let mut plan = if layout.mirrored {
         plan.mirrored()
     } else {
         plan
     };
+    // Issue #195: every piece, near and far, stands on the terrain (in the world: the mirror's
+    // terrain is the mirror image of the file's, as the plans are).
+    let mut far = far;
+    if let Some(terrain) = terrain.as_deref().filter(|t| !t.is_empty()) {
+        let pieces = plan
+            .pieces
+            .iter_mut()
+            .chain(far.iter_mut().flat_map(|far| far.pieces.iter_mut()));
+        for piece in pieces {
+            piece.position.y = terrain.foot(piece.position.xz(), piece.radius);
+        }
+    }
     for piece in &plan.left_out {
         warn!("decor of {}: no room for {piece}", layout.name);
     }

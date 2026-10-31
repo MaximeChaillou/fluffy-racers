@@ -16,6 +16,7 @@ use super::layout::{TrackLayout, TrackSample};
 use super::mesh::{self, GROUND_HEIGHT, MeshData, PaintedMesh};
 use super::paving;
 use super::start_line::StartLine;
+use super::terrain::Terrain;
 use super::water;
 use super::{
     AntiGravity, MirrorMode, NoItemBoxes, PlayerStart, Surface, WALL_RESTITUTION, anti_gravity_at,
@@ -152,7 +153,8 @@ pub fn build_circuit_when_loaded(
         return;
     };
     let mirrored;
-    let data = if mirror.is_some_and(|mirror| mirror.0) {
+    let mirror_on = mirror.is_some_and(|mirror| mirror.0);
+    let data = if mirror_on {
         mirrored = file.mirrored();
         &mirrored
     } else {
@@ -324,6 +326,15 @@ pub fn build_circuit_when_loaded(
         &mut materials,
         &layout,
         &palette,
+    );
+    // Issue #195: the terrain around the circuit, from its file (its mirror image in the mirror
+    // mode).
+    spawn_terrain(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        file.terrain_built(mirror_on),
+        &layout.name,
     );
     spawn_trick_ramps(
         &mut commands,
@@ -620,6 +631,57 @@ fn spawn_ground(
             NotShadowCaster,
         ));
     }
+}
+
+/// Issue #195: the terrain (`super::terrain`): drawn in tiles, each culled on its own, in one
+/// material (vertex colors, fully rough like the ground: no seam where it rises from it), casting
+/// no shadow; solid (off-road) where a kart can reach it. Its heights stay for the decor
+/// (`dressing.rs`), as a resource: an empty one on a circuit without a terrain.
+fn spawn_terrain(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    terrain: Option<Terrain>,
+    name: &str,
+) {
+    let Some(terrain) = terrain else {
+        commands.insert_resource(Terrain::default());
+        return;
+    };
+    let drawn = terrain.mesh();
+    if !drawn.indices.is_empty() {
+        let material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            ..default()
+        });
+        for tile in drawn.tiles(super::terrain::TILE) {
+            commands.spawn((
+                LevelScoped,
+                Name::new(format!("Terrain: {name}")),
+                Mesh3d(meshes.add(to_mesh(&tile))),
+                MeshMaterial3d(material.clone()),
+                Transform::default(),
+                NotShadowCaster,
+            ));
+        }
+    }
+    // Solid where a kart can reach it.
+    let solid = terrain.collider_mesh();
+    if !solid.indices.is_empty()
+        && let Some(entity) = spawn_trimesh(
+            commands,
+            &solid,
+            Surface::Offroad,
+            0.0,
+            TriMeshFlags::FIX_INTERNAL_EDGES,
+        )
+    {
+        commands
+            .entity(entity)
+            .insert(Name::new(format!("Terrain (solid): {name}")));
+    }
+    commands.insert_resource(terrain);
 }
 
 /// The glide ramps of the file (issue #20): boxes like the trick ramps (a trick works off them
