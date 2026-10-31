@@ -176,15 +176,22 @@ fn two_games_see_each_others_colors_and_agree_on_a_conflict() {
     let start = start_race(&mut room, ANA, 4, 1);
     assert_eq!(start.players, seats);
     let bots = [Brown, Pink, Yellow, Lime];
-    room.until(3.0, "the bots shown", |app| {
+    // Issue #212: every kart shown before it is looked at, as in `parts_tests.rs` (#98): the
+    // host's bots on the guest's screen, and each player's race kart on the other's. Waiting for
+    // the bots only was not enough: a kart sends its state every `send_interval_ticks` (2), from
+    // the first such tick after its level is built, and the frame that level is built on depends
+    // on the circuit files loading in the background (real time). When the guest's level came on
+    // an odd tick, the host received the guest's first state one frame after the guest showed the
+    // bots: its kart was not on the host's screen yet (about one run in 30 to 150).
+    let (ana_slot, bob_slot) = (start.slot_of(ANA).unwrap(), start.slot_of(BOB).unwrap());
+    room.until(3.0, "the bots and the players shown", |app| {
         let sync = app.world().resource::<KartSync>();
-        app.world()
-            .resource::<NetSession>()
-            .lobby
-            .as_ref()
-            .unwrap()
-            .is_host()
-            || (0..4).all(|kart| sync.remote_kart(kart).is_some_and(|r| r.proxy.is_some()))
+        let shown = |kart| sync.remote_kart(kart).is_some_and(|r| r.proxy.is_some());
+        if lobby(app).is_host() {
+            shown(bob_slot)
+        } else {
+            (0..4).all(shown) && shown(ana_slot)
+        }
     });
     room.frame();
     let host = room.app(ANA);
