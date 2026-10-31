@@ -814,6 +814,37 @@ fn the_chase_camera_sees_the_road_over_the_walls() {
 
 // --- Issue #79: the start line, drawn only -------------------------------------------------------
 
+/// Issue #206: where a ray from `from` along `direction` (unit) first meets `collider` (placed by
+/// `transform`), within `length` (m), solid: on a trimesh, against each of its triangles, without
+/// its tree of boxes.
+///
+/// Why not `Collider::cast_ray`: the rays of [`the_start_line_is_drawn_and_nothing_of_it_is_solid`]
+/// are axis-aligned (straight down, `s.up` exactly the world's up on a level road), and some of
+/// them pass exactly in the plane of a face of the boxes of the road's tree (the line at `z = 0`,
+/// where a row of the road's vertices lies too). Parry's box test (`cast_inv_ray_simd`) then
+/// multiplies 0 by an infinite inverse direction: `NaN`, and the box is missed, with the triangle
+/// under it, by chance of how the tree was built (the Col des Moufles at 36 and 48 m, issue #204:
+/// the triangle itself is hit). Each triangle's own test has no such case.
+fn exact_ray_hit(
+    collider: &Collider,
+    transform: &GlobalTransform,
+    from: Vec3,
+    direction: Vec3,
+    length: f32,
+) -> Option<f32> {
+    use bevy_rapier3d::parry::query::{Ray, RayCast};
+    let (_, rotation, translation) = transform.to_scale_rotation_translation();
+    let Some(trimesh) = collider.raw.as_trimesh() else {
+        return collider.cast_ray(translation, rotation, from, direction, length, true);
+    };
+    let back = rotation.inverse();
+    let ray = Ray::new(back * (from - translation), back * direction);
+    trimesh
+        .triangles()
+        .filter_map(|triangle| triangle.cast_local_ray(&ray, length, true))
+        .min_by(f32::total_cmp)
+}
+
 /// Issue #79 acceptance, on every circuit of the game and its mirror, as the game builds them:
 /// the start line's band and arch are drawn with the circuit (each of their vertices is one of
 /// the circuit's mesh), and none of it is solid, so the physics does not change. A ray down each
@@ -918,17 +949,7 @@ fn the_start_line_is_drawn_and_nothing_of_it_is_solid() {
                             colliders
                                 .iter()
                                 .filter_map(|(collider, transform, surface)| {
-                                    let (_, rotation, translation) =
-                                        transform.to_scale_rotation_translation();
-                                    collider
-                                        .cast_ray(
-                                            translation,
-                                            rotation,
-                                            from,
-                                            direction,
-                                            length,
-                                            true,
-                                        )
+                                    exact_ray_hit(collider, transform, from, direction, length)
                                         .map(|toi| (toi, *surface))
                                 })
                                 .min_by(|a, b| a.0.total_cmp(&b.0))
