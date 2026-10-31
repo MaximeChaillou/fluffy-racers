@@ -1383,11 +1383,31 @@ impl TrackData {
         let lakes: Vec<super::water::Lake> =
             self.lakes.iter().map(super::water::Lake::new).collect();
         let far = self.far_decor();
+        // Issue #202: what a terrain that hugs the road keeps.
+        let open: Vec<super::shortcut::OpenEdge> = self
+            .open_edges
+            .iter()
+            .map(|e| super::shortcut::OpenEdge::new(&center, e))
+            .collect();
+        let gaps: Vec<super::water::Gap> = self
+            .gaps
+            .iter()
+            .map(|g| super::water::Gap::new(&center, g))
+            .collect();
+        let zones: Vec<super::anti_gravity::AntiGravityZone> = self
+            .anti_gravity
+            .iter()
+            .map(|z| super::anti_gravity::AntiGravityZone::new(&center, z))
+            .collect();
+        let edges = super::terrain::RoadEdges {
+            open: &open,
+            gaps: &gaps,
+            zones: &zones,
+        };
         Some(super::terrain::Terrain::build(
             &style,
             &center,
-            &shortcuts,
-            &lakes,
+            (&shortcuts, &lakes, &edges),
             far.as_ref(),
             (&self.palette(), self.decor_seed, mirrored),
         ))
