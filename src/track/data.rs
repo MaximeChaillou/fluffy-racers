@@ -77,6 +77,12 @@ pub struct TrackData {
     /// camera does not look through it at the road.
     #[serde(default)]
     pub cuttings: Vec<OpenEdgeData>,
+    /// Issue #208: stretches of the road that are **a bridge over a ravine**, walled on both
+    /// sides, on a terrain that hugs the road (`embank`): under it, the terrain falls away into a
+    /// ravine (`track::terrain::RAVINE_RISE`, down to the ground at the most), the skirts give way
+    /// to pillars and a deck (`track::mesh`). Drawn only: a kart never falls off a walled bridge.
+    #[serde(default)]
+    pub bridges: Vec<BridgeData>,
     /// Issue #107: shortcuts off the centerline (a hidden road, a grass path, a risky jump over
     /// a drop), from the centerline at `from` to the centerline at `to`. The race counts them
     /// right (`crate::race::Course::project`); the bots take them by level (`crate::bots`).
@@ -369,6 +375,18 @@ pub struct OpenEdgeData {
     pub to: f32,
     pub side: EdgeSide,
 }
+
+/// Issue #208: a bridge over a ravine, from `from` to `to` (spline parameters).
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BridgeData {
+    pub from: f32,
+    pub to: f32,
+}
+
+/// Issue #208: a bridge is this long at least (m along the centerline): a span between two
+/// abutments, with its ravine under it.
+pub const MIN_BRIDGE: f32 = 24.0;
 
 /// Issue #107: what a shortcut is made of.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -887,6 +905,55 @@ impl TrackData {
         Ok(())
     }
 
+    /// Issue #208: a bridge, on a terrain that hugs the road, walled on both sides (a kart never
+    /// falls off it: its pillars are drawn only), [`MIN_BRIDGE`] meters long at least and a
+    /// quarter of the circuit at most, apart from the gaps, the anti-gravity zones, the drops, the
+    /// cuttings (a wall of rock is no ravine) and the other bridges.
+    fn validate_bridges(&self) -> Result<(), InvalidTrack> {
+        let fail = |message: String| Err(InvalidTrack(message));
+        let n = self.points.len() as f32;
+        let within =
+            |from: f32, to: f32, p: f32| (p - from).rem_euclid(n) <= (to - from).rem_euclid(n);
+        if self.bridges.is_empty() {
+            return Ok(());
+        }
+        let center = super::layout::CenterLine::of(self);
+        for (k, bridge) in self.bridges.iter().enumerate() {
+            let (from, to) = (bridge.from, bridge.to);
+            let span = (to - from).rem_euclid(n);
+            let length = if from.is_finite() && to.is_finite() {
+                center.wrap(center.param_to_distance(to) - center.param_to_distance(from))
+            } else {
+                0.0
+            };
+            if span <= 0.0 || length < MIN_BRIDGE || span > n / 4.0 {
+                return fail(format!(
+                    "bridge {from}..{to}: {length:.1} m long (at least {MIN_BRIDGE} m), or more \
+                     than a quarter of the circuit"
+                ));
+            }
+            if !self.terrain().is_some_and(|t| t.embank > 0.0) {
+                return fail(format!(
+                    "bridge {from}..{to}: on a terrain that does not hug the road (no embank)"
+                ));
+            }
+            let overlaps = |a: f32, b: f32| within(a, b, from) || within(from, to, a);
+            if self.open_edges.iter().any(|e| overlaps(e.from, e.to))
+                || self.cuttings.iter().any(|c| overlaps(c.from, c.to))
+                || self.gaps.iter().any(|g| overlaps(g.from, g.to))
+                || self.anti_gravity.iter().any(|z| overlaps(z.from, z.to))
+                || self.drops.iter().any(|d| within(from, to, d.at))
+                || self.bridges[k + 1..].iter().any(|b| overlaps(b.from, b.to))
+            {
+                return fail(format!(
+                    "bridge {from}..{to}: beside a side without wall, on a cutting, a gap, an \
+                     anti-gravity zone, a drop or another bridge"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Issue #107: the stretches without wall (each on a side, out of the anti-gravity zones and
     /// the gaps, half the circuit at most) and the shortcuts (each from one side of the road
     /// without wall to another, its points apart, as wide as a lane at least; a jump with its
@@ -958,6 +1025,7 @@ impl TrackData {
                 ));
             }
         }
+        self.validate_bridges()?;
         if self.shortcuts.is_empty() {
             return Ok(());
         }
@@ -1203,6 +1271,7 @@ impl TrackData {
             )
             .chain(self.open_edges.iter().map(|e| ("open edge", e.from, e.to)))
             .chain(self.cuttings.iter().map(|e| ("cutting", e.from, e.to)))
+            .chain(self.bridges.iter().map(|b| ("bridge", b.from, b.to)))
             .chain(self.shortcuts.iter().map(|s| ("shortcut", s.from, s.to)))
             .chain(self.offroad.iter().map(|z| ("sand patch", z.from, z.to)));
         for (what, from, to) in ranges {
@@ -1452,11 +1521,18 @@ impl TrackData {
             .iter()
             .map(|e| super::shortcut::OpenEdge::new(&center, e))
             .collect();
+        // Issue #208: its bridges.
+        let bridges: Vec<super::terrain::Bridge> = self
+            .bridges
+            .iter()
+            .map(|b| super::terrain::Bridge::new(&center, b))
+            .collect();
         let edges = super::terrain::RoadEdges {
             open: &open,
             gaps: &gaps,
             zones: &zones,
             cuts: &cuts,
+            bridges: &bridges,
         };
         Some(super::terrain::Terrain::build(
             &style,
@@ -1781,6 +1857,49 @@ mod tests {
         }));
         let mirrored = col.mirrored();
         assert_eq!(mirrored.cuttings[0].side, col.cuttings[0].side.mirrored());
+        assert_eq!(mirrored.validate(), Ok(()));
+    }
+
+    /// Issue #208: a bridge is long enough, a quarter of the circuit at most, walled on both
+    /// sides, on a terrain that hugs the road, apart from the cuttings, the gaps, the drops and
+    /// the other bridges; mirrored, it stays where it is.
+    #[test]
+    fn bridges_that_make_no_sense_are_rejected() {
+        let file = format!("{}/assets/tracks/col.track.ron", env!("CARGO_MANIFEST_DIR"));
+        let col = TrackData::from_ron(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert!(!col.bridges.is_empty());
+        assert_eq!(col.validate(), Ok(()));
+        let broken = |change: &dyn Fn(&mut TrackData)| {
+            let mut data = col.clone();
+            change(&mut data);
+            data.validate().is_err()
+        };
+        assert!(broken(&|d| d.bridges[0].to = d.bridges[0].from));
+        assert!(broken(&|d| d.bridges[0].to = d.bridges[0].from + 1.0));
+        assert!(broken(&|d| d.bridges[0].from = f32::NAN));
+        assert!(broken(&|d| d.bridges[0].to = d.bridges[0].from + 60.0));
+        // Beside a side without wall (the jump's corner opens the right side).
+        assert!(broken(&|d| {
+            d.bridges[0].from = 66.0;
+            d.bridges[0].to = 72.0;
+        }));
+        // On a cutting, on another bridge, on a drop.
+        assert!(broken(&|d| d.bridges[0].from = 50.0));
+        assert!(broken(&|d| d.bridges.push(d.bridges[0])));
+        assert!(broken(&|d| {
+            d.drops.push(DropData {
+                at: d.bridges[0].from + 2.5,
+                height: 3.0,
+            })
+        }));
+        // Without a terrain that hugs the road.
+        assert!(broken(&|d| {
+            if let Some(t) = &mut d.terrain {
+                t.embank = 0.0;
+            }
+        }));
+        let mirrored = col.mirrored();
+        assert_eq!(mirrored.bridges, col.bridges);
         assert_eq!(mirrored.validate(), Ok(()));
     }
 

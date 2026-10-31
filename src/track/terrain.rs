@@ -45,7 +45,7 @@ use serde::Deserialize;
 
 use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
 use super::biome::{Palette, Rgb};
-use super::data::ShortcutKind;
+use super::data::{BridgeData, ShortcutKind};
 use super::decor::tight_turns;
 use super::far::{FarDecor, FarLayer, GroundRect};
 use super::layout::{CenterLine, TrackSample};
@@ -107,6 +107,19 @@ pub const CUT_RISE: f32 = 2.5;
 /// Issue #204: over this many meters at each end of a cutting, its wall comes up from the
 /// embankment to its full height (along the road): no sheer face across the road's way.
 pub const CUT_FADE: f32 = 16.0;
+
+/// Issue #208: under a bridge (`TrackData::bridges`), the ravine falls away from each abutment at
+/// this slope (rise over run, the cuttings' wall: about 68°), as deep as it lets it be (down to
+/// the ground at the most)...
+pub const RAVINE_RISE: f32 = CUT_RISE;
+
+/// ...and across the road, beyond its floor, its walls rise at this one (about 76°): a gorge,
+/// which leaves the roads beside it (a switchback 44 m away) on their embankment.
+pub const RAVINE_WALL: f32 = 4.0;
+
+/// Issue #208: the floor of a ravine reaches this far beyond the outer face of the bridge's walls
+/// (m) before its sides rise.
+pub const RAVINE_REACH: f32 = 2.0;
 
 /// Issue #204: the chase camera the cuttings keep the road in sight of (`CameraTuning`'s
 /// defaults, checked by a test): this far behind the kart (m) and this high above it (m), the
@@ -611,6 +624,51 @@ pub struct RoadEdges<'a> {
     pub zones: &'a [AntiGravityZone],
     /// Issue #204: its cuttings (the side cut into the hillside).
     pub cuts: &'a [OpenEdge],
+    /// Issue #208: its bridges (a ravine under each).
+    pub bridges: &'a [Bridge],
+}
+
+/// Issue #208: a bridge over a ravine, as built along the centerline (m).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bridge {
+    pub from: f32,
+    pub to: f32,
+}
+
+impl Bridge {
+    pub fn new(center: &CenterLine, data: &BridgeData) -> Self {
+        Self {
+            from: center.wrap(center.param_to_distance(data.from)),
+            to: center.wrap(center.param_to_distance(data.to)),
+        }
+    }
+
+    /// Its length along the centerline (m).
+    pub fn length(&self, center: &CenterLine) -> f32 {
+        center.wrap(self.to - self.from)
+    }
+
+    /// How far into it the centerline distance `distance` (any lap) is (m), if it is on it.
+    pub fn along(&self, center: &CenterLine, distance: f32) -> Option<f32> {
+        let into = center.wrap(distance - self.from);
+        (into <= self.length(center)).then_some(into)
+    }
+
+    /// How deep the ravine under it is at `distance` (m under the road; `None` off the bridge):
+    /// its sides rise at [`RAVINE_RISE`] from each abutment (the ground bounds it).
+    pub fn depth(&self, center: &CenterLine, distance: f32) -> Option<f32> {
+        self.along(center, distance)
+            .map(|into| RAVINE_RISE * into.min(self.length(center) - into))
+    }
+}
+
+/// Issue #208: the bridge at centerline distance `distance`, if one is there.
+pub fn bridge_at<'a>(
+    bridges: &'a [Bridge],
+    center: &CenterLine,
+    distance: f32,
+) -> Option<&'a Bridge> {
+    bridges.iter().find(|b| b.along(center, distance).is_some())
 }
 
 /// Issue #202: the terrain that hugs the road, at every vertex of a grid (m above the ground).
@@ -863,6 +921,31 @@ fn hug(
                     });
                 }
             }
+            // Issue #208: under a bridge, a ravine: as deep as its sides let it be from the
+            // abutments (down to the ground), its floor across the deck and [`RAVINE_REACH`]
+            // beyond, its walls rising at [`RAVINE_WALL`] beyond it.
+            // Its depth is the bridge's at the vertex's place along the road (none beyond its
+            // abutments): the sample's window never carries it past them.
+            if let Some(bridge) = on_road
+                .then(|| bridge_at(edges.bridges, center, s.distance))
+                .flatten()
+            {
+                let floor = keep + RAVINE_REACH;
+                let depth = |v: Vec2| {
+                    let along = (v - p).dot(forward);
+                    bridge.depth(center, s.distance + along).unwrap_or(0.0)
+                };
+                let deepest =
+                    bridge.depth(center, s.distance).unwrap_or(0.0) + RAVINE_RISE * window;
+                let low = (level - deepest).max(-SINK);
+                let disc = (p, floor + (top - low).max(0.0) / RAVINE_WALL);
+                grid.bound(&mut bound, &mut cut_bound, disc, |v: Vec2| match place(v) {
+                    Some((level, lateral)) => {
+                        (level - depth(v)).max(-SINK) + RAVINE_WALL * (lateral - floor).max(0.0)
+                    }
+                    None => f32::MAX,
+                });
+            }
             if level > 0.0 {
                 let berm = keep + diagonal;
                 grid.stamp(
@@ -1016,6 +1099,7 @@ mod tests {
     use crate::camera::CameraTuning;
     use crate::race::RaceTuning;
     use crate::track::TrackData;
+    use crate::track::data::MIN_BRIDGE;
 
     /// Issue #202: how much less than [`EMBANK_LIP`] the terrain that hugs the road may keep under
     /// it (m): its triangles, 6 m wide, against a road that curves and dips.
@@ -1403,6 +1487,8 @@ mod tests {
     /// least, and within 4 m of it on three quarters, instead of the skirts down to the ground
     /// (0 before #202). The others: inside the tight turns (no higher than the lowest of their
     /// road: a switchback's inside is a terrace at the level of its foot), beside the voids.
+    /// Issue #208: not on a bridge, which stands on its pillars over its ravine instead
+    /// (`the_demonstration_circuit_has_a_bridge_over_a_ravine`).
     #[test]
     fn the_terrain_hugs_the_raised_road_of_the_demonstration_circuit() {
         let mut hugging = 0;
@@ -1425,12 +1511,20 @@ mod tests {
                 .iter()
                 .map(|e| OpenEdge::new(&center, e))
                 .collect();
+            // Issue #208: a bridge stands on its pillars over its ravine, not on the ground.
+            let bridges: Vec<Bridge> = data
+                .bridges
+                .iter()
+                .map(|b| Bridge::new(&center, b))
+                .collect();
             let (mut raised, mut carried, mut close) = (0usize, 0usize, 0usize);
             for sample in &road {
                 let right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
                 for sign in [-1.0f32, 1.0] {
                     let edge = sample.point(sign * wall_offset(sample), 0.0).y;
-                    if edge - GROUND_HEIGHT < 4.0 || !walled(&open, &center, sample.distance, sign)
+                    if edge - GROUND_HEIGHT < 4.0
+                        || !walled(&open, &center, sample.distance, sign)
+                        || bridge_at(&bridges, &center, sample.distance).is_some()
                     {
                         continue;
                     }
@@ -1464,6 +1558,57 @@ mod tests {
             );
         }
         assert!(hugging >= 2, "{hugging} circuits hug their road");
+    }
+
+    /// Issue #208 acceptance (GD § 16, « Notre implémentation (#208, étape 1) »): a bridge over a
+    /// ravine. On a circuit with bridges (the Col des Moufles and its mirror), under every bridge,
+    /// on the middle third of its length, the terrain under its deck (across it, from one wall to
+    /// the other, every meter) stays [`BRIDGE_FALL`] meters under the road at least, and the
+    /// ravine is [`BRIDGE_DEEP`] meters deep somewhere: a height that shows (Max: « des hauteurs
+    /// franches »). Before #208, the terrain came up to [`EMBANK_LIP`] under the road there, or
+    /// fell away from it on one side only.
+    #[test]
+    fn the_demonstration_circuit_has_a_bridge_over_a_ravine() {
+        const BRIDGE_FALL: f32 = 20.0;
+        const BRIDGE_DEEP: f32 = 40.0;
+        let mut bridged = 0;
+        for (name, data, terrain) in terrains() {
+            if data.bridges.is_empty() {
+                continue;
+            }
+            bridged += 1;
+            let center = CenterLine::of(&data);
+            for bridge in data.bridges.iter().map(|b| Bridge::new(&center, b)) {
+                let length = bridge.length(&center);
+                assert!(length >= MIN_BRIDGE, "{name}: a bridge of {length} m");
+                let (mut checked, mut shallowest, mut deepest) = (0usize, f32::MAX, f32::MIN);
+                let mut along = length / 3.0;
+                while along <= 2.0 * length / 3.0 {
+                    let s = center.at(bridge.from + along);
+                    let w = wall_offset(&s);
+                    for k in -(w as i32)..=(w as i32) {
+                        let p = s.point(k as f32, 0.0);
+                        let ground = terrain.surface(p.xz()).unwrap_or(GROUND_HEIGHT);
+                        let under = p.y - ground;
+                        checked += 1;
+                        shallowest = shallowest.min(under);
+                        deepest = deepest.max(under);
+                    }
+                    along += 1.0;
+                }
+                println!(
+                    "{name}: a bridge of {length:.1} m, the terrain {shallowest:.1} to \
+                     {deepest:.1} m under its deck on its middle third ({checked} points)"
+                );
+                assert!(checked > 100, "{name}: {checked}");
+                assert!(
+                    shallowest >= BRIDGE_FALL,
+                    "{name}: the terrain {shallowest} m under the bridge only"
+                );
+                assert!(deepest >= BRIDGE_DEEP, "{name}: a ravine {deepest} m deep");
+            }
+        }
+        assert!(bridged >= 2, "{bridged} circuits with a bridge");
     }
 
     /// Issue #204 acceptance (GD § 16, « Notre implémentation (#204) »): a road cut into the
