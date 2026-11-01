@@ -66,6 +66,10 @@ pub struct TrickRamp;
 #[derive(Component, Clone, Copy, Debug)]
 pub struct DropFace;
 
+/// Issue #219: on the collider of the curtains under the walls (`TrackMeshes::curtains`).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct UnderWall;
+
 /// On the collider of a glide ramp (GD § 10, issue #20), with [`TrickRamp`] (a trick works off
 /// it too): leaving it opens the kart's glider (`crate::kart::KartEnvironment`).
 #[derive(Component, Clone, Copy, Debug)]
@@ -326,6 +330,19 @@ pub fn build_circuit_when_loaded(
         )
     {
         commands.entity(entity).insert(DropFace);
+    }
+    // Issue #219: the curtains under the walls, solid like a wall (two-sided), only on a circuit
+    // whose terrain hugs the road.
+    if !generated.curtains.indices.is_empty()
+        && let Some(entity) = spawn_trimesh(
+            &mut commands,
+            &generated.curtains,
+            Surface::Wall,
+            WALL_RESTITUTION,
+            TriMeshFlags::FIX_INTERNAL_EDGES_TWO_SIDED,
+        )
+    {
+        commands.entity(entity).insert(UnderWall);
     }
     // Issue #180: the trick stretches of the bumps and the drops (their road and shoulders),
     // marked as trick ramps (GD § 5), only on a circuit that has some (nothing new elsewhere).

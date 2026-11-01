@@ -1666,3 +1666,107 @@ fn karts_climb_and_descend_the_col_without_slowing_down() {
         }
     }
 }
+
+/// Issue #219 acceptance (GD § 16, rule 3: a road that passes over itself): on the Coteau
+/// Citrouille, the road climbs into its loop and out of it onto a bridge over the road it came
+/// up. A kart at full throttle, on the left, in the middle and on the right of the road, drives
+/// under the bridge, round the loop and over the bridge: on its wheels all along (never more than
+/// a bump's height off its own road, never under it), never towed, and the race follows it on
+/// its own part of the road (its progress never jumps to the other one: from a tick to the next,
+/// it moves on by what the kart drove, never back); on the mirror image too.
+#[test]
+fn karts_drive_under_the_bridge_and_over_it() {
+    const COTEAU: &str = "tracks/coteau.track.ron";
+    for mirrored in [false, true] {
+        let probe = Ribbon::on(COTEAU, Pace::Default, mirrored, 0, 0);
+        let center = probe.layout.center.clone();
+        let text =
+            std::fs::read_to_string(format!("{}/assets/{COTEAU}", env!("CARGO_MANIFEST_DIR")))
+                .unwrap();
+        let file = crate::track::TrackData::from_ron(&text).unwrap();
+        assert_eq!(
+            center.length(),
+            crate::track::CenterLine::of(&file).length()
+        );
+        let bridges: Vec<crate::track::terrain::Bridge> = file
+            .bridges
+            .iter()
+            .map(|b| crate::track::terrain::Bridge::new(&center, b))
+            .collect();
+        drop(probe);
+        // Where the road passes over itself: the closest pair of samples seen from above, one on
+        // the bridge, the other 60 m and more away along the track.
+        let samples = center.samples();
+        let mut crossing = (f32::MAX, 0.0, 0.0);
+        for over in samples
+            .iter()
+            .filter(|s| crate::track::terrain::bridge_at(&bridges, &center, s.distance).is_some())
+        {
+            for under in samples {
+                let along = center.wrap(over.distance - under.distance);
+                if along < 60.0 || center.length() - along < 60.0 {
+                    continue;
+                }
+                let apart = over.position.xz().distance(under.position.xz());
+                if apart < crossing.0 {
+                    crossing = (apart, under.distance, over.distance);
+                }
+            }
+        }
+        let (apart, under, over) = crossing;
+        assert!(apart < 1.0, "the road crosses itself ({apart} m apart)");
+        let headroom = center.at(over).position.y - center.at(under).position.y;
+        assert!(headroom > 12.0, "{headroom} m");
+        // Up to the end of the bridge (the drop after it is a jump).
+        let length = center.wrap(over - under) + 64.0;
+        for lateral in [-5.0, 0.0, 5.0] {
+            let mut coteau = Ribbon::on(COTEAU, Pace::Default, mirrored, 0, 0);
+            let kart = coteau.kart;
+            let start = under - 40.0;
+            coteau.place(kart, start, lateral, 25.0);
+            let mut log = new_log();
+            let progress = |ribbon: &Ribbon| {
+                ribbon
+                    .app
+                    .world()
+                    .get::<RaceProgress>(kart)
+                    .unwrap()
+                    .distance
+            };
+            let mut last = progress(&coteau);
+            let (mut highest, mut ticks) = (0.0f32, 0u32);
+            let (mut below, mut above) = (false, false);
+            while center.wrap(coteau.sample(kart).distance - start) < length {
+                ticks += 1;
+                assert!(ticks < 60 * 20, "{lateral}: the run never ended");
+                let input = coteau.autopilot(kart, lateral, 100.0);
+                coteau.tick(input, &[], &mut log);
+                assert!(!log.towed, "{lateral}: the pelican came at tick {ticks}");
+                let now = progress(&coteau);
+                assert!(
+                    now >= last - 0.3 && now - last < 1.5,
+                    "{lateral}: the race moved the kart from {last} to {now} m"
+                );
+                last = now;
+                highest = highest.max(coteau.height(kart));
+                let at = coteau.transform(kart).translation;
+                let (u, o) = (center.at(under).position, center.at(over).position);
+                // Right under the bridge's middle, right over the road's.
+                below |= at.xz().distance(o.xz()) < 8.0 && at.y < o.y - 8.0;
+                above |= at.xz().distance(u.xz()) < 8.0 && at.y > u.y + 8.0;
+            }
+            println!(
+                "Coteau Citrouille (mirrored {mirrored}), lane {lateral}: {ticks} ticks, the \
+                 bridge {headroom:.1} m over the road, the kart {:.2} to {highest:.2} m over its \
+                 road",
+                log.lowest
+            );
+            assert!(log.lowest > 0.2, "{lateral}: {} m", log.lowest);
+            assert!(highest < 2.5, "{lateral}: {highest} m");
+            assert!(
+                below && above,
+                "{lateral}: under the bridge {below}, on it {above}"
+            );
+        }
+    }
+}

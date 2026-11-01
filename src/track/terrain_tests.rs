@@ -218,3 +218,94 @@ fn terrain_runs(path: &str, mirrored: bool) -> Vec<String> {
     }
     failures
 }
+
+/// Issue #219: on a circuit whose terrain hugs the road, the embankment comes up to
+/// `terrain::EMBANK_LIP` under the road at the foot of its walls: a kart out of the track there
+/// (thrown over a wall) drives into the curtain under the wall (`mesh::CURTAIN_DEPTH`), never
+/// under the wall and under the road, where the race would not see it out of the track. On the
+/// Coteau Citrouille and its mirror, every 60 m or so where a side is walled and its embankment
+/// at the foot of the wall: the kart dropped on the embankment 3 m beyond the wall, driven at
+/// full throttle straight at the road from 10 m/s: never under the road (between its walls, its
+/// center under the road's surface).
+#[test]
+fn a_kart_on_the_embankment_never_drives_under_the_road() {
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let threads: Vec<_> = [false, true]
+            .into_iter()
+            .map(|mirrored| scope.spawn(move || under_road_runs(mirrored)))
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn under_road_runs(mirrored: bool) -> Vec<String> {
+    let (mut app, kart) = game_on("tracks/coteau.track.ron", mirrored);
+    let terrain = app.world().resource::<Terrain>().clone();
+    let layout = app.world().resource::<TrackLayout>().clone();
+    let center = &layout.center;
+    let name = format!(
+        "Coteau Citrouille{}",
+        if mirrored { " (miroir)" } else { "" }
+    );
+    let mut failures = Vec::new();
+    let mut runs = 0;
+    let mut last = f32::MIN;
+    for s in center.samples() {
+        if s.distance - last < 60.0 {
+            continue;
+        }
+        for side in [-1.0f32, 1.0] {
+            if ![-3.0f32, 0.0, 3.0]
+                .iter()
+                .all(|o| shortcut::walled(&layout.open_edges, center, s.distance + o, side))
+            {
+                continue;
+            }
+            let outer = mesh::wall_offset(s) + mesh::WALL_THICKNESS;
+            let flat = Vec3::new(s.right.x, 0.0, s.right.z).normalize_or(Vec3::X) * side;
+            let p = (s.position + flat * (outer + 3.0)).xz();
+            // On the embankment: the terrain just under the road's level there.
+            let Some(ground) = terrain.surface(p) else {
+                continue;
+            };
+            let road = s.position.y;
+            if !(road - 1.5..=road - 0.5).contains(&ground) {
+                continue;
+            }
+            last = s.distance;
+            runs += 1;
+            let toward = -flat.xz();
+            place(&mut app, kart, &terrain, p, 0.6, toward, 10.0);
+            for tick in 0..90 {
+                *app.world_mut().get_mut::<KartInput>(kart).unwrap() = KartInput {
+                    throttle: 1.0,
+                    ..default()
+                };
+                app.update();
+                let world = app.world();
+                if *world.get::<KartState>(kart).unwrap() == KartState::Respawning {
+                    break;
+                }
+                let at = world.get::<Transform>(kart).unwrap().translation;
+                let lateral = (at - s.position).dot(flat);
+                if lateral < mesh::wall_offset(s) && at.y < s.point(lateral * side, 0.0).y {
+                    failures.push(format!(
+                        "{name}: from {:.0} m (side {side}), under the road at tick {tick}: {at}",
+                        s.distance
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    assert!(runs >= 10, "{name}: {runs} runs only");
+    failures
+}

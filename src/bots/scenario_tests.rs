@@ -2437,6 +2437,13 @@ fn run_on_circuit(path: &str, mirror: bool, seed: u64) -> CircuitRun {
     run_on_circuit_as(path, mirror, seed, BotDifficulty::Normal)
 }
 
+/// Issue #219: how long a race of 3 laps may last at most (s), so that every kart finishes it on a
+/// circuit of the guide's longest lap ([`GUIDE_FASTEST_LAP`]: a Hard bot's fastest lap up to 70 s,
+/// the Normal bots and the last of the pack some 15 % slower). 180 s before #219, which a lap of
+/// 60 s for a Normal bot (the Coteau Citrouille, 1 680 m and its loop) already went past; the
+/// checks on the stragglers stay (`slowest finish / fastest finish`).
+const CLOSED_RACE_SECONDS: f32 = 3.0 * GUIDE_FASTEST_LAP.1 * 1.15;
+
 /// The same, every bot of `difficulty`.
 fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficulty) -> CircuitRun {
     let mut app = race_on_circuit(path, mirror, seed);
@@ -2445,12 +2452,17 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
     }
     let layout = app.world().resource::<TrackLayout>().clone();
     let mut log = RaceLog::new(&mut app);
-    // Issue #119: a long race lasts about 3 min (a race of laps, about 2).
+    // Issue #119: a long race lasts about 3 min (a race of laps, about 2 to 3: issue #219,
+    // [`CLOSED_RACE_SECONDS`]).
     let open = layout.open().cloned();
     run_race(
         &mut app,
         &mut log,
-        if open.is_some() { 360.0 } else { 180.0 },
+        if open.is_some() {
+            360.0
+        } else {
+            CLOSED_RACE_SECONDS
+        },
     );
     let label = format!("{}{}", layout.name, if mirror { " (miroir)" } else { "" });
     let lap_lengths = match &open {
@@ -2499,13 +2511,12 @@ const NO_DROP: [(&str, &str); 0] = [];
 /// Issue #180: the circuits of the guide that do not have their bumps and drops yet, and the
 /// issue that gives them theirs (Prairie Pompon, the demonstration circuit, has them, and the Col
 /// des Moufles since #211). Each one leaves this list with its issue: the test refuses a circuit
-/// still listed that has some.
-const RELIEF_PENDING: [(&str, u32); 6] = [
+/// still listed that has some. Issue #219: the Coteau Citrouille has its own (redrawn higher).
+const RELIEF_PENDING: [(&str, u32); 5] = [
     ("Corniche Cannelle", 164),
     ("Échappée Pissenlit", 184),
     ("Forêt Frimousse", 184),
     ("Falaises Flanelle", 184),
-    ("Coteau Citrouille", 184),
     ("Périple Polochon", 184),
 ];
 

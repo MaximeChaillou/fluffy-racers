@@ -437,7 +437,10 @@ fn race_app_mirrored(track: TrackChoice, bots: usize, mirror: bool) -> (App, Ent
 fn wall_collider(app: &mut App) -> Collider {
     let world = app.world_mut();
     let walls: Vec<Collider> = world
-        .query_filtered::<(&Collider, &Surface), Without<super::circuit::DropFace>>()
+        .query_filtered::<(&Collider, &Surface), (
+            Without<super::circuit::DropFace>,
+            Without<super::circuit::UnderWall>,
+        )>()
         .iter(world)
         .filter(|(collider, surface)| **surface == Surface::Wall && collider.as_trimesh().is_some())
         .map(|(collider, _)| collider.clone())
