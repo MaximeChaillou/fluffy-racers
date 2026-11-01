@@ -40,7 +40,7 @@
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "racing-kit/flagCheckers", at: 682.000, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "castle-kit/tower-square-roof", at: 411.204, side: Left, height: 24.0, radius: 6.0, gap: 2.0),
-        (model: "castle-kit/tree-large", at: 533.216, side: Right, height: 24.0, radius: 3.8, gap: 0.1),
+        (model: "castle-kit/tree-large", at: 533.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
         (model: "castle-kit/tower-square-roof", at: 687.000, side: Right, height: 30.0, radius: 8.0, gap: 3.0),
         (model: "castle-kit/tower-square", at: 691.000, side: Right, height: 16.0, radius: 9.0, gap: 4.0),
         (model: "castle-kit/tower-square-roof", at: 695.000, side: Right, height: 26.0, radius: 7.0, gap: 3.0),

@@ -389,11 +389,9 @@ fn no_crash_sends_a_kart_over_a_wall() {
 
 // --- Issue #47: walls drawn as high as they are solid, and the chase camera over them -------------
 
-/// The circuits of the walls' test (and of the camera's, but issue #148: `camera_circuits()`):
-/// the two of issue #47 and the Crique Câline (issue #19). Not the Col des Moufles: on its switchbacks, the walls of the leg the kart
-/// is on hide a little more of the next leg, lower down the mountain, than the 2 % of the camera's
-/// test (2.05 % measured, never the road just ahead nor the kart: 0 frames); its walls are the
-/// same as everywhere (`mesh::WALL_HEIGHT`).
+/// The circuits of the walls' test: the two of issue #47, the Crique Câline (issue #19) and the
+/// Ruban Réglisse (issue #78). Issue #191: the camera's test rolls on every circuit of the game
+/// and its mirror (`the_chase_camera_sees_the_road_over_the_walls`).
 fn circuits() -> [TrackChoice; 4] {
     [
         TrackChoice::default(),
@@ -404,35 +402,31 @@ fn circuits() -> [TrackChoice; 4] {
     ]
 }
 
-/// The circuits of the camera's test: those of `circuits()`, but the Anneau Guimauve and the
-/// Crique Câline redrawn (issue #148) for the Lagon Duvet (issue #20), for the reason the Col des
-/// Moufles is not in `circuits()`: their lacets (five hairpins of 22 m, the other leg 44 m away,
-/// lower or higher) put more of the next leg behind the walls of the leg the kart is on than the
-/// 2 % of the test (3.8 % for the autopilot, 4.1 to 4.3 % for a Hard bot, measured), never the
-/// road just ahead nor the kart (0 frames), never the anti-wall (0 frames); their walls are the
-/// same as everywhere (`mesh::WALL_HEIGHT`), and solid as drawn (`circuits()`, above).
-fn camera_circuits() -> [TrackChoice; 3] {
-    [
-        TrackChoice::default(),
-        TrackChoice::Circuit("tracks/lagon.track.ron".into()),
-        TrackChoice::Circuit("tracks/ruban.track.ron".into()),
-    ]
-}
-
 /// The game on `track` with `bots` bots, once the race and its bots exist.
 fn race_app(track: TrackChoice, bots: usize) -> (App, Entity) {
+    race_app_mirrored(track, bots, false)
+}
+
+/// The same, on the circuit or its mirror (issue #19, the mirror mode).
+fn race_app_mirrored(track: TrackChoice, bots: usize, mirror: bool) -> (App, Entity) {
     let mut app = game_app_unloaded(track, bots);
+    if mirror {
+        app.insert_resource(crate::track::MirrorMode(true));
+    }
     single_threaded(&mut app);
     wait_for_the_player(&mut app);
-    let kart = player(&mut app);
-    for _ in 0..20 {
+    // Issue #191: the circuit file loads asynchronously (several at once here).
+    for _ in 0..2000 {
         let world = app.world_mut();
         if world.get_resource::<Race>().is_some()
             && world.query::<&Bot>().iter(world).count() == bots
+            && world.resource::<TrackLayout>().mirrored == mirror
         {
+            let kart = player(&mut app);
             return (app, kart);
         }
         app.update();
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("the race or its bots never came");
 }
@@ -568,11 +562,121 @@ struct CameraView {
     worst: f32,
     /// Frames where a wall hides the center of the kart followed.
     kart_hidden: usize,
+    /// Issue #191: the points of the road ahead on screen that a piece of the decor hides (its
+    /// footprint, as high as the piece: a tree's canopy and trunk alike), of the road just ahead,
+    /// and the frames where one hides the kart.
+    decor_hidden: usize,
+    decor_near_hidden: usize,
+    decor_kart_hidden: usize,
 }
 
-/// The walls the camera looks over (the karts' and the drawn ones are the same, see above).
+/// Issue #191: the decor of the circuit as the game places it (`dressing`: the plan of its file,
+/// mirrored in the mirror mode, each piece on the terrain), each piece as an upright cylinder
+/// (its footprint's center on the ground, its radius, its foot and its top).
+#[derive(Resource, Default)]
+struct DecorPieces(Vec<(Vec2, f32, f32, f32)>);
+
+impl DecorPieces {
+    fn of(app: &mut App) -> Self {
+        use super::decor::place_decor_around;
+        use super::layout::CenterLine;
+        use super::shortcut::Shortcut;
+        use super::water::Lake;
+        let world = app.world();
+        let layout = world.resource::<TrackLayout>();
+        let handle = &world.resource::<super::circuit::TrackHandle>().0;
+        let data = world
+            .resource::<Assets<super::TrackData>>()
+            .get(handle)
+            .expect("the circuit's file");
+        let center = CenterLine::of(data);
+        let shortcuts: Vec<Shortcut> = data
+            .shortcuts
+            .iter()
+            .map(|s| Shortcut::new(&center, s))
+            .collect();
+        let lakes: Vec<Lake> = data.lakes.iter().map(Lake::new).collect();
+        let plan = place_decor_around(
+            &center,
+            data.biome(),
+            &data.props,
+            data.decor_seed,
+            &lakes,
+            &shortcuts,
+        );
+        let plan = if layout.mirrored {
+            plan.mirrored()
+        } else {
+            plan
+        };
+        assert!(!plan.pieces.is_empty(), "{}: no decor", layout.name);
+        let terrain = world.get_resource::<Terrain>().filter(|t| !t.is_empty());
+        Self(
+            plan.pieces
+                .iter()
+                .map(|piece| {
+                    let at = piece.position.xz();
+                    let foot = terrain.map_or(piece.position.y, |t| t.foot(at, piece.radius));
+                    (at, piece.radius, foot, foot + piece.height)
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether the segment from `from` to `to` passes through a piece.
+    fn hide(&self, from: Vec3, to: Vec3) -> bool {
+        let (a, d) = (from.xz(), (to - from).xz());
+        let (lo, hi) = (a.min(a + d), a.max(a + d));
+        self.0.iter().any(|&(c, r, foot, top)| {
+            if c.x + r < lo.x || c.x - r > hi.x || c.y + r < lo.y || c.y - r > hi.y {
+                return false;
+            }
+            // Where the segment is within `r` of the axis (ground plane): |a + t d - c| < r.
+            let f = a - c;
+            let (qa, qb, qc) = (d.dot(d), 2.0 * f.dot(d), f.dot(f) - r * r);
+            let disc = qb * qb - 4.0 * qa * qc;
+            if qa < 1e-9 || disc <= 0.0 {
+                return false;
+            }
+            let root = disc.sqrt();
+            let t0 = ((-qb - root) / (2.0 * qa)).max(0.0);
+            let t1 = ((-qb + root) / (2.0 * qa)).min(1.0);
+            if t0 >= t1 {
+                return false;
+            }
+            let (y0, y1) = (from.y + (to.y - from.y) * t0, from.y + (to.y - from.y) * t1);
+            y0.min(y1) < top && y0.max(y1) > foot
+        })
+    }
+}
+
+/// The walls the camera looks over, as they are drawn opaque (issue #191: the karts' ones, but
+/// their glass tops between two legs of the track, which the camera sees through).
 #[derive(Resource)]
 struct Walls(Collider);
+
+/// Issue #191: the opaque part of the circuit's walls as the game draws them
+/// (`mesh::TrackMeshes::wall_looks`), from its file (mirrored in the mirror mode), as a collider
+/// to cast the camera's rays against: the karts' walls (`wall_collider`), but only up to
+/// `mesh::GLASS_FROM` between two legs of the track.
+fn drawn_walls(app: &mut App) -> Collider {
+    let world = app.world();
+    let layout = world.resource::<TrackLayout>();
+    let handle = &world.resource::<super::circuit::TrackHandle>().0;
+    let file = world
+        .resource::<Assets<super::TrackData>>()
+        .get(handle)
+        .expect("the circuit's file");
+    let data = if layout.mirrored {
+        file.mirrored()
+    } else {
+        file.clone()
+    };
+    let generated = super::mesh::generate(&layout.center, &data, &data.palette());
+    assert!(!generated.wall_looks.indices.is_empty(), "{}", layout.name);
+    let (vertices, triangles) = generated.wall_looks.collider_data();
+    Collider::trimesh(vertices, triangles).expect("the walls as drawn")
+}
 
 /// Picture size of the game's window (16:9): what is on screen.
 const ASPECT: f32 = 16.0 / 9.0;
@@ -586,6 +690,7 @@ fn watch_the_view(
     tuning: Res<CameraTuning>,
     layout: Res<TrackLayout>,
     walls: Res<Walls>,
+    decor: Res<DecorPieces>,
     cameras: Query<(&ChaseCamera, &Transform, &Projection)>,
     visuals: Query<(&Transform, &InterpolatedFrom), Without<ChaseCamera>>,
     shakes: Query<&CameraShake>,
@@ -672,9 +777,12 @@ fn watch_the_view(
             let lost_here = hidden(p);
             seen += 1;
             lost += usize::from(lost_here);
+            let behind_decor = decor.hide(eye.translation, p);
+            view.decor_hidden += usize::from(behind_decor);
             if ahead <= 20.0 {
                 view.near_on_screen += 1;
                 view.near_hidden += usize::from(lost_here);
+                view.decor_near_hidden += usize::from(behind_decor);
             }
         }
     }
@@ -684,6 +792,7 @@ fn watch_the_view(
         view.worst = view.worst.max(lost as f32 / seen as f32);
     }
     view.kart_hidden += usize::from(hidden(kart.translation));
+    view.decor_kart_hidden += usize::from(decor.hide(eye.translation, kart.translation));
 }
 
 /// Who drives the kart the camera follows.
@@ -697,12 +806,12 @@ enum Driver {
 }
 
 /// What the chase camera saw while `driver` drove on `track`.
-fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
+fn watch_a_race(track: TrackChoice, mirror: bool, driver: Driver) -> CameraView {
     let bots = match driver {
         Driver::Autopilot => 0,
         Driver::HardBotInTheGrid => 11,
     };
-    let (mut app, kart) = race_app(track, bots);
+    let (mut app, kart) = race_app_mirrored(track, bots, mirror);
     let layout = app.world().resource::<TrackLayout>().clone();
     let laps = match driver {
         Driver::Autopilot => {
@@ -718,11 +827,14 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
                 .entity_mut(kart)
                 .remove::<PlayerKart>()
                 .insert(bot(BotDifficulty::Hard, seed, &tuning));
-            3
+            // The race (three laps; issue #119: an open circuit's race is its one run).
+            app.world().resource::<Course>().laps as usize
         }
     };
-    let walls = wall_collider(&mut app);
+    let walls = drawn_walls(&mut app);
+    let decor = DecorPieces::of(&mut app);
     app.insert_resource(Walls(walls))
+        .insert_resource(decor)
         .init_resource::<CameraView>()
         .add_systems(
             PostUpdate,
@@ -738,8 +850,9 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
         < laps
     {
         ticks += 1;
+        // A safety net only (issue #191: the long races too, the Échappée's 4 km).
         assert!(
-            ticks < 150 * TICK_HZ as usize,
+            ticks < 400 * TICK_HZ as usize,
             "{driver:?}: the laps never ended"
         );
         match driver {
@@ -751,8 +864,13 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 }
 
 /// Issue #47: with the walls drawn 1.2 m high (0.8 m before), the chase camera still sees the
-/// road, on the circuits of `camera_circuits()`, followed for a lap of the test autopilot and for a race
-/// of a Hard bot in a full grid:
+/// road, followed for a lap of the test autopilot and for a race of a Hard bot in a full grid.
+/// Issue #191: on **every circuit of the game and its mirror** (since #148, only Prairie Pompon,
+/// the Lagon Duvet and the Ruban Réglisse; the Col des Moufles left out since #109, the Anneau
+/// Guimauve and the Crique Câline since #148: 3 to 5 % of the road ahead hidden on nine circuits
+/// out of twelve, by the walls of the lacets), the rays cast against the walls as they are drawn
+/// opaque (`drawn_walls`: their glass tops between two legs of the track are seen through);
+/// and the decor too:
 /// - its anti-wall (issue #2) never pulls it in: the walls stay under its line of sight, which
 ///   starts 1.35 m above the road at the kart. Measured: 0 frames, before and after;
 /// - a wall never hides the road just ahead (3 to 20 m, on screen) nor the kart. Measured: never,
@@ -760,39 +878,66 @@ fn watch_a_race(track: TrackChoice, driver: Driver) -> CameraView {
 /// - over the road on screen up to 45 m ahead, the walls hide 2 % of it at most: the road on the
 ///   other side of the hairpin's island, which the higher walls hide more of (Prairie Pompon:
 ///   0.5 to 0.6 % before, 1.3 to 1.6 % after, 2.5 % with walls of 1.6 m; Anneau Guimauve: 0 %
-///   before, 0.05 to 0.4 % after).
+///   before, 0.05 to 0.4 % after). Issue #191, measured: 0.6 % at most (the Col des Moufles,
+///   a Hard bot), Prairie Pompon 0.2 to 0.3 % (1.4 to 1.9 % before);
+/// - the decor (each piece an upright cylinder, its footprint as high as the piece) hides the
+///   same at most: 2 % of the road ahead on screen, never the road just ahead nor the kart (a
+///   thousandth at most, like the walls). Measured: 0.03 % at most, never the road just ahead
+///   nor the kart.
 ///
 /// Issue #108: a kart on a shortcut (Prairie Pompon redrawn has three) has its path ahead, then
 /// the road after it.
 #[test]
 fn the_chase_camera_sees_the_road_over_the_walls() {
-    let runs: Vec<(TrackChoice, Driver)> = camera_circuits()
-        .into_iter()
-        .flat_map(|track| {
-            [Driver::Autopilot, Driver::HardBotInTheGrid].map(|driver| (track.clone(), driver))
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let runs: Vec<(TrackChoice, bool, Driver)> = crate::admin::tracks::circuits()
+        .iter()
+        .flat_map(|entry| {
+            [false, true].into_iter().flat_map(move |mirror| {
+                [Driver::Autopilot, Driver::HardBotInTheGrid]
+                    .map(|driver| (entry.choice(), mirror, driver))
+            })
         })
         .collect();
-    let views: Vec<CameraView> = std::thread::scope(|scope| {
-        let threads: Vec<_> = runs
-            .iter()
-            .map(|(track, driver)| scope.spawn(|| watch_a_race(track.clone(), *driver)))
-            .collect();
-        threads
-            .into_iter()
-            .map(|thread| {
-                thread
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    assert!(runs.len() >= 48, "{}", runs.len());
+    // Issue #191: 48 races, a few at a time (one App per thread, as many as the machine's cores).
+    let next = AtomicUsize::new(0);
+    let done: Mutex<Vec<Option<CameraView>>> = Mutex::new(vec![None; runs.len()]);
+    let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((track, mirror, driver)) = runs.get(i) else {
+                            return;
+                        };
+                        let view = watch_a_race(track.clone(), *mirror, *driver);
+                        done.lock().unwrap()[i] = Some(view);
+                    }
+                })
             })
-            .collect()
+            .collect();
+        for worker in workers {
+            worker
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        }
     });
+    let views: Vec<CameraView> = done.into_inner().unwrap().into_iter().flatten().collect();
+    assert_eq!(views.len(), runs.len());
     let mut failures = Vec::new();
-    for ((track, driver), view) in runs.iter().zip(&views) {
+    for ((track, mirror, driver), view) in runs.iter().zip(&views) {
+        let track = format!("{track:?}{}", if *mirror { " (mirror)" } else { "" });
         let share = |part: usize, whole: usize| part as f32 / whole.max(1) as f32;
         let hidden = share(view.hidden, view.on_screen);
         println!(
-            "{track:?}, {driver:?}: {} frames, anti-wall {}, road ahead hidden {:.2} % (worst \
-             frame {:.1} %), just ahead {} of {}, kart hidden {}",
+            "{track}, {driver:?}: {} frames, anti-wall {}, road ahead hidden {:.2} % (worst \
+             frame {:.1} %), just ahead {} of {}, kart hidden {}; by the decor {:.2} %, just \
+             ahead {}, kart {}",
             view.frames,
             view.pulled_in,
             100.0 * hidden,
@@ -800,14 +945,20 @@ fn the_chase_camera_sees_the_road_over_the_walls() {
             view.near_hidden,
             view.near_on_screen,
             view.kart_hidden,
+            100.0 * share(view.decor_hidden, view.on_screen),
+            view.decor_near_hidden,
+            view.decor_kart_hidden,
         );
         if share(view.pulled_in, view.frames) > 0.002
             || share(view.near_hidden, view.near_on_screen) > 0.001
             || share(view.kart_hidden, view.frames) > 0.001
             || hidden > 0.02
             || view.near_on_screen < 20 * view.frames
+            || share(view.decor_hidden, view.on_screen) > 0.02
+            || share(view.decor_near_hidden, view.near_on_screen) > 0.001
+            || share(view.decor_kart_hidden, view.frames) > 0.001
         {
-            failures.push(format!("{track:?}, {driver:?}: {view:?}"));
+            failures.push(format!("{track}, {driver:?}: {view:?}"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

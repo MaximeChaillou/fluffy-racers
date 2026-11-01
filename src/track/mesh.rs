@@ -20,7 +20,8 @@ pub const CURB_WIDTH: f32 = 1.0;
 /// Thickness of the low walls (m).
 pub const WALL_THICKNESS: f32 = 0.5;
 /// Height of the low walls above the road (m), on every circuit: as drawn and as solid. Their
-/// collider is the drawn mesh itself ([`TrackMeshes::walls`]): one constant, nothing solid that is
+/// collider is the drawn mesh itself ([`TrackMeshes::walls`]; issue #191: drawn opaque, or with a
+/// glass top between two legs of the track, the same faces): one constant, nothing solid that is
 /// not drawn (issue #47). Issue #27: the top of a kart's body is 0.8 m above the road; with walls
 /// exactly as high, a kart pushing into a wall caught its top edge, which pushed its nose down
 /// until it stood on it, or let it ride up onto the wall. 0.4 m higher, a kart only ever meets
@@ -28,6 +29,34 @@ pub const WALL_THICKNESS: f32 = 0.5;
 /// the road at the kart (`CameraTuning::look_height` above the kart's center) and rises from
 /// there: the camera's anti-wall ray never meets a wall on a lap (tested on both circuits).
 pub const WALL_HEIGHT: f32 = 1.2;
+/// Issue #191: on the lacets, the low walls that stand between two legs of the track (where the
+/// chase camera sees the other leg across them) are drawn with a **glass top**: opaque from the
+/// road up to this height (m), glass from there to their top ([`TrackMeshes::glass`]). Solid as
+/// before, [`WALL_HEIGHT`] high (their collider is [`TrackMeshes::walls`], unchanged): only how
+/// they are drawn changes. Seen from 20 to 30 m away, a wall at 1.2 m hid the near half of the
+/// other leg's road from a camera 2.4 m above the kart (3 to 5 % of the road ahead on screen, on
+/// nine circuits out of twelve): the lines of sight met the walls between 0.5 m and their top
+/// nine times out of ten.
+pub const GLASS_FROM: f32 = 0.4;
+/// Issue #191: a wall stands between two legs where a sample of the road lies beyond it (on its
+/// outer side), within this distance (m) of its foot...
+pub const GLASS_REACH: f32 = 50.0;
+/// ...at least this far along the track from it (m), either way...
+pub const GLASS_APART: f32 = 30.0;
+/// ...and nearer to it than this share of how far along the track it is: the road comes back
+/// toward the wall (the other leg of a lacet; the exit of a hairpin or of a tight turn, seen
+/// across its inside), not the stretch the wall lines nor the rest of a wide turn. The share
+/// glassed (of the walls' sides along the road): 15 to 17 % on the Ruban Réglisse and the Lagon
+/// Duvet, 52 to 73 % on the circuits of lacets; 0.6 and 25 m (fewer walls) left 3 % of the road
+/// ahead hidden there, 0.8 and 30 m 0.6 % at most.
+pub const GLASS_RETURN: f32 = 0.8;
+/// Issue #191: how opaque the glass is (its material's alpha): the road beyond it shows through,
+/// the wall's shape stays plain.
+pub const GLASS_ALPHA: f32 = 0.3;
+/// How much of the wall's panel color the glass keeps (the rest white): a pale tint of the
+/// biome's barriers.
+const GLASS_TINT: f32 = 0.45;
+
 /// Height of the surrounding grass ground. A bit below the road: no z-fighting, and the
 /// spline may dip a few centimeters below its control points (Catmull-Rom overshoot).
 pub const GROUND_HEIGHT: f32 = -0.25;
@@ -143,6 +172,23 @@ impl MeshData {
 
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    /// Issue #191: the triangles added from vertex `start` on (every triangle of a mesh built
+    /// quad by quad uses vertices of its own quad only), with their vertices.
+    pub fn from_vertex(&self, start: usize) -> MeshData {
+        let base = start as u32;
+        MeshData {
+            positions: self.positions[start..].to_vec(),
+            normals: self.normals[start..].to_vec(),
+            colors: self.colors[start..].to_vec(),
+            indices: self
+                .indices
+                .iter()
+                .filter(|&&i| i >= base)
+                .map(|i| i - base)
+                .collect(),
+        }
     }
 
     /// Issue #119: the triangles split into square tiles of `size` meters on the ground plane (by
@@ -312,9 +358,17 @@ pub struct TrackMeshes {
     pub road: MeshData,
     /// Grass shoulders and off-road patches: `Surface::Offroad`.
     pub offroad: MeshData,
-    /// Low walls, [`WALL_HEIGHT`] high: drawn, and their collider too, `Surface::Wall` (the same
-    /// triangles, issue #47).
+    /// Low walls, [`WALL_HEIGHT`] high: their collider, `Surface::Wall` (issue #47: the same
+    /// triangles as drawn, [`wall_looks`](Self::wall_looks) and [`glass`](Self::glass)).
     pub walls: MeshData,
+    /// Issue #191: the low walls as drawn, opaque: [`walls`](Self::walls) itself (the same
+    /// triangles, in the same order) but along the walls that stand between two legs of the
+    /// track ([`walls_between_legs`]), only up to [`GLASS_FROM`] there...
+    pub wall_looks: MeshData,
+    /// ...and their glass top, from [`GLASS_FROM`] to their top (their faces and their lid),
+    /// drawn see-through (`track::circuit`). Empty on a circuit without such a wall. Every
+    /// vertex of the collider is a vertex of one of the two.
+    pub glass: MeshData,
     /// Skirts under raised parts: visual only. Issue #78: the blue stripes of the anti-gravity
     /// zones too.
     pub decor: MeshData,
@@ -357,7 +411,9 @@ impl TrackMeshes {
     pub fn combined(&self) -> MeshData {
         let mut all = self.road.clone();
         all.append(&self.offroad);
-        all.append(&self.walls);
+        all.append(&self.wall_looks);
+        // Issue #191: headless, the glass in the one mesh too (nothing draws it there).
+        all.append(&self.glass);
         all.append(&self.decor);
         all.append(&self.anti_gravity_road);
         all.append(&self.anti_gravity_offroad);
@@ -370,11 +426,11 @@ impl TrackMeshes {
 
     /// Issue #187: what is drawn with a renderer: the road's paving and its borders apart, with
     /// their UVs, and the rest plain (every triangle of [`combined`](Self::combined) in one of
-    /// the three, once).
+    /// the three, once; issue #191: but the walls' glass, [`glass`](Self::glass), drawn apart).
     pub fn drawn(&self) -> DrawnTrack {
         let mut plain = self.offroad.clone();
         for part in [
-            &self.walls,
+            &self.wall_looks,
             &self.decor,
             &self.blue_curbs,
             &self.anti_gravity_offroad,
@@ -542,6 +598,16 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         s0.up.y >= -FACING_UP_TOLERANCE && s1.up.y >= -FACING_UP_TOLERANCE
     };
     let skirted = |s0: &TrackSample, s1: &TrackSample| faces_up(s0, s1) && !bridged(s0, s1);
+    // Issue #191: whether the wall of side `sign` between two samples stands between two legs of
+    // the track (its first sample's).
+    let between = walls_between_legs(center);
+    let step = center.length() / center.samples().len().max(1) as f32;
+    let glassed = |sign: f32, s0: &TrackSample, _: &TrackSample| {
+        let i = ((s0.distance / step).round() as usize) % between.len().max(1);
+        between
+            .get(i)
+            .is_some_and(|sides| sides[usize::from(sign > 0.0)])
+    };
     let mut meshes = TrackMeshes::default();
     // Issue #187: whether the road's paving lies on the ground (its UVs the ground's meters)
     // rather than following the road (in the anti-gravity zones, it always follows it).
@@ -694,14 +760,19 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         }
 
         // Low walls: inner face, top, outer face on each side (issue #107: not along the
-        // stretches without wall).
+        // stretches without wall). Issue #191: drawn with a glass top between two legs.
         wall_strips(
-            &mut meshes.walls,
+            WallParts {
+                solid: &mut meshes.walls,
+                drawn: &mut meshes.wall_looks,
+                glass: &mut meshes.glass,
+            },
             samples,
             closed,
             palette,
             &walled_side,
             &|s: &TrackSample| WALL_HEIGHT + wall_lift(center, s.distance),
+            &glassed,
         );
 
         // Skirts from the wall bottoms down to the ground (or the floor of a lake), so raised
@@ -848,6 +919,10 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         }
     }
 
+    // Issue #191: the walls' quads from here on (their ends, the barriers) drawn opaque, as they
+    // are solid.
+    let strips_end = meshes.walls.positions.len();
+
     // Issue #20: each end of the road at a gap is closed, from the top of its walls down to the
     // ground: a cliff at the lip, a ledge at the landing.
     let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
@@ -938,8 +1013,58 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
         barrier(&mut meshes.walls, &center.at(gap.from), -1.0, panels, top);
         barrier(&mut meshes.walls, &center.at(gap.to), 1.0, panels, top);
     }
+    let ends = meshes.walls.from_vertex(strips_end);
+    meshes.wall_looks.append(&ends);
 
     meshes
+}
+
+/// Issue #191: for every sample of `center`, whether its wall on the left and on the right
+/// (`[left, right]`) stands between two legs of the track: a sample of the road (on the road of
+/// an open circuit) lies beyond it, on its outer side, within [`GLASS_REACH`] meters of its foot,
+/// at least [`GLASS_APART`] meters along the track from it, either way, and nearer to it than
+/// [`GLASS_RETURN`] times that.
+pub fn walls_between_legs(center: &CenterLine) -> Vec<[bool; 2]> {
+    let samples = center.samples();
+    const CELL: f32 = 25.0;
+    let cell = |p: Vec2| ((p.x / CELL).floor() as i32, (p.y / CELL).floor() as i32);
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<u32>> = Default::default();
+    for (j, s) in samples.iter().enumerate() {
+        if center.on_the_road(s.distance) {
+            cells
+                .entry(cell(s.position.xz()))
+                .or_default()
+                .push(j as u32);
+        }
+    }
+    let reach = (GLASS_REACH / CELL).ceil() as i32;
+    samples
+        .iter()
+        .map(|s| {
+            [-1.0f32, 1.0].map(|sign| {
+                let normal = (s.right * sign).xz().normalize_or_zero();
+                let foot = s.point(sign * wall_offset(s), 0.0).xz();
+                let (cx, cy) = cell(foot);
+                (-reach..=reach).any(|dx| {
+                    (-reach..=reach).any(|dy| {
+                        cells.get(&(cx + dx, cy + dy)).is_some_and(|list| {
+                            list.iter().any(|&j| {
+                                let other = &samples[j as usize];
+                                let to = other.position.xz() - foot;
+                                let apart = center.wrap(other.distance - s.distance);
+                                let apart = apart.min(center.length() - apart);
+                                let far = to.length();
+                                apart >= GLASS_APART
+                                    && far <= GLASS_REACH
+                                    && far <= GLASS_RETURN * apart
+                                    && to.dot(normal) > 0.0
+                            })
+                        })
+                    })
+                })
+            })
+        })
+        .collect()
 }
 
 /// Issue #187: the UVs of a run of samples (`v` at each sample, its end too when it is closed),
@@ -1176,74 +1301,137 @@ fn runs(center: &CenterLine, gaps: &[Gap]) -> Vec<(Vec<TrackSample>, bool)> {
     runs
 }
 
+/// Issue #191: where the walls go: their collider, and how they are drawn (opaque, and their
+/// glass tops).
+struct WallParts<'a> {
+    solid: &'a mut MeshData,
+    drawn: &'a mut MeshData,
+    glass: &'a mut MeshData,
+}
+
 /// The walls of both sides, [`WALL_HEIGHT`] high: inner face, flat top, outer face. The faces
 /// alternate the palette's two wall colors in panels (the barriers' look, issue #11). Issue #107:
 /// a side's wall only between two samples where `walled` says it stands (`walled(sign, s0, s1)`,
 /// sign -1 for the left, 1 for the right); everywhere on a circuit without a stretch without wall.
 /// Issue #180: `tall(s)`, their height at each sample ([`WALL_HEIGHT`], higher along a bump's back
 /// and below a drop: [`wall_lift`]).
+///
+/// Issue #191: into `parts.solid`, the collider, whole; into `parts.drawn`, the same quads in the
+/// same order, but where `glassed` says the wall stands between two legs (`glassed(sign, s0,
+/// s1)`), only its faces' band up to [`GLASS_FROM`]; there, the rest of its faces and its lid
+/// into `parts.glass`, in a pale tint of the panels.
 fn wall_strips(
-    mesh: &mut MeshData,
+    parts: WallParts,
     samples: &[TrackSample],
     closed: bool,
     palette: &Palette,
     walled: &dyn Fn(f32, &TrackSample, &TrackSample) -> bool,
     tall: &dyn Fn(&TrackSample) -> f32,
+    glassed: &dyn Fn(f32, &TrackSample, &TrackSample) -> bool,
 ) {
+    let WallParts {
+        solid,
+        drawn,
+        glass,
+    } = parts;
+    let inner = |s: &TrackSample| wall_offset(s);
     let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
     let panels = [rgba(palette.walls.0), rgba(palette.walls.1)];
     let panel = |i: usize| panels[(i / WALL_PANEL) % 2];
+    let pale = |c: [f32; 4]| {
+        let k = GLASS_TINT;
+        [
+            c[0] * k + 1.0 - k,
+            c[1] * k + 1.0 - k,
+            c[2] * k + 1.0 - k,
+            1.0,
+        ]
+    };
+    let pale_panel = |i: usize| pale(panel(i));
     let top = rgba(palette.wall_top);
-    let right = |s0: &TrackSample, s1: &TrackSample| walled(1.0, s0, s1);
-    let left = |s0: &TrackSample, s1: &TrackSample| walled(-1.0, s0, s1);
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(wall_offset(s), 0.0),
-        |s| s.point(wall_offset(s), tall(s)),
-        panel,
-        right,
-    );
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(wall_offset(s), tall(s)),
-        |s| s.point(outer(s), tall(s)),
-        |_| top,
-        right,
-    );
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(outer(s), tall(s)),
-        |s| s.point(outer(s), 0.0),
-        panel,
-        right,
-    );
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(-wall_offset(s), tall(s)),
-        |s| s.point(-wall_offset(s), 0.0),
-        panel,
-        left,
-    );
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(-outer(s), tall(s)),
-        |s| s.point(-wall_offset(s), tall(s)),
-        |_| top,
-        left,
-    );
-    mesh.strip_where(
-        samples,
-        closed,
-        |s| s.point(-outer(s), 0.0),
-        |s| s.point(-outer(s), tall(s)),
-        panel,
-        left,
-    );
+    for sign in [1.0f32, -1.0] {
+        let walled = |s0: &TrackSample, s1: &TrackSample| walled(sign, s0, s1);
+        let opaque = |s0: &TrackSample, s1: &TrackSample| walled(s0, s1) && !glassed(sign, s0, s1);
+        let clear = |s0: &TrackSample, s1: &TrackSample| walled(s0, s1) && glassed(sign, s0, s1);
+        // A face at `lateral` from `low` to `high` (heights), its front toward the road on the
+        // inner face (`toward`), away from it on the outer one; the right side's inner face
+        // goes up, the left side's down (the strip's front is `(b - a) × forward`).
+        let up_first = |toward: bool| (sign > 0.0) == toward;
+        let face = |mesh: &mut MeshData,
+                    lateral: &dyn Fn(&TrackSample) -> f32,
+                    toward: bool,
+                    low: &dyn Fn(&TrackSample) -> f32,
+                    high: &dyn Fn(&TrackSample) -> f32,
+                    color: &dyn Fn(usize) -> [f32; 4],
+                    keep: &dyn Fn(&TrackSample, &TrackSample) -> bool| {
+            let at = |s: &TrackSample, h: f32| s.point(sign * lateral(s), h);
+            if up_first(toward) {
+                mesh.strip_where(
+                    samples,
+                    closed,
+                    |s| at(s, low(s)),
+                    |s| at(s, high(s)),
+                    color,
+                    keep,
+                );
+            } else {
+                mesh.strip_where(
+                    samples,
+                    closed,
+                    |s| at(s, high(s)),
+                    |s| at(s, low(s)),
+                    color,
+                    keep,
+                );
+            }
+        };
+        let lid = |mesh: &mut MeshData,
+                   color: &dyn Fn(usize) -> [f32; 4],
+                   keep: &dyn Fn(&TrackSample, &TrackSample) -> bool| {
+            // From the inner edge to the outer one on the right, the other way on the left:
+            // facing up both ways.
+            let (a, b): (&dyn Fn(&TrackSample) -> f32, &dyn Fn(&TrackSample) -> f32) = if sign > 0.0
+            {
+                (&inner, &outer)
+            } else {
+                (&outer, &inner)
+            };
+            mesh.strip_where(
+                samples,
+                closed,
+                |s| s.point(sign * a(s), tall(s)),
+                |s| s.point(sign * b(s), tall(s)),
+                color,
+                keep,
+            );
+        };
+        let ground = |_: &TrackSample| 0.0;
+        let band = |_: &TrackSample| GLASS_FROM;
+        let full = |s0: &TrackSample, s1: &TrackSample| walled(s0, s1);
+        // The order of before (#47): inner face, lid, outer face on the right; on the left,
+        // inner face, lid, outer face too.
+        for mesh_part in 0..3 {
+            match mesh_part {
+                0 => {
+                    face(solid, &inner, true, &ground, tall, &panel, &full);
+                    face(drawn, &inner, true, &ground, tall, &panel, &opaque);
+                    face(drawn, &inner, true, &ground, &band, &panel, &clear);
+                    face(glass, &inner, true, &band, tall, &pale_panel, &clear);
+                }
+                1 => {
+                    lid(solid, &|_| top, &full);
+                    lid(drawn, &|_| top, &opaque);
+                    lid(glass, &|_| pale(top), &clear);
+                }
+                _ => {
+                    face(solid, &outer, false, &ground, tall, &panel, &full);
+                    face(drawn, &outer, false, &ground, tall, &panel, &opaque);
+                    face(drawn, &outer, false, &ground, &band, &panel, &clear);
+                    face(glass, &outer, false, &band, tall, &pale_panel, &clear);
+                }
+            }
+        }
+    }
 }
 
 /// A sand patch on the road between two spline parameters.
@@ -1365,8 +1553,14 @@ mod tests {
             let center = CenterLine::of(&data);
             let meshes = generate(&center, &data, &data.palette());
             let drawn = meshes.drawn();
+            // Issue #191: and the walls' glass tops, drawn apart too.
             assert_eq!(
-                triangles(&[&drawn.plain, &drawn.paving.mesh, &drawn.borders.mesh]),
+                triangles(&[
+                    &drawn.plain,
+                    &drawn.paving.mesh,
+                    &drawn.borders.mesh,
+                    &meshes.glass
+                ]),
                 triangles(&[&meshes.combined()]),
                 "{file}"
             );
@@ -1574,13 +1768,24 @@ mod tests {
                 }
             }
             assert_eq!(3 * on_top, 2 * walls.positions.len(), "{}", data.name);
-            // What is drawn is all of it: the walls are in the circuit's single mesh.
+            // What is drawn is all of it: the walls are in the circuit's single mesh. Issue
+            // #191: as drawn, opaque then their glass tops (on the oval, the inner walls of its
+            // half circles), every vertex of the collider one of theirs.
             let all = meshes.combined();
             let start = meshes.road.positions.len() + meshes.offroad.positions.len();
-            assert_eq!(
-                all.positions[start..start + walls.positions.len()],
-                walls.positions[..]
-            );
+            let (looks, glass) = (&meshes.wall_looks.positions, &meshes.glass.positions);
+            assert_eq!(all.positions[start..start + looks.len()], looks[..]);
+            let start = start + looks.len();
+            assert_eq!(all.positions[start..start + glass.len()], glass[..]);
+            let drawn: Vec<[i64; 3]> = looks
+                .iter()
+                .chain(glass)
+                .map(|p| p.map(|c| (c * 1000.0).round() as i64))
+                .collect();
+            for p in walls.positions.iter() {
+                let p = p.map(|c| (c * 1000.0).round() as i64);
+                assert!(drawn.contains(&p), "{}: {p:?} not drawn", data.name);
+            }
         }
     }
 
@@ -2212,5 +2417,134 @@ mod tests {
         let plain = test_track();
         let meshes = generate(&CenterLine::of(&plain), &plain, &Palette::default());
         assert!(meshes.trick_road.indices.is_empty() && meshes.trick_offroad.indices.is_empty());
+    }
+
+    /// Issue #191, on every circuit of the game and its mirror: the walls are drawn as they are
+    /// solid, a glass top where they stand between two legs of the track. Their collider is
+    /// whole (every quad [`WALL_HEIGHT`] high, as before); every vertex of it is a vertex of the
+    /// opaque walls or of the glass; the glass is only between [`GLASS_FROM`] and the walls'
+    /// top; the walls between two legs are those of the lacets and of the hairpins (a share of
+    /// the walls on the circuits with hairpins; on the oval of the tests, the inner walls of its
+    /// half circles only).
+    #[test]
+    fn the_walls_between_two_legs_have_a_glass_top_and_stay_whole() {
+        use std::collections::HashSet;
+        let key = |p: [f32; 3]| {
+            [
+                (p[0] * 1000.0).round() as i64,
+                (p[1] * 1000.0).round() as i64,
+                (p[2] * 1000.0).round() as i64,
+            ]
+        };
+        // The oval of the tests (it turns right): glass only on the inner walls of its two half
+        // circles (20 to 35 m, the road coming back toward them across the infield), never on
+        // its outer walls, never along its straights.
+        let oval = crate::track::test_oval();
+        let center = CenterLine::of(&oval);
+        let between = walls_between_legs(&center);
+        let turns = crate::track::decor::tight_turns(&center);
+        assert!(between.iter().any(|[_, right]| *right));
+        for (s, [left, right]) in center.samples().iter().zip(&between) {
+            assert!(!left, "the outer wall at {}", s.distance);
+            if *right {
+                assert!(
+                    turns.iter().any(|t| t.at.distance(s.position.xz()) < 30.0),
+                    "glass along a straight at {}",
+                    s.distance
+                );
+            }
+        }
+
+        let mut shares = Vec::new();
+        for entry in crate::admin::tracks::circuits() {
+            let text = std::fs::read_to_string(format!(
+                "{}/assets/tracks/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                entry.file
+            ))
+            .unwrap();
+            let file = TrackData::from_ron(&text).unwrap();
+            for data in [file.clone(), file.mirrored()] {
+                let center = CenterLine::of(&data);
+                let meshes = generate(&center, &data, &data.palette());
+                let name = format!(
+                    "{}{}",
+                    data.name,
+                    if data == file { "" } else { " (mirror)" }
+                );
+                let drawn: HashSet<[i64; 3]> = meshes
+                    .wall_looks
+                    .positions
+                    .iter()
+                    .chain(&meshes.glass.positions)
+                    .map(|p| key(*p))
+                    .collect();
+                let undrawn = meshes
+                    .walls
+                    .positions
+                    .iter()
+                    .filter(|p| !drawn.contains(&key(**p)))
+                    .count();
+                assert_eq!(undrawn, 0, "{name}: vertices of the walls not drawn");
+                // The glass between `GLASS_FROM` and the top, never down to the road; the
+                // opaque walls there no higher than `GLASS_FROM` (they reach the top elsewhere).
+                // (Each vertex is a point across the road at a sample, or at the end of a run
+                // (a gap, the step of a drop): within a step of a sample along the road.)
+                for p in &meshes.glass.positions {
+                    let p = Vec3::from_array(*p);
+                    let on = center.samples().iter().any(|s| {
+                        let d = p - s.position;
+                        let lateral = d.dot(s.right).abs();
+                        let height = d.dot(s.up);
+                        d.dot(s.forward).abs() <= 1.0
+                            && (wall_offset(s) - 0.05..=wall_offset(s) + WALL_THICKNESS + 0.05)
+                                .contains(&lateral)
+                            && (GLASS_FROM - 0.05
+                                ..=WALL_HEIGHT + wall_lift(&center, s.distance) + 0.05)
+                                .contains(&height)
+                    });
+                    assert!(on, "{name}: glass at {p}, not on a wall's glass top");
+                }
+                // A share of the walls, glass where (and only where) some stand between legs.
+                let between = walls_between_legs(&center);
+                let road: Vec<usize> = (0..between.len())
+                    .filter(|&i| center.on_the_road(center.samples()[i].distance))
+                    .collect();
+                let sides = 2 * road.len();
+                let glassed = road.iter().flat_map(|&i| between[i]).filter(|b| *b).count();
+                let share = glassed as f32 / sides as f32;
+                assert!(
+                    share < 0.75,
+                    "{name}: {:.0} % of the walls in glass",
+                    100.0 * share
+                );
+                assert_eq!(
+                    meshes.glass.indices.is_empty(),
+                    glassed == 0,
+                    "{name}: glass and walls between two legs"
+                );
+                shares.push(format!("{name}: {:.0} %", 100.0 * share));
+                // Its mirror: the same walls, side for side.
+                if data != file {
+                    let original = walls_between_legs(&CenterLine::of(&file));
+                    let mirrored = between.iter().map(|[l, r]| [*r, *l]).collect::<Vec<_>>();
+                    let differ = original
+                        .iter()
+                        .zip(&mirrored)
+                        .filter(|(a, b)| a != b)
+                        .count();
+                    assert!(
+                        differ * 100 <= original.len(),
+                        "{name}: {differ} samples whose walls differ from the file's"
+                    );
+                }
+            }
+        }
+        println!("walls between two legs: {}", shares.join(", "));
+        // The circuits with lacets have some.
+        assert!(
+            shares.iter().filter(|s| !s.ends_with(" 0 %")).count() >= 16,
+            "{shares:?}"
+        );
     }
 }

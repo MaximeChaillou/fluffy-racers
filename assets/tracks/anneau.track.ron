@@ -38,6 +38,9 @@
         (model: "food-kit/cake-birthday", at: 39.800, side: Right, height: 22.0, radius: 12.0, gap: 30.0),
         (model: "food-kit/donut-sprinkles", at: 4.000, side: Left, height: 14.0, radius: 7.0, gap: 6.0, yaw: 90.0),
         (model: "food-kit/donut-chocolate", at: 125.909, side: Left, height: 12.0, radius: 6.0, gap: 6.0, yaw: 90.0),
+        // Issue #191: a giant lollipop in the middle of the bulge, as on the Coteau Citrouille
+        // (its pine): 8 m from the wall, off the chase camera's sight lines out of the turn.
+        (model: "food-kit/lollypop", at: 161.216, side: Right, height: 22.0, radius: 3.8, gap: 8.0),
     ],
     checkpoint_spacing: 25.0,
     points: [

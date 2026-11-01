@@ -885,6 +885,6 @@
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "racing-kit/flagCheckers", at: 689.000, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
         (model: "nature-kit/rock_tallJ", at: 267.204, side: Left, height: 24.0, radius: 6.0, gap: 2.0),
-        (model: "nature-kit/rock_tallH", at: 490.216, side: Right, height: 22.0, radius: 3.8, gap: 0.1),
+        (model: "nature-kit/rock_tallH", at: 490.216, side: Right, height: 22.0, radius: 3.8, gap: 8.0),
     ],
 )
