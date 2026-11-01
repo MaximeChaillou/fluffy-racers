@@ -2512,13 +2512,9 @@ const NO_DROP: [(&str, &str); 0] = [];
 /// issue that gives them theirs (Prairie Pompon, the demonstration circuit, has them, and the Col
 /// des Moufles since #211). Each one leaves this list with its issue: the test refuses a circuit
 /// still listed that has some. Issue #219: the Coteau Citrouille has its own (redrawn higher).
-const RELIEF_PENDING: [(&str, u32); 5] = [
-    ("Corniche Cannelle", 164),
-    ("Échappée Pissenlit", 184),
-    ("Forêt Frimousse", 184),
-    ("Falaises Flanelle", 184),
-    ("Périple Polochon", 184),
-];
+/// Issue #221: the Échappée Pissenlit, the Forêt Frimousse, the Falaises Flanelle and the Périple
+/// Polochon have theirs too (redrawn higher; #184 is done).
+const RELIEF_PENDING: [(&str, u32); 1] = [("Corniche Cannelle", 164)];
 
 /// Issue #180 acceptance (GD § 16, rule 3): every circuit of the guide ([`GUIDE_CIRCUITS`]) and
 /// its mirror has [`GUIDE_BUMPS`] bumps at least on each lap (on a long race, in each section)
