@@ -462,7 +462,13 @@ pub fn render(map: &TrackMap, style: &MapStyle, colors: &MapColors) -> MapImage 
             .max(1.0);
     let region = (6.0 * reach * per_pixel).max(NEAR_ALONG);
     let (mut tops, mut belows) = (vec![0u64; segments.len()], vec![0u64; segments.len()]);
+    // Issue #219: on a road that climbs over itself in a loop, its two passages some 150 m apart,
+    // the road on top and the road below stop short of each other along the loop, a gap of twice
+    // the reach of a pixel's line between them: a stretch of the loop is never drawn under the
+    // next one.
+    let gap = 2.0 * reach * per_pixel;
     for (b, (top, below)) in bridges(&line).into_iter().take(64).enumerate() {
+        let region = region.min(line.apart(top, below) / 2.0 - gap).max(0.0);
         for (k, s) in segments.iter().enumerate() {
             if line.apart(s.along, top) < region {
                 tops[k] |= 1 << b;
@@ -904,7 +910,10 @@ mod tests {
     /// Issue #181: the line has no hole: every pixel the centerline passes over is of the line
     /// (or of a mark on it), each next to the one before, on every circuit of the game, big and
     /// small, mirrored or not; closed for a circuit of laps (round from the start line back to
-    /// it), open for a long race (from the start line to the finish line).
+    /// it), open for a long race (from the start line to the finish line). Issue #219: the road
+    /// that passes over itself (the Coteau Citrouille's loop, one bridge): near the crossing, the
+    /// road below shows beside the road on top and stops under it, its white edge across it
+    /// (`the_road_below_a_bridge_stops_under_it`); everywhere else, the line.
     #[test]
     fn the_line_is_continuous_closed_or_open() {
         for entry in crate::admin::tracks::circuits() {
@@ -913,12 +922,39 @@ mod tests {
                 let (map, style, image) = drawn(&data, mirror, big);
                 let name = format!("{} (mirror {mirror}, big {big})", entry.name);
                 assert_eq!(map.closed, !entry.long, "{name}");
-                assert!(bridges(&map).is_empty(), "{name}: no bridge yet");
+                let found = bridges(&map);
+                let expected = usize::from(entry.name == "Coteau Citrouille");
+                assert_eq!(found.len(), expected, "{name}: {found:?}");
+                // Issue #219: the road on top of each bridge, in the picture.
+                let tops: Vec<(f32, Vec<Vec2>)> = found
+                    .iter()
+                    .map(|(top, below)| {
+                        let on_top = map
+                            .points
+                            .iter()
+                            .filter(|p| map.apart(p.along, *top) < NEAR_ALONG)
+                            .map(|p| to_pixels(&style, p.at))
+                            .collect();
+                        (*below, on_top)
+                    })
+                    .collect();
+                let casing = style.line + style.edge;
                 let pixels = walk(&map, &style);
                 for (k, ((x, y), along)) in pixels.iter().enumerate() {
                     let kind = image.kind(*x, *y);
+                    // Issue #219: the road below a bridge is drawn too (`Below`, beside the road
+                    // on top); under the road on top and its white edge, it stops.
+                    let at = Vec2::new(*x as f32 + 0.5, *y as f32 + 0.5);
+                    let under = tops.iter().any(|(below, on_top)| {
+                        map.apart(*along, *below) < NEAR_ALONG
+                            && on_top
+                                .iter()
+                                .any(|p| p.distance(at) < casing + style.edge + 1.0)
+                    });
                     assert!(
-                        matches!(kind, Kind::Line(_) | Kind::Mark),
+                        under
+                            || matches!(kind, Kind::Line(_) | Kind::Mark)
+                            || (!tops.is_empty() && matches!(kind, Kind::Below(_))),
                         "{name}: a hole at {along} m ({x}, {y}): {kind:?}"
                     );
                     let previous = pixels[if k == 0 { pixels.len() - 1 } else { k - 1 }].0;

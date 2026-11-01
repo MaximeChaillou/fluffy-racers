@@ -838,7 +838,10 @@ impl TrackLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::mesh::{CURB_WIDTH, GROUND_HEIGHT, WALL_THICKNESS, wall_offset};
+    use crate::track::mesh::{
+        CURB_WIDTH, GROUND_HEIGHT, OVERPASS_HEADROOM, WALL_HEIGHT, WALL_THICKNESS, wall_offset,
+    };
+    use crate::track::terrain::{Bridge, bridge_at};
 
     /// Issue #108: the test circuit (the layout Prairie Pompon had before #108).
     fn prairie() -> TrackData {
@@ -1287,11 +1290,15 @@ mod tests {
     /// and no two parts of the track far apart along it (60 m and more) come so close that their
     /// walls would touch: a meter at least between their outer faces. Issue #20: in a lake, above
     /// its floor (and under its water where the road dips); a gap has neither road nor walls.
-    /// Issue #119: on an open circuit, its road only (its way back is never built).
+    /// Issue #119: on an open circuit, its road only (its way back is never built). Issue #219
+    /// (GD § 16, rule 3): **unless one passes over the other**, on a bridge (its pillars, not
+    /// skirts, under it), [`OVERPASS_HEADROOM`] meters above the top of the other's walls at
+    /// least; one circuit does at least (the Coteau Citrouille's loop).
     #[test]
     fn every_circuit_and_its_mirror_keep_their_parts_apart() {
         let circuits = every_circuit();
         assert!(circuits.len() >= 5, "issue #20: at least 5 circuits");
+        let mut overpasses = 0;
         for data in circuits.iter().flat_map(|d| [d.clone(), d.mirrored()]) {
             let name = format!(
                 "{}{}",
@@ -1333,6 +1340,13 @@ mod tests {
                     }
                 }
             }
+            // Issue #219 (GD § 16, rule 3): a part of the track on a bridge may pass over another
+            // one, [`OVERPASS_HEADROOM`] above it at least.
+            let bridges: Vec<Bridge> = data
+                .bridges
+                .iter()
+                .map(|b| Bridge::new(&center, b))
+                .collect();
             let length = center.length();
             for (i, a) in samples.iter().enumerate().step_by(2) {
                 if !center.on_the_road(a.distance) {
@@ -1348,16 +1362,130 @@ mod tests {
                     }
                     let apart = a.position.xz().distance(b.position.xz());
                     let needed = wall_offset(a) + wall_offset(b) + 2.0 * WALL_THICKNESS + 1.0;
+                    if apart <= needed && passes_over(&bridges, &center, a, b) {
+                        overpasses += 1;
+                        continue;
+                    }
                     assert!(
                         apart > needed,
                         "{name}: the track at {:.0} m and at {:.0} m is {apart:.1} m apart \
-                         (walls need {needed:.1} m)",
+                         (walls need {needed:.1} m), and neither is on a bridge \
+                         {OVERPASS_HEADROOM} m above the other",
                         a.distance,
                         b.distance
                     );
                 }
             }
         }
+        // Issue #219: the first circuit that passes over itself (the Coteau Citrouille's loop),
+        // and its mirror.
+        assert!(overpasses > 0, "no part of any circuit passes over another");
+    }
+
+    /// Issue #219 (GD § 16, rule 3: a change of level never hides the road): on every circuit
+    /// that passes over itself and its mirror, the chase camera (6 m behind and 2.4 m above the
+    /// kart, the kart in the middle of the road or near either edge) on the road under a bridge
+    /// sees the road 3 to 45 m ahead (in its middle and near its edges) under the bridge: no
+    /// sight line meets its deck, from its underside to the top of its walls.
+    #[test]
+    fn the_chase_camera_sees_the_road_under_a_bridge() {
+        use crate::track::mesh::BRIDGE_DECK;
+        use crate::track::terrain::{CHASE_DISTANCE, CHASE_HEIGHT};
+        let mut checked = 0;
+        for data in every_circuit()
+            .iter()
+            .flat_map(|d| [d.clone(), d.mirrored()])
+        {
+            let center = CenterLine::of(&data);
+            let bridges: Vec<Bridge> = data
+                .bridges
+                .iter()
+                .map(|b| Bridge::new(&center, b))
+                .collect();
+            let decks: Vec<&TrackSample> = center
+                .samples()
+                .iter()
+                .filter(|s| bridge_at(&bridges, &center, s.distance).is_some())
+                .collect();
+            let length = center.length();
+            let apart = |a: f32, b: f32| {
+                let along = center.wrap(a - b);
+                along.min(length - along)
+            };
+            // The road that passes under a bridge, and 60 m before it.
+            let under: Vec<&TrackSample> = center
+                .road_samples()
+                .iter()
+                .filter(|s| {
+                    decks.iter().any(|d| {
+                        apart(d.distance, s.distance) >= 60.0
+                            && d.position.xz().distance(s.position.xz()) < 60.0
+                    })
+                })
+                .map(|s| &center.samples()[center.nearest_index(s.position)])
+                .collect();
+            if under.is_empty() {
+                continue;
+            }
+            checked += 1;
+            for s in under {
+                let flat = Vec3::new(s.forward.x, 0.0, s.forward.z).normalize_or_zero();
+                for kart in [-0.6, 0.0, 0.6] {
+                    let eye = s.point(kart * s.half_width, 0.55) - flat * CHASE_DISTANCE
+                        + Vec3::Y * CHASE_HEIGHT;
+                    for ahead in (1..=15).map(|k| 3.0 * k as f32) {
+                        let t = center.at(s.distance + ahead);
+                        for across in [-0.9, 0.0, 0.9] {
+                            let target = t.point(across * t.half_width, 0.0);
+                            let steps = (eye.distance(target).ceil() as usize).max(1);
+                            for k in 0..=steps {
+                                let p = eye.lerp(target, k as f32 / steps as f32);
+                                let hit = decks.iter().any(|d| {
+                                    apart(d.distance, s.distance) >= 60.0
+                                        && p.xz().distance(d.position.xz())
+                                            < wall_offset(d) + WALL_THICKNESS
+                                        && p.y > d.position.y - BRIDGE_DECK - 0.5
+                                        && p.y < d.position.y + WALL_HEIGHT + 0.5
+                                });
+                                assert!(
+                                    !hit,
+                                    "{}: from {:.0} m, the road {ahead} m ahead is hidden by the \
+                                     bridge at {p}",
+                                    data.name, s.distance
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked >= 2, "the Coteau Citrouille and its mirror");
+    }
+
+    /// Issue #219: whether one of two samples is on a bridge and passes over the other,
+    /// [`OVERPASS_HEADROOM`] meters above it at least (road to road, every point across both).
+    fn passes_over(
+        bridges: &[Bridge],
+        center: &CenterLine,
+        a: &TrackSample,
+        b: &TrackSample,
+    ) -> bool {
+        let over = |upper: &TrackSample, lower: &TrackSample| {
+            bridge_at(bridges, center, upper.distance).is_some() && {
+                let high = upper
+                    .point(-wall_offset(upper), 0.0)
+                    .y
+                    .min(upper.point(wall_offset(upper), 0.0).y)
+                    .min(upper.position.y);
+                let low = lower
+                    .point(-wall_offset(lower), WALL_HEIGHT)
+                    .y
+                    .max(lower.point(wall_offset(lower), WALL_HEIGHT).y)
+                    .max(lower.position.y);
+                high - low >= OVERPASS_HEADROOM
+            }
+        };
+        over(a, b) || over(b, a)
     }
 
     /// Issue #19 (GD § 1, the mirror mode): the mirror image of every circuit is valid and is

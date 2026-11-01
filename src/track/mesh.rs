@@ -390,6 +390,12 @@ pub struct TrackMeshes {
     /// Issue #180: the faces of the drops (`Surface::Wall`, drawn and solid, apart from the low
     /// walls: not a wall a kart sees the road over). Empty on a circuit without a drop.
     pub cliffs: MeshData,
+    /// Issue #219: on a circuit whose terrain hugs the road (`embank`), a curtain under each wall,
+    /// from the outer face of the wall at the road down to [`CURTAIN_DEPTH`] under it
+    /// (`Surface::Wall`, solid only: the skirt is drawn there): a kart out of the track on the
+    /// embankment, which comes up to [`terrain::EMBANK_LIP`](super::terrain::EMBANK_LIP) under the
+    /// road, never slips under the wall and under the road. Empty on any other circuit.
+    pub curtains: MeshData,
     /// Issue #187: the road's surface (the road's, the anti-gravity zones', the trick stretches')
     /// as it is drawn with its paving, its UVs in meters divided by
     /// `paving::PAVING_TILE` (the ground's `x` and `z` for a paving that lies on the ground;
@@ -487,14 +493,84 @@ pub const PILLAR_SPREAD: f32 = 0.6;
 /// them.
 pub const PILLAR_WIDTH: f32 = 2.4;
 
+/// Issue #219: how far under the road the curtain under a wall reaches ([`TrackMeshes::curtains`],
+/// m): well under the embankment at the foot of the walls (`terrain::EMBANK_LIP` under the road),
+/// with room for a kart's wheels to sink in it.
+pub const CURTAIN_DEPTH: f32 = 2.0;
+
+/// Issue #219 (GD § 16, rule 3): a part of the road on a bridge passes over another part of it
+/// this far above the top of its walls at least (m, road to wall top): the deck's underside
+/// ([`BRIDGE_DECK`]) stays well above a kart in the air on the road below, and a kart on either
+/// road is always closer to its own centerline than to the other's (the race and the bots find
+/// it on the right one).
+pub const OVERPASS_HEADROOM: f32 = 10.0;
+
 /// Issue #208: where the bents of a bridge's pillars stand (m along the centerline): evenly
-/// spaced, [`PILLAR_SPACING`] apart at most, none at its abutments.
+/// spaced, [`PILLAR_SPACING`] apart at most, none at its abutments. Issue #219: none on another
+/// part of the road that the bridge passes over (its pillars clear of its walls by a pillar's
+/// width): the bridge spans it, a bent on each side of it.
 pub fn pillar_bents(center: &CenterLine, bridge: &Bridge) -> Vec<f32> {
     let length = bridge.length(center);
-    let spans = (length / PILLAR_SPACING).ceil().max(2.0) as usize;
-    (1..spans)
-        .map(|k| center.wrap(bridge.from + length * k as f32 / spans as f32))
+    let blocked = spanned_roads(center, bridge, length);
+    if blocked.is_empty() {
+        let spans = (length / PILLAR_SPACING).ceil().max(2.0) as usize;
+        return (1..spans)
+            .map(|k| center.wrap(bridge.from + length * k as f32 / spans as f32))
+            .collect();
+    }
+    // The free stretches between the abutments and the roads below (m into the bridge), evenly
+    // filled; a bent at each end that is a road's side (not an abutment).
+    let mut bents = Vec::new();
+    let mut start = (0.0, false);
+    for &(from, to) in blocked.iter().chain([&(length, length)]) {
+        let end = (from, from < length);
+        let free = end.0 - start.0;
+        if free > 0.0 {
+            let spans = (free / PILLAR_SPACING).ceil().max(1.0) as usize;
+            let first = if start.1 { 0 } else { 1 };
+            let last = if end.1 { spans } else { spans - 1 };
+            bents.extend((first..=last).map(|k| start.0 + free * k as f32 / spans as f32));
+        }
+        start = (to, true);
+    }
+    bents.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    bents
+        .into_iter()
+        .map(|into| center.wrap(bridge.from + into))
         .collect()
+}
+
+/// Issue #219: the stretches of a bridge (m into it, `length` long) where a bent of pillars would
+/// stand on another part of the road (closer to its centerline than its walls' outer face and a
+/// pillar's width): the road it passes over, 60 m and more away along the track. Merged, in order.
+fn spanned_roads(center: &CenterLine, bridge: &Bridge, length: f32) -> Vec<(f32, f32)> {
+    const STEP: f32 = 0.5;
+    let road = center.road_samples();
+    let total = center.length();
+    let steps = (length / STEP).floor() as usize;
+    let mut blocked: Vec<(f32, f32)> = Vec::new();
+    for k in 0..=steps {
+        let into = k as f32 * STEP;
+        let s = center.at(bridge.from + into);
+        let feet =
+            [-1.0f32, 1.0].map(|side| s.point(side * PILLAR_SPREAD * s.half_width, 0.0).xz());
+        let on_a_road = road.iter().any(|r| {
+            let along = center.wrap(r.distance - s.distance);
+            along.min(total - along) >= 60.0 && {
+                let reach = wall_offset(r) + WALL_THICKNESS + PILLAR_WIDTH;
+                feet.iter().any(|f| f.distance(r.position.xz()) < reach)
+            }
+        });
+        if !on_a_road {
+            continue;
+        }
+        let (from, to) = ((into - STEP).max(0.0), (into + STEP).min(length));
+        match blocked.last_mut() {
+            Some(last) if last.1 >= from => last.1 = to,
+            _ => blocked.push((from, to)),
+        }
+    }
+    blocked
 }
 
 /// Issue #180: the road is cut this far (m) each way around the step of a drop: the upper road
@@ -609,6 +685,8 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             .is_some_and(|sides| sides[usize::from(sign > 0.0)])
     };
     let mut meshes = TrackMeshes::default();
+    // Issue #219: whether the terrain hugs the road (the curtains under the walls).
+    let hugged = data.terrain().is_some_and(|t| t.embank > 0.0);
     // Issue #187: whether the road's paving lies on the ground (its UVs the ground's meters)
     // rather than following the road (in the anti-gravity zones, it always follows it).
     let planar = !data.road_look().paving.follows_the_road();
@@ -796,6 +874,33 @@ pub fn generate(center: &CenterLine, data: &TrackData, palette: &Palette) -> Tra
             |_| skirt,
             skirted,
         );
+        // Issue #219: on a circuit whose terrain hugs the road, the curtains under the walls
+        // (solid only: the skirts are drawn there). A kart out of the track on the embankment
+        // never slips under a wall and under the road.
+        if hugged {
+            for side in [-1.0f32, 1.0] {
+                let (a, b): (&dyn Fn(&TrackSample) -> Vec3, &dyn Fn(&TrackSample) -> Vec3) =
+                    if side > 0.0 {
+                        (
+                            &|s: &TrackSample| s.point(outer(s), 0.0),
+                            &|s: &TrackSample| s.point(outer(s), -CURTAIN_DEPTH),
+                        )
+                    } else {
+                        (
+                            &|s: &TrackSample| s.point(-outer(s), -CURTAIN_DEPTH),
+                            &|s: &TrackSample| s.point(-outer(s), 0.0),
+                        )
+                    };
+                meshes.curtains.strip_where(
+                    samples,
+                    closed,
+                    a,
+                    b,
+                    |_| skirt,
+                    |s0, s1| skirted(s0, s1) && walled_side(side, s0, s1),
+                );
+            }
+        }
         // Issue #208: on a bridge, its deck instead: its underside, `BRIDGE_DECK` under the road
         // from one wall's outer face to the other's, facing down, and its two edges facing out.
         decor.strip_where(
@@ -2068,12 +2173,34 @@ mod tests {
     /// it has its deck (its underside `BRIDGE_DECK` under the road, facing down, at every sample)
     /// and its pillars (two per bent, `PILLAR_SPACING` apart at most, none at its abutments), and
     /// whatever of it reaches the ground is the foot of a pillar. Its walls stand on both sides.
+    /// Issue #219: the same on the Coteau Citrouille, whose bridge passes over its own road: no
+    /// pillar stands on another part of the road (within its walls' outer face and a pillar's
+    /// width), and a span is longer than `PILLAR_SPACING` only over a road (on the Coteau, one).
     #[test]
     fn a_bridge_stands_on_pillars_instead_of_skirts() {
-        let data = TrackData::from_ron(include_str!("../../assets/tracks/col.track.ron")).unwrap();
-        assert!(!data.bridges.is_empty());
-        for data in [data.clone(), data.mirrored()] {
+        let col = TrackData::from_ron(include_str!("../../assets/tracks/col.track.ron")).unwrap();
+        let coteau =
+            TrackData::from_ron(include_str!("../../assets/tracks/coteau.track.ron")).unwrap();
+        assert!(!col.bridges.is_empty() && !coteau.bridges.is_empty());
+        let mut spanned = 0;
+        for data in [
+            col.clone(),
+            col.mirrored(),
+            coteau.clone(),
+            coteau.mirrored(),
+        ] {
             let center = CenterLine::of(&data);
+            let road = center.road_samples();
+            // Another part of the road (60 m and more away along it) under `p`, within `reach`
+            // meters of its walls' outer face.
+            let over_a_road = |p: Vec3, at: f32, reach: f32| {
+                road.iter().any(|r| {
+                    let along = center.wrap(r.distance - at);
+                    along.min(center.length() - along) >= 60.0
+                        && p.xz().distance(r.position.xz())
+                            < wall_offset(r) + WALL_THICKNESS + reach
+                })
+            };
             let meshes = generate(&center, &data, &Palette::default());
             let decor = &meshes.decor;
             let outer = |s: &TrackSample| wall_offset(s) + WALL_THICKNESS;
@@ -2090,11 +2217,27 @@ mod tests {
                 let mut last = bridge.from;
                 for at in bents.iter().chain([&center.wrap(bridge.from + length)]) {
                     let span = center.wrap(at - last);
+                    let middle = center.at(last + span / 2.0);
+                    let over = over_a_road(middle.position, middle.distance, 0.0);
+                    spanned += usize::from(over);
                     assert!(
-                        span > 1.0 && span <= PILLAR_SPACING + 1e-3,
-                        "a span of {span} m"
+                        span > 1.0 && (span <= PILLAR_SPACING + 1e-3 || over),
+                        "{}: a span of {span} m",
+                        data.name
                     );
                     last = *at;
+                }
+                // Issue #219: no pillar on another part of the road.
+                for at in &bents {
+                    let s = center.at(*at);
+                    for side in [-1.0f32, 1.0] {
+                        let foot = s.point(side * PILLAR_SPREAD * s.half_width, 0.0);
+                        assert!(
+                            !over_a_road(foot, *at, PILLAR_WIDTH / 2.0),
+                            "{}: a pillar on the road at {at:.0} m",
+                            data.name
+                        );
+                    }
                 }
                 let axes: Vec<Vec3> = bents
                     .iter()
@@ -2173,6 +2316,10 @@ mod tests {
                 );
             }
         }
+        assert_eq!(
+            spanned, 2,
+            "the Coteau's bridge spans its road, in the mirror too"
+        );
     }
 
     /// Issue #107: on the Corniche Cannelle and its mirror, a side without wall has no wall, and

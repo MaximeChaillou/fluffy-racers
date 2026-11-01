@@ -1,17 +1,22 @@
 // "Coteau Citrouille": a hillside of pumpkins at dusk (issue #111, the 11th circuit), after the
-// guide « Conception des circuits » (docs/GAME_DESIGN.md § 16). Original layout, about 1510 m a
+// guide « Conception des circuits » (docs/GAME_DESIGN.md § 16). Original layout, about 1680 m a
 // lap, turning right: the start straight in the pumpkin field, 10 m above the valley; two
-// hairpins (right, left) up the hillside, a tight corner onto the top, east along it; the lacets
-// of the top (a hairpin to the right, a hairpin to the left) up to the crest, 20 m up; the risky
-// jump's corner (a tight corner to the right, its inside a drop, that a ramp crosses); down the
-// hillside: a tight corner, the serpentine (a hairpin to the left, a hairpin to the right) down to
-// the field; the bulge round a giant crooked pine, whose hidden road runs straight behind a stack
-// of crates; the last corner, that the grass bridge crosses behind a curtain of tall grass. Six
-// hairpins of 180° (a Normal bot drifts them), the bulge's S (left 75°, right 150°, left 75°),
-// four tight corners of 90°: no long soft curve, one long straight. The pieces of the shortcuts
-// (the jump's corner and its landing; the bulge, the last corner and their paths) are the
-// Corniche Cannelle's (issues #107, #156: their gains and their hiding were tuned), with other
-// covers; the rest is new.
+// hairpins (right, left) up the hillside; issue #219: the climb on north (steep, in
+// anti-gravity), into **the loop** (to the left, 270°), which climbs all the way round and comes
+// out of it **on a bridge over the road that came up to it**, 14 m under it (the road passes
+// over itself, GD § 16, rule 3); east along the top, 44 m up, down a drop; the lacets of the top
+// (a hairpin to the right, a hairpin to the left) up to the crest, 48 m up (20 m before #219);
+// the risky jump's corner (a tight corner to the right, its inside a drop, that a ramp crosses);
+// down the hillside: a tight corner, the serpentine (a hairpin to the left, a hairpin to the
+// right; its two legs steep, in anti-gravity) down to the field, a bump; the bulge round a giant
+// crooked pine, whose hidden road runs straight behind a stack of crates; the last corner, that
+// the grass bridge crosses behind a curtain of tall grass; a bump on the way back to the line.
+// Six hairpins of 180° (a Normal bot drifts them), the loop of 270° (a tight corner of 90° to the
+// right before #219: the same way out), the bulge's S (left 75°, right 150°, left 75°), three
+// tight corners of 90°: no long soft curve, one long straight. The pieces of the shortcuts (the
+// jump's corner and its landing; the bulge, the last corner and their paths) are the Corniche
+// Cannelle's (issues #107, #156: their gains and their hiding were tuned), with other covers; the
+// rest is new.
 //
 // Drawn as a plan of straights and arcs, its points every 8 m along it (the parameters below
 // follow them).
@@ -28,14 +33,15 @@
     music: "neon-sign-circuit",
     decor_seed: 111,
     // Issue #211: the pumpkin hillside's terrain (`assets/data/biomes.ron`), and it hugs the road:
-    // the road, 10 to 20 m above the valley all the way round, is carried by the hillside up to its
-    // walls, which falls away from them (`embank`, rise over run: about 31°), instead of the skirts
-    // down to the flat valley. The voids stay (the jump's corner: 6 m under the road at least).
-    terrain: (height: 32.0, scale: 140.0, floor: 0.25, rock: (0.46, 0.37, 0.28), embank: 0.6),
+    // the road, 10 to 48 m above the valley all the way round (issue #219: 20 m at most before), is
+    // carried by the hillside up to its walls, which falls away from them (`embank`, rise over run:
+    // about 31°), instead of the skirts down to the flat valley. The voids stay (the jump's corner:
+    // 6 m under the road at least). Issue #219: its hills 50 m high (32 m before), above the crest.
+    terrain: (height: 50.0, scale: 140.0, floor: 0.25, rock: (0.46, 0.37, 0.28), embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
-        (model: "graveyard-kit/pine-crooked", at: 159.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
-        (model: "graveyard-kit/pumpkin-tall-carved", at: 92.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
+        (model: "graveyard-kit/pine-crooked", at: 178.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
+        (model: "graveyard-kit/pumpkin-tall-carved", at: 111.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
     ],
     checkpoint_spacing: 25.0,
     points: [
@@ -77,126 +83,151 @@
         (pos: (82.85, 13.28, 2.14), width: 13.0, shoulder: 2.0),
         (pos: (86.67, 13.39, -4.48), width: 13.0, shoulder: 2.0),
         (pos: (88.00, 13.50, -12.00), width: 13.0, shoulder: 2.0),
-        // north, climbing: the first trick ramp at its start.
+        // north, climbing: the first trick ramp near its start; issue #219: then steep (25 %), in
+        // anti-gravity.
         (pos: (88.00, 13.67, -20.00), width: 13.0, shoulder: 2.0),
         (pos: (88.00, 13.83, -28.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.00, -36.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.17, -44.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.33, -52.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.50, -60.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.67, -68.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 14.83, -76.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 15.00, -84.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 15.17, -92.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 15.33, -100.00), width: 13.0, shoulder: 2.0),
-        (pos: (88.00, 15.50, -108.00), width: 13.0, shoulder: 2.0),
-        // a tight corner to the right (90°), east, along the top of the hillside.
-        (pos: (89.37, 15.62, -114.89), width: 13.0, shoulder: 2.0),
-        (pos: (93.27, 15.75, -120.73), width: 13.0, shoulder: 2.0),
-        (pos: (99.11, 15.88, -124.63), width: 13.0, shoulder: 2.0),
-        (pos: (106.00, 16.00, -126.00), width: 13.0, shoulder: 2.0),
-        // east along the top (a log rolls across its right side).
-        (pos: (114.00, 16.08, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (122.00, 16.17, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (130.00, 16.25, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (138.00, 16.33, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (146.00, 16.42, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (154.00, 16.50, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (162.00, 16.58, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (170.00, 16.67, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (178.00, 16.75, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (186.00, 16.83, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (194.00, 16.92, -126.00), width: 13.0, shoulder: 2.0),
-        (pos: (202.00, 17.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.15, -36.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.47, -44.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 14.79, -52.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 15.11, -60.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 17.11, -68.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 19.11, -76.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 21.11, -84.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 23.11, -92.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 25.11, -100.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 27.11, -108.00), width: 13.0, shoulder: 2.0),
+        // Issue #219: on north past the old corner, still climbing; the loop (to the left, 270°,
+        // radius 22 m), climbing all the way round...
+        (pos: (88.00, 27.87, -116.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 28.63, -124.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 29.39, -132.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 30.15, -140.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 30.91, -148.00), width: 13.0, shoulder: 2.0),
+        (pos: (86.57, 31.66, -155.80), width: 13.0, shoulder: 2.0),
+        (pos: (82.47, 32.42, -162.59), width: 13.0, shoulder: 2.0),
+        (pos: (76.22, 33.17, -167.48), width: 13.0, shoulder: 2.0),
+        (pos: (68.65, 33.92, -169.84), width: 13.0, shoulder: 2.0),
+        (pos: (60.74, 34.68, -169.36), width: 13.0, shoulder: 2.0),
+        (pos: (53.50, 35.43, -166.11), width: 13.0, shoulder: 2.0),
+        (pos: (47.89, 36.18, -160.50), width: 13.0, shoulder: 2.0),
+        (pos: (44.64, 36.94, -153.26), width: 13.0, shoulder: 2.0),
+        (pos: (44.16, 37.69, -145.35), width: 13.0, shoulder: 2.0),
+        (pos: (46.52, 38.44, -137.78), width: 13.0, shoulder: 2.0),
+        (pos: (51.41, 39.20, -131.53), width: 13.0, shoulder: 2.0),
+        (pos: (58.20, 39.95, -127.43), width: 13.0, shoulder: 2.0),
+        (pos: (66.00, 40.71, -126.00), width: 13.0, shoulder: 2.0),
+        // ...out of it heading east, onto the bridge over the road that came up to it, 14 m
+        // under it; along the top.
+        (pos: (74.00, 41.47, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (82.00, 42.23, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (90.00, 42.99, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (98.00, 43.51, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (106.00, 43.79, -126.00), width: 13.0, shoulder: 2.0),
+        // east along the top (issue #219: 44 m up, down a drop of 4 m; a log rolls across its right
+        // side).
+        (pos: (114.00, 43.87, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (122.00, 43.96, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (130.00, 39.96, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (138.00, 40.12, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (146.00, 40.21, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (154.00, 40.29, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (162.00, 40.37, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (170.00, 40.46, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (178.00, 40.54, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (186.00, 40.62, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (194.00, 40.71, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (202.00, 40.98, -126.00), width: 13.0, shoulder: 2.0),
         // the lacets of the top: a hairpin to the right, west...
-        (pos: (209.52, 17.11, -124.67), width: 13.0, shoulder: 2.0),
-        (pos: (216.14, 17.22, -120.85), width: 13.0, shoulder: 2.0),
-        (pos: (221.05, 17.33, -115.00), width: 13.0, shoulder: 2.0),
-        (pos: (223.67, 17.44, -107.82), width: 13.0, shoulder: 2.0),
-        (pos: (223.67, 17.56, -100.18), width: 13.0, shoulder: 2.0),
-        (pos: (221.05, 17.67, -93.00), width: 13.0, shoulder: 2.0),
-        (pos: (216.14, 17.78, -87.15), width: 13.0, shoulder: 2.0),
-        (pos: (209.52, 17.89, -83.33), width: 13.0, shoulder: 2.0),
-        (pos: (202.00, 18.00, -82.00), width: 13.0, shoulder: 2.0),
-        (pos: (194.00, 18.50, -82.00), width: 13.0, shoulder: 2.0),
-        (pos: (186.00, 19.00, -82.00), width: 13.0, shoulder: 2.0),
-        // ... and a hairpin to the left, east: the crest, 21 m up.
-        (pos: (178.48, 19.11, -80.67), width: 13.0, shoulder: 2.0),
-        (pos: (171.86, 19.22, -76.85), width: 13.0, shoulder: 2.0),
-        (pos: (166.95, 19.33, -71.00), width: 13.0, shoulder: 2.0),
-        (pos: (164.33, 19.44, -63.82), width: 13.0, shoulder: 2.0),
-        (pos: (164.33, 19.56, -56.18), width: 13.0, shoulder: 2.0),
-        (pos: (166.95, 19.67, -49.00), width: 13.0, shoulder: 2.0),
-        (pos: (171.86, 19.78, -43.15), width: 13.0, shoulder: 2.0),
-        (pos: (178.48, 19.89, -39.33), width: 13.0, shoulder: 2.0),
-        (pos: (186.00, 20.00, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (194.00, 20.00, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (202.00, 20.00, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (209.52, 41.28, -124.67), width: 13.0, shoulder: 2.0),
+        (pos: (216.14, 41.58, -120.85), width: 13.0, shoulder: 2.0),
+        (pos: (221.05, 41.88, -115.00), width: 13.0, shoulder: 2.0),
+        (pos: (223.67, 42.18, -107.82), width: 13.0, shoulder: 2.0),
+        (pos: (223.67, 42.49, -100.18), width: 13.0, shoulder: 2.0),
+        (pos: (221.05, 42.79, -93.00), width: 13.0, shoulder: 2.0),
+        (pos: (216.14, 43.09, -87.15), width: 13.0, shoulder: 2.0),
+        (pos: (209.52, 43.39, -83.33), width: 13.0, shoulder: 2.0),
+        (pos: (202.00, 43.69, -82.00), width: 13.0, shoulder: 2.0),
+        (pos: (194.00, 44.38, -82.00), width: 13.0, shoulder: 2.0),
+        (pos: (186.00, 45.07, -82.00), width: 13.0, shoulder: 2.0),
+        // ... and a hairpin to the left, east: the crest, 48 m up (21 m before #219).
+        (pos: (178.48, 45.37, -80.67), width: 13.0, shoulder: 2.0),
+        (pos: (171.86, 45.67, -76.85), width: 13.0, shoulder: 2.0),
+        (pos: (166.95, 45.97, -71.00), width: 13.0, shoulder: 2.0),
+        (pos: (164.33, 46.27, -63.82), width: 13.0, shoulder: 2.0),
+        (pos: (164.33, 46.58, -56.18), width: 13.0, shoulder: 2.0),
+        (pos: (166.95, 46.88, -49.00), width: 13.0, shoulder: 2.0),
+        (pos: (171.86, 47.18, -43.15), width: 13.0, shoulder: 2.0),
+        (pos: (178.48, 47.48, -39.33), width: 13.0, shoulder: 2.0),
+        (pos: (186.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (194.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (202.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
         // the risky jump's corner (the Corniche Cannelle's piece): east, then a tight corner to the
         // right (90°): its inside is a drop of 20 m, the jump cuts across it; the wide landing, south.
-        (pos: (210.00, 20.00, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (218.03, 20.00, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (226.04, 20.00, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (234.06, 20.00, -38.01), width: 13.0, shoulder: 2.0),
-        (pos: (242.09, 20.00, -38.01), width: 13.0, shoulder: 2.0),
-        (pos: (250.11, 20.00, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (258.13, 20.00, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (266.15, 20.00, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (274.13, 20.00, -37.46), width: 13.0, shoulder: 2.0),
-        (pos: (281.21, 20.00, -33.85), width: 13.0, shoulder: 2.0),
-        (pos: (286.05, 20.00, -27.53), width: 13.0, shoulder: 2.0),
-        (pos: (287.69, 19.99, -19.75), width: 20.0, shoulder: 2.0),
-        (pos: (287.69, 19.82, -11.72), width: 20.0, shoulder: 2.0),
-        (pos: (287.70, 19.64, -3.70), width: 20.0, shoulder: 2.0),
-        (pos: (287.70, 19.46, 4.31), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 19.28, 12.34), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 19.10, 20.36), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 18.80, 28.36), width: 13.0, shoulder: 2.0),
+        (pos: (210.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (218.03, 47.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (226.04, 47.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (234.06, 47.79, -38.01), width: 13.0, shoulder: 2.0),
+        (pos: (242.09, 47.79, -38.01), width: 13.0, shoulder: 2.0),
+        (pos: (250.11, 47.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (258.13, 47.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (266.15, 47.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (274.13, 47.79, -37.46), width: 13.0, shoulder: 2.0),
+        (pos: (281.21, 47.79, -33.85), width: 13.0, shoulder: 2.0),
+        (pos: (286.05, 47.79, -27.53), width: 13.0, shoulder: 2.0),
+        (pos: (287.69, 47.78, -19.75), width: 20.0, shoulder: 2.0),
+        (pos: (287.69, 47.61, -11.72), width: 20.0, shoulder: 2.0),
+        (pos: (287.70, 47.43, -3.70), width: 20.0, shoulder: 2.0),
+        (pos: (287.70, 47.25, 4.31), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 47.07, 12.34), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 46.89, 20.36), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 46.59, 28.36), width: 13.0, shoulder: 2.0),
         // south, down from the crest; a tight corner to the right, west.
-        (pos: (287.71, 18.30, 36.36), width: 13.0, shoulder: 2.0),
-        (pos: (286.34, 18.05, 43.25), width: 13.0, shoulder: 2.0),
-        (pos: (282.44, 17.80, 49.09), width: 13.0, shoulder: 2.0),
-        (pos: (276.60, 17.55, 52.99), width: 13.0, shoulder: 2.0),
-        (pos: (269.71, 17.30, 54.36), width: 13.0, shoulder: 2.0),
-        // west, down the hillside: the second trick ramp at its start.
-        (pos: (262.21, 16.99, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (254.71, 16.68, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (247.21, 16.36, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (239.71, 16.05, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (232.21, 15.74, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (224.71, 15.43, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (217.21, 15.11, 54.36), width: 13.0, shoulder: 2.0),
-        (pos: (209.71, 14.80, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (287.71, 45.79, 36.36), width: 13.0, shoulder: 2.0),
+        (pos: (286.34, 45.30, 43.25), width: 13.0, shoulder: 2.0),
+        (pos: (282.44, 44.82, 49.09), width: 13.0, shoulder: 2.0),
+        (pos: (276.60, 44.34, 52.99), width: 13.0, shoulder: 2.0),
+        (pos: (269.71, 44.09, 54.36), width: 13.0, shoulder: 2.0),
+        // west, down the hillside: the second trick ramp at its start; issue #219: then steep (32 %),
+        // in anti-gravity.
+        (pos: (262.21, 43.78, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (254.71, 43.47, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (247.21, 41.06, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (239.71, 38.67, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (232.21, 36.28, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (224.71, 33.88, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (217.21, 31.48, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (209.71, 29.09, 54.36), width: 13.0, shoulder: 2.0),
         // a hairpin to the left, east.
-        (pos: (202.19, 14.63, 55.69), width: 13.0, shoulder: 2.0),
-        (pos: (195.57, 14.47, 59.51), width: 13.0, shoulder: 2.0),
-        (pos: (190.66, 14.30, 65.36), width: 13.0, shoulder: 2.0),
-        (pos: (188.04, 14.13, 72.54), width: 13.0, shoulder: 2.0),
-        (pos: (188.04, 13.97, 80.18), width: 13.0, shoulder: 2.0),
-        (pos: (190.66, 13.80, 87.36), width: 13.0, shoulder: 2.0),
-        (pos: (195.57, 13.63, 93.21), width: 13.0, shoulder: 2.0),
-        (pos: (202.19, 13.47, 97.03), width: 13.0, shoulder: 2.0),
-        (pos: (209.71, 13.30, 98.36), width: 13.0, shoulder: 2.0),
-        // east (a stone swings over its right side).
-        (pos: (217.21, 12.99, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (224.71, 12.68, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (232.21, 12.36, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (239.71, 12.05, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (247.21, 11.74, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (254.71, 11.43, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (262.21, 11.11, 98.36), width: 13.0, shoulder: 2.0),
-        (pos: (269.71, 10.80, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (202.19, 28.79, 55.69), width: 13.0, shoulder: 2.0),
+        (pos: (195.57, 28.51, 59.51), width: 13.0, shoulder: 2.0),
+        (pos: (190.66, 28.21, 65.36), width: 13.0, shoulder: 2.0),
+        (pos: (188.04, 27.92, 72.54), width: 13.0, shoulder: 2.0),
+        (pos: (188.04, 27.63, 80.18), width: 13.0, shoulder: 2.0),
+        (pos: (190.66, 27.34, 87.36), width: 13.0, shoulder: 2.0),
+        (pos: (195.57, 27.04, 93.21), width: 13.0, shoulder: 2.0),
+        (pos: (202.19, 26.76, 97.03), width: 13.0, shoulder: 2.0),
+        (pos: (209.71, 26.59, 98.36), width: 13.0, shoulder: 2.0),
+        // east, steep (23 %), in anti-gravity (issue #219; a stone swings over its right side).
+        (pos: (217.21, 24.84, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (224.71, 23.09, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (232.21, 21.33, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (239.71, 19.59, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (247.21, 17.84, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (254.71, 16.09, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (262.21, 14.33, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (269.71, 12.59, 98.36), width: 13.0, shoulder: 2.0),
         // a hairpin to the right, west, down to the pumpkin field.
-        (pos: (277.23, 10.71, 99.69), width: 13.0, shoulder: 2.0),
-        (pos: (283.85, 10.62, 103.51), width: 13.0, shoulder: 2.0),
-        (pos: (288.76, 10.53, 109.36), width: 13.0, shoulder: 2.0),
-        (pos: (291.38, 10.44, 116.54), width: 13.0, shoulder: 2.0),
-        (pos: (291.38, 10.36, 124.18), width: 13.0, shoulder: 2.0),
-        (pos: (288.76, 10.27, 131.36), width: 13.0, shoulder: 2.0),
-        (pos: (283.85, 10.18, 137.21), width: 13.0, shoulder: 2.0),
+        (pos: (277.23, 12.27, 99.69), width: 13.0, shoulder: 2.0),
+        (pos: (283.85, 11.96, 103.51), width: 13.0, shoulder: 2.0),
+        (pos: (288.76, 11.65, 109.36), width: 13.0, shoulder: 2.0),
+        (pos: (291.38, 11.33, 116.54), width: 13.0, shoulder: 2.0),
+        (pos: (291.38, 11.03, 124.18), width: 13.0, shoulder: 2.0),
+        (pos: (288.76, 10.72, 131.36), width: 13.0, shoulder: 2.0),
+        (pos: (283.85, 10.40, 137.21), width: 13.0, shoulder: 2.0),
         (pos: (277.23, 10.09, 141.03), width: 13.0, shoulder: 2.0),
         (pos: (269.71, 10.00, 142.36), width: 13.0, shoulder: 2.0),
-        // west, the approach of the bulge.
+        // west, the approach of the bulge (issue #219: a bump).
         (pos: (261.68, 10.00, 142.36), width: 13.0, shoulder: 2.0),
         (pos: (253.64, 10.00, 142.36), width: 13.0, shoulder: 2.0),
         (pos: (245.61, 10.00, 142.36), width: 13.0, shoulder: 2.0),
@@ -246,7 +277,7 @@
         (pos: (0.00, 10.00, 88.82), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 10.00, 80.80), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 10.00, 72.78), width: 15.0, shoulder: 3.0),
-        // north, back to the start line.
+        // north, back to the start line (issue #219: a bump).
         (pos: (0.00, 10.00, 64.69), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 10.00, 56.61), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 10.00, 48.52), width: 15.0, shoulder: 3.0),
@@ -260,29 +291,57 @@
     // hidden road) and inside the last corner (the grass bridge), each over a drop of 10 m and
     // more. Everywhere else, walls: the hairpins, the hillside, the crest.
     open_edges: [
-        (from: 86.826, to: 97.457, side: Right),
-        (from: 151.000, to: 169.351, side: Right),
-        (from: 169.173, to: 182.900, side: Right),
+        (from: 105.826, to: 116.457, side: Right),
+        (from: 170.000, to: 188.351, side: Right),
+        (from: 188.173, to: 201.900, side: Right),
+    ],
+    // Issue #219 (GD § 16, rule 3): the road passes over itself. Out of the loop, heading east, the
+    // road is a bridge over the road that came up the hillside to it (14 m under it): its pillars
+    // on each side of the road below, none on it.
+    bridges: [
+        (from: 61.0, to: 68.0),
+    ],
+    // Issue #219: the climb north (25 %) and the two legs of the serpentine (32 % and 23 % down)
+    // in level anti-gravity zones (#215): a kart neither slows down nor speeds up there. From
+    // where the slope starts to where it eases off (its crest in), off the hairpins and the trick
+    // ramps; the climb's zone ends 12 m before the road passes under the bridge.
+    anti_gravity: [
+        (from: 37.75, to: 44.75),
+        (from: 125.75, to: 132.5),
+        (from: 140.5, to: 149.5),
+    ],
+    // Issue #219 (#184, GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver), where
+    // nothing turns for 60 m and more after them: on the field, out of the serpentine's last
+    // hairpin (77 m on to the bulge, a gentle S), and on the way back to the line, past where the
+    // grass bridge comes back.
+    bumps: [
+        (at: 159.5, height: 2.2, length: 22.0),
+        (at: 202.5, height: 2.2, length: 22.0),
+    ],
+    // Issue #219 (#184): a drop of 4 m on the top, past the bridge, 35 m straight below it and
+    // 76 m to the next hairpin (the lacets of the top climb the 4 m back).
+    drops: [
+        (at: 69.5, height: 4.0),
     ],
     shortcuts: [
         // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
         // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
         // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it
         // falls.
-        (from: 87.450, to: 97.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+        (from: 106.450, to: 116.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
-         points: [(245.69, 20.00, -36.51), (260.70, 20.00, -34.52), (265.64, 20.00, -27.00), (282.70, 19.58, -1.01), (282.70, 19.58, 7.99)]),
+         points: [(245.69, 47.79, -36.51), (260.70, 47.79, -34.52), (265.64, 47.79, -27.00), (282.70, 47.37, -1.01), (282.70, 47.37, 7.99)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: narrow (5 m), straight behind the giant crooked pine while the road goes
         // round it, behind a stack of crates 18 m in, where it leaves the road's edge (they burst as
         // one drives through them, a little slower, and come back).
-        (from: 151.000, to: 168.603, kind: Grass, width: 5.0,
+        (from: 170.000, to: 187.603, kind: Grass, width: 5.0,
          points: [(172.00, 10.00, 138.36), (121.27, 10.00, 138.36), (70.53, 10.00, 138.36)],
          cover: Some((kind: Crates, at: 18.0))),
         // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker
         // with one (the mini-turbo of the bulge's last turn, a piment); behind a curtain of tall
         // grass 26 m in.
-        (from: 169.921, to: 182.828, kind: Grass, width: 5.0,
+        (from: 188.921, to: 201.828, kind: Grass, width: 5.0,
          points: [(59.96, 10.00, 135.36), (53.49, 10.00, 134.51), (47.46, 10.00, 132.01), (42.48, 10.00, 129.14), (37.50, 10.00, 126.26), (32.52, 10.00, 123.39), (27.54, 10.00, 120.51), (22.54, 10.00, 117.01), (18.23, 10.00, 112.70), (14.73, 10.00, 107.70), (12.15, 10.00, 102.17), (10.57, 10.00, 96.28), (10.04, 10.00, 90.20)],
          cover: Some((kind: Foliage, at: 26.0))),
     ],
@@ -294,9 +353,9 @@
     // hairpin to the left after it).
     obstacles: [
         (kind: Rock, at: 7.0, offset: 0.95, size: 1.1, yaw: 20.0),
-        (kind: RollingLog, at: 53.500, offset: 0.5, sweep: 0.32, period: 5.0),
-        (kind: SwingingStone, at: 126.000, offset: 0.5, sweep: 0.35, period: 3.6),
-        (kind: Trunk, at: 109.500, offset: -1.12, yaw: 4.0),
+        (kind: RollingLog, at: 75.500, offset: 0.5, sweep: 0.32, period: 5.0),
+        (kind: SwingingStone, at: 145.000, offset: 0.5, sweep: 0.35, period: 3.6),
+        (kind: Trunk, at: 128.500, offset: -1.12, yaw: 4.0),
     ],
     // Issue #144: the bison paces across the left side of the first climb (the karts keep right
     // for the hairpin to the left after it).
@@ -307,34 +366,34 @@
     // on the serpentine, crates on the approach of the bulge.
     breakables: [
         (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
-        (kind: HayBale, at: 110.000, offsets: [0.5]),
-        (kind: Crate, at: 142.000, offsets: [-0.6, -0.25]),
+        (kind: HayBale, at: 129.000, offsets: [0.5]),
+        (kind: Crate, at: 167.500, offsets: [-0.6, -0.25]),
     ],
     // Trick ramps (issue #13): at the start of the climb out of the second hairpin, and at the
     // start of the serpentine, out of a tight corner (60 m and more before the next turn).
     trick_ramps: [
-        (at: 32.600, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
-        (at: 105.600, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 33.500, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 124.600, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
     ],
     // Boost pads (issue #13): out of the first hairpin, and out of the serpentine's last hairpin.
     // None before the grass bridge: it pays only with a boost of one's own.
     boost_pads: [
         (at: 18.500, offset: 0.3),
-        (at: 140.000, offset: 0.0),
+        (at: 158.000, offset: 0.0),
     ],
     item_boxes: [
         (at: 4.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
-        (at: 50.000, offsets: [-0.5, 0.0, 0.5]),
-        (at: 108.000, offsets: [-0.4, 0.0, 0.4]),
-        (at: 147.670, offsets: [0.7], double: true),
+        (at: 67.500, offsets: [-0.5, 0.0, 0.5]),
+        (at: 127.000, offsets: [-0.4, 0.0, 0.4]),
+        (at: 166.670, offsets: [0.7], double: true),
     ],
     // Croquettes (issue #14): lines along the straights, off the middle of the road, never on
     // the grid.
     croquettes: [
         (from: 3.4, count: 5, spacing: 3.0, offset: 0.42),
         (from: 19.000, count: 4, spacing: 3.0, offset: 0.4),
-        (from: 51.000, count: 4, spacing: 3.0, offset: -0.4),
-        (from: 123.000, count: 4, spacing: 3.0, offset: -0.4),
-        (from: 168.853, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 73.000, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 142.000, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 187.853, count: 4, spacing: 3.0, offset: -0.4),
     ],
 )
