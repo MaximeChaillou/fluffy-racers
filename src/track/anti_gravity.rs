@@ -37,6 +37,9 @@ pub struct AntiGravityZone {
     /// A box around its road (world): out of it, nothing is in the zone.
     pub min: Vec3,
     pub max: Vec3,
+    /// Issue #215: its road never banks beyond 45° (`TrackData::level_zone`): a big climb or
+    /// descent, road like any other but for the karts' gravity (the terrain carries it).
+    pub level: bool,
 }
 
 impl AntiGravityZone {
@@ -48,12 +51,15 @@ impl AntiGravityZone {
             to,
             min: Vec3::splat(f32::MAX),
             max: Vec3::splat(f32::MIN),
+            level: true,
         };
+        let level = super::data::MAX_BANK.to_radians().cos() - 1e-3;
         let length = zone.length(center);
         let step = center.length() / center.samples().len() as f32;
         let count = (length / step).ceil().max(1.0) as usize;
         for k in 0..=count {
             let s = center.at(from + length * k as f32 / count as f32);
+            zone.level &= bank_cos(&s) >= level;
             let reach = wall_offset(&s) + WALL_THICKNESS;
             for p in [s.point(-reach, 0.0), s.point(reach, 0.0)] {
                 zone.min = zone.min.min(p);
@@ -159,6 +165,15 @@ pub fn bend_at(zones: &[AntiGravityZone], center: &CenterLine, position: Vec3) -
     zones
         .iter()
         .find_map(|zone| zone.bend_near(center, position))
+}
+
+/// Issue #215: the cosine of the road's banking at a sample (1 flat, 0 a wall, -1 a ceiling),
+/// whatever its slope.
+pub fn bank_cos(sample: &super::layout::TrackSample) -> f32 {
+    let flat_right = sample.forward.cross(Vec3::Y).normalize_or(Vec3::X);
+    sample
+        .up
+        .dot(flat_right.cross(sample.forward).normalize_or(Vec3::Y))
 }
 
 /// The zone of `zones` that `distance` is in, if any.
@@ -443,5 +458,58 @@ mod tests {
         assert_eq!(climbing.validate(), Ok(()));
         assert!(anti_gravity_turn(&CenterLine::of(&climbing), &climbing.anti_gravity[0]) < 2.0);
         assert_eq!(data.mirrored().validate(), Ok(()));
+    }
+
+    /// Issue #215: a level anti-gravity zone (the big climbs and descents of the Col des Moufles,
+    /// where the karts must not slow down) is road like any other: it carries a bridge, a cutting,
+    /// an obstacle and a passer-by, and the terrain carries it. Banked beyond 45° (a wall), the
+    /// same zone refuses them, as the zones of #78 to #96 always did.
+    #[test]
+    fn a_level_zone_is_road_and_a_banked_one_is_not() {
+        let file = format!("{}/assets/tracks/col.track.ron", env!("CARGO_MANIFEST_DIR"));
+        let col = TrackData::from_ron(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(col.validate(), Ok(()));
+        assert!(col.anti_gravity.len() >= 4, "{:?}", col.anti_gravity);
+        let center = CenterLine::of(&col);
+        let n = col.points.len() as f32;
+        let within = |zone: &AntiGravityData, p: f32| {
+            (p - zone.from).rem_euclid(n) <= (zone.to - zone.from).rem_euclid(n)
+        };
+        for zone in &col.anti_gravity {
+            assert!(col.level_zone(zone), "{zone:?}");
+            assert!(AntiGravityZone::new(&center, zone).level, "{zone:?}");
+        }
+        let zoned = |p: f32| col.anti_gravity.iter().any(|z| within(z, p));
+        assert!(col.bridges.iter().any(|b| zoned(b.from + 1.0)));
+        assert!(col.cuttings.iter().any(|c| zoned(c.from + 1.0)));
+        assert!(col.obstacles.iter().any(|o| zoned(o.at)));
+        assert!(col.npcs.iter().any(|o| zoned(o.at)));
+        // The zone of the third climb (its bridge, its log), banked like a wall in its middle.
+        let climb = col
+            .anti_gravity
+            .iter()
+            .position(|z| col.obstacles.iter().any(|o| within(z, o.at)))
+            .unwrap();
+        let mut banked = col.clone();
+        let zone = banked.anti_gravity[climb];
+        let middle = ((zone.from + zone.to) / 2.0).round() as usize;
+        banked.points[middle].bank = 90.0;
+        assert!(!banked.level_zone(&zone));
+        assert!(!AntiGravityZone::new(&CenterLine::of(&banked), &zone).level);
+        assert!(banked.validate().is_err());
+        banked
+            .bridges
+            .retain(|b| !within(&zone, b.from) && !within(&zone, b.to));
+        banked
+            .cuttings
+            .retain(|c| !within(&zone, c.from) && !within(&zone, c.to));
+        banked.obstacles.retain(|o| !within(&zone, o.at));
+        banked.npcs.retain(|o| !within(&zone, o.at));
+        banked.breakables.retain(|o| !within(&zone, o.at));
+        assert_eq!(banked.validate(), Ok(()));
+        // The wall of the straight of these tests: not level.
+        let wall = wall_straight();
+        assert!(!wall.level_zone(&wall.anti_gravity[0]));
+        assert!(!AntiGravityZone::new(&CenterLine::of(&wall), &wall.anti_gravity[0]).level);
     }
 }

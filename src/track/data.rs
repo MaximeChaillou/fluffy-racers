@@ -63,7 +63,8 @@ pub struct TrackData {
     /// the road bank beyond 45° (up to [`MAX_ANTI_GRAVITY_BANK`]); the zone must begin and end
     /// where the road is still flat enough to drive on without it. It may turn (issue #96: a turn
     /// banked like a wall); then banked into the turn, its normal toward the inside, or the karts
-    /// fly off it.
+    /// fly off it. Issue #215: a zone that never banks beyond 45° ([`TrackData::level_zone`]: a
+    /// big climb or descent where the karts do not slow down) is road like any other.
     #[serde(default)]
     pub anti_gravity: Vec<AntiGravityData>,
     /// Issue #107 (GD « Conception des circuits »): stretches with no wall on one side of the road
@@ -907,8 +908,9 @@ impl TrackData {
 
     /// Issue #208: a bridge, on a terrain that hugs the road, walled on both sides (a kart never
     /// falls off it: its pillars are drawn only), [`MIN_BRIDGE`] meters long at least and a
-    /// quarter of the circuit at most, apart from the gaps, the anti-gravity zones, the drops, the
-    /// cuttings (a wall of rock is no ravine) and the other bridges.
+    /// quarter of the circuit at most, apart from the gaps, the anti-gravity zones that bank
+    /// (issue #215: a level zone is road), the drops, the cuttings (a wall of rock is no ravine)
+    /// and the other bridges.
     fn validate_bridges(&self) -> Result<(), InvalidTrack> {
         let fail = |message: String| Err(InvalidTrack(message));
         let n = self.points.len() as f32;
@@ -941,13 +943,16 @@ impl TrackData {
             if self.open_edges.iter().any(|e| overlaps(e.from, e.to))
                 || self.cuttings.iter().any(|c| overlaps(c.from, c.to))
                 || self.gaps.iter().any(|g| overlaps(g.from, g.to))
-                || self.anti_gravity.iter().any(|z| overlaps(z.from, z.to))
+                || self
+                    .anti_gravity
+                    .iter()
+                    .any(|z| !self.level_zone(z) && overlaps(z.from, z.to))
                 || self.drops.iter().any(|d| within(from, to, d.at))
                 || self.bridges[k + 1..].iter().any(|b| overlaps(b.from, b.to))
             {
                 return fail(format!(
                     "bridge {from}..{to}: beside a side without wall, on a cutting, a gap, an \
-                     anti-gravity zone, a drop or another bridge"
+                     anti-gravity zone that banks, a drop or another bridge"
                 ));
             }
         }
@@ -1013,14 +1018,17 @@ impl TrackData {
                 .iter()
                 .any(|e| beside(e.side) && overlaps(e.from, e.to))
                 || self.gaps.iter().any(|g| overlaps(g.from, g.to))
-                || self.anti_gravity.iter().any(|z| overlaps(z.from, z.to))
+                || self
+                    .anti_gravity
+                    .iter()
+                    .any(|z| !self.level_zone(z) && overlaps(z.from, z.to))
                 || self.cuttings[k + 1..]
                     .iter()
                     .any(|c| beside(c.side) && overlaps(c.from, c.to))
             {
                 return fail(format!(
                     "cutting {}..{}: beside a side without wall, on a gap, an anti-gravity zone \
-                     or another cutting",
+                     that banks or another cutting",
                     cut.from, cut.to
                 ));
             }
@@ -1128,9 +1136,10 @@ impl TrackData {
     }
 
     /// Issue #144: the obstacles, the passers-by and the things to drive through: on the road
-    /// (out of the gaps and the anti-gravity zones), a sensible size, a moving one with its sweep
-    /// and its period, a fixed one without; the road's free part never closed (a moving one or a
-    /// passer-by sweeps one side of the road at most: from 0.1 off the middle).
+    /// (out of the gaps and of the anti-gravity zones that bank: issue #215, a level zone is
+    /// road), a sensible size, a moving one with its sweep and its period, a fixed one without;
+    /// the road's free part never closed (a moving one or a passer-by sweeps one side of the road
+    /// at most: from 0.1 off the middle).
     fn validate_hazards(&self) -> Result<(), InvalidTrack> {
         let fail = |message: String| Err(InvalidTrack(message));
         let n = self.points.len() as f32;
@@ -1139,7 +1148,10 @@ impl TrackData {
         let placed = |at: f32| {
             at.is_finite()
                 && !self.gaps.iter().any(|g| within(g.from, g.to, at))
-                && !self.anti_gravity.iter().any(|z| within(z.from, z.to, at))
+                && !self
+                    .anti_gravity
+                    .iter()
+                    .any(|z| !self.level_zone(z) && within(z.from, z.to, at))
         };
         // A sweep leaves the other side of the road free: it never crosses the middle by more
         // than this (in half widths).
@@ -1468,6 +1480,32 @@ impl TrackData {
                 (param - zone.from).rem_euclid(n) <= (zone.to - zone.from).rem_euclid(n)
             });
             (bank.abs() > MAX_BANK + 1e-3 && !zoned).then_some(param)
+        })
+    }
+
+    /// Issue #215: whether the anti-gravity zone `zone` keeps its road **level**: it never banks
+    /// beyond [`MAX_BANK`] (in steps of 1/16 of a segment), like any road out of the zones. Such
+    /// a zone (a big climb or descent, where the karts' gravity follows the road so that they do
+    /// not slow down, Max 2026-10-31) is ordinary road but for the karts' gravity: the terrain
+    /// carries it (`track::terrain`), it may be cut into the mountain or be a bridge, and it may
+    /// have obstacles, passers-by and things to drive through. A zone that banks beyond (a wall,
+    /// a ceiling, a turn banked like a wall) keeps the rules of #78 to #96.
+    pub fn level_zone(&self, zone: &AntiGravityData) -> bool {
+        const STEPS: usize = 16;
+        let n = self.points.len();
+        if n < 2 {
+            return false;
+        }
+        let slopes = super::layout::bank_slopes(&self.points, &self.anti_gravity);
+        let length = (zone.to - zone.from).rem_euclid(n as f32);
+        let count = (length * STEPS as f32).ceil().max(1.0) as usize;
+        (0..=count).all(|k| {
+            let param = (zone.from + length * k as f32 / count as f32).rem_euclid(n as f32);
+            let i = (param.floor() as usize).min(n - 1);
+            let t = param - i as f32;
+            let (a, b) = (self.points[i].bank, self.points[(i + 1) % n].bank);
+            let bank = super::layout::bank_between(a, b, (slopes[i], slopes[(i + 1) % n]), t);
+            bank.abs() <= MAX_BANK + 1e-3
         })
     }
 
@@ -1842,7 +1880,14 @@ mod tests {
         assert!(broken(&|d| d.cuttings[0].from = f32::NAN));
         // Beside a side without wall (the jump's corner opens the right side).
         assert!(broken(&|d| d.cuttings[0].from = 60.0));
+        // Issue #215: past the bridge across the third switchback (a cutting on a bridge is
+        // refused), up to the summit.
         assert!(!broken(&|d| {
+            d.cuttings[0].from = 68.0;
+            d.cuttings[0].to = 76.0;
+            d.cuttings[0].side = EdgeSide::Left;
+        }));
+        assert!(broken(&|d| {
             d.cuttings[0].from = 60.0;
             d.cuttings[0].to = 76.0;
             d.cuttings[0].side = EdgeSide::Left;
@@ -1883,8 +1928,9 @@ mod tests {
             d.bridges[0].from = 66.0;
             d.bridges[0].to = 72.0;
         }));
-        // On a cutting, on another bridge, on a drop.
-        assert!(broken(&|d| d.bridges[0].from = 50.0));
+        // On a cutting, on another bridge, on a drop (issue #215: the cutting of the third
+        // climb ends at 44, where its bridge starts now).
+        assert!(broken(&|d| d.bridges[0].from = 43.0));
         assert!(broken(&|d| d.bridges.push(d.bridges[0])));
         assert!(broken(&|d| {
             d.drops.push(DropData {

@@ -1,13 +1,15 @@
 // "Col des Moufles": a snowy mountain pass (issue #19, redrawn for issue #109 after the guide
 // « Conception des circuits », docs/GAME_DESIGN.md § 16). Original layout, about 1.5 km a lap,
 // turning left: the start straight in the valley; three switchbacks up the face of the mountain
-// (hairpins to the left, the right and the left: a lacet), 58 m up to the pass (12 m before issue
+// (hairpins to the left, the right and the left: a lacet), 88 m up to the pass (12 m before issue
 // #202, 24 m before issue #204, 42 m before issue #206: its legs 48 m longer, climbing at up to
 // 35 %, and the pad before the jump 8 m longer; issue #208: the third climb ends on a bridge over
-// a ravine; issue #211: a second bridge on the way down, two bumps and a drop); on the pass,
+// a ravine; issue #211: a second bridge on the way down, two bumps and a drop; 58 m before issue
+// #215: the third climb up to 57 % and the descents down to 54 %, in anti-gravity, the third
+// climb and its switchback on a viaduct); on the pass,
 // the corner of the risky jump (to the right, its inside a drop down to the mountain's slope, 6 m
 // at least) and the summit, the high point with a view over the valley; a
-// tight left turn, then the way down (54 m up, then down to the valley): a bulge (right 70°, left 140°, right 70°) whose hidden road runs
+// tight left turn, then the way down (84 m up, then down to the valley): a bulge (right 70°, left 140°, right 70°) whose hidden road runs
 // straight behind a bank of snow; two more switchbacks at the foot of the mountain (left, right);
 // the tight left corner that the snow path cuts, and the last corner. Five hairpins of 180° (a
 // Normal bot drifts them), four tight turns of 90°, the S of the switchbacks and of the summit:
@@ -95,16 +97,16 @@
         (pos: (-44.00, 6.00, -68.27), width: 14.0, shoulder: 2.0),
         (pos: (-44.00, 6.94, -60.40), width: 14.0, shoulder: 2.0),
         (pos: (-44.00, 8.25, -52.53), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 9.94, -44.67), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 12.01, -36.80), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 14.45, -28.93), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 17.17, -21.07), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 19.61, -13.20), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 21.68, -5.33), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 23.37, 2.53), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 24.69, 10.40), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 25.62, 18.27), width: 14.0, shoulder: 2.0),
-        (pos: (-44.00, 26.19, 26.13), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 9.67, -44.67), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 11.33, -36.80), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 13.23, -28.93), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 15.17, -21.07), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 17.13, -13.20), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 19.08, -5.33), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 21.02, 2.53), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 22.97, 10.40), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 24.76, 18.27), width: 14.0, shoulder: 2.0),
+        (pos: (-44.00, 25.90, 26.13), width: 14.0, shoulder: 2.0),
         // the second switchback, a hairpin to the right (radius 22 m).
         (pos: (-44.00, 26.38, 34.00), width: 14.0, shoulder: 2.0),
         (pos: (-45.33, 26.48, 41.52), width: 14.0, shoulder: 5.0),
@@ -117,118 +119,118 @@
         (pos: (-86.67, 29.77, 41.52), width: 14.0, shoulder: 5.0),
         // north, up: the rolling log, the boxes.
         (pos: (-88.00, 29.88, 34.00), width: 14.0, shoulder: 5.0),
-        (pos: (-88.00, 30.06, 26.13), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 30.63, 18.27), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 31.57, 10.40), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 32.88, 2.53), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 34.57, -5.33), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 36.64, -13.20), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 39.08, -21.07), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 41.80, -28.93), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 44.24, -36.80), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 46.31, -44.67), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 48.00, -52.53), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 49.31, -60.40), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 50.25, -68.27), width: 14.0, shoulder: 2.0),
-        (pos: (-88.00, 50.81, -76.13), width: 14.0, shoulder: 2.0),
-        // the third switchback, a hairpin to the left (radius 22 m), up to the pass (58 m).
-        (pos: (-88.00, 51.00, -84.00), width: 14.0, shoulder: 2.0),
-        (pos: (-89.33, 51.25, -91.52), width: 14.0, shoulder: 5.0),
-        (pos: (-93.15, 51.88, -98.14), width: 14.0, shoulder: 5.0),
-        (pos: (-99.00, 52.82, -103.05), width: 14.0, shoulder: 5.0),
-        (pos: (-106.18, 53.91, -105.67), width: 14.0, shoulder: 5.0),
-        (pos: (-113.82, 55.09, -105.67), width: 14.0, shoulder: 5.0),
-        (pos: (-121.00, 56.18, -103.05), width: 14.0, shoulder: 5.0),
-        (pos: (-126.85, 57.12, -98.14), width: 14.0, shoulder: 5.0),
-        (pos: (-130.67, 57.75, -91.52), width: 14.0, shoulder: 5.0),
+        (pos: (-88.00, 30.61, 26.13), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 32.49, 18.27), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 35.53, 10.40), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 39.72, 2.53), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 44.18, -5.33), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 48.66, -13.20), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 53.13, -21.07), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 57.60, -28.93), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 62.07, -36.80), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 66.55, -44.67), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 71.02, -52.53), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 75.21, -60.40), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 78.27, -68.27), width: 14.0, shoulder: 2.0),
+        (pos: (-88.00, 80.20, -76.13), width: 14.0, shoulder: 2.0),
+        // the third switchback, a hairpin to the left (radius 22 m), up to the pass (88 m).
+        (pos: (-88.00, 81.00, -84.00), width: 14.0, shoulder: 2.0),
+        (pos: (-89.33, 81.25, -91.52), width: 14.0, shoulder: 5.0),
+        (pos: (-93.15, 81.88, -98.14), width: 14.0, shoulder: 5.0),
+        (pos: (-99.00, 82.82, -103.05), width: 14.0, shoulder: 5.0),
+        (pos: (-106.18, 83.91, -105.67), width: 14.0, shoulder: 5.0),
+        (pos: (-113.82, 85.09, -105.67), width: 14.0, shoulder: 5.0),
+        (pos: (-121.00, 86.18, -103.05), width: 14.0, shoulder: 5.0),
+        (pos: (-126.85, 87.12, -98.14), width: 14.0, shoulder: 5.0),
+        (pos: (-130.67, 87.75, -91.52), width: 14.0, shoulder: 5.0),
         // south, on the pass: a pad lines the karts up for the jump.
-        (pos: (-132.00, 58.00, -84.00), width: 14.0, shoulder: 5.0),
-        (pos: (-132.00, 58.00, -76.00), width: 14.0, shoulder: 2.0),
-        (pos: (-132.00, 58.00, -68.00), width: 14.0, shoulder: 2.0),
-        (pos: (-132.00, 58.00, -60.00), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -84.00), width: 14.0, shoulder: 5.0),
+        (pos: (-132.00, 88.00, -76.00), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -68.00), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -60.00), width: 14.0, shoulder: 2.0),
         // the corner of the risky jump, to the right (90°, radius 22 m): its inside is a drop (6 m at least).
-        (pos: (-132.00, 58.00, -52.00), width: 14.0, shoulder: 2.0),
-        (pos: (-132.00, 58.00, -43.98), width: 14.0, shoulder: 2.0),
-        (pos: (-132.00, 58.00, -35.97), width: 14.0, shoulder: 2.0),
-        (pos: (-132.61, 58.00, -28.00), width: 14.0, shoulder: 2.0),
-        (pos: (-135.84, 58.00, -20.71), width: 14.0, shoulder: 2.0),
-        (pos: (-141.46, 58.00, -15.05), width: 14.0, shoulder: 2.0),
-        (pos: (-148.72, 58.00, -11.77), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -52.00), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -43.98), width: 14.0, shoulder: 2.0),
+        (pos: (-132.00, 88.00, -35.97), width: 14.0, shoulder: 2.0),
+        (pos: (-132.61, 88.00, -28.00), width: 14.0, shoulder: 2.0),
+        (pos: (-135.84, 88.00, -20.71), width: 14.0, shoulder: 2.0),
+        (pos: (-141.46, 88.00, -15.05), width: 14.0, shoulder: 2.0),
+        (pos: (-148.72, 88.00, -11.77), width: 14.0, shoulder: 2.0),
         // the landing, wider (16 m): a rock at its left edge; the summit, heading west.
-        (pos: (-156.69, 58.00, -11.13), width: 16.0, shoulder: 2.0),
-        (pos: (-164.70, 58.00, -11.13), width: 16.0, shoulder: 2.0),
-        (pos: (-172.72, 58.00, -11.13), width: 16.0, shoulder: 2.0),
-        (pos: (-180.72, 58.00, -11.13), width: 14.0, shoulder: 2.0),
+        (pos: (-156.69, 88.00, -11.13), width: 16.0, shoulder: 2.0),
+        (pos: (-164.70, 88.00, -11.13), width: 16.0, shoulder: 2.0),
+        (pos: (-172.72, 88.00, -11.13), width: 16.0, shoulder: 2.0),
+        (pos: (-180.72, 88.00, -11.13), width: 14.0, shoulder: 2.0),
         // a tight left turn (90°): the way down, heading south.
-        (pos: (-188.72, 58.00, -11.13), width: 14.0, shoulder: 2.0),
-        (pos: (-196.45, 58.00, -9.91), width: 14.0, shoulder: 2.0),
-        (pos: (-203.41, 58.00, -6.36), width: 14.0, shoulder: 2.0),
-        (pos: (-208.95, 58.00, -0.82), width: 14.0, shoulder: 2.0),
-        (pos: (-212.50, 58.00, 6.14), width: 14.0, shoulder: 2.0),
-        (pos: (-213.72, 58.00, 13.87), width: 14.0, shoulder: 2.0),
+        (pos: (-188.72, 88.00, -11.13), width: 14.0, shoulder: 2.0),
+        (pos: (-196.45, 88.00, -9.91), width: 14.0, shoulder: 2.0),
+        (pos: (-203.41, 88.00, -6.36), width: 14.0, shoulder: 2.0),
+        (pos: (-208.95, 88.00, -0.82), width: 14.0, shoulder: 2.0),
+        (pos: (-212.50, 88.00, 6.14), width: 14.0, shoulder: 2.0),
+        (pos: (-213.72, 88.00, 13.87), width: 14.0, shoulder: 2.0),
         // Issue #211: a drop of 4 m, between these two points (the way down started with a
         // slope of 4 m over 16 m before).
-        (pos: (-213.72, 54.00, 21.87), width: 14.0, shoulder: 2.0),
-        // the bulge (right 70°, left 140°, right 70°), 54 m up: the hidden road goes straight behind its bank of snow.
-        (pos: (-213.72, 54.00, 29.87), width: 14.0, shoulder: 2.0),
-        (pos: (-213.72, 54.00, 37.88), width: 14.0, shoulder: 2.0),
-        (pos: (-214.97, 54.00, 45.78), width: 14.0, shoulder: 2.0),
-        (pos: (-218.25, 54.00, 53.07), width: 14.0, shoulder: 2.0),
-        (pos: (-223.35, 54.00, 59.22), width: 14.0, shoulder: 2.0),
-        (pos: (-229.89, 54.00, 63.82), width: 14.0, shoulder: 2.0),
-        (pos: (-237.32, 54.00, 66.80), width: 14.0, shoulder: 2.0),
-        (pos: (-244.48, 54.00, 70.33), width: 14.0, shoulder: 2.0),
-        (pos: (-249.96, 54.00, 76.12), width: 14.0, shoulder: 2.0),
-        (pos: (-253.01, 54.00, 83.48), width: 14.0, shoulder: 2.0),
-        (pos: (-253.24, 54.00, 91.45), width: 14.0, shoulder: 2.0),
-        (pos: (-250.62, 54.00, 98.98), width: 14.0, shoulder: 2.0),
-        (pos: (-245.49, 54.00, 105.08), width: 14.0, shoulder: 2.0),
-        (pos: (-238.52, 54.00, 108.95), width: 14.0, shoulder: 2.0),
-        (pos: (-231.03, 54.00, 111.78), width: 14.0, shoulder: 2.0),
-        (pos: (-224.28, 54.00, 116.06), width: 14.0, shoulder: 2.0),
-        (pos: (-218.91, 54.00, 121.98), width: 14.0, shoulder: 2.0),
-        (pos: (-215.28, 54.00, 129.10), width: 14.0, shoulder: 2.0),
-        (pos: (-213.66, 54.00, 136.93), width: 14.0, shoulder: 2.0),
-        (pos: (-213.58, 54.00, 144.94), width: 14.0, shoulder: 2.0),
+        (pos: (-213.72, 84.00, 21.87), width: 14.0, shoulder: 2.0),
+        // the bulge (right 70°, left 140°, right 70°), 84 m up: the hidden road goes straight behind its bank of snow.
+        (pos: (-213.72, 84.00, 29.87), width: 14.0, shoulder: 2.0),
+        (pos: (-213.72, 84.00, 37.88), width: 14.0, shoulder: 2.0),
+        (pos: (-214.97, 84.00, 45.78), width: 14.0, shoulder: 2.0),
+        (pos: (-218.25, 84.00, 53.07), width: 14.0, shoulder: 2.0),
+        (pos: (-223.35, 84.00, 59.22), width: 14.0, shoulder: 2.0),
+        (pos: (-229.89, 84.00, 63.82), width: 14.0, shoulder: 2.0),
+        (pos: (-237.32, 84.00, 66.80), width: 14.0, shoulder: 2.0),
+        (pos: (-244.48, 84.00, 70.33), width: 14.0, shoulder: 2.0),
+        (pos: (-249.96, 84.00, 76.12), width: 14.0, shoulder: 2.0),
+        (pos: (-253.01, 84.00, 83.48), width: 14.0, shoulder: 2.0),
+        (pos: (-253.24, 84.00, 91.45), width: 14.0, shoulder: 2.0),
+        (pos: (-250.62, 84.00, 98.98), width: 14.0, shoulder: 2.0),
+        (pos: (-245.49, 84.00, 105.08), width: 14.0, shoulder: 2.0),
+        (pos: (-238.52, 84.00, 108.95), width: 14.0, shoulder: 2.0),
+        (pos: (-231.03, 84.00, 111.78), width: 14.0, shoulder: 2.0),
+        (pos: (-224.28, 84.00, 116.06), width: 14.0, shoulder: 2.0),
+        (pos: (-218.91, 84.00, 121.98), width: 14.0, shoulder: 2.0),
+        (pos: (-215.28, 84.00, 129.10), width: 14.0, shoulder: 2.0),
+        (pos: (-213.66, 84.00, 136.93), width: 14.0, shoulder: 2.0),
+        (pos: (-213.58, 84.00, 144.94), width: 14.0, shoulder: 2.0),
         // down to the foot of the mountain, south.
-        (pos: (-213.58, 53.73, 152.94), width: 14.0, shoulder: 2.0),
-        (pos: (-213.58, 52.92, 160.94), width: 14.0, shoulder: 2.0),
-        (pos: (-213.58, 51.57, 168.95), width: 14.0, shoulder: 2.0),
-        (pos: (-213.58, 49.68, 176.95), width: 14.0, shoulder: 2.0),
-        (pos: (-213.57, 47.25, 184.95), width: 14.0, shoulder: 2.0),
-        (pos: (-213.57, 44.82, 192.95), width: 14.0, shoulder: 2.0),
-        (pos: (-213.57, 42.93, 200.95), width: 14.0, shoulder: 2.0),
-        (pos: (-213.57, 41.58, 208.96), width: 14.0, shoulder: 2.0),
-        (pos: (-213.57, 40.77, 216.96), width: 14.0, shoulder: 2.0),
+        (pos: (-213.58, 83.29, 152.94), width: 14.0, shoulder: 2.0),
+        (pos: (-213.58, 81.15, 160.94), width: 14.0, shoulder: 2.0),
+        (pos: (-213.58, 77.59, 168.95), width: 14.0, shoulder: 2.0),
+        (pos: (-213.58, 74.03, 176.95), width: 14.0, shoulder: 2.0),
+        (pos: (-213.57, 70.47, 184.95), width: 14.0, shoulder: 2.0),
+        (pos: (-213.57, 66.91, 192.95), width: 14.0, shoulder: 2.0),
+        (pos: (-213.57, 63.35, 200.95), width: 14.0, shoulder: 2.0),
+        (pos: (-213.57, 59.78, 208.96), width: 14.0, shoulder: 2.0),
+        (pos: (-213.57, 57.50, 216.96), width: 14.0, shoulder: 2.0),
         // the fourth switchback, a hairpin to the left (radius 22 m), at the foot.
-        (pos: (-213.57, 40.50, 224.96), width: 14.0, shoulder: 2.0),
-        (pos: (-212.24, 40.17, 232.48), width: 14.0, shoulder: 5.0),
-        (pos: (-208.42, 39.07, 239.10), width: 14.0, shoulder: 5.0),
-        (pos: (-202.57, 37.64, 244.01), width: 14.0, shoulder: 5.0),
-        (pos: (-195.39, 35.88, 246.63), width: 14.0, shoulder: 5.0),
-        (pos: (-187.75, 34.12, 246.63), width: 14.0, shoulder: 5.0),
-        (pos: (-180.57, 32.36, 244.01), width: 14.0, shoulder: 5.0),
-        (pos: (-174.71, 30.93, 239.10), width: 14.0, shoulder: 5.0),
-        (pos: (-170.89, 29.83, 232.48), width: 14.0, shoulder: 5.0),
+        (pos: (-213.57, 56.50, 224.96), width: 14.0, shoulder: 2.0),
+        (pos: (-212.24, 56.17, 232.48), width: 14.0, shoulder: 5.0),
+        (pos: (-208.42, 55.07, 239.10), width: 14.0, shoulder: 5.0),
+        (pos: (-202.57, 53.64, 244.01), width: 14.0, shoulder: 5.0),
+        (pos: (-195.39, 51.88, 246.63), width: 14.0, shoulder: 5.0),
+        (pos: (-187.75, 50.12, 246.63), width: 14.0, shoulder: 5.0),
+        (pos: (-180.57, 48.36, 244.01), width: 14.0, shoulder: 5.0),
+        (pos: (-174.71, 46.93, 239.10), width: 14.0, shoulder: 5.0),
+        (pos: (-170.89, 45.83, 232.48), width: 14.0, shoulder: 5.0),
         // north: the trick ramp, the boxes.
-        (pos: (-169.57, 29.50, 224.96), width: 14.0, shoulder: 5.0),
-        (pos: (-169.57, 29.35, 216.85), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 28.91, 208.74), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 28.17, 200.63), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 27.13, 192.52), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 25.80, 184.40), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 24.17, 176.29), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 22.24, 168.18), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 20.02, 160.07), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 17.50, 151.96), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 14.98, 143.85), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 12.76, 135.74), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 10.83, 127.63), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 9.20, 119.52), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 7.87, 111.40), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 6.83, 103.29), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 6.09, 95.18), width: 14.0, shoulder: 2.0),
-        (pos: (-169.57, 5.65, 87.07), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 45.50, 224.96), width: 14.0, shoulder: 5.0),
+        (pos: (-169.57, 43.98, 216.85), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 40.15, 208.74), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 35.74, 200.63), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 31.33, 192.52), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 26.92, 184.40), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 22.94, 176.29), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 20.70, 168.18), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 19.29, 160.07), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 17.80, 151.96), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 16.25, 143.85), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 14.68, 135.74), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 13.11, 127.63), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 11.54, 119.52), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 9.97, 111.40), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 8.40, 103.29), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 6.95, 95.18), width: 14.0, shoulder: 2.0),
+        (pos: (-169.57, 5.98, 87.07), width: 14.0, shoulder: 2.0),
         // the fifth switchback, a hairpin to the right (radius 22 m).
         (pos: (-169.57, 5.50, 78.96), width: 14.0, shoulder: 2.0),
         (pos: (-168.24, 5.28, 71.44), width: 14.0, shoulder: 5.0),
@@ -289,8 +291,9 @@
     // after it), and out of the last corner, before the grid (as on Prairie Pompon; its
     // croquettes beyond its landing). Not on the descent to the fourth switchback (a kart lands
     // too close to the hairpin, and the mountain stops carrying the road), nor before a tight
-    // corner. Each bump on the mountain costs the terrain its embankment along it (the bound of
-    // #202 follows the road's tangent, lower over a bump): the first climb's bump is short.
+    // corner. Each bump on the mountain cost the terrain its embankment along it (the bound of
+    // #202 followed the road's tangent, lower over a bump; since issue #215, it follows the
+    // bump): the first climb's bump is short.
     bumps: [
         (at: 20.0, height: 2.2, length: 22.0),
         (at: 178.6, height: 2.2, length: 30.0),
@@ -301,13 +304,26 @@
     drops: [
         (at: 87.25, height: 4.0),
     ],
+    // Issue #215 (Max, 2026-10-31: « pour ne pas ralentir, tu peux utiliser la même technique
+    // que pour les routes en spirale, avec les roues qui pivotent »): the big climbs and
+    // descents are anti-gravity zones (GD § 10), level ones (never banked: the terrain carries
+    // them, they are cut into the mountain, a bridge, the bison and the log stand on them):
+    // the karts' gravity follows the road, so that they neither slow down going up nor speed up
+    // going down. Each one from where its slope starts to where it eases off (its crests in
+    // it), never on a hairpin, a bump or a trick ramp.
+    anti_gravity: [
+        (from: 23.0, to: 34.0),
+        (from: 43.0, to: 58.0),
+        (from: 107.0, to: 118.0),
+        (from: 127.0, to: 134.0),
+    ],
     offroad: [
         // Deep snow inside the first switchback: cutting the apex costs speed.
         (from: 14.37, to: 18.141, left: -1.0, right: -0.55),
     ],
     // Issue #107: the sides without wall: the inside of the jump's corner (a drop of 6 m at least) and the
     // start of the landing (until the flight comes over the road), where the hidden road leaves the
-    // road and comes back to it (only where its own road lies beyond: 54 m above the valley; issue
+    // road and comes back to it (only where its own road lies beyond: 84 m above the valley; issue
     // #206: where it leaves, 5 m further, the wall's end out of the line of a boosted kart), the
     // inside of the snow path's corner (at the foot, on the ground). Everywhere else, walls:
     // around the switchbacks, where the pack bunches up, along the climb and the way down (above a
@@ -324,24 +340,31 @@
     // of the switchbacks; the second up to its bridge, issue #208), past the landing of the jump
     // the summit and the head of the way down
     // (the view over the valley on the left), the way north after the fourth switchback (up to
-    // the hidden road) and the way south after the fifth. Wherever the chase camera would look
-    // through it at the road ahead, the wall stays under its sight.
+    // the hidden road; issue #215: on through the fifth switchback, on its outside, under the
+    // pass and the bulge 60 to 80 m higher) and the way south after the fifth. Issue #215: the
+    // second climb's stops at its viaduct. Wherever the chase camera would look through it at
+    // the road ahead, the wall stays under its sight.
     cuttings: [
         (from: 182.0, to: 9.8, side: Left),
         (from: 14.0, to: 34.0, side: Right),
-        (from: 38.0, to: 51.0, side: Left),
+        (from: 38.0, to: 44.0, side: Left),
         (from: 79.2, to: 94.0, side: Right),
-        (from: 127.0, to: 141.727, side: Left),
+        (from: 127.0, to: 155.3, side: Left),
         (from: 153.2, to: 158.8, side: Right),
     ],
     // Issue #208: a bridge over a ravine, at the head of the third climb (up to the third
     // switchback, 43 to 52 m up): the first climb runs 44 m east of it and 40 m lower, and the
     // mountain could not carry it there. Under it, the ravine falls away down to the valley; the
     // skirts give way to its deck and its pillars. Walled on both sides.
-    // Issue #211: a second bridge, on the way down to the fourth switchback (54 to 42 m up): the
-    // mountain did not carry the road there either (4 to 9 m under the foot of its left wall).
+    // Issue #211: a second bridge, on the way down to the fourth switchback (84 to 60 m up since
+    // #215): the mountain did not carry the road there either (4 to 9 m under the foot of its
+    // left wall).
+    // Issue #215: the first one is a viaduct now, from the bottom of the third climb (31 m up)
+    // round the third switchback to the pass (88 m up): the climb runs 44 m beside the first one
+    // and the third switchback beside the first, both 30 to 80 m lower, steeper than any slope of
+    // the mountain (« un Col encore plus haut porté par ses ponts »).
     bridges: [
-        (from: 51.5, to: 58.0),
+        (from: 44.5, to: 67.5),
         (from: 107.5, to: 116.0),
     ],
     shortcuts: [
@@ -351,11 +374,11 @@
         // too slow, it falls.
         (from: 70.812, to: 78.788, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 8.0,
-         points: [(-133.61, 58.00, -53.15), (-136.39, 58.00, -41.21), (-142.55, 58.00, -36.12), (-170.53, 58.00, -12.98)]),
+         points: [(-133.61, 88.00, -53.15), (-136.39, 88.00, -41.21), (-142.55, 88.00, -36.12), (-170.53, 88.00, -12.98)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: straight behind the bank of snow while the road bulges around it.
         (from: 90.728, to: 106.468, kind: Grass, width: 10.0,
-         points: [(-208.92, 54.00, 44.73), (-207.94, 54.00, 59.18), (-207.36, 54.00, 73.64), (-207.15, 54.00, 88.11), (-207.33, 54.00, 102.59), (-207.89, 54.00, 117.07), (-208.85, 54.00, 131.56)]),
+         points: [(-208.92, 84.00, 44.73), (-207.94, 84.00, 59.18), (-207.36, 84.00, 73.64), (-207.15, 84.00, 88.11), (-207.33, 84.00, 102.59), (-207.89, 84.00, 117.07), (-208.85, 84.00, 131.56)]),
         // The snow path, across the tight corner at the foot: slow without a boost, quicker with
         // one (the mini-turbo of the switchback before it).
         (from: 155.889, to: 167.326, kind: Grass, width: 8.0,
