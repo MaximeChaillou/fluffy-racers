@@ -810,16 +810,18 @@
     // a section at least, where nothing turns for 60 m and more after them: on the start straight
     // (two, 80 m apart; 90 m on to the first hairpin); on three legs of the lacets of the west, one
     // right past its trick ramp (a kart flies over it from the ramp), one 44 m out of its hairpin
-    // (a gentle S after it), one 28 m out of its hairpin; on two legs of the lacets of the north,
-    // out of their hairpins (the second one's boost pad just before it). Tried and left out: right
-    // out of the hairpin of the lacets of the west (a kart still turning takes off askew, and came
-    // down on the other side of the wall).
+    // (a gentle S after it), one 28 m out of its hairpin, a long one (issue #150: 36 m, 22 before;
+    // the short one launched the pack high, and it came down 90 m on, braking for the next
+    // hairpin, and went over its walls, on the CI's newer machines and on other seeds); on two
+    // legs of the lacets of the north, out of their hairpins (the second one's boost pad just
+    // before it). Tried and left out: right out of the hairpin of the lacets of the west (a kart
+    // still turning takes off askew, and came down on the other side of the wall).
     bumps: [
         (at: 5.0, height: 2.2, length: 22.0),
         (at: 15.0, height: 2.2, length: 22.0),
         (at: 333.2, height: 2.2, length: 22.0),
         (at: 363.5, height: 2.2, length: 22.0),
-        (at: 403.5, height: 2.2, length: 22.0),
+        (at: 402.8, height: 2.2, length: 36.0),
         (at: 615.3, height: 2.2, length: 22.0),
         (at: 644.4, height: 2.2, length: 22.0),
     ],
