@@ -421,7 +421,7 @@ Toutes les valeurs sont dans `KartTuning::environment` (`EnvironmentTuning` : pa
 - **Une zone d'anti-gravité à plat** (#215, § 16) : une zone dont la route ne penche jamais au-delà de 45° (une grande montée ou descente) est une route comme les autres, sauf pour la gravité des karts : on y monte sans ralentir et on y descend sans accélérer (le Col des Moufles, jusqu'à 57 %). Le terrain la porte, et elle accepte un tronçon taillé, un pont, des obstacles et des passants ; jamais une bosse, un décrochage, un vide ni un bord sans muret.
 - **Un décrochage n'est pas un vide** (#180, § 16) : la route s'arrête en haut d'une marche et reprend juste en dessous, dans le même axe ; on tombe d'un niveau à l'autre en roulant, sans planeur ni pélican. Un vide (`gaps`) reste un tronçon sans route qu'on traverse en planeur.
 - **En ligne** : trois bits de l'état du kart (planeur, sous l'eau, anti-gravité) ; les autres voient l'aile, l'inclinaison, les bulles, le kart sur le mur ou sous le plafond et ses roues pivotées.
-- **Le Lagon Duvet** (#20, le circuit de démonstration) : départ en haut d'une falaise, envol au-dessus du lagon, atterrissage sur la plage, puis la route plonge sous l'eau du lagon avant de remonter la falaise.
+- **Le Lagon Duvet** (#20, le circuit de démonstration) : départ en haut d'une falaise, envol au-dessus du lagon, atterrissage sur la plage, puis la route plonge sous l'eau du lagon avant de remonter la falaise. **Depuis #150**, refait selon le guide (§ 16, « Le Lagon Duvet refait (#150) ») : le même envol et la même plongée, puis une montée en anti-gravité jusqu'à un sommet à 46 m.
 - **La Corniche Cannelle** (#107, le circuit de référence du guide, § 16) : le planeur du bord d'un canyon jusqu'à son fond, au-dessus de la rivière, puis un gué sous l'eau ; pas d'anti-gravité (elle reste au Ruban Réglisse). Ses bords au-dessus du vide n'ont pas de muret (§ 16) : c'est le vide, et le pélican.
 
 ## 11. Aides et accessibilité (MK8DX)
@@ -1490,12 +1490,41 @@ Les quatre circuits qui attendaient leur relief (#184) montent maintenant bien p
 
 ![Le Périple Polochon : une branche des lacets du bourg, à mi-hauteur du rempart (#221)](img/periple-lacets-bourg.jpg)
 
-- **Pas encore** (#223) : le dénivelé de l'Anneau Guimauve, de la Crique Câline et de Prairie Pompon (en dernier) ; la Corniche (#164), le Lagon (#150) et le Ruban (#151) ont leurs issues.
+- **Pas encore** (#223) : le dénivelé de l'Anneau Guimauve, de la Crique Câline et de Prairie Pompon (en dernier) ; la Corniche (#164) et le Ruban (#151) ont leurs issues ; le Lagon est refait (#150, plus bas).
+
+### Le Lagon Duvet refait (#150)
+
+Le lagon tropical au pied d'une falaise de jungle (le biome « Lagon »), le circuit des environnements spéciaux (#20), refait selon le guide : le même départ en haut de la falaise, le même envol et la même plongée, puis une vraie montagne. Environ **1 860 m le tour** (770 m avant), à droite, de -4,2 m (le fond du lagon) à **46 m** (le sommet) :
+
+- **la ligne droite du départ** en haut de la falaise, à 10 m, la seule longue (l'aspiration, les boîtes, des ballons au GO), jusqu'au **tremplin du planeur** ;
+- **le planeur** au-dessus du lagon (le vide de 60 m et sa chute de 10 m, ceux de #20 : le vol plané ne change pas), **la réception sur la plage**, puis 100 m de plage (un planeur cabré et boosté se pose jusqu'à 190 m après le vide) ;
+- **une épingle à droite sur la plage** (35 m de rayon, du sable à l'intérieur ; l'épave au-delà, la tour de guet à sa sortie), un plot, 56 m de plage, puis **la plongée** : la route entre dans le lagon, court sous l'eau (4,2 m au plus bas) et en ressort ; elle y entre en douceur (sa pente grandit sur 16 m) : sous l'eau, avec la moitié de la gravité, un kart à pleine vitesse décollait d'une pente qui commence d'un coup, et son drift s'arrêtait ;
+- **une épingle à gauche au pied de la falaise**, puis **la montée** vers le nord le long de la falaise, **en anti-gravité** (42 m de dénivelé, jusqu'à 42 %), jusqu'à **l'épingle du sommet** (à droite), à 46 m, au-dessus de la plage : la vue sur le lagon et le planeur ;
+- **le viaduc** : le haut de la montée, l'épingle du sommet et le début de la descente sont un pont le long de la falaise (la route de la plage, 44 m plus bas juste à côté, ne laisse pas la falaise porter la route jusqu'à ses murets) ;
+- **la descente** vers le sud, en anti-gravité (jusqu'à 47 %), de niveau 24 m avant **un décrochage de 4 m** ; 40 m droits dessous ;
+- **la chicane du sommet** (un virage serré à gauche, puis un à droite) ;
+- **le serpent** qui descend la pente est : **une bosse** à la sortie de la chicane, une botte de foin, **une épingle à gauche** ; **le bison** puis **un rondin qui roule** sur la droite de la branche nord, **une épingle à droite** ; **une pierre qui balance** sur la droite de la dernière branche ;
+- **le virage du saut risqué** (à droite, 90°) : son intérieur est un vide de 10 m, qu'un tremplin traverse ; la réception élargie, vers l'ouest, **une bosse** longue (son plot dessous), des caisses ;
+- **le renflement** (gauche 75°, droite 150°, gauche 75°) autour d'un palmier géant, que **la route cachée** coupe tout droit **derrière un rideau de lianes et de hautes herbes** ; **le dernier virage** (à droite, 90°), que traverse **le pont d'herbe, fermé par un panneau qui casse au boost**.
+
+Cinq épingles, le S du renflement, la chicane et deux autres virages serrés : aucune longue courbe molle. **Les pièces des raccourcis** (le virage du saut et sa réception ; le renflement, le dernier virage et leurs chemins) sont celles de la Forêt Frimousse (celles de la Corniche Cannelle), avec une autre paire de couvertures (le rideau et le panneau) ; le planeur et la plongée sont ceux du Lagon (#20) ; le reste est neuf. Les bords sans muret : l'intérieur du virage du saut, le renflement, l'intérieur du dernier virage ; partout ailleurs, des murets. **Le terrain épouse la route** (`embank`, comme les circuits de #211) ; le lagon garde son sol. Ses mécaniques : le planeur, l'eau, l'anti-gravité, le drift (cinq épingles), deux bosses et un décrochage, un pont, deux plots, trois raccourcis. Sa musique reste « Joyful Jungle ». Son miroir marche.
+
+**Les mesures** : voir `STATUS.md`. **Ce qu'il a appris** :
+- **un planeur cabré et boosté se pose loin** (190 m après le vide sur le Lagon) : la réception du planeur demande assez de route droite ou douce derrière elle (100 m, puis une épingle de 35 m de rayon), sinon il se pose de travers dans l'épingle ;
+- **sous l'eau, la gravité est moitié moindre** : une pente qui commence d'un coup à l'entrée de l'eau fait décoller un kart rapide, et casse son drift ; la pente grandit sur 16 m, et le kart passe sous l'eau là où elle est déjà constante ;
+- **une bosse ou un tremplin à figures avant un obstacle ou un PNJ** : le kart qui en retombe tombe dessus (de 4 à 9 karts renversés par course quand le rondin et le bison étaient à 45-60 m d'une bosse ou d'un tremplin, 0 à 1 ensuite) ; **un tremplin à figures 77 m avant une épingle** en descente envoyait encore un bot Difficile par-dessus son muret : il est parti ;
+- **une zone d'anti-gravité, puis un PNJ, puis un décrochage** : le peloton s'y bouscule (des spin boosts) et passe par-dessus les murets du décrochage ; 24 m de plat avant le décrochage, et le PNJ ailleurs.
+
+![La grille du Lagon Duvet, en haut de la falaise ; à droite, la montée en anti-gravité vers le sommet (#150)](img/lagon-depart-montee.jpg)
+
+![La descente du sommet en anti-gravité (la bande bleue), à 46 m : en contrebas, le serpent et le reste du circuit (#150)](img/lagon-sommet.jpg)
+
+![La plongée : sous l'eau du lagon, le voile bleu, une rangée de boîtes (#150)](img/lagon-plongee.jpg)
 
 ### La suite
 
 - ~~**Étape 2** (#144)~~ : fait (voir plus haut). Reste à faire plus tard : d'autres PNJ (une créature qui traverse toute la route, en laissant une fenêtre ; les bots devraient alors attendre ou la contourner dans le temps, pas seulement dans l'espace) ; le ragdoll du salon (`characters::ragdoll`) pour un PNJ que l'on bouscule.
-- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148, faits ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150 ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
+- Puis les six premiers circuits refaits selon ce guide (#108 : Prairie Pompon, fait ; Anneau Guimauve et Crique Câline : #148, faits ; #109 : le Col des Moufles, fait ; Lagon Duvet : #150, fait ; Ruban Réglisse : #151, qui attend une décision de Max sur la longueur de ses zones), et les nouveaux, jusqu'à 24.
 - **Des raccourcis étroits et cachés** (#156, règle 7) : faits sur la Corniche Cannelle ; Prairie Pompon et le Col des Moufles : #162. Chaque nouveau circuit suit la règle 7 et varie les façons de cacher.
 - **Les courses longues** (#119) : la première (l'Échappée Pissenlit, la Coupe Nuage), la deuxième (le Périple Polochon, la Coupe Câlin, #111) ; une par coupe, la dernière, comme un final : celle de la Coupe Doudou et des coupes suivantes.
 - **Les nouveaux circuits** (#110) : la Forêt Frimousse et les Falaises Flanelle (9e et 10e), avec l'Échappée Pissenlit (8e) : les circuits 8 à 10 sont faits. **#111** : le Coteau Citrouille (11e) et le Périple Polochon (12e, la deuxième course longue) : **la Coupe Câlin est complète et proposée**. Le 13e (le premier de la 4e coupe) : #168 ; puis #112 à #115.

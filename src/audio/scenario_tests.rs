@@ -936,6 +936,10 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
     assert_eq!(voice(&mut app).unwrap().number, then.number);
 }
 
+/// How long [`the_cap_holds_with_twelve_karts`] runs (s): the pack laps the circuit and comes
+/// back past the player in that time.
+const CAP_SECONDS: u32 = 70;
+
 /// Issue #103 acceptance: with 12 karts racing (11 bots, the player driving straight on into
 /// the walls, the items on), the cap of sounds at once is never exceeded, nor the engines' and
 /// the squeals'; the player's engine plays, the others' from the closest karts; sounds were
@@ -945,10 +949,12 @@ fn the_last_lap_and_the_finish_have_their_jingles() {
 /// it did on Prairie Pompon before it was redrawn (1.3 km a lap now: the pack does not come back
 /// in time, out of hearing). Issue #109: the Crique Câline (690 m a lap), the Col des Moufles
 /// being redrawn too (1.3 km). Issue #148: the Lagon Duvet (770 m a lap), the Crique Câline
-/// being redrawn too (1.55 km).
+/// being redrawn too (1.55 km). Issue #150: the Ruban Réglisse (940 m a lap, the shortest
+/// circuit left), the Lagon Duvet being redrawn too (1.86 km); the pack comes back past the
+/// player within [`CAP_SECONDS`] there (70 s, 40 s before).
 #[test]
 fn the_cap_holds_with_twelve_karts() {
-    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/lagon.track.ron".into()), 11);
+    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/ruban.track.ron".into()), 11);
     {
         let mut tuning = app.world_mut().resource_mut::<SoundTuning>();
         tuning.max_sounds = 6;
@@ -957,7 +963,7 @@ fn the_cap_holds_with_twelve_karts() {
     hold_keys(&mut app, &[KeyCode::ArrowUp]);
     let mut heard_others = 0usize;
     let mut most = 0usize;
-    for tick in 0..(40 * 60) {
+    for tick in 0..(CAP_SECONDS * 60) {
         if tick % 300 == 0 {
             // Items for everybody, now and then.
             app.world_mut().write_message(GiveItem(Prize::PeloteX3));

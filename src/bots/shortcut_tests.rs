@@ -38,7 +38,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 10] = [
+const CIRCUITS: [Circuit; 11] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -134,6 +134,16 @@ const CIRCUITS: [Circuit; 10] = [
         jump_approach: 50.0,
         grass_approach: 20.0,
         road_approach: 60.0,
+    },
+    // Issue #150, the Lagon Duvet redrawn (the Forêt Frimousse's pieces, other covers): the jump
+    // from the serpent's last leg, the grass bridge from out of the bulge, the hidden road from
+    // the last straight (past its bump).
+    Circuit {
+        path: "tracks/lagon.track.ron",
+        name: "Lagon Duvet",
+        jump_approach: 60.0,
+        grass_approach: 20.0,
+        road_approach: 40.0,
     },
 ];
 
@@ -974,7 +984,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
     }
     // Issue #110: and the new covers on the new circuits (a waterfall in the Forêt Frimousse, a
     // stack of crates in the Falaises Flanelle); issue #111: the Coteau Citrouille and the Périple
-    // Polochon; issue #148: the Anneau Guimauve and the Crique Câline redrawn.
+    // Polochon; issue #148: the Anneau Guimauve and the Crique Câline redrawn; issue #150: the
+    // Lagon Duvet redrawn.
     for (circuit, kind) in [
         ("Corniche Cannelle", CoverKind::Panel),
         ("Corniche Cannelle", CoverKind::Foliage),
@@ -990,6 +1001,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Anneau Guimauve", CoverKind::Panel),
         ("Crique Câline", CoverKind::Waterfall),
         ("Crique Câline", CoverKind::Foliage),
+        ("Lagon Duvet", CoverKind::Foliage),
+        ("Lagon Duvet", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),

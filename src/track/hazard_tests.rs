@@ -23,8 +23,9 @@ use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_play
 
 const CORNICHE: &str = "tracks/corniche.track.ron";
 /// Issue #108: a circuit without any hazard (issue #109: the Crique Câline, the Col des Moufles
-/// has some now; issue #148: the Lagon Duvet, the Crique Câline redrawn has some).
-const PLAIN_CIRCUIT: &str = "tracks/lagon.track.ron";
+/// has some now; issue #148: the Lagon Duvet, the Crique Câline redrawn has some; issue #150: the
+/// Ruban Réglisse, the Lagon Duvet redrawn has some).
+const PLAIN_CIRCUIT: &str = "tracks/ruban.track.ron";
 
 /// The game on the circuit file `path` (its mirror image or not), race seed `seed`, the player's
 /// kart alone, its race started (the test drives it).
