@@ -1515,6 +1515,11 @@ Cinq épingles, le S du renflement, la chicane et deux autres virages serrés : 
 - **une bosse ou un tremplin à figures avant un obstacle ou un PNJ** : le kart qui en retombe tombe dessus (de 4 à 9 karts renversés par course quand le rondin et le bison étaient à 45-60 m d'une bosse ou d'un tremplin, 0 à 1 ensuite) ; **un tremplin à figures 77 m avant une épingle** en descente envoyait encore un bot Difficile par-dessus son muret : il est parti ;
 - **une zone d'anti-gravité, puis un PNJ, puis un décrochage** : le peloton s'y bouscule (des spin boosts) et passe par-dessus les murets du décrochage ; 24 m de plat avant le décrochage, et le PNJ ailleurs.
 
+- **la CI a changé de machine pendant #150** (une image plus récente : une autre bibliothèque mathématique, donc d'autres courses, au bit près, que sur `dev` la veille) et deux fragilités d'autres circuits sont sorties :
+  - **l'Échappée Pissenlit** : une bosse courte (22 m) sur une branche des lacets de l'ouest lançait le peloton haut, qui retombait 90 m plus loin en freinant pour l'épingle suivante et passait par-dessus ses murets (en CI, et sur la graine 1008 en local). Elle est **longue** (36 m) : plus basse, la même figure, plus aucune chute sur 16 graines ;
+  - **Prairie Pompon** : les bots Difficile ne font **jamais** de figure sur son décrochage (60 m avant l'épingle de la prairie : la règle des 2 s), d'où exactement 2 figures par tour, le minimum ; un kart gêné suffit pour tomber à 1,99. L'avancer au bout de la terrasse (76 m avant l'épingle) donne 2,2 à 2,5 figures, mais toute retouche de Prairie fait tomber ses autres tests au ras de leur seuil (la course avec objets, l'orange au clavier, les murets de verre) : une décision pour Max, voir `STATUS.md` ;
+  - **la leçon** : un test au ras de son seuil sur toutes les graines tombe au premier changement de machine ; c'est la marge qui se mesure, pas seulement le passage.
+
 ![La grille du Lagon Duvet, en haut de la falaise ; à droite, la montée en anti-gravité vers le sommet (#150)](img/lagon-depart-montee.jpg)
 
 ![La descente du sommet en anti-gravité (la bande bleue), à 46 m : en contrebas, le serpent et le reste du circuit (#150)](img/lagon-sommet.jpg)
