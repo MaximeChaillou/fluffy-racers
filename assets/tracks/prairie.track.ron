@@ -1,18 +1,23 @@
 // "Prairie Pompon": a meadow with a hill, the opening circuit (issue #3, redrawn for issue #108
 // after the guide « Conception des circuits », docs/GAME_DESIGN.md § 16). Original layout, about
-// 1380 m a lap (1370 before #193), turning right, easy and flowing, but with turns to drift: the
+// 1390 m a lap (1380 before #227, 1370 before #193), turning right, easy and flowing, but with
+// turns to drift: the
 // start straight; three hairpins (right, left, right) up the Butte, a hill 6.5 m high; on top, a
 // tight left turn and the corner of the risky jump, its inside a drop; a bulge whose hidden road
 // runs straight behind a hedge; down the Butte; two hairpins (right, left) in the meadow; a tight
 // right turn and the last corner, across which the grass path cuts. Five hairpins of 200° to
-// 217° (a Normal bot drifts them; each one after a straight long enough for its last mini-turbo
+// 225° (a Normal bot drifts them; each one after a straight long enough for its last mini-turbo
 // to be over; each one begins or ends in a little kink the other way, which a drift goes
 // through), four tight turns of 90°, an S: no long soft curve, one long straight. The circuit of
 // issue #3 is the test circuit of the unit tests now (`src/track/test_circuit.track.ron`).
 //
 // Drawn as a plan of straights and arcs, its points every 8 m along it (the parameters below
 // follow them; issue #193: 7.7 to 8.8 m in the three hairpins redrawn, the same number of
-// points).
+// points). Issue #227 (its tests out of the edge of their thresholds): three hairpins redrawn
+// (the one at the foot of the Butte, the one on top, the second one of the meadow), the way out
+// of the terrace and the drop moved, the parts of the circuit after them moved sideways with
+// them (the bottom straight takes it up); one more point. The bump out of the last corner
+// longer, its run-off wider.
 //
 // Format: see src/track/data.rs. Positions along the track ("at", "from", "to") are spline
 // parameters: 9.5 = halfway between points 9 and 10. Lateral "offset" goes from -1 (left
@@ -29,26 +34,26 @@
     music: "pure-raceway",
     decor_seed: 11,
     props: [
-        (model: "racing-kit/grandStandCovered", at: 168.754, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
-        (model: "racing-kit/grandStandCovered", at: 167.257, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/grandStandCovered", at: 170.754, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/grandStandCovered", at: 169.257, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.5, radius: 0.8, gap: 1.8),
         (model: "racing-kit/bannerTowerRed", at: 13.474, side: Left, height: 6.0, radius: 1.6, gap: 0.5),
-        (model: "racing-kit/bannerTowerGreen", at: 38.713, side: Right, height: 6.0, radius: 1.6, gap: 0.5),
+        (model: "racing-kit/bannerTowerGreen", at: 39.953, side: Right, height: 6.0, radius: 1.6, gap: 0.5),
         // The hedge inside the bulge: the hidden road runs behind it (bushes: nothing high
         // stands inside a tight turn, GD § 14).
-        (model: "nature-kit/plant_bushLarge", at: 88.675, side: Right, height: 1.5, radius: 1.4, gap: 4.50, shadows: false),
-        (model: "nature-kit/plant_bushLarge", at: 88.900, side: Right, height: 1.5, radius: 1.4, gap: 9.54, shadows: false),
-        (model: "nature-kit/plant_bushLarge", at: 89.050, side: Right, height: 1.5, radius: 1.4, gap: 14.70, shadows: false),
-        (model: "nature-kit/plant_bushLarge", at: 98.275, side: Right, height: 1.5, radius: 1.4, gap: 9.63, shadows: false),
-        (model: "nature-kit/plant_bushLarge", at: 98.500, side: Right, height: 1.5, radius: 1.4, gap: 4.58, shadows: false),
+        (model: "nature-kit/plant_bushLarge", at: 90.675, side: Right, height: 1.5, radius: 1.4, gap: 4.50, shadows: false),
+        (model: "nature-kit/plant_bushLarge", at: 90.9, side: Right, height: 1.5, radius: 1.4, gap: 9.54, shadows: false),
+        (model: "nature-kit/plant_bushLarge", at: 91.05, side: Right, height: 1.5, radius: 1.4, gap: 14.70, shadows: false),
+        (model: "nature-kit/plant_bushLarge", at: 100.275, side: Right, height: 1.5, radius: 1.4, gap: 9.63, shadows: false),
+        (model: "nature-kit/plant_bushLarge", at: 100.5, side: Right, height: 1.5, radius: 1.4, gap: 4.58, shadows: false),
         // Giant oaks outside the two hairpins of the meadow: they mark them from afar.
-        (model: "nature-kit/tree_oak", at: 115.903, side: Left, height: 20.0, radius: 5.0, gap: 3.0),
-        (model: "nature-kit/tree_oak", at: 136.843, side: Right, height: 18.0, radius: 5.0, gap: 3.0),
+        (model: "nature-kit/tree_oak", at: 117.903, side: Left, height: 20.0, radius: 5.0, gap: 3.0),
+        (model: "nature-kit/tree_oak", at: 138.232, side: Right, height: 18.0, radius: 5.0, gap: 3.0),
         // Giant trees on the Butte, outside its hairpin: they show the hill from afar.
-        (model: "nature-kit/tree_detailed", at: 63.033, side: Left, height: 18.0, radius: 4.5, gap: 1.5),
-        (model: "racing-kit/tentClosed", at: 156.647, side: Left, height: 3.2, radius: 3.4, gap: 1.5),
+        (model: "nature-kit/tree_detailed", at: 65.029, side: Left, height: 18.0, radius: 4.5, gap: 1.5),
+        (model: "racing-kit/tentClosed", at: 157.647, side: Left, height: 3.2, radius: 3.4, gap: 1.5),
         // A stand by the bottom straight, outside.
-        (model: "racing-kit/grandStandAwning", at: 153.902, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
+        (model: "racing-kit/grandStandAwning", at: 154.902, side: Left, height: 6.0, radius: 3.8, gap: 1.0),
     ],
     checkpoint_spacing: 25.0,
     points: [
@@ -87,144 +92,148 @@
         (pos: (36.84, 0.00, -86.19), width: 14.0, shoulder: 4.0),
         (pos: (36.84, 0.00, -77.70), width: 14.0, shoulder: 4.0),
         (pos: (36.84, 0.00, -69.68), width: 14.0, shoulder: 4.0),
-        (pos: (36.84, 0.00, -60.89), width: 14.0, shoulder: 4.0),
-        // Issue #193: a narrower shoulder where the kink turns (its walls never fold).
-        (pos: (36.16, 0.00, -52.16), width: 14.0, shoulder: 3.5),
-        (pos: (32.85, 0.00, -44.05), width: 14.0, shoulder: 4.0),
-        (pos: (30.87, 0.00, -35.54), width: 14.0, shoulder: 4.0),
-        // a hairpin to the left: the climb starts. Issue #193: a kink to the right first, then
-        // radius 25 m and 208° (22 m and 180° before): 11 m longer, out onto the climb as before.
-        (pos: (31.95, 0.02, -26.86), width: 14.0, shoulder: 5.0),
-        (pos: (35.94, 0.14, -19.09), width: 14.0, shoulder: 5.0),
-        (pos: (42.37, 0.33, -13.16), width: 14.0, shoulder: 5.0),
-        (pos: (50.44, 0.57, -9.81), width: 14.0, shoulder: 5.0),
-        (pos: (59.17, 0.82, -9.44), width: 14.0, shoulder: 5.0),
-        (pos: (67.50, 1.08, -12.10), width: 14.0, shoulder: 5.0),
-        (pos: (74.40, 1.29, -17.47), width: 14.0, shoulder: 5.0),
-        (pos: (79.03, 1.44, -24.88), width: 14.0, shoulder: 5.0),
-        (pos: (80.83, 1.50, -33.43), width: 14.0, shoulder: 5.0),
+        (pos: (36.84, 0.00, -61.68), width: 14.0, shoulder: 4.0),
+        (pos: (36.84, 0.00, -53.68), width: 14.0, shoulder: 4.0),
+        (pos: (36.84, 0.00, -45.68), width: 14.0, shoulder: 4.0),
+        (pos: (36.84, 0.00, -37.68), width: 14.0, shoulder: 4.0),
+        (pos: (36.84, 0.01, -29.63), width: 14.0, shoulder: 4.0),
+        // a hairpin to the left: the climb starts. Issue #227: radius 24 m and 200°, then a kink
+        // to the right (20°) onto the climb, 8 m further south (#193: a kink to the right first,
+        // then 25 m and 208°; 22 m and 180° before #193).
+        (pos: (38.18, 0.05, -21.78), width: 14.0, shoulder: 5.0),
+        (pos: (42.01, 0.16, -14.80), width: 14.0, shoulder: 5.0),
+        (pos: (47.95, 0.33, -9.43), width: 14.0, shoulder: 5.0),
+        (pos: (55.28, 0.54, -6.33), width: 14.0, shoulder: 5.0),
+        (pos: (63.23, 0.76, -5.80), width: 14.0, shoulder: 5.0),
+        (pos: (70.91, 0.98, -7.89), width: 14.0, shoulder: 5.0),
+        (pos: (77.51, 1.18, -12.42), width: 14.0, shoulder: 5.0),
+        (pos: (82.24, 1.35, -18.82), width: 14.0, shoulder: 5.0),
+        (pos: (84.62, 1.45, -26.42), width: 14.0, shoulder: 5.0),
+        (pos: (84.37, 1.51, -34.43), width: 14.0, shoulder: 5.0),
         // north, up the Butte (6.5 m): balloons, the bison.
-        (pos: (80.84, 1.57, -42.22), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 1.78, -50.23), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 2.10, -58.25), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 2.52, -66.26), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 3.00, -74.28), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 3.52, -82.29), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 4.06, -90.31), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 4.60, -98.33), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 5.12, -106.34), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 5.58, -114.36), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 5.98, -122.37), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 6.28, -130.39), width: 14.0, shoulder: 2.0),
-        (pos: (80.84, 6.46, -138.40), width: 14.0, shoulder: 2.0),
-        // the hairpin at the top of the Butte, to the right (radius 22 m): the view.
-        (pos: (80.93, 6.50, -146.42), width: 14.0, shoulder: 5.0),
-        (pos: (83.09, 6.50, -154.09), width: 14.0, shoulder: 5.0),
-        (pos: (87.84, 6.50, -160.49), width: 14.0, shoulder: 5.0),
-        (pos: (94.56, 6.50, -164.78), width: 14.0, shoulder: 5.0),
-        (pos: (102.37, 6.50, -166.39), width: 14.0, shoulder: 5.0),
-        (pos: (110.24, 6.50, -165.12), width: 14.0, shoulder: 5.0),
-        (pos: (117.13, 6.50, -161.12), width: 14.0, shoulder: 5.0),
-        (pos: (122.16, 6.50, -154.93), width: 14.0, shoulder: 5.0),
-        (pos: (124.64, 6.50, -147.36), width: 14.0, shoulder: 5.0),
-        (pos: (124.26, 6.50, -139.39), width: 14.0, shoulder: 5.0),
-        (pos: (121.67, 6.50, -131.81), width: 14.0, shoulder: 2.0),
-        (pos: (119.07, 6.50, -124.24), width: 14.0, shoulder: 2.0),
-        (pos: (117.76, 6.50, -116.34), width: 14.0, shoulder: 2.0),
-        (pos: (117.68, 6.50, -108.33), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 1.57, -42.22), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 1.78, -50.23), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 2.10, -58.25), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 2.52, -66.26), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 3.00, -74.28), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 3.52, -82.29), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 4.06, -90.31), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 4.60, -98.33), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 5.12, -106.34), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 5.58, -114.36), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 5.98, -122.37), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 6.28, -130.52), width: 14.0, shoulder: 2.0),
+        (pos: (82.63, 6.46, -138.72), width: 14.0, shoulder: 2.0),
+        // the hairpin at the top of the Butte, to the right (radius 22 m): the view. Issue #227:
+        // 225° (about 200° before), then a kink to the left (45°) back to the south.
+        (pos: (82.78, 6.50, -146.91), width: 14.0, shoulder: 5.0),
+        (pos: (85.20, 6.50, -154.70), width: 14.0, shoulder: 5.0),
+        (pos: (90.30, 6.50, -161.06), width: 14.0, shoulder: 5.0),
+        (pos: (97.36, 6.50, -165.13), width: 14.0, shoulder: 5.0),
+        (pos: (105.42, 6.50, -166.36), width: 14.0, shoulder: 5.0),
+        (pos: (113.37, 6.50, -164.56), width: 14.0, shoulder: 5.0),
+        (pos: (120.12, 6.50, -159.99), width: 14.0, shoulder: 5.0),
+        (pos: (124.75, 6.50, -153.28), width: 14.0, shoulder: 5.0),
+        (pos: (126.61, 6.50, -145.34), width: 14.0, shoulder: 5.0),
+        (pos: (125.45, 6.50, -137.27), width: 14.0, shoulder: 5.0),
+        (pos: (121.44, 6.50, -130.18), width: 14.0, shoulder: 2.0),
+        (pos: (116.22, 6.50, -123.87), width: 14.0, shoulder: 2.0),
+        (pos: (112.85, 6.50, -116.42), width: 14.0, shoulder: 2.0),
+        (pos: (111.70, 6.50, -108.33), width: 14.0, shoulder: 2.0),
         // on top: a tight left turn (90°), east.
-        (pos: (118.43, 6.50, -100.38), width: 14.0, shoulder: 2.0),
-        (pos: (122.07, 6.50, -93.30), width: 14.0, shoulder: 2.0),
-        (pos: (128.18, 6.50, -88.20), width: 14.0, shoulder: 2.0),
-        (pos: (135.80, 6.50, -85.88), width: 14.0, shoulder: 2.0),
-        (pos: (143.81, 6.50, -85.80), width: 14.0, shoulder: 2.0),
-        (pos: (151.83, 6.50, -85.80), width: 14.0, shoulder: 2.0),
-        (pos: (159.84, 6.50, -85.80), width: 14.0, shoulder: 2.0),
+        (pos: (112.45, 6.50, -100.38), width: 14.0, shoulder: 2.0),
+        (pos: (116.09, 6.50, -93.30), width: 14.0, shoulder: 2.0),
+        (pos: (122.20, 6.50, -88.20), width: 14.0, shoulder: 2.0),
+        (pos: (129.82, 6.50, -85.88), width: 14.0, shoulder: 2.0),
+        (pos: (137.83, 6.50, -85.80), width: 14.0, shoulder: 2.0),
+        (pos: (145.85, 6.50, -85.80), width: 14.0, shoulder: 2.0),
+        (pos: (153.86, 6.50, -85.80), width: 14.0, shoulder: 2.0),
         // the corner of the risky jump, to the right (90°, radius 22 m): its inside is a drop.
-        (pos: (167.81, 6.50, -85.19), width: 14.0, shoulder: 2.0),
-        (pos: (175.10, 6.50, -81.96), width: 14.0, shoulder: 2.0),
-        (pos: (180.76, 6.50, -76.34), width: 14.0, shoulder: 2.0),
-        (pos: (184.04, 6.50, -69.08), width: 14.0, shoulder: 2.0),
+        (pos: (161.83, 6.50, -85.19), width: 14.0, shoulder: 2.0),
+        (pos: (169.12, 6.50, -81.96), width: 14.0, shoulder: 2.0),
+        (pos: (174.78, 6.50, -76.34), width: 14.0, shoulder: 2.0),
+        (pos: (178.06, 6.50, -69.08), width: 14.0, shoulder: 2.0),
         // the landing, wider (16 m): a rock at its left edge.
-        (pos: (184.68, 6.50, -61.11), width: 16.0, shoulder: 2.0),
-        (pos: (184.68, 6.50, -53.10), width: 16.0, shoulder: 2.0),
-        (pos: (184.68, 6.50, -45.08), width: 16.0, shoulder: 2.0),
+        (pos: (178.70, 6.50, -61.11), width: 16.0, shoulder: 2.0),
+        (pos: (178.70, 6.50, -53.10), width: 16.0, shoulder: 2.0),
+        (pos: (178.70, 6.50, -45.08), width: 16.0, shoulder: 2.0),
         // the bulge (left 70°, right 140°, left 70°): the hidden road goes straight behind its hedge.
-        (pos: (184.69, 6.50, -37.07), width: 14.0, shoulder: 2.0),
-        (pos: (185.95, 6.50, -29.17), width: 14.0, shoulder: 2.0),
-        (pos: (189.24, 6.50, -21.89), width: 14.0, shoulder: 2.0),
-        (pos: (194.35, 6.50, -15.74), width: 14.0, shoulder: 2.0),
-        (pos: (200.89, 6.50, -11.15), width: 14.0, shoulder: 2.0),
-        (pos: (208.33, 6.50, -8.18), width: 14.0, shoulder: 2.0),
-        (pos: (215.49, 6.50, -4.66), width: 14.0, shoulder: 2.0),
-        (pos: (220.98, 6.50, 1.12), width: 14.0, shoulder: 2.0),
-        (pos: (224.04, 6.50, 8.48), width: 14.0, shoulder: 2.0),
-        (pos: (224.28, 6.50, 16.45), width: 14.0, shoulder: 2.0),
-        (pos: (221.67, 6.50, 23.98), width: 14.0, shoulder: 2.0),
-        (pos: (216.54, 6.50, 30.09), width: 14.0, shoulder: 2.0),
-        (pos: (209.58, 6.50, 33.97), width: 14.0, shoulder: 2.0),
-        (pos: (202.09, 6.50, 36.81), width: 14.0, shoulder: 2.0),
-        (pos: (195.35, 6.50, 41.10), width: 14.0, shoulder: 2.0),
-        (pos: (189.98, 6.50, 47.02), width: 14.0, shoulder: 2.0),
-        (pos: (186.36, 6.50, 54.15), width: 14.0, shoulder: 2.0),
-        (pos: (184.75, 6.50, 61.98), width: 14.0, shoulder: 2.0),
+        (pos: (178.71, 6.50, -37.07), width: 14.0, shoulder: 2.0),
+        (pos: (179.97, 6.50, -29.17), width: 14.0, shoulder: 2.0),
+        (pos: (183.26, 6.50, -21.89), width: 14.0, shoulder: 2.0),
+        (pos: (188.37, 6.50, -15.74), width: 14.0, shoulder: 2.0),
+        (pos: (194.91, 6.50, -11.15), width: 14.0, shoulder: 2.0),
+        (pos: (202.35, 6.50, -8.18), width: 14.0, shoulder: 2.0),
+        (pos: (209.51, 6.50, -4.66), width: 14.0, shoulder: 2.0),
+        (pos: (215.00, 6.50, 1.12), width: 14.0, shoulder: 2.0),
+        (pos: (218.06, 6.50, 8.48), width: 14.0, shoulder: 2.0),
+        (pos: (218.30, 6.50, 16.45), width: 14.0, shoulder: 2.0),
+        (pos: (215.69, 6.50, 23.98), width: 14.0, shoulder: 2.0),
+        (pos: (210.56, 6.50, 30.09), width: 14.0, shoulder: 2.0),
+        (pos: (203.60, 6.50, 33.97), width: 14.0, shoulder: 2.0),
+        (pos: (196.11, 6.50, 36.81), width: 14.0, shoulder: 2.0),
+        (pos: (189.37, 6.50, 41.10), width: 14.0, shoulder: 2.0),
+        (pos: (184.00, 6.50, 47.02), width: 14.0, shoulder: 2.0),
+        (pos: (180.38, 6.50, 54.15), width: 14.0, shoulder: 2.0),
+        (pos: (178.77, 6.50, 61.98), width: 14.0, shoulder: 2.0),
         // down the Butte, south (issue #180: down to the terrace of the hairpin below, 2.5 m above
         // the meadow).
-        (pos: (184.68, 6.49, 69.99), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 6.16, 78.01), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 5.50, 86.02), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 4.67, 94.04), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 3.80, 102.05), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 3.06, 110.07), width: 14.0, shoulder: 2.0),
-        (pos: (184.68, 2.59, 118.08), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 6.49, 69.99), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 6.16, 78.01), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 5.50, 86.02), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 4.67, 94.04), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 3.80, 102.05), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 3.06, 110.07), width: 14.0, shoulder: 2.0),
+        (pos: (178.70, 2.59, 118.08), width: 14.0, shoulder: 2.0),
         // a hairpin to the right (radius 22 m), on a terrace 2.5 m above the meadow (issue #180).
-        (pos: (184.47, 2.50, 126.09), width: 14.0, shoulder: 5.0),
-        (pos: (181.95, 2.50, 133.65), width: 14.0, shoulder: 5.0),
-        (pos: (176.90, 2.50, 139.82), width: 14.0, shoulder: 5.0),
-        (pos: (169.99, 2.50, 143.79), width: 14.0, shoulder: 5.0),
-        (pos: (162.12, 2.50, 145.03), width: 14.0, shoulder: 5.0),
-        (pos: (154.32, 2.50, 143.38), width: 14.0, shoulder: 5.0),
-        (pos: (147.61, 2.50, 139.07), width: 14.0, shoulder: 5.0),
-        (pos: (142.89, 2.50, 132.65), width: 14.0, shoulder: 5.0),
-        (pos: (140.77, 2.50, 124.96), width: 14.0, shoulder: 5.0),
-        (pos: (141.52, 2.50, 117.03), width: 14.0, shoulder: 5.0),
-        (pos: (144.21, 2.50, 109.48), width: 14.0, shoulder: 2.0),
-        (pos: (146.71, 2.50, 101.87), width: 14.0, shoulder: 2.0),
-        (pos: (147.81, 2.50, 93.94), width: 14.0, shoulder: 2.0),
+        (pos: (178.49, 2.50, 126.09), width: 14.0, shoulder: 5.0),
+        (pos: (175.97, 2.50, 133.65), width: 14.0, shoulder: 5.0),
+        (pos: (170.92, 2.50, 139.82), width: 14.0, shoulder: 5.0),
+        (pos: (164.01, 2.50, 143.79), width: 14.0, shoulder: 5.0),
+        (pos: (156.14, 2.50, 145.03), width: 14.0, shoulder: 5.0),
+        (pos: (148.34, 2.50, 143.38), width: 14.0, shoulder: 5.0),
+        (pos: (141.63, 2.50, 139.07), width: 14.0, shoulder: 5.0),
+        (pos: (136.91, 2.50, 132.65), width: 14.0, shoulder: 5.0),
+        (pos: (134.79, 2.50, 124.96), width: 14.0, shoulder: 5.0),
+        (pos: (135.54, 2.50, 117.03), width: 14.0, shoulder: 5.0),
+        (pos: (138.23, 2.50, 109.48), width: 14.0, shoulder: 2.0),
+        (pos: (140.92, 0.00, 101.93), width: 14.0, shoulder: 2.0),
+        (pos: (143.61, 0.00, 94.38), width: 14.0, shoulder: 2.0),
         // north: issue #180, off the terrace by a drop of 2.5 m (the road level up to its edge,
-        // between these two points), then on in the meadow.
-        (pos: (147.84, 2.50, 85.93), width: 14.0, shoulder: 2.0),
-        (pos: (147.84, 0.00, 77.91), width: 14.0, shoulder: 2.0),
-        (pos: (147.84, 0.00, 70.21), width: 14.0, shoulder: 2.0),
-        (pos: (147.84, 0.00, 62.51), width: 14.0, shoulder: 2.0),
-        (pos: (147.84, 0.00, 54.82), width: 14.0, shoulder: 2.0),
-        (pos: (147.84, 0.00, 47.12), width: 14.0, shoulder: 2.0),
-        (pos: (149.03, 0.00, 39.54), width: 14.0, shoulder: 2.0),
-        (pos: (152.10, 0.00, 32.50), width: 14.0, shoulder: 2.0),
-        (pos: (153.63, 0.00, 24.99), width: 14.0, shoulder: 2.0),
-        // a hairpin to the left. Issue #193: a kink to the right first, then radius 24 m and 208°
-        // (22 m and about 200° before, its kink at the end).
-        (pos: (152.71, 0.00, 17.38), width: 14.0, shoulder: 5.0),
-        (pos: (149.45, 0.00, 10.44), width: 14.0, shoulder: 5.0),
-        (pos: (144.16, 0.00, 4.89), width: 14.0, shoulder: 5.0),
-        (pos: (137.39, 0.00, 1.29), width: 14.0, shoulder: 5.0),
-        (pos: (129.84, 0.00, 0.01), width: 14.0, shoulder: 5.0),
-        (pos: (122.26, 0.00, 1.18), width: 14.0, shoulder: 5.0),
-        (pos: (115.44, 0.00, 4.67), width: 14.0, shoulder: 5.0),
-        (pos: (110.07, 0.00, 10.14), width: 14.0, shoulder: 5.0),
-        (pos: (106.69, 0.00, 17.02), width: 14.0, shoulder: 5.0),
-        (pos: (105.65, 0.00, 24.61), width: 14.0, shoulder: 2.0),
-        (pos: (105.65, 0.00, 32.31), width: 14.0, shoulder: 2.0),
+        // between the two points before), then on in the meadow. Issue #227: the way out of the
+        // terrace goes on straight 8 m more before it turns north (the drop on it, straight).
+        (pos: (144.71, 0.00, 86.45), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 78.44), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 70.21), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 62.51), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 54.82), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 46.67), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 38.52), width: 14.0, shoulder: 2.0),
+        (pos: (144.74, 0.00, 30.32), width: 14.0, shoulder: 2.0),
+        (pos: (144.72, 0.00, 22.17), width: 14.0, shoulder: 2.0),
+        // a hairpin to the left. Issue #227: radius 23 m and 215°, then a kink to the right (35°)
+        // onto the straight south (#193: a kink to the right first, then 24 m and 208°; 22 m and
+        // about 200° before #193, its kink at the end).
+        (pos: (143.00, 0.00, 14.25), width: 14.0, shoulder: 5.0),
+        (pos: (138.60, 0.00, 7.38), width: 14.0, shoulder: 5.0),
+        (pos: (132.13, 0.00, 2.50), width: 14.0, shoulder: 5.0),
+        (pos: (124.36, 0.00, 0.17), width: 14.0, shoulder: 5.0),
+        (pos: (116.22, 0.00, 0.69), width: 14.0, shoulder: 5.0),
+        (pos: (108.81, 0.00, 4.00), width: 14.0, shoulder: 5.0),
+        (pos: (103.02, 0.00, 9.66), width: 14.0, shoulder: 5.0),
+        (pos: (99.53, 0.00, 17.04), width: 14.0, shoulder: 5.0),
+        (pos: (98.84, 0.00, 25.12), width: 14.0, shoulder: 2.0),
+        (pos: (100.99, 0.00, 32.93), width: 14.0, shoulder: 2.0),
         // south.
-        (pos: (105.65, 0.00, 40.01), width: 14.0, shoulder: 2.0),
-        (pos: (105.65, 0.00, 48.03), width: 14.0, shoulder: 2.0),
-        (pos: (105.65, 0.00, 56.04), width: 14.0, shoulder: 2.0),
-        (pos: (105.65, 0.00, 64.06), width: 14.0, shoulder: 2.0),
+        (pos: (105.02, 0.00, 40.05), width: 14.0, shoulder: 2.0),
+        (pos: (106.63, 0.00, 48.03), width: 14.0, shoulder: 2.0),
+        (pos: (106.63, 0.00, 56.04), width: 14.0, shoulder: 2.0),
+        (pos: (106.63, 0.00, 64.06), width: 14.0, shoulder: 2.0),
         // a tight right turn (90°): the grass path crosses its inside.
-        (pos: (105.41, 0.00, 72.06), width: 14.0, shoulder: 2.0),
-        (pos: (102.41, 0.00, 79.42), width: 14.0, shoulder: 2.0),
-        (pos: (96.54, 0.00, 84.78), width: 14.0, shoulder: 2.0),
-        (pos: (88.93, 0.00, 87.08), width: 14.0, shoulder: 2.0),
+        (pos: (106.39, 0.00, 72.06), width: 14.0, shoulder: 2.0),
+        (pos: (103.39, 0.00, 79.42), width: 14.0, shoulder: 2.0),
+        (pos: (97.52, 0.00, 84.78), width: 14.0, shoulder: 2.0),
+        (pos: (89.91, 0.00, 87.08), width: 14.0, shoulder: 2.0),
         // west along the bottom: a trick ramp.
         (pos: (80.91, 0.00, 87.13), width: 14.0, shoulder: 2.0),
         (pos: (72.90, 0.00, 87.13), width: 14.0, shoulder: 2.0),
@@ -239,15 +248,16 @@
         (pos: (9.17, 0.00, 84.81), width: 14.0, shoulder: 2.0),
         (pos: (3.28, 0.00, 79.48), width: 14.0, shoulder: 2.0),
         (pos: (0.25, 0.00, 72.13), width: 14.0, shoulder: 2.0),
-        // the start straight (the grid sits here, behind point 0).
-        (pos: (-0.00, 0.00, 64.13), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 56.11), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 48.09), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 40.08), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 32.06), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 24.05), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 16.03), width: 14.0, shoulder: 4.0),
-        (pos: (-0.00, 0.00, 8.02), width: 14.0, shoulder: 4.0),
+        // the start straight (the grid sits here, behind point 0). Issue #227: its shoulders 6 m
+        // wide (4 m before): the run-off of the bump out of the last corner.
+        (pos: (-0.00, 0.00, 64.13), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 56.11), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 48.09), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 40.08), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 32.06), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 24.05), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 16.03), width: 14.0, shoulder: 6.0),
+        (pos: (-0.00, 0.00, 8.02), width: 14.0, shoulder: 6.0),
     ],
     // Issue #180 (GD § 16, rule 3): bumps, a real rise and fall of the road, 2.2 m high (a kart
     // and its tallest driver): a fast kart takes off from their crest (a trick there gives the
@@ -255,22 +265,33 @@
     // its foot launches the karts onto it), and out of the last corner toward the line, before
     // the grid. Not on the short straights between two hairpins: a kart that lands there is too
     // late to set up its drift (the bots, and a player on the keyboard, lose their orange).
+    // Issue #227: the one out of the last corner 31.8 m long (28 m before: as long as it can be
+    // before the grid), gentler, and its run-off wider (the shoulders of the start straight
+    // before the line, 6 m): the karts still cross the road toward its outside there, and the
+    // short one launched them high (5.7 m) and long, over the wall (pelicans, after the line).
     bumps: [
-        (at: 44.2, height: 2.2, length: 32.0),
-        (at: 162.2, height: 2.2, length: 28.0),
+        (at: 46.2, height: 2.2, length: 32.0),
+        (at: 163.0, height: 2.2, length: 31.8),
     ],
     // Issue #180: a drop of 2.5 m off the terrace of the meadow's hairpin, on the straight north:
     // the road stops at its edge and goes on below, in its line (a trick off the edge gives the
     // boost). Not a fall: no pelican. (Down the Butte, the drop landed too close to the hairpin
-    // below it.)
+    // below it.) Issue #227: at the end of the terrace, about 80 m before the hairpin of the meadow
+    // (60 m before): a bot tricks off it only with no big turn within 2 s, and none did; on a
+    // straight piece of road (the glass of the walls there, beside the descent, reaches down the
+    // step: `track::mesh`'s test finds each of its corners within a meter of a sample of the road
+    // only where the road is straight).
     drops: [
-        (at: 123.5, height: 2.5),
+        (at: 122.5, height: 2.5),
     ],
     offroad: [
         // Sand at the inside of the first hairpin: cutting the apex costs speed. Issue #193: from
         // 0.7 (0.55 before): with the wider hairpin, a drift held on the road passes beside it
-        // (`race::scenario_tests::a_keyboard_player_gets_an_orange_in_every_big_turn`).
-        (from: 19.370, to: 23.141, left: 0.7, right: 1.0),
+        // (`race::scenario_tests::a_keyboard_player_gets_an_orange_in_every_big_turn`). Issue
+        // #227: from 0.8: at 0.7, that drift kept to the sand's edge (the racing line keeps out of
+        // it), steered out to keep off it and got its orange late, a wheel on the sand's first
+        // meter.
+        (from: 19.37, to: 23.141, left: 0.8, right: 1.0),
     ],
     // Issue #107: the sides without wall: the inside of the jump's corner (a drop of 6.5 m), where
     // the hidden road leaves the road and comes back to it (only where its own road lies beyond:
@@ -281,10 +302,10 @@
     // over the edge would drive on below the road, not seen fallen). A kart that leaves the road
     // where it has no wall is out of the track: the pelican comes for it.
     open_edges: [
-        (from: 74.609, to: 82.913, side: Right),
-        (from: 85.657, to: 87.404, side: Right),
-        (from: 99.762, to: 101.509, side: Right),
-        (from: 142.390, to: 154.626, side: Right),
+        (from: 76.609, to: 84.913, side: Right),
+        (from: 87.657, to: 89.404, side: Right),
+        (from: 101.762, to: 103.509, side: Right),
+        (from: 143.447, to: 155.626, side: Right),
     ],
     shortcuts: [
         // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
@@ -292,18 +313,18 @@
         // corner (a 6.5 m fall), landing on the road after it (on the landing, 16 m after its
         // start: the side without wall ends where the flight comes over the road). Fast enough,
         // it saves the corner; too slow, it falls.
-        (from: 74.859, to: 82.788, kind: Jump, width: 8.0, ramp_width: 6.0,
+        (from: 76.859, to: 84.788, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 8.0,
-         points: [(142.66, 6.50, -84.19), (154.60, 6.50, -81.41), (159.69, 6.50, -75.25), (182.83, 6.50, -47.27)]),
+         points: [(136.68, 6.50, -84.19), (148.62, 6.50, -81.41), (153.71, 6.50, -75.25), (176.85, 6.50, -47.27)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: straight behind the hedge while the road bulges around it. Issue #171:
         // level with the road (6.50 m; 6.48 to 6.49 before: its last 12 m lay as high as the
         // road's shoulder it comes back over, and the wheels found the grass as often as it).
-        (from: 85.728, to: 101.468, kind: Grass, width: 10.0,
-         points: [(179.90, 6.50, -30.21), (178.94, 6.50, -15.76), (178.37, 6.50, -1.30), (178.18, 6.50, 13.17), (178.38, 6.50, 27.65), (178.96, 6.50, 42.13), (179.94, 6.50, 56.62)]),
+        (from: 87.728, to: 103.468, kind: Grass, width: 10.0,
+         points: [(173.92, 6.50, -30.21), (172.96, 6.50, -15.76), (172.39, 6.50, -1.30), (172.20, 6.50, 13.17), (172.40, 6.50, 27.65), (172.98, 6.50, 42.13), (173.96, 6.50, 56.62)]),
         // The grass path, across the last corner: slow without a boost, quicker with one.
-        (from: 142.889, to: 154.326, kind: Grass, width: 8.0,
-         points: [(94.66, 0.00, 39.02), (94.11, 0.00, 45.22), (92.61, 0.00, 51.27), (90.19, 0.00, 57.00), (86.91, 0.00, 62.30), (82.85, 0.00, 67.02), (78.10, 0.00, 71.05), (72.79, 0.00, 74.29), (67.04, 0.00, 76.68), (60.98, 0.00, 78.14), (54.28, 0.00, 78.64)]),
+        (from: 143.915, to: 155.326, kind: Grass, width: 8.0,
+         points: [(95.64, 0.00, 39.02), (95.09, 0.00, 45.22), (93.59, 0.00, 51.27), (91.17, 0.00, 57.00), (87.89, 0.00, 62.30), (83.83, 0.00, 67.02), (79.08, 0.00, 71.05), (73.77, 0.00, 74.29), (68.02, 0.00, 76.68), (61.96, 0.00, 78.14), (54.28, 0.00, 78.64)]),
     ],
     // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
     // the next turn does not want (the bots keep to the other one), never where a bot sets up
@@ -315,14 +336,14 @@
     // right at the top (the karts keep left, on its outside); issue #180: past the landing of
     // the climb's bump, like the second row of boxes and the croquettes after it.
     npcs: [
-        (kind: Bison, at: 51.6, offset: 0.55, sweep: 0.3, period: 6.5),
+        (kind: Bison, at: 53.6, offset: 0.55, sweep: 0.3, period: 6.5),
     ],
     // Things to drive through: balloons on the climb (on its bump), hay bales down the Butte and
     // along the bottom straight.
     breakables: [
-        (kind: Balloon, at: 45.520, offsets: [-0.55, 0.0, 0.55]),
-        (kind: HayBale, at: 104.254, offsets: [-0.5]),
-        (kind: HayBale, at: 158.144, offsets: [-0.5]),
+        (kind: Balloon, at: 47.52, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 106.254, offsets: [-0.5]),
+        (kind: HayBale, at: 159.144, offsets: [-0.5]),
     ],
     // Trick ramp (issue #13): west along the bottom, on flat ground, far from the next hairpin (a
     // bot or a player drifts it from its normal speed) and out of the tight turn (a kart that
@@ -331,7 +352,7 @@
     // takes the ramp going left lands before the left wall). The risky jump's ramp is a trick
     // ramp too.
     trick_ramps: [
-        (at: 152.405, offset: 0.35, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 153.405, offset: 0.35, width: 7.0, length: 7.0, angle: 12.0),
     ],
     // Boost pads (issue #13): about 1 s of boost, on the start straight (over before the first
     // hairpin), at the foot of the climb and out of the hairpin at the top of the Butte (lining
@@ -340,14 +361,18 @@
     // path: it pays only with a boost of one's own (the last hairpin's mini-turbo, a piment).
     boost_pads: [
         (at: 5.988, offset: -0.45),
-        (at: 43.773, offset: 0.0),
-        (at: 69.692, offset: 0.0),
+        (at: 45.739, offset: 0.0),
+        (at: 71.691, offset: 0.0),
     ],
+    // Item boxes: three rows across the straights and a double box. Issue #227: four boxes in
+    // the rows of the climb and of the bottom straight (three before), the latter to the left of
+    // the middle, where the pack drives toward the outside of the last corner (its box on the
+    // right was never taken).
     item_boxes: [
         (at: 9.357, offsets: [-0.6, -0.2, 0.2, 0.6]),
-        (at: 49.2, offsets: [-0.5, 0.0, 0.5]),
-        (at: 156.647, offsets: [-0.5, 0.0, 0.5]),
-        (at: 74.984, offsets: [-0.7], double: true),
+        (at: 51.2, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 157.647, offsets: [-0.75, -0.4, -0.05, 0.3]),
+        (at: 76.984, offsets: [-0.7], double: true),
     ],
     // Croquettes (issue #14): lines along the straights, off the middle of the road (go and get
     // them), never on the grid. Each one is +1 % of top speed (10 at most) and a mini-boost; they
@@ -355,10 +380,10 @@
     croquettes: [
         (from: 1.996, count: 5, spacing: 3.0, offset: 0.42),
         (from: 6.737, count: 4, spacing: 3.0, offset: -0.45),
-        (from: 31.034, count: 4, spacing: 3.0, offset: 0.4),
-        (from: 53.2, count: 4, spacing: 3.0, offset: -0.4),
-        (from: 82.663, count: 3, spacing: 3.0, offset: 0.3),
-        (from: 127.178, count: 4, spacing: 3.0, offset: 0.4),
-        (from: 157.146, count: 4, spacing: 3.0, offset: 0.45),
+        (from: 31.185, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 55.2, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 84.663, count: 3, spacing: 3.0, offset: 0.3),
+        (from: 129.167, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 158.146, count: 4, spacing: 3.0, offset: 0.45),
     ],
 )
