@@ -33,7 +33,8 @@
 //!   never rises over the road (nor steeper than 45° above it beyond its walls), and it keeps
 //!   every void a kart falls into: beside a side without wall, over a gap, under a risky jump's
 //!   flight, the terrain stays [`OPEN_FALL`] meters under the road at least (more than
-//!   `RaceTuning::fall_depth`); flat over the lakes and around the anti-gravity zones.
+//!   `RaceTuning::fall_depth`); flat over the lakes and around the anti-gravity zones that bank
+//!   (issue #215: a level zone, a big climb, is carried like any road).
 //! - Issue #204: **a road cut into the mountain** (`TrackData::cuttings`, on a terrain that
 //!   hugs the road): on the side of a cutting, beyond the berm, the relief of the mountain rises
 //!   over the road, at [`CUT_RISE`] at most. On a circuit with cuttings, whatever rises beyond the
@@ -43,7 +44,7 @@
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use super::anti_gravity::{AntiGravityZone, anti_gravity_at};
+use super::anti_gravity::{AntiGravityZone, anti_gravity_at, bank_cos};
 use super::biome::{Palette, Rgb};
 use super::data::{BridgeData, ShortcutKind};
 use super::decor::tight_turns;
@@ -806,19 +807,200 @@ fn hug_level(sample: &TrackSample) -> f32 {
     low - GROUND_HEIGHT - EMBANK_LIP
 }
 
+/// Issue #215: a road's level steeper than this between two samples (rise over horizontal run)
+/// is a step (a drop), not a slope: the steepest climb of a level anti-gravity zone stays well
+/// under it.
+const STEP_SLOPE: f32 = 1.5;
+
+/// Issue #215: how much lower than its measured sag the bound that follows the road stays (m):
+/// the chords are measured from the samples of the road, a meter apart (a kink between two of
+/// them, where the road comes out of the ground, sags a few centimeters more).
+const SAG_MARGIN: f32 = 0.1;
+
+/// Issue #215: the level of the terrain that hugs a line (the road, or a shortcut's path) along
+/// it, as a bound that **follows its bumps**: a vertex takes the line's exact level where it
+/// stands along it (its horizontal run), less the sag of its triangles there. A triangle of the
+/// terrain spans `S` along the line, a cell's side where the line runs along the grid to its
+/// diagonal at 45° to it: over a stretch that bends up (a dip, the foot of a bump) by `κ` (the
+/// second derivative of the level over the run), its corners on the level stand up to
+/// `κ S² / 8` above it in between, as much as the middle of a chord of `S` stands over the level
+/// (measured, not supposed); over a stretch that bends down (a crest), they stand under it.
+/// Within a diagonal of a step (a drop, and where the road comes out of the ground: the terrain
+/// cannot sag under the ground there), the lowest level around. On a straight climb, exactly
+/// the level (as the tangent of #202); over a bump, within some decimeters of it (the tangent of
+/// #202 dropped meters under it, and the embankment was lost along the whole bump).
+struct Profile {
+    /// For each sample: its level (`hug_level`), the horizontal run to the next one (m), and
+    /// whether the line goes on to it (false at its end and across a break in its samples).
+    level: Vec<f32>,
+    run: Vec<f32>,
+    linked: Vec<bool>,
+    /// For each sample: how far under the level the bound stays near it (the sag) for the
+    /// triangles that span a cell's side along the line, and a cell's diagonal; or, within a
+    /// diagonal of a step, the lowest level there.
+    sag: Vec<(f32, f32)>,
+    floor: Vec<Option<f32>>,
+}
+
+impl Profile {
+    fn new(line: &[TrackSample], closed: bool, diagonal: f32) -> Self {
+        let n = line.len();
+        // Never under the ground's sink, as the terrain. Where the road comes out of the ground
+        // (the foot of a bump in the valley), the terrain cannot follow it under the sink: that
+        // kink is taken as a step.
+        let level: Vec<f32> = line.iter().map(|s| hug_level(s).max(-SINK)).collect();
+        let grounded: Vec<bool> = line.iter().map(|s| hug_level(s) <= -SINK).collect();
+        let mut run = vec![0.0; n];
+        let mut linked = vec![false; n];
+        for i in 0..n {
+            let j = i + 1;
+            if j == n && !closed {
+                continue;
+            }
+            let (a, b) = (&line[i], &line[j % n]);
+            // A break in the samples (an open circuit's road, in the order of its samples).
+            if a.position.distance(b.position) > 3.0 {
+                continue;
+            }
+            run[i] = a.position.xz().distance(b.position.xz());
+            linked[i] = true;
+        }
+        let mut profile = Self {
+            level,
+            run,
+            linked,
+            sag: vec![(0.0, 0.0); n],
+            floor: vec![None; n],
+        };
+        // How far the middle of a chord across each sample (half of it on each side) stands over
+        // the level there: the most a triangle's corners on the level stand over it in between
+        // (`κ S² / 8` for a chord of `S` where the level bends up by `κ`, none where it bends
+        // down), for a chord of a cell's side and of its diagonal.
+        let rise = |half: f32| -> Vec<f32> {
+            (0..profile.level.len())
+                .map(
+                    |i| match (profile.level_at(i, -half), profile.level_at(i, half)) {
+                        (Some(back), Some(ahead)) => {
+                            ((back + ahead) / 2.0 - profile.level[i]).max(0.0)
+                        }
+                        _ => 0.0,
+                    },
+                )
+                .collect()
+        };
+        let (side, across) = (rise(CELL / 2.0), rise(diagonal / 2.0));
+        let half = diagonal / 2.0;
+        // A vertex's triangles span a diagonal on each side of it: their chords' middles within
+        // half a diagonal (and a meter more for the vertices between two samples).
+        let reach = half + 1.0;
+        for i in 0..n {
+            let (mut sag, mut lowest, mut step) = ((side[i], across[i]), profile.level[i], false);
+            for dir in [-1i64, 1] {
+                let (mut k, mut gone) = (i, 0.0);
+                while gone < reach {
+                    let Some(j) = profile.next(k, dir) else {
+                        break;
+                    };
+                    let link = if dir > 0 { k } else { j };
+                    let length = profile.run[link];
+                    gone += length;
+                    k = j;
+                    sag = (sag.0.max(side[k]), sag.1.max(across[k]));
+                }
+                // The lowest level within a diagonal and a meter, if a step is there.
+                let (mut k, mut gone) = (i, 0.0);
+                while gone < diagonal + 1.0 {
+                    let Some(j) = profile.next(k, dir) else {
+                        break;
+                    };
+                    let link = if dir > 0 { k } else { j };
+                    let length = profile.run[link];
+                    step |= (profile.level[j] - profile.level[k]).abs()
+                        > STEP_SLOPE * length.max(0.05)
+                        || grounded[j] != grounded[k];
+                    gone += length;
+                    k = j;
+                    lowest = lowest.min(profile.level[k]);
+                }
+            }
+            // A few centimeters more: the chords are measured from the samples, a meter apart.
+            profile.sag[i] = (sag.0 + SAG_MARGIN, sag.1 + SAG_MARGIN);
+            profile.floor[i] = step.then_some(lowest);
+        }
+        profile
+    }
+
+    /// The sample after (`dir` 1) or before (-1) sample `k`, if the line goes on to it.
+    fn next(&self, k: usize, dir: i64) -> Option<usize> {
+        let n = self.level.len();
+        if dir > 0 {
+            self.linked[k].then_some((k + 1) % n)
+        } else {
+            let j = (k + n - 1) % n;
+            (self.linked[j] && (k > 0 || self.linked[n - 1])).then_some(j)
+        }
+    }
+
+    /// The line's level at `along` meters of horizontal run from sample `i` (backward if
+    /// negative), between its samples; None past an end of the line.
+    fn level_at(&self, i: usize, along: f32) -> Option<f32> {
+        self.between(i, along)
+            .map(|(k, j, t)| self.level[k] + (self.level[j] - self.level[k]) * t)
+    }
+
+    /// The two samples `along` meters of horizontal run from sample `i` is between, and how far
+    /// from the first to the second; None past an end of the line.
+    fn between(&self, i: usize, along: f32) -> Option<(usize, usize, f32)> {
+        let dir = if along < 0.0 { -1 } else { 1 };
+        let (mut k, mut gone) = (i, 0.0);
+        loop {
+            let j = self.next(k, dir)?;
+            let length = self.run[if dir > 0 { k } else { j }];
+            if gone + length >= along.abs() {
+                let t = if length > 1e-4 {
+                    (along.abs() - gone) / length
+                } else {
+                    1.0
+                };
+                return Some((k, j, t));
+            }
+            gone += length;
+            k = j;
+        }
+    }
+
+    /// The bound of the terrain that hugs the line at `along` meters of horizontal run from
+    /// sample `i` (m above the ground), its triangles `span` meters long along it at most (a
+    /// cell's side to its diagonal); None past an end of the line.
+    fn at(&self, i: usize, along: f32, span: f32) -> Option<f32> {
+        let (k, j, t) = self.between(i, along)?;
+        let level = self.level[k] + (self.level[j] - self.level[k]) * t;
+        // Between the sags of a side and of a diagonal, linearly: over them where the level bends
+        // smoothly (the sag grows as the square of the span), exactly at a kink (linearly).
+        let share = ((span - CELL) / (CELL * (std::f32::consts::SQRT_2 - 1.0))).clamp(0.0, 1.0);
+        let sag = |(side, across): (f32, f32)| side + (across - side) * share;
+        Some(match (self.floor[k], self.floor[j]) {
+            (None, None) => level - sag(self.sag[k]).max(sag(self.sag[j])),
+            (a, b) => level.min(a.unwrap_or(f32::MAX)).min(b.unwrap_or(f32::MAX)),
+        })
+    }
+}
+
 /// Issue #202: the terrain that hugs the road, at every vertex of `grid` (m above the ground):
 /// the embankment (the highest of the road's levels, flat for a cell's diagonal beyond its walls
 /// (a berm), then falling away at `slope`),
 /// and what bounds it (the lowest of: the road's levels, rising away from its walls at
 /// [`BOUND_RISE`]; inside a tight turn, the lowest of its road; [`OPEN_FALL`] under a side
-/// without wall, a gap, a risky jump; the ground on a lake and around an anti-gravity zone).
+/// without wall, a gap, a risky jump; the ground on a lake and around an anti-gravity zone that
+/// banks: issue #215, a level zone is carried like any road).
 ///
 /// A vertex takes the road's level from every sample less than a cell's diagonal away along the
-/// road (its window), each one carried to the vertex along the road's slope there (its tangent):
-/// on a straight climb, exactly the road's level beside the vertex; in a dip, at the foot of a
-/// bump, at a drop's step, lower. The bound is the lowest of them, so that every triangle over
-/// the road (its corners within a diagonal of any point of it) stays under that point's level:
-/// the terrain never comes through the road, wherever the road bends up or steps down.
+/// road (its window), each one carried to the vertex along the road (issue #215, [`Profile`]: the
+/// road's level where the vertex stands along it, less the sag of a triangle where the road bends
+/// up, the lowest level near a step; #202 carried it along the road's tangent, meters under a
+/// bump). The bound is the lowest of them, so that every triangle over the road (its corners
+/// within a diagonal of any point of it) stays under that point's level: the terrain never comes
+/// through the road, wherever the road bends up or steps down.
 fn hug(
     (slope, wide, ceiling): (f32, f32, f32),
     grid: &Grid,
@@ -850,10 +1032,12 @@ fn hug(
     // Issue #204: a cutting's wall rises up to the relief of the mountain, over the road: every
     // bound reaches as far as it may bound it.
     let top = if cutting { top.max(ceiling) } else { top };
+    // Issue #215: a level anti-gravity zone (a big climb) is carried like any road; and a steep
+    // road is not special for its slope, only for its banking.
     let special = |s: &TrackSample| {
         gap_at(edges.gaps, center, s.distance).is_some()
-            || anti_gravity_at(edges.zones, center, s.distance).is_some()
-            || s.up.y < 0.9
+            || anti_gravity_at(edges.zones, center, s.distance).is_some_and(|z| !z.level)
+            || bank_cos(s) < 0.9
     };
     // What rises from `base` at `p` beyond `keep` meters, at the bound's slope (a disc), as far
     // as it bounds anything.
@@ -865,6 +1049,9 @@ fn hug(
     };
     for (line_index, line) in lines.iter().enumerate() {
         let on_road = line_index == 0;
+        // Issue #215: its level along it, as a bound that follows its bumps.
+        let profile = Profile::new(line, on_road && center.open().is_none(), diagonal);
+        let profile = &profile;
         for (i, s) in line.iter().enumerate() {
             let p = s.position.xz();
             let keep = keep_out(s);
@@ -894,11 +1081,21 @@ fn hug(
             let forward = Vec2::new(s.forward.x, s.forward.z).normalize_or(Vec2::Y);
             let across = Vec2::new(-forward.y, forward.x);
             let level = hug_level(s);
+            // Issue #215: how long the grid's triangles are along the road there (their cell's
+            // side across the grid, its diagonal at 45° to it).
+            let span = CELL * (forward.x.abs() + forward.y.abs());
             // The vertex's place from the sample: along the road (in its window, or none), across.
+            // Issue #215: the line's level where the vertex stands along it, less its sag (the
+            // tangent of #202 past an end of the line).
             let place = move |v: Vec2| {
                 let d = v - p;
                 let along = d.dot(forward);
-                (along.abs() <= window).then(|| (level + gradient * along, d.dot(across).abs()))
+                (along.abs() <= window).then(|| {
+                    let at = profile
+                        .at(i, along, span)
+                        .unwrap_or(level + gradient * along);
+                    (at, d.dot(across).abs())
+                })
             };
             let reach = keep + diagonal + (top - level).max(0.0) / BOUND_RISE;
             let rise = |level: f32, lateral: f32, slope: f32| {
@@ -1578,6 +1775,154 @@ mod tests {
 
     /// Issue #202: the demonstration circuit of a terrain that hugs the road.
     const DEMONSTRATION: &str = "Col des Moufles";
+
+    /// Issue #215 (Max, 2026-10-31: « Pour les routes qui montent haut, pour ne pas ralentir, tu
+    /// peux utiliser la même technique que pour les routes en spirale »): the demonstration
+    /// circuit climbs far higher than before (58 m before #215), and wherever its road climbs or
+    /// falls steeply, the karts drive in a level anti-gravity zone (their gravity follows the
+    /// road: they do not slow down going up): every stretch of 16 m whose slope is above
+    /// [`STEEP`] is in one. The zones stay level (the terrain carries them, the hug test above).
+    #[test]
+    fn the_demonstration_circuit_climbs_high_in_anti_gravity() {
+        const HIGH: f32 = 80.0;
+        const STEEP: f32 = 0.25;
+        const RUN: f32 = 16.0;
+        let file = format!("{}/assets/tracks/col.track.ron", env!("CARGO_MANIFEST_DIR"));
+        let data = TrackData::from_ron(&std::fs::read_to_string(file).unwrap()).unwrap();
+        for data in [data.clone(), data.mirrored()] {
+            let center = CenterLine::of(&data);
+            let zones: Vec<AntiGravityZone> = data
+                .anti_gravity
+                .iter()
+                .map(|z| AntiGravityZone::new(&center, z))
+                .collect();
+            assert!(zones.iter().all(|z| z.level), "{zones:?}");
+            let road = center.road_samples();
+            let (lo, hi) = road.iter().fold((f32::MAX, f32::MIN), |(lo, hi), s| {
+                (lo.min(s.position.y), hi.max(s.position.y))
+            });
+            assert!(hi - lo >= HIGH, "the road climbs {lo} to {hi} m only");
+            let (mut steep, mut zoned, mut steepest) = (0usize, 0usize, 0.0f32);
+            let step = center.length() / center.samples().len() as f32;
+            let ahead = (RUN / step).round() as usize;
+            for (i, s) in road.iter().enumerate() {
+                let next = &road[(i + ahead) % road.len()];
+                let run = s.position.xz().distance(next.position.xz());
+                let slope = (next.position.y - s.position.y).abs() / run.max(1e-3);
+                // A drop's step is no slope.
+                let step = (0..ahead).any(|k| {
+                    let (a, b) = (&road[(i + k) % road.len()], &road[(i + k + 1) % road.len()]);
+                    (b.position.y - a.position.y).abs() > STEP_SLOPE * step
+                });
+                if step || slope <= STEEP {
+                    continue;
+                }
+                steep += 1;
+                steepest = steepest.max(slope);
+                let middle = s.distance + RUN / 2.0;
+                if anti_gravity_at(&zones, &center, middle).is_some() {
+                    zoned += 1;
+                } else {
+                    panic!(
+                        "{}: a slope of {slope:.2} out of the zones at {:.0} m",
+                        data.name, s.distance
+                    );
+                }
+            }
+            println!(
+                "{}: the road from {lo:.1} to {hi:.1} m, {steep} meters steeper than {STEEP} \
+                 (up to {steepest:.2}), {zoned} of them in anti-gravity",
+                data.name
+            );
+            assert!(steep > 200, "{steep}");
+        }
+    }
+
+    /// Issue #215: the bound of the terrain that hugs the road follows a bump (#202 carried the
+    /// road's level along its tangent, meters under a bump: the embankment was lost along the
+    /// whole bump), and never lets a triangle of the terrain come over the road. A straight along
+    /// the grid, 10 m up, with the bump of the Col des Moufles (2.2 m over 22 m), and its foot on
+    /// the ground for a second one.
+    #[test]
+    fn the_bound_of_the_embankment_follows_a_bump() {
+        let diagonal = CELL * std::f32::consts::SQRT_2;
+        let window = diagonal + 0.5;
+        for base in [10.0f32, 0.0] {
+            let bump = |z: f32| {
+                let t = (z - 40.0) / 22.0;
+                if (0.0..=1.0).contains(&t) {
+                    1.1 * (1.0 - (std::f32::consts::TAU * t).cos())
+                } else {
+                    0.0
+                }
+            };
+            let height = |z: f32| base + bump(z);
+            let line: Vec<TrackSample> = (0..=100)
+                .map(|k| {
+                    let z = k as f32;
+                    let forward =
+                        Vec3::new(0.0, height(z + 0.01) - height(z - 0.01), -0.02).normalize();
+                    let right = forward.cross(Vec3::Y).normalize();
+                    TrackSample {
+                        distance: z,
+                        position: Vec3::new(0.0, height(z), -z),
+                        forward,
+                        right,
+                        up: right.cross(forward),
+                        half_width: 7.0,
+                        shoulder: 2.0,
+                    }
+                })
+                .collect();
+            let profile = Profile::new(&line, false, diagonal);
+            let level = |z: f32| (height(z) - GROUND_HEIGHT - EMBANK_LIP).max(-SINK);
+            // A vertex at `z` along the line: the lowest bound of the samples around it (as in
+            // `hug`), and of #202's tangents.
+            let bound = |z: f32| {
+                (0..line.len())
+                    .filter(|i| (z - *i as f32).abs() <= window)
+                    .filter_map(|i| profile.at(i, z - i as f32, CELL))
+                    .fold(f32::MAX, f32::min)
+            };
+            let tangent = |z: f32| {
+                (1..line.len() - 1)
+                    .filter(|i| (z - *i as f32).abs() <= window)
+                    .map(|i| {
+                        let g = (height(i as f32 + 1.0) - height(i as f32 - 1.0)) / 2.0;
+                        height(i as f32) - GROUND_HEIGHT - EMBANK_LIP + g * (z - i as f32)
+                    })
+                    .fold(f32::MAX, f32::min)
+                    .max(-SINK)
+            };
+            let (mut deepest, mut deepest_before) = (0.0f32, 0.0f32);
+            for k in 0..=120 {
+                let z = 20.0 + k as f32 * 0.5;
+                let b = bound(z);
+                assert!(b <= level(z) + 1e-3, "{base}: {b} over {} at {z}", level(z));
+                deepest = deepest.max(level(z) - b);
+                deepest_before = deepest_before.max(level(z) - tangent(z));
+                // A triangle along the grid: from here to a cell on, under the road all along.
+                let far = bound(z + CELL);
+                for t in 1..12 {
+                    let x = z + CELL * t as f32 / 12.0;
+                    let chord = b + (far - b) * t as f32 / 12.0;
+                    assert!(
+                        chord <= level(x) + 0.02,
+                        "{base}: a triangle {chord} over the road {} at {x}",
+                        level(x)
+                    );
+                }
+            }
+            println!(
+                "{base} m up: the bound at most {deepest:.2} m under the road over the bump \
+                 ({deepest_before:.2} m along the tangent of #202)"
+            );
+            if base > 0.0 {
+                assert!(deepest <= 0.5, "{deepest}");
+                assert!(deepest_before >= 1.5, "{deepest_before}");
+            }
+        }
+    }
 
     /// Issue #208 acceptance (GD § 16, « Notre implémentation (#208, étape 1) »): a bridge over a
     /// ravine. On a circuit with bridges (the Col des Moufles and its mirror), under every bridge,

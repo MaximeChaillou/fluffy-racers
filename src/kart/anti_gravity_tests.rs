@@ -132,7 +132,13 @@ impl Ribbon {
 
     /// The same, its runs through the zone `which` ([`WALL`], [`CEILING`] or [`TURN`]).
     fn at(pace: Pace, mirrored: bool, others: usize, which: usize) -> Self {
-        let mut app = game_app_unloaded(TrackChoice::Circuit(RIBBON.into()), others);
+        Self::on(RIBBON, pace, mirrored, others, which)
+    }
+
+    /// Issue #215: the same on the circuit `path` (the Ruban Réglisse: its three zones), its runs
+    /// through its zone `which`.
+    fn on(path: &str, pace: Pace, mirrored: bool, others: usize, which: usize) -> Self {
+        let mut app = game_app_unloaded(TrackChoice::Circuit(path.into()), others);
         app.insert_resource(MirrorMode(mirrored));
         if pace == Pace::Fastest {
             let loadout = fastest_in_anti_gravity(&Roster::embedded());
@@ -169,11 +175,13 @@ impl Ribbon {
         let layout = app.world().resource::<TrackLayout>().clone();
         let course = app.world().resource::<Course>().clone();
         assert_eq!(layout.mirrored, mirrored);
-        assert_eq!(
-            layout.anti_gravity.len(),
-            3,
-            "the wall's zone, the ceiling's and the banked turn's"
-        );
+        if path == RIBBON {
+            assert_eq!(
+                layout.anti_gravity.len(),
+                3,
+                "the wall's zone, the ceiling's and the banked turn's"
+            );
+        }
         let zone = layout.anti_gravity[which];
         Self {
             app,
@@ -1574,5 +1582,87 @@ fn the_wheels_pivot_flat_their_outer_face_down() {
             pivoted_wheel(rest, side, 3.0),
             pivoted_wheel(rest, side, 1.0)
         );
+    }
+}
+
+/// Issue #215 acceptance (Max, 2026-10-31: « Pour les routes qui montent haut, pour ne pas
+/// ralentir, tu peux utiliser la même technique que pour les routes en spirale, avec les roues
+/// qui pivotent »): on the Col des Moufles, the big climbs and descents are level anti-gravity
+/// zones. A kart at full throttle goes up the steepest climb (the third, up to 57 %) and down
+/// the steepest descent as on the flat: in anti-gravity all along (its gravity along the road's
+/// normal), never slower than it came in going up, never faster than its top speed going down,
+/// on its wheels, without the pelican; on the mirror image too. With the world's gravity, the
+/// climb would take 4.9 m/s² off it at 57 % (half of `g`).
+#[test]
+fn karts_climb_and_descend_the_col_without_slowing_down() {
+    const COL: &str = "tracks/col.track.ron";
+    for mirrored in [false, true] {
+        let probe = Ribbon::on(COL, Pace::Default, mirrored, 0, 0);
+        let center = probe.layout.center.clone();
+        let zones = probe.layout.anti_gravity.clone();
+        drop(probe);
+        // The steepest climb and the steepest descent: the zones whose road rises and falls the
+        // most.
+        let rise = |zone: &AntiGravityZone| {
+            center.at(zone.to - 1.0).position.y - center.at(zone.from + 1.0).position.y
+        };
+        let climb = (0..zones.len())
+            .max_by(|a, b| rise(&zones[*a]).total_cmp(&rise(&zones[*b])))
+            .unwrap();
+        let descent = (0..zones.len())
+            .min_by(|a, b| rise(&zones[*a]).total_cmp(&rise(&zones[*b])))
+            .unwrap();
+        assert!(rise(&zones[climb]) > 40.0, "{}", rise(&zones[climb]));
+        assert!(rise(&zones[descent]) < -25.0, "{}", rise(&zones[descent]));
+        for which in [climb, descent] {
+            let mut col = Ribbon::on(COL, Pace::Default, mirrored, 0, which);
+            let kart = col.kart;
+            let zone = col.zone;
+            let length = zone.length(&center);
+            let entry = 25.0;
+            col.place(kart, zone.from + 2.0, 0.0, entry);
+            let mut log = new_log();
+            let (mut slowest, mut fastest, mut zoned, mut ticks) = (f32::MAX, 0.0f32, 0u32, 0u32);
+            let along = |d: f32| center.wrap(d - zone.from);
+            while along(col.sample(kart).distance) < length - 3.0 {
+                ticks += 1;
+                assert!(ticks < 60 * 10, "{which}: the run never ended");
+                let input = col.autopilot(kart, 0.0, 100.0);
+                col.tick(input, &[], &mut log);
+                let speed = col.velocity(kart).dot(*col.transform(kart).forward());
+                if ticks > 30 {
+                    slowest = slowest.min(speed);
+                    fastest = fastest.max(speed);
+                }
+                zoned += u32::from(col.environment(kart).anti_gravity);
+                assert!(!log.towed, "{which}: the pelican came");
+            }
+            println!(
+                "Col des Moufles (mirrored {mirrored}), zone {which} ({:.1} m up): {ticks} ticks, \
+                 {zoned} in anti-gravity, speed {slowest:.1} to {fastest:.1} m/s, the kart \
+                 {:.2} m over the road at the lowest, its up {:.3} from the road's at worst",
+                rise(&zone),
+                log.lowest,
+                log.worst_alignment
+            );
+            assert!(
+                zoned >= ticks - 2,
+                "{which}: {zoned} of {ticks} ticks in anti-gravity"
+            );
+            assert!(log.lowest > 0.2, "{which}: {}", log.lowest);
+            assert!(
+                log.worst_alignment > 0.95,
+                "{which}: {}",
+                log.worst_alignment
+            );
+            if which == climb {
+                assert!(
+                    slowest >= entry - 0.5,
+                    "{which}: down to {slowest} m/s going up"
+                );
+            } else {
+                assert!(fastest <= 30.0, "{which}: up to {fastest} m/s going down");
+            }
+        }
     }
 }

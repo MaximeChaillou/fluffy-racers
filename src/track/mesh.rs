@@ -2121,11 +2121,16 @@ mod tests {
                     for side in [-1.0f32, 1.0] {
                         let under = s.point(side * outer(s), -BRIDGE_DECK);
                         assert!(facing(under, -s.up), "no deck at {:.0} m", s.distance);
-                        assert!(
-                            facing(under, side * s.right),
-                            "no edge at {:.0} m",
-                            s.distance
-                        );
+                        // Issue #215: out of its edge, square to it (on a bridge that turns
+                        // tight, the inside edge is a tighter curve than the centerline).
+                        let edge = |at: f32| {
+                            let e = center.at(at);
+                            e.point(side * outer(&e), 0.0)
+                        };
+                        let along = edge(s.distance + 1.0) - edge(s.distance - 1.0);
+                        let out = along.cross(s.up).normalize() * side;
+                        assert!(out.dot(side * s.right) > 0.5, "{out}");
+                        assert!(facing(under, out), "no edge at {:.0} m", s.distance);
                     }
                 }
                 // No skirt hangs from its edges down to the ground; the pillars stand there
