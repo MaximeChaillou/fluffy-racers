@@ -35,7 +35,7 @@
               rock: (0.40, 0.36, 0.30), steep: 1.0, embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
-        (model: "nature-kit/tree_pineTallC_detailed", at: 142.216, side: Right, height: 24.0, radius: 3.8, gap: 0.1),
+        (model: "nature-kit/tree_pineTallC_detailed", at: 142.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
         (model: "nature-kit/mushroom_redTall", at: 76.204, side: Left, height: 16.0, radius: 6.0, gap: 2.0),
     ],
     checkpoint_spacing: 25.0,

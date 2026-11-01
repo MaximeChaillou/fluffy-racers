@@ -176,14 +176,163 @@ pub fn tight_turns(center: &CenterLine) -> Vec<TightTurn> {
         .collect()
 }
 
-/// Whether a piece `height` meters high at `p` would hide the road out of a tight turn: inside
-/// the circle of one, near the turn itself (closer to the sample than the radius: a gentle turn's
-/// circle reaches far across the infield, where nothing hides that turn).
-pub fn hides_a_turn(turns: &[TightTurn], p: Vec2, height: f32) -> bool {
-    height > SIGHTLINE_HEIGHT
-        && turns
-            .iter()
-            .any(|t| t.center.distance(p) < t.radius && t.at.distance(p) < t.radius)
+/// Issue #191: where the chase camera looks through the tight turns: from every sample of the
+/// road from [`SIGHT_REACH`] meters before a tight turn to its end (every [`SIGHT_KART_STEP`]
+/// meters, the kart across the road, [`SIGHT_KARTS`]), the camera where the chase puts it (`terrain`'s
+/// `CHASE_DISTANCE` behind the kart, on the ground plane), to the road ahead (every
+/// [`SIGHT_STEP`] meters up to [`SIGHT_REACH`], across it, [`SIGHT_TARGETS`]): the reach and the
+/// spread of the camera test (`track::scenario_tests`, 45 m). A piece higher than
+/// [`SIGHTLINE_HEIGHT`] whose footprint one of them crosses would hide the road out of the turn;
+/// elsewhere in the turn's infield, even a giant one hides nothing (before #191, nothing higher
+/// stood anywhere inside a tight turn: the giant needle, pine or tree in the middle of a bulge was
+/// always left out).
+///
+/// Built once per circuit (at its load) as the cells of [`SIGHT_CELL`] meters they pass through
+/// (every cell's length along each line): a footprint crosses a line where it reaches the middle
+/// of one of these cells, a cell's diagonal more (a little more than the line itself).
+#[derive(Clone, Debug, Default)]
+pub struct TurnSightLines {
+    /// The corner of the grid's first cell (ground plane), its columns and rows.
+    origin: Vec2,
+    cols: usize,
+    rows: usize,
+    /// The cells a line passes through, row by row.
+    crossed: Vec<bool>,
+    lines: usize,
+}
+
+/// Issue #191: how far ahead the chase camera keeps the road out of a tight turn in sight, and
+/// how far before the turn it starts (m): the camera test's reach.
+pub const SIGHT_REACH: f32 = 45.0;
+/// ...from the kart every this many meters along the road...
+pub const SIGHT_KART_STEP: f32 = 3.0;
+/// ...to the road ahead every this many meters...
+pub const SIGHT_STEP: f32 = 3.0;
+/// ...the kart across the road (shares of its half width)...
+pub const SIGHT_KARTS: [f32; 3] = [-0.6, 0.0, 0.6];
+/// ...and the road ahead across it (shares of its half width, its edges too).
+pub const SIGHT_TARGETS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
+/// The cells of the grid (m).
+const SIGHT_CELL: f32 = 1.0;
+
+impl TurnSightLines {
+    /// The sight lines through the tight turns of `center` (`turns`, [`tight_turns`]).
+    pub fn new(center: &CenterLine, turns: &[TightTurn]) -> Self {
+        let samples = center.samples();
+        let n = samples.len();
+        if n == 0 || turns.is_empty() {
+            return Self::default();
+        }
+        let step = center.length() / n as f32;
+        // The samples in a tight turn, then those up to the reach before one.
+        let mut near = vec![false; n];
+        let mut k = 0;
+        // `tight_turns` lists them in the order of the samples.
+        for (i, s) in samples.iter().enumerate() {
+            if k < turns.len() && turns[k].at == s.position.xz() {
+                k += 1;
+                let before = (SIGHT_REACH / step).ceil() as usize;
+                for j in 0..=before {
+                    near[(i + n - j) % n] = true;
+                }
+            }
+        }
+        let flat = |s: &TrackSample| Vec2::new(s.forward.x, s.forward.z).normalize_or_zero();
+        let every = (SIGHT_KART_STEP / step).round().max(1.0) as usize;
+        let ahead = (SIGHT_REACH / SIGHT_STEP).round() as usize;
+        let mut lines = Vec::new();
+        for (i, sample) in samples.iter().enumerate().step_by(every) {
+            if !near[i] || !center.on_the_road(sample.distance) {
+                continue;
+            }
+            let eyes = SIGHT_KARTS.map(|kart| {
+                sample.point(kart * sample.half_width, 0.0).xz()
+                    - flat(sample) * super::terrain::CHASE_DISTANCE
+            });
+            for k in 1..=ahead {
+                let distance = sample.distance + k as f32 * SIGHT_STEP;
+                if !center.on_the_road(center.wrap(distance)) {
+                    continue;
+                }
+                let s = center.at(distance);
+                for across in SIGHT_TARGETS {
+                    let target = s.point(across * s.half_width, 0.0).xz();
+                    for eye in eyes {
+                        lines.push([eye, target]);
+                    }
+                }
+            }
+        }
+        if lines.is_empty() {
+            return Self::default();
+        }
+        let (lo, hi) = lines.iter().flatten().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        );
+        let origin = lo - Vec2::splat(SIGHT_CELL);
+        let cols = ((hi.x - origin.x) / SIGHT_CELL).ceil() as usize + 2;
+        let rows = ((hi.y - origin.y) / SIGHT_CELL).ceil() as usize + 2;
+        let mut grid = Self {
+            origin,
+            cols,
+            rows,
+            crossed: vec![false; cols * rows],
+            lines: lines.len(),
+        };
+        for [a, b] in &lines {
+            let steps = (a.distance(*b) / SIGHT_CELL).ceil().max(1.0) as usize;
+            for k in 0..=steps {
+                if let Some(i) = grid.index(a.lerp(*b, k as f32 / steps as f32)) {
+                    grid.crossed[i] = true;
+                }
+            }
+        }
+        grid
+    }
+
+    /// The cell of `p`, if it is in the grid.
+    fn index(&self, p: Vec2) -> Option<usize> {
+        let c = ((p - self.origin) / SIGHT_CELL).floor();
+        (c.x >= 0.0 && c.y >= 0.0 && (c.x as usize) < self.cols && (c.y as usize) < self.rows)
+            .then(|| c.y as usize * self.cols + c.x as usize)
+    }
+
+    /// How many sight lines there are.
+    pub fn len(&self) -> usize {
+        self.lines
+    }
+
+    /// Whether there is none (a circuit without a tight turn).
+    pub fn is_empty(&self) -> bool {
+        self.lines == 0
+    }
+
+    /// Whether a footprint of `radius` at `p` (ground plane) crosses a sight line: reaches the
+    /// middle of a cell one passes through, a cell's diagonal more.
+    pub fn crossed(&self, p: Vec2, radius: f32) -> bool {
+        if self.crossed.is_empty() {
+            return false;
+        }
+        let reach = radius + SIGHT_CELL * std::f32::consts::SQRT_2;
+        let cells = (reach / SIGHT_CELL).ceil() as i32 + 1;
+        let here = ((p - self.origin) / SIGHT_CELL).floor();
+        (-cells..=cells).any(|dy| {
+            (-cells..=cells).any(|dx| {
+                let c = here + Vec2::new(dx as f32, dy as f32);
+                let middle = self.origin + (c + Vec2::splat(0.5)) * SIGHT_CELL;
+                middle.distance_squared(p) <= reach * reach
+                    && self.index(middle).is_some_and(|i| self.crossed[i])
+            })
+        })
+    }
+
+    /// Whether a piece `height` meters high, of `radius`, at `p` would hide the road out of a
+    /// tight turn from the chase camera: higher than [`SIGHTLINE_HEIGHT`] (the walls' height and
+    /// a little more: the camera looks over them), and on one of its sight lines.
+    pub fn hidden_by(&self, p: Vec2, radius: f32, height: f32) -> bool {
+        height > SIGHTLINE_HEIGHT && self.crossed(p, radius)
+    }
 }
 
 /// Where a piece `gap` meters beyond the walls of `sample` stands, on side `side` (its center:
@@ -263,7 +412,7 @@ pub fn place_decor_around(
         })
     };
     let inside = inside_sign(center);
-    let turns = tight_turns(center);
+    let sight = TurnSightLines::new(center, &tight_turns(center));
     let lines = StartLine::all(center);
     let mut plan = DecorPlan {
         models: decor_models(biome, props),
@@ -277,7 +426,7 @@ pub fn place_decor_around(
             if !clear_of_the_circuit(samples, p, prop.radius)
                 || !clear_of_the_arches(&lines, p, prop.radius)
                 || plan.overlaps(p, prop.radius)
-                || hides_a_turn(&turns, p, prop.height)
+                || sight.hidden_by(p, prop.radius, prop.height)
                 || wet(p, prop.radius)
             {
                 plan.left_out
@@ -313,7 +462,7 @@ pub fn place_decor_around(
                 if clear_of_the_circuit(samples, p, row.radius)
                     && clear_of_the_arches(&lines, p, row.radius)
                     && !plan.overlaps(p, row.radius)
-                    && !hides_a_turn(&turns, p, row.height)
+                    && !sight.hidden_by(p, row.radius, row.height)
                     && !wet(p, row.radius)
                 {
                     let model = plan.model(&row.models[turn % row.models.len()]);
@@ -351,7 +500,7 @@ pub fn place_decor_around(
                 if !clear_of_the_circuit(samples, p, group.radius)
                     || !clear_of_the_arches(&lines, p, group.radius)
                     || plan.overlaps(p, group.radius)
-                    || hides_a_turn(&turns, p, height)
+                    || sight.hidden_by(p, group.radius, height)
                     || wet(p, group.radius)
                 {
                     continue;
@@ -388,6 +537,16 @@ mod tests {
         data.validate().unwrap();
         let center = CenterLine::of(&data);
         (data, center)
+    }
+
+    /// Issue #191: every circuit of the game (the manifest's files), not six of them.
+    fn every_circuit() -> Vec<String> {
+        let files: Vec<String> = crate::admin::tracks::circuits()
+            .into_iter()
+            .map(|entry| entry.file)
+            .collect();
+        assert!(files.len() >= 12, "{files:?}");
+        files
     }
 
     fn lakes_of(data: &TrackData) -> Vec<Lake> {
@@ -443,10 +602,14 @@ mod tests {
         let turns = tight_turns(&prairie);
         let smallest = turns.iter().map(|t| t.radius).fold(f32::MAX, f32::min);
         assert!((8.0..16.0).contains(&smallest), "{smallest}");
-        // The hairpin's center (18, -86) is inside, the middle of the start straight is not.
-        assert!(hides_a_turn(&turns, Vec2::new(18.0, -88.0), 5.0));
-        assert!(!hides_a_turn(&turns, Vec2::new(18.0, -88.0), 1.0));
-        assert!(!hides_a_turn(&turns, Vec2::new(-20.0, 0.0), 5.0));
+        // The hairpin's island (its center at (18, -86), 12 m) is on the chase camera's sight
+        // lines out of it (issue #191): a high piece there hides the road, a low one does not;
+        // the middle of the start straight is on none of them.
+        let sight = TurnSightLines::new(&prairie, &turns);
+        assert!(sight.len() > 10_000, "{}", sight.len());
+        assert!(sight.hidden_by(Vec2::new(18.0, -88.0), 1.0, 5.0));
+        assert!(!sight.hidden_by(Vec2::new(18.0, -88.0), 1.0, 1.0));
+        assert!(!sight.hidden_by(Vec2::new(-20.0, 0.0), 1.0, 5.0));
         let oval = CenterLine::of(&crate::track::test_oval());
         let turns = tight_turns(&oval);
         for t in &turns {
@@ -457,8 +620,19 @@ mod tests {
                 "{t:?}"
             );
         }
-        assert!(hides_a_turn(&turns, Vec2::new(35.0, -75.0), 3.0));
-        assert!(!hides_a_turn(&turns, Vec2::new(35.0, 0.0), 3.0));
+        // Issue #191: a wide turn's sight lines cut across its infield near the road, never
+        // through the middle of its circle: a high piece just inside the apex hides the road
+        // out of it, one at the circle's center (where the old rule refused it) hides nothing.
+        let sight = TurnSightLines::new(&oval, &turns);
+        let apex = turns
+            .iter()
+            .min_by(|a, b| a.radius.total_cmp(&b.radius))
+            .unwrap();
+        let inward = (apex.center - apex.at).normalize();
+        let just_inside = apex.at + inward * 10.0;
+        assert!(sight.hidden_by(just_inside, 1.0, 3.0), "{just_inside}");
+        assert!(!sight.hidden_by(apex.center, 1.0, 3.0), "{}", apex.center);
+        assert!(!sight.hidden_by(Vec2::new(35.0, 0.0), 1.0, 3.0));
     }
 
     /// Both circuits of issue #11 turn right: their infield is on the driver's right.
@@ -497,14 +671,7 @@ mod tests {
     #[test]
     fn the_mirrored_decor_is_the_mirror_image_and_never_on_the_track() {
         let flip = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
-        for file in [
-            "prairie.track.ron",
-            "anneau.track.ron",
-            "crique.track.ron",
-            "col.track.ron",
-            "lagon.track.ron",
-            "ruban.track.ron",
-        ] {
+        for file in &every_circuit() {
             let (data, _, plan) = plan_of(file);
             let mirrored = plan.clone().mirrored();
             assert_eq!(mirrored.models, plan.models);
@@ -522,8 +689,12 @@ mod tests {
             let center = CenterLine::of(&data);
             let samples = center.samples();
             let step = center.length() / samples.len() as f32;
+            // Issue #119: on an open circuit, along its road (nothing is built on its way back,
+            // where the decor may stand; issue #191: the Échappée Pissenlit and the Périple
+            // Polochon are checked too).
             let dense: Vec<TrackSample> = (0..samples.len() * 4)
                 .map(|i| center.at(i as f32 * step / 4.0))
+                .filter(|s| center.on_the_road(s.distance))
                 .collect();
             for piece in &mirrored.pieces {
                 for s in &dense {
@@ -544,14 +715,7 @@ mod tests {
     /// file still finds room (the flags at the line stand beyond the posts).
     #[test]
     fn the_decor_keeps_clear_of_the_arch() {
-        for file in [
-            "prairie.track.ron",
-            "anneau.track.ron",
-            "crique.track.ron",
-            "col.track.ron",
-            "lagon.track.ron",
-            "ruban.track.ron",
-        ] {
+        for file in &every_circuit() {
             let (data, center, plan) = plan_of(file);
             assert!(plan.left_out.is_empty(), "{file}: {:?}", plan.left_out);
             let mirrored = data.mirrored();
@@ -583,6 +747,7 @@ mod tests {
     /// piece, all on the ground slab around the circuit.
     #[test]
     fn the_decor_is_the_same_every_time_and_never_on_the_track() {
+        // Issue #191: every circuit of the game (six before), each with its biome.
         for (file, biome) in [
             ("prairie.track.ron", "Prairie"),
             ("anneau.track.ron", "Guimauve"),
@@ -590,6 +755,12 @@ mod tests {
             ("col.track.ron", "Neige"),
             ("lagon.track.ron", "Lagon"),
             ("ruban.track.ron", "Guimauve"),
+            ("corniche.track.ron", "Corniche"),
+            ("echappee.track.ron", "Prairie"),
+            ("foret.track.ron", "Sous-bois"),
+            ("falaises.track.ron", "Falaises"),
+            ("coteau.track.ron", "Citrouilles"),
+            ("periple.track.ron", "Royaume"),
         ] {
             let (data, center, plan) = plan_of(file);
             assert_eq!(data.biome.as_deref(), Some(biome));
@@ -638,8 +809,12 @@ mod tests {
             // Clear of the circuit, densely: every sample and three points between two samples.
             let samples = center.samples();
             let step = center.length() / samples.len() as f32;
+            // Issue #119: on an open circuit, along its road (nothing is built on its way back,
+            // where the decor may stand; issue #191: the Échappée Pissenlit and the Périple
+            // Polochon are checked too).
             let dense: Vec<TrackSample> = (0..samples.len() * 4)
                 .map(|i| center.at(i as f32 * step / 4.0))
+                .filter(|s| center.on_the_road(s.distance))
                 .collect();
             for piece in &plan.pieces {
                 let p = piece.position.xz();
@@ -658,12 +833,13 @@ mod tests {
                 assert_eq!(piece.position.y, GROUND_HEIGHT);
                 assert!(piece.height > 0.0 && piece.radius > 0.0);
             }
-            // Nothing high inside a tight turn: the road out of it stays in sight.
-            let turns = tight_turns(&center);
+            // Nothing high on a sight line of the chase camera through a tight turn (issue #191:
+            // before, nothing high anywhere inside one): the road out of it stays in sight.
+            let sight = TurnSightLines::new(&center, &tight_turns(&center));
             for piece in &plan.pieces {
                 assert!(
-                    !hides_a_turn(&turns, piece.position.xz(), piece.height),
-                    "{file}: {} ({} m) inside a tight turn at {}",
+                    !sight.hidden_by(piece.position.xz(), piece.radius, piece.height),
+                    "{file}: {} ({} m) on a sight line through a tight turn at {}",
                     plan.models[piece.model as usize],
                     piece.height,
                     piece.position

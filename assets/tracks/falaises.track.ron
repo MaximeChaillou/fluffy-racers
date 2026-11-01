@@ -36,7 +36,7 @@
               rock: (0.86, 0.82, 0.78), steep: 0.8, embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
-        (model: "nature-kit/stone_tallI", at: 166.216, side: Left, height: 22.0, radius: 3.8, gap: 0.1),
+        (model: "nature-kit/stone_tallI", at: 166.216, side: Left, height: 22.0, radius: 3.8, gap: 8.0),
         (model: "nature-kit/stone_tallF", at: 49.204, side: Right, height: 24.0, radius: 6.0, gap: 2.0),
     ],
     checkpoint_spacing: 25.0,

@@ -205,6 +205,33 @@ pub fn build_circuit_when_loaded(
             Transform::default(),
         ));
     }
+    // Issue #191: the glass tops of the walls between two legs of the track, see-through: one
+    // more mesh (tiled on an open circuit), blended, casting no shadow; with a renderer only
+    // (headless, in the one mesh: the bot races' world does not change).
+    if painted.is_some() && !generated.glass.indices.is_empty() {
+        let glass_material = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 1.0, 1.0, mesh::GLASS_ALPHA),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.15,
+            reflectance: 0.6,
+            ..default()
+        });
+        let tiles = if open {
+            generated.glass.tiles(TILE_SIZE)
+        } else {
+            vec![generated.glass.clone()]
+        };
+        for tile in &tiles {
+            commands.spawn((
+                LevelScoped,
+                Name::new(format!("Track glass: {}", layout.name)),
+                Mesh3d(meshes.add(to_mesh(tile))),
+                MeshMaterial3d(glass_material.clone()),
+                NotShadowCaster,
+                Transform::default(),
+            ));
+        }
+    }
     if let Some((parts, road)) = &painted {
         for (what, part, material) in [
             ("paving", &parts.paving, &road.paving),

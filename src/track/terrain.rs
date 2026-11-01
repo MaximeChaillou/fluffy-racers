@@ -1005,7 +1005,7 @@ fn hug(
             .map(hug_level)
             .fold(hug_level(at), f32::min);
         // Near the turn itself (closer to its sample than its radius: a gentle turn's circle
-        // reaches far across the infield, `decor::hides_a_turn`).
+        // reaches far across the infield).
         let (disc, value) = rising(c, r, lowest.max(-SINK));
         let near = turn.at;
         // Issue #204: with cuttings, the chase camera's sight bounds what rises inside a tight

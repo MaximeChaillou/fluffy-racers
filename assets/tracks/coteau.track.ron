@@ -34,7 +34,7 @@
     terrain: (height: 32.0, scale: 140.0, floor: 0.25, rock: (0.46, 0.37, 0.28), embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
-        (model: "graveyard-kit/pine-crooked", at: 159.216, side: Right, height: 24.0, radius: 3.8, gap: 0.1),
+        (model: "graveyard-kit/pine-crooked", at: 159.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
         (model: "graveyard-kit/pumpkin-tall-carved", at: 92.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
     ],
     checkpoint_spacing: 25.0,
