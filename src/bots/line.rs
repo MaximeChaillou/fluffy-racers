@@ -1079,7 +1079,7 @@ pub(crate) mod tests {
     /// its racing line has at least five turns of 120° or more, the ones a Normal bot drifts
     /// (`BotSkill::min_drift_angle`: the guide's drifts per lap). Issue #108: the same on Prairie
     /// Pompon redrawn after the guide; issue #109: on the Col des Moufles redrawn; issue #148: on
-    /// the Anneau Guimauve and the Crique Câline redrawn.
+    /// the Anneau Guimauve and the Crique Câline redrawn; issue #150: on the Lagon Duvet redrawn.
     #[test]
     fn the_lanes_keep_away_from_a_drop_and_the_reference_circuit_has_turns_to_drift() {
         let t = BotTuning::default();
@@ -1089,6 +1089,7 @@ pub(crate) mod tests {
             include_str!("../../assets/tracks/col.track.ron"),
             include_str!("../../assets/tracks/anneau.track.ron"),
             include_str!("../../assets/tracks/crique.track.ron"),
+            include_str!("../../assets/tracks/lagon.track.ron"),
         ];
         for data in circuits.into_iter().flat_map(|text| {
             let data = TrackData::from_ron(text).unwrap();
