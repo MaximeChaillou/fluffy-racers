@@ -401,6 +401,20 @@ fn closed_the_panel_has_no_egui_context() {
     assert_eq!(egui_parts(&mut app), 0);
     assert!(app.world().get::<ChaseCamera>(camera).is_some());
     assert!(!app.world().resource::<KeyboardCapture>().0);
+    // Issue #231: the options' « Serveur » field keeps the keyboard, like the pseudo's (#98):
+    // the panel closed does not give it back to the game while one types in it.
+    app.insert_resource(crate::options::OptionsMenu {
+        open: true,
+        row: 0,
+        typing: true,
+    });
+    app.update();
+    assert!(app.world().resource::<KeyboardCapture>().0);
+    app.world_mut()
+        .resource_mut::<crate::options::OptionsMenu>()
+        .typing = false;
+    app.update();
+    assert!(!app.world().resource::<KeyboardCapture>().0);
 }
 
 /// Issue #17: the options menu had an egui context while it was open. Issue #100: its screen is

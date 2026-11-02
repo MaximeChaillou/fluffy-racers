@@ -12,9 +12,11 @@
 //! (`menu::pilot`, G), which also stores it; each change goes to the others at once (the
 //! `Hello`).
 //!
-//! Issue #225: the **dedicated server** « Créer une partie » goes to (`NetSettings::server`):
-//! `?server=ws://…:3536` (`--server` natively) once, kept in the browser
-//! ([`SERVER_STORAGE_KEY`]); `?server=` (empty, or `none`) forgets it: the page hosts again.
+//! Issue #225: the **dedicated server** « Créer une partie » goes to (`NetSettings::server`).
+//! Issue #231: it is typed in the options (« Serveur », `menu::options_screen`), which keeps it
+//! in the browser ([`SERVER_STORAGE_KEY`], read here before anything is built); empty: none, the
+//! page hosts. `?server=ws://…:3536` (`--server` natively) wins over it without replacing it,
+//! like `?pseudo=`; `?server=` (empty, or `none`): no server this time.
 
 use bevy::prelude::*;
 
@@ -46,9 +48,10 @@ impl Plugin for NetUiPlugin {
 /// online); `?pseudo=` comes after it (`join_launch_room`). An unreadable text is ignored (the
 /// character's name then), with a warning.
 fn load_stored_pseudo(mut settings: ResMut<NetSettings>) {
-    // Issue #225: the dedicated server kept (an unreadable one is ignored).
+    // Issue #225: the dedicated server kept (an unreadable one is ignored); issue #231: typed in
+    // the options.
     if let Some(server) =
-        storage::load_key(SERVER_STORAGE_KEY).and_then(|text| super::parse_signal(&text))
+        super::server_from_stored(storage::load_key(SERVER_STORAGE_KEY).as_deref())
     {
         settings.server = Some(server);
     }
@@ -87,11 +90,15 @@ fn join_launch_room(
     if let Some(stun) = options.stun.clone() {
         settings.stun = stun;
     }
-    // Issue #225: `?server=` sets the dedicated server (kept), or forgets it.
-    if let Some(server) = options.server.clone() {
-        storage::save_key(SERVER_STORAGE_KEY, server.as_deref().unwrap_or(""));
-        info!("network: dedicated server: {server:?}");
-        settings.server = server;
+    // Issue #225: `?server=` names the dedicated server, or none; issue #231: it wins over the
+    // one kept (the options' « Serveur », loaded at PreStartup) without replacing it, like
+    // `?pseudo=`.
+    if options.server.is_some() {
+        settings.server = super::launch_server(settings.server.take(), options.server.clone());
+        info!(
+            "network: dedicated server from the address: {:?}",
+            settings.server
+        );
     }
     if let Some(turn) = options.turn_server() {
         settings.turn = Some(turn);
@@ -142,6 +149,13 @@ mod platform {
         web_sys::window()?.location().hostname().ok()
     }
 
+    /// Issue #231: the page came in `https://`.
+    pub fn page_secure() -> bool {
+        web_sys::window()
+            .and_then(|window| window.location().protocol().ok())
+            .is_some_and(|protocol| protocol.eq_ignore_ascii_case("https:"))
+    }
+
     /// The game's page, without its query: the base of the invitation link.
     pub fn page() -> Option<String> {
         let location = web_sys::window()?.location();
@@ -187,6 +201,10 @@ mod platform {
         None
     }
 
+    pub fn page_secure() -> bool {
+        false
+    }
+
     /// Natively, no page: the invitation is a command line.
     pub fn page() -> Option<String> {
         None
@@ -196,8 +214,8 @@ mod platform {
 /// The invitation of `session`'s room: the page's link (`?room=CODE`, its signaling server), or
 /// natively the command line.
 pub fn invitation(session: &NetSession) -> String {
-    // Issue #225: a dedicated server's room: the link keeps the server for the friend's next
-    // games too (`?server=`).
+    // Issue #225: a dedicated server's room: the link names the server (`?server=`), for the
+    // friend's games from that page (issue #231: without replacing the one he keeps).
     let server = session
         .lobby
         .as_ref()
@@ -212,6 +230,12 @@ pub fn invitation(session: &NetSession) -> String {
             }
         })
         .unwrap_or_else(|| native_command(&session.room, &session.signal))
+}
+
+/// Issue #231: the page is served in `https://` (GitHub Pages): the browser blocks `ws://`
+/// addresses there ([`super::blocked_from_secure_page`]). Natively: no page, never.
+pub fn page_is_secure() -> bool {
+    platform::page_secure()
 }
 
 /// The page is served from this machine's loopback (`localhost`): the browser does not know the
@@ -229,6 +253,7 @@ mod tests {
     fn natively_there_is_no_page() {
         assert_eq!(platform::page(), None);
         assert_eq!(platform::page_host(), None);
+        assert!(!page_is_secure());
         // `cargo test` gives no `--room`.
         assert_eq!(platform::launch_options().room, None);
     }

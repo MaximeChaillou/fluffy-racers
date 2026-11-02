@@ -251,10 +251,10 @@ pub(super) fn attach_egui_context(
     mut state: Option<ResMut<PanelState>>,
     mut time: Option<ResMut<Time<Virtual>>>,
 ) {
+    let typing = pilot_typing(selection.as_deref()) || server_typing(options.as_deref());
     let options = options.is_some_and(|menu| menu.open);
     let pilot = selection.as_deref().is_some_and(|screen| screen.open);
     let solo = race_menu.is_some_and(|menu| menu.open);
-    let typing = pilot_typing(selection.as_deref());
     let choosing = options || pilot || solo;
     // Issue #101: the lobby's window and its banner are `bevy_ui` now (`crate::salon`): only the
     // panel needs egui.
@@ -343,17 +343,26 @@ fn pilot_typing(selection: Option<&SelectionScreen>) -> bool {
     selection.is_some_and(|screen| screen.open && screen.typing)
 }
 
+/// Issue #231: the options' « Serveur » field (`bevy_ui`, `menu::options_screen`) has the
+/// keyboard.
+fn server_typing(options: Option<&OptionsMenu>) -> bool {
+    options.is_some_and(|menu| menu.open && menu.typing)
+}
+
 /// Issue #80: while the panel is closed (open, it decides: its fields and its lists), a text
 /// field of any other window takes the keyboard the same way: the game sees no key while one is
 /// typed in. After egui's pass: its focus as the frame leaves it. No egui context (no window
-/// open): no egui field. Issue #98: nor while the « Pilote » screen's field has it.
+/// open): no egui field. Issue #98: nor while the « Pilote » screen's field has it; issue #231:
+/// nor the options' « Serveur » field.
 fn capture_for_text_fields(
     mut contexts: EguiContexts,
     selection: Option<Res<SelectionScreen>>,
+    options: Option<Res<OptionsMenu>>,
     mut capture: ResMut<KeyboardCapture>,
 ) {
     let typing = contexts.ctx_mut().is_ok_and(|ctx| ctx.text_edit_focused())
-        || pilot_typing(selection.as_deref());
+        || pilot_typing(selection.as_deref())
+        || server_typing(options.as_deref());
     capture.set_if_neq(KeyboardCapture(typing));
 }
 
@@ -434,7 +443,8 @@ fn panel(world: &mut World) {
     });
     let capture = ctx.text_edit_focused()
         || ctx.any_popup_open()
-        || pilot_typing(world.get_resource::<SelectionScreen>());
+        || pilot_typing(world.get_resource::<SelectionScreen>())
+        || server_typing(world.get_resource::<OptionsMenu>());
     world
         .resource_mut::<KeyboardCapture>()
         .set_if_neq(KeyboardCapture(capture));

@@ -1,6 +1,6 @@
 //! The player's options (issue #17, GD § 13): the keyboard layout, (issue #80) the names over
-//! the karts online and (issue #103) the volumes (general, the sound effects, the music), in a
-//! small menu kept in the browser between sessions. Made to take more options later: a field of
+//! the karts online, (issue #103) the volumes (general, the sound effects, the music) and (issue
+//! #231) the dedicated server's address, in a small menu kept in the browser between sessions. Made to take more options later: a field of
 //! [`PlayerOptions`] (with its default), a line of [`OptionRow`] (its label, its help, its value,
 //! how it changes); the screen (`menu::options_screen`) draws every line of [`OptionRow::ALL`].
 //!
@@ -10,6 +10,11 @@
 //!   `net::tags`); issue #103: the volumes, from 0 to 100 % by steps of 10 (80 % by default),
 //!   read by the mixer (`audio`: the general one on everything, the effects' on the sounds, the
 //!   music's for #104). The driving aids of GD § 11 are not planned for now (Max, 2026-10-13).
+//! - **Serveur** (issue #231): the dedicated server's address (#225), a text field, not a value
+//!   of [`PlayerOptions`]: it is `net::NetSettings::server`, kept under its own key
+//!   (`net::SERVER_STORAGE_KEY`). Here only its line: Entrée, Espace or right on it (a click in
+//!   the field) types in it ([`OptionsMenu::typing`]); the field, its check and its storage are
+//!   the screen's (`menu::options_screen`, with a renderer only).
 //! - **Menu** ([`OptionsMenu`]): **O** opens and closes it (« options »: the same letter at the
 //!   same place in AZERTY and QWERTY, free in the game's controls, no Fn on a Mac), from the race
 //!   or from the selection screen. Up and down (arrows, or Z/S in AZERTY and W/S in QWERTY): the
@@ -122,6 +127,8 @@ impl PlayerOptions {
             OptionRow::MasterVolume => volume_label(self.master_volume),
             OptionRow::EffectsVolume => volume_label(self.effects_volume),
             OptionRow::MusicVolume => volume_label(self.music_volume),
+            // Issue #231: a text field, written by the screen.
+            OptionRow::Server => "",
         }
     }
 
@@ -131,7 +138,7 @@ impl PlayerOptions {
             OptionRow::MasterVolume => Some(&mut self.master_volume),
             OptionRow::EffectsVolume => Some(&mut self.effects_volume),
             OptionRow::MusicVolume => Some(&mut self.music_volume),
-            OptionRow::Keyboard | OptionRow::NameTags => None,
+            OptionRow::Keyboard | OptionRow::NameTags | OptionRow::Server => None,
         }
     }
 
@@ -152,6 +159,8 @@ impl PlayerOptions {
                     *volume = next.clamp(0, 100) as u8;
                 }
             }
+            // Issue #231: not an option of these (`OptionsMenu::typing`).
+            OptionRow::Server => {}
         }
         self
     }
@@ -172,15 +181,18 @@ pub enum OptionRow {
     MasterVolume,
     EffectsVolume,
     MusicVolume,
+    /// Issue #231: the dedicated server's address (a text field).
+    Server,
 }
 
 impl OptionRow {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         OptionRow::Keyboard,
         OptionRow::NameTags,
         OptionRow::MasterVolume,
         OptionRow::EffectsVolume,
         OptionRow::MusicVolume,
+        OptionRow::Server,
     ];
 
     pub fn label(self) -> &'static str {
@@ -191,6 +203,7 @@ impl OptionRow {
             OptionRow::MasterVolume => "Volume général",
             OptionRow::EffectsVolume => "Effets sonores",
             OptionRow::MusicVolume => "Musique",
+            OptionRow::Server => "Serveur",
         }
     }
 
@@ -203,6 +216,8 @@ impl OptionRow {
             OptionRow::MasterVolume => "Le volume de tout le jeu.",
             OptionRow::EffectsVolume => "Moteurs, objets, coups et cris des animaux.",
             OptionRow::MusicVolume => "La musique des circuits.",
+            // Issue #231: the screen writes what the address does instead, once there is one.
+            OptionRow::Server => "Vide : ton navigateur héberge la partie.",
         }
     }
 }
@@ -212,6 +227,10 @@ impl OptionRow {
 pub struct OptionsMenu {
     pub open: bool,
     pub row: usize,
+    /// Issue #231: the player types in the « Serveur » field (Entrée on its line, or a click in
+    /// it). Meanwhile the keys are the field's (`admin::KeyboardCapture`, set by the screen) and
+    /// the lines do not change; the screen ends it (Entrée, Échap, a click elsewhere).
+    pub typing: bool,
 }
 
 impl OptionsMenu {
@@ -308,10 +327,26 @@ fn apply_options_actions(
                 *menu = OptionsMenu {
                     open: !menu.open,
                     row: 0,
+                    typing: false,
                 };
             }
-            OptionsAction::Close => menu.open = false,
+            OptionsAction::Close => {
+                menu.open = false;
+                menu.typing = false;
+            }
             _ if !menu.open => {}
+            // Issue #231: while one types the server, the lines wait.
+            OptionsAction::Row(_) | OptionsAction::Focus(_) | OptionsAction::Change(..)
+                if menu.typing => {}
+            // Issue #231: Entrée, Espace or right on the server's line: type in it.
+            OptionsAction::Change(OptionRow::Server, step) => {
+                if let Some(index) = OptionRow::ALL.iter().position(|r| *r == OptionRow::Server) {
+                    menu.row = index;
+                }
+                if step > 0 {
+                    menu.typing = true;
+                }
+            }
             OptionsAction::Row(step) => {
                 let rows = OptionRow::ALL.len() as i32;
                 menu.row = (menu.row as i32 + step).rem_euclid(rows) as usize;
@@ -527,7 +562,7 @@ mod tests {
         assert_eq!(options.changed(row, -1), off);
         assert_eq!(options.changed(row, 2), options);
         assert_eq!(options.changed(row, 0), options);
-        // Issue #103: the volumes after them.
+        // Issue #103: the volumes after them; issue #231: then the server.
         assert_eq!(
             OptionRow::ALL,
             [
@@ -536,6 +571,7 @@ mod tests {
                 OptionRow::MasterVolume,
                 OptionRow::EffectsVolume,
                 OptionRow::MusicVolume,
+                OptionRow::Server,
             ]
         );
     }

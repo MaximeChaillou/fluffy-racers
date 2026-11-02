@@ -115,17 +115,34 @@ L'adresse du serveur, c'est celle de sa mise en relation :
 - `ws://203.0.113.7:3536` pour un VPS, depuis une page en `http://` ;
 - `wss://fluffy.duckdns.org` avec HTTPS (étape 4).
 
-Ouvre le jeu **une fois** avec `?server=` suivi de cette adresse, par exemple :
+Mets-la dans le jeu, **une fois** (#231) :
+
+1. ouvre le jeu, puis **Options** (sur l'accueil, ou la touche **O**) ;
+2. va sur la ligne **Serveur** (la dernière : flèche du haut depuis la première), puis
+   **Entrée** (ou un clic dans le champ) ;
+3. tape l'adresse, par exemple `wss://fluffy.duckdns.org`, puis **Entrée**.
+
+Le jeu vérifie l'adresse avant de la garder : elle doit commencer par `ws://` ou `wss://`. Sinon,
+il le dit sous les lignes (« Adresse illisible ») et ne change rien. Sur une page en `https://`
+(GitHub Pages), le navigateur refuse une adresse `ws://` : le jeu le dit aussi (« Page https : il
+faut wss:// ») ; voir l'étape 4, « HTTPS ».
+
+Le navigateur garde l'adresse. Ensuite, « Multijoueur » puis « Créer une partie » va sur ton
+serveur. Le lien d'invitation de la partie porte l'adresse du serveur : tes amis n'ont rien à
+régler.
+
+Pour revenir au jeu sans serveur (le navigateur de celui qui crée la partie héberge, comme
+avant) : vide le champ **Serveur** et appuie sur **Entrée**.
+
+**Par la page** : `?server=` suivi de l'adresse marche aussi, par exemple :
 
 ```
 https://maximechaillou.github.io/fluffy-racers/?server=wss://fluffy.duckdns.org
 ```
 
-Le navigateur la garde. Ensuite, « Multijoueur » puis « Créer une partie » va sur ton serveur. Le
-lien d'invitation de la partie porte l'adresse du serveur : tes amis n'ont rien à régler.
-
-Pour revenir au jeu sans serveur (le navigateur héberge) : ouvre le jeu une fois avec `?server=`
-(vide).
+Ce lien passe devant l'adresse des options, **sans la remplacer** (comme `?pseudo=`) : c'est ce
+que fait le lien d'invitation. `?server=` vide : sans serveur, pour cette fois. La ligne
+**Serveur** des options le dit (« Cette fois, le serveur du lien »).
 
 ## Sans Docker
 
@@ -160,7 +177,7 @@ fluffy-racers-server --help
 
 - **« Impossible de joindre le serveur de mise en relation »** : le port TCP 3536 (ou 443 avec
   HTTPS) n'est pas ouvert, ou l'adresse est fausse. Depuis une page en `https://`, l'adresse doit
-  commencer par `wss://`.
+  commencer par `wss://` (la ligne **Serveur** des options le dit).
 - **Le salon reste sur « Connexion à l'hôte… »** : la connexion WebRTC ne passe pas. Vérifie les
   ports UDP (étape 3), puis le serveur STUN pour une machine derrière une box.
 - **« Un joueur a une autre version du jeu »** : le serveur et la page n'ont pas la même version.

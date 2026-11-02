@@ -79,7 +79,7 @@ pub use nav::{
 };
 pub use options_screen::{
     ControlLine, OptionsArrow, OptionsBack, OptionsColumn, OptionsHelp, OptionsLine, OptionsRoot,
-    OptionsUi, OptionsValue,
+    OptionsUi, OptionsValue, SERVER_HINT, ServerField, ServerHint, ServerNotice,
 };
 pub use pilot_screen::{
     ColorSwatch, LineValue, PilotArrow, PilotButton, PilotColumn, PilotHint, PilotLine, PilotRoot,
