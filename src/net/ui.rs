@@ -11,6 +11,10 @@
 //! built; `?pseudo=` wins over it). Issue #98: it is typed in the « Pilote » screen
 //! (`menu::pilot`, G), which also stores it; each change goes to the others at once (the
 //! `Hello`).
+//!
+//! Issue #225: the **dedicated server** « Créer une partie » goes to (`NetSettings::server`):
+//! `?server=ws://…:3536` (`--server` natively) once, kept in the browser
+//! ([`SERVER_STORAGE_KEY`]); `?server=` (empty, or `none`) forgets it: the page hosts again.
 
 use bevy::prelude::*;
 
@@ -22,6 +26,10 @@ use super::{
     NetAction, NetSession, NetSettings, NetTuning, default_signal, invite_link, native_command,
 };
 use crate::admin::storage;
+
+/// Issue #225: where the dedicated server's address is kept in the browser (its signaling
+/// address, as typed: `ws://…:3536`).
+pub const SERVER_STORAGE_KEY: &str = "fluffy-racers/server";
 
 pub struct NetUiPlugin;
 
@@ -38,6 +46,12 @@ impl Plugin for NetUiPlugin {
 /// online); `?pseudo=` comes after it (`join_launch_room`). An unreadable text is ignored (the
 /// character's name then), with a warning.
 fn load_stored_pseudo(mut settings: ResMut<NetSettings>) {
+    // Issue #225: the dedicated server kept (an unreadable one is ignored).
+    if let Some(server) =
+        storage::load_key(SERVER_STORAGE_KEY).and_then(|text| super::parse_signal(&text))
+    {
+        settings.server = Some(server);
+    }
     let Some(text) = storage::load_key(PSEUDO_STORAGE_KEY) else {
         return;
     };
@@ -72,6 +86,12 @@ fn join_launch_room(
     }
     if let Some(stun) = options.stun.clone() {
         settings.stun = stun;
+    }
+    // Issue #225: `?server=` sets the dedicated server (kept), or forgets it.
+    if let Some(server) = options.server.clone() {
+        storage::save_key(SERVER_STORAGE_KEY, server.as_deref().unwrap_or(""));
+        info!("network: dedicated server: {server:?}");
+        settings.server = server;
     }
     if let Some(turn) = options.turn_server() {
         settings.turn = Some(turn);
@@ -176,8 +196,21 @@ mod platform {
 /// The invitation of `session`'s room: the page's link (`?room=CODE`, its signaling server), or
 /// natively the command line.
 pub fn invitation(session: &NetSession) -> String {
+    // Issue #225: a dedicated server's room: the link keeps the server for the friend's next
+    // games too (`?server=`).
+    let server = session
+        .lobby
+        .as_ref()
+        .is_some_and(|lobby| lobby.on_server())
+        .then_some(session.signal.as_str());
     platform::page()
-        .map(|page| invite_link(&page, &session.room, &session.signal))
+        .map(|page| {
+            let link = invite_link(&page, &session.room, &session.signal);
+            match server {
+                Some(server) => super::room::with_server(&link, server),
+                None => link,
+            }
+        })
         .unwrap_or_else(|| native_command(&session.room, &session.signal))
 }
 

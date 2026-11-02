@@ -63,7 +63,12 @@
 //! Version 17 (issue #153): the room's settings carry the level of its bots
 //! ([`RoomSetup::difficulty`], one byte after the switches, as [`RaceStart::difficulty`]).
 //! Version 18 (issue #156): a shortcut's panel broken by a kart with a boost ([`PanelDown`]: the
-//! kart's peer tells, every peer has it down until the same tick).
+//! kart's peer tells, every peer has it down until the same tick). Version 19 (issue #225): the
+//! dedicated server, a host without a kart nor a seat: it tells each newcomer what it hosts
+//! ([`Message::Server`], [`ServerInfo`]: the players, the settings, the race or the championship
+//! on), a newcomer asks for its seat ([`Message::Enter`]: it creates the game, or joins the one
+//! on), and the game's leader (the first seated player) sends its choices to the server
+//! ([`Message::Lead`], [`LeadOrder`]: the settings, the start, the next stage).
 
 use std::fmt;
 
@@ -73,7 +78,7 @@ use crate::kart::KartColor;
 use crate::race::{ResultLine, ResultTime};
 
 /// Version of this protocol: first byte of every packet. Bump it whenever a message changes.
-pub const PROTOCOL_VERSION: u8 = 18;
+pub const PROTOCOL_VERSION: u8 = 19;
 
 /// Players in a room at most (GD § 1: 12 racers).
 pub const MAX_PLAYERS: usize = 12;
@@ -184,6 +189,40 @@ impl Default for RoomSetup {
             plan: ChampionshipSetup::default(),
         }
     }
+}
+
+/// Issue #225: what a dedicated server hosts, told to each newcomer (and again when it changes,
+/// to those who did not take a seat yet): a game is on when a player is seated.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ServerInfo {
+    /// The players seated (0: no game, the server waits).
+    pub players: u8,
+    /// The game's settings (its mode, its circuit or its championship).
+    pub setup: RoomSetup,
+    /// The last race announced (0: none since the game was created).
+    pub race: u16,
+    /// Its circuit.
+    pub track: u8,
+    /// Its round of the championship (0: a race alone).
+    pub round: u8,
+    /// The championship's races scored so far.
+    pub scored: u8,
+}
+
+impl ServerInfo {
+    /// A game is on: someone created it and is still there.
+    pub fn game(&self) -> bool {
+        self.players > 0
+    }
+}
+
+/// Issue #225: an order of the game's leader to its dedicated server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeadOrder {
+    /// The room's settings (the lobby's lines, « Retour au salon »).
+    Setup(RoomSetup),
+    /// « Lancer la course », « Course suivante », « Le podium »: the server knows which.
+    Start,
 }
 
 /// The bits of a [`RoomSetup`]'s byte.
@@ -1017,6 +1056,13 @@ pub enum Message {
     /// Issue #122: the host's championship in progress: its entrants, their points, the
     /// overall standings, the podium.
     Championship(ChampionshipState),
+    /// Issue #225: a dedicated server tells a newcomer what it hosts.
+    Server(ServerInfo),
+    /// Issue #225: a newcomer asks the dedicated server for its seat (it creates the game, or
+    /// joins the one on).
+    Enter,
+    /// Issue #225: the game's leader orders its dedicated server.
+    Lead(LeadOrder),
 }
 
 /// Kart states in one [`Message::KartStates`] at most: the karts of a grid.
@@ -1058,6 +1104,12 @@ const KART_STATES: u8 = 41;
 const FOOT_STATE: u8 = 42;
 const FOOT_STATES: u8 = 43;
 const FOOT_STRIKE: u8 = 44;
+const SERVER: u8 = 45;
+const ENTER: u8 = 46;
+const LEAD: u8 = 47;
+/// The kinds of [`LeadOrder`].
+const LEAD_SETUP: u8 = 0;
+const LEAD_START: u8 = 1;
 const RELAYED: u8 = 10;
 
 /// The reasons a tether ends, in their wire order.
@@ -1114,6 +1166,9 @@ impl Message {
             Message::FootStates(_) => FOOT_STATES,
             Message::FootStrike(_) => FOOT_STRIKE,
             Message::Championship(_) => CHAMPIONSHIP,
+            Message::Server(_) => SERVER,
+            Message::Enter => ENTER,
+            Message::Lead(_) => LEAD,
             Message::Relayed { .. } => RELAYED,
         }
     }
@@ -1133,6 +1188,9 @@ impl Message {
                 | Message::RaceOver(_)
                 | Message::RaceResults(_)
                 | Message::Championship(_)
+                | Message::Server(_)
+                | Message::Enter
+                | Message::Lead(_)
                 | Message::Verdict(_)
                 | Message::Ping { .. }
                 | Message::Pong { .. }
@@ -1199,22 +1257,19 @@ impl Message {
                 out.extend_from_slice(lineup);
                 put_keys(out, &start.players);
             }
-            Message::Setup(setup) => {
-                let mut bits = 0;
-                for (on, bit) in [
-                    (setup.mirror, SETUP_MIRROR),
-                    (setup.bots, SETUP_BOTS),
-                    (setup.items, SETUP_ITEMS),
-                    (setup.championship, SETUP_CHAMPIONSHIP),
-                ] {
-                    if on {
-                        bits |= bit;
-                    }
-                }
-                // Issue #153: the bots' level after the switches.
-                out.extend_from_slice(&[setup.track, bits, setup.difficulty]);
-                put_plan(out, &setup.plan);
+            Message::Setup(setup) => put_setup(out, setup),
+            Message::Server(info) => {
+                out.push(info.players);
+                put_setup(out, &info.setup);
+                out.extend_from_slice(&info.race.to_le_bytes());
+                out.extend_from_slice(&[info.track, info.round, info.scored]);
             }
+            Message::Enter => {}
+            Message::Lead(LeadOrder::Setup(setup)) => {
+                out.push(LEAD_SETUP);
+                put_setup(out, setup);
+            }
+            Message::Lead(LeadOrder::Start) => out.push(LEAD_START),
             Message::Championship(state) => {
                 put_plan(out, &state.setup);
                 out.extend_from_slice(&state.seed.to_le_bytes());
@@ -1556,31 +1611,30 @@ impl Message {
                 }
                 Message::StartRace(start)
             }
-            SETUP => {
-                let track = reader.u8()?;
-                let bits = reader.u8()?;
-                if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS | SETUP_CHAMPIONSHIP) != 0 {
-                    return Err(DecodeError::Invalid("room settings"));
+            SETUP => Message::Setup(reader.setup()?),
+            SERVER => {
+                let players = reader.u8()?;
+                if usize::from(players) > MAX_PLAYERS {
+                    return Err(DecodeError::Invalid("more players than seats"));
                 }
-                let difficulty = reader.u8()?;
-                if difficulty > MAX_DIFFICULTY {
-                    return Err(DecodeError::Invalid("bot difficulty"));
-                }
-                let setup = RoomSetup {
+                let setup = reader.setup()?;
+                let race = reader.u16()?;
+                let [track, round, scored] = reader.array()?;
+                Message::Server(ServerInfo {
+                    players,
+                    setup,
+                    race,
                     track,
-                    mirror: bits & SETUP_MIRROR != 0,
-                    bots: bits & SETUP_BOTS != 0,
-                    difficulty,
-                    items: bits & SETUP_ITEMS != 0,
-                    championship: bits & SETUP_CHAMPIONSHIP != 0,
-                    plan: reader.plan()?,
-                };
-                // Issue #122: a championship races something.
-                if setup.championship && setup.plan.program.is_empty() {
-                    return Err(DecodeError::Invalid("championship without races"));
-                }
-                Message::Setup(setup)
+                    round,
+                    scored,
+                })
             }
+            ENTER => Message::Enter,
+            LEAD => match reader.u8()? {
+                LEAD_SETUP => Message::Lead(LeadOrder::Setup(reader.setup()?)),
+                LEAD_START => Message::Lead(LeadOrder::Start),
+                _ => return Err(DecodeError::Invalid("leader's order")),
+            },
             CHAMPIONSHIP => {
                 let setup = reader.plan()?;
                 let seed = u64::from_le_bytes(reader.array()?);
@@ -2165,6 +2219,25 @@ const MAX_DIFFICULTY: u8 = 2;
 /// The bots' level of a new room (`bots::BotDifficulty::Normal`, issue #153: the default).
 const NORMAL_DIFFICULTY: u8 = 1;
 
+/// Issue #99: the room's settings: the circuit, a byte of switches, the bots' level (issue #153),
+/// then the championship chosen (issue #122, [`put_plan`]).
+fn put_setup(out: &mut Vec<u8>, setup: &RoomSetup) {
+    let mut bits = 0;
+    for (on, bit) in [
+        (setup.mirror, SETUP_MIRROR),
+        (setup.bots, SETUP_BOTS),
+        (setup.items, SETUP_ITEMS),
+        (setup.championship, SETUP_CHAMPIONSHIP),
+    ] {
+        if on {
+            bits |= bit;
+        }
+    }
+    // Issue #153: the bots' level after the switches.
+    out.extend_from_slice(&[setup.track, bits, setup.difficulty]);
+    put_plan(out, &setup.plan);
+}
+
 /// Issue #122: a championship chosen: its byte of bits, its cup, its draw, then its program (a
 /// count byte and a byte per circuit, [`MAX_PROGRAM`] at most).
 fn put_plan(out: &mut Vec<u8>, plan: &ChampionshipSetup) {
@@ -2315,6 +2388,33 @@ impl Reader<'_> {
             return Err(DecodeError::Invalid(too_many));
         }
         self.array_of(count)
+    }
+
+    /// The room's settings ([`put_setup`]).
+    fn setup(&mut self) -> Result<RoomSetup, DecodeError> {
+        let track = self.u8()?;
+        let bits = self.u8()?;
+        if bits & !(SETUP_MIRROR | SETUP_BOTS | SETUP_ITEMS | SETUP_CHAMPIONSHIP) != 0 {
+            return Err(DecodeError::Invalid("room settings"));
+        }
+        let difficulty = self.u8()?;
+        if difficulty > MAX_DIFFICULTY {
+            return Err(DecodeError::Invalid("bot difficulty"));
+        }
+        let setup = RoomSetup {
+            track,
+            mirror: bits & SETUP_MIRROR != 0,
+            bots: bits & SETUP_BOTS != 0,
+            difficulty,
+            items: bits & SETUP_ITEMS != 0,
+            championship: bits & SETUP_CHAMPIONSHIP != 0,
+            plan: self.plan()?,
+        };
+        // Issue #122: a championship races something.
+        if setup.championship && setup.plan.program.is_empty() {
+            return Err(DecodeError::Invalid("championship without races"));
+        }
+        Ok(setup)
     }
 
     /// Issue #122: a championship chosen ([`put_plan`]).
@@ -2591,6 +2691,33 @@ mod tests {
             ),
             Message::RoomFull,
             Message::Bye,
+            // Issue #225: the dedicated server's news, a seat asked, the leader's orders.
+            Message::Server(ServerInfo::default()),
+            Message::Server(ServerInfo {
+                players: MAX_PLAYERS as u8,
+                setup: RoomSetup {
+                    track: 4,
+                    mirror: true,
+                    championship: true,
+                    plan: ChampionshipSetup {
+                        program: Program::new(&[4, 2, 0]),
+                        ..ChampionshipSetup::default()
+                    },
+                    ..RoomSetup::default()
+                },
+                race: 0xfffe,
+                track: 2,
+                round: 2,
+                scored: 1,
+            }),
+            Message::Enter,
+            Message::Lead(LeadOrder::Start),
+            Message::Lead(LeadOrder::Setup(RoomSetup {
+                track: 3,
+                bots: false,
+                items: false,
+                ..RoomSetup::default()
+            })),
             Message::StartRace(RaceStart {
                 race: 0xbeef,
                 seed: 0xdead_beef_0123_4567,
@@ -3298,8 +3425,9 @@ mod tests {
         // knocked over, the oreillers gone and retargeted; issue #63 what the host relays and its
         // bundles of kart states; issue #70 the closed results; issue #21 the thefts and what
         // they took; issue #101 the characters on foot (a state, the host's bundles) and their
-        // strikes; issue #122 the championship in progress; issue #156 the panels broken.
-        assert_eq!(kinds.len(), 37);
+        // strikes; issue #122 the championship in progress; issue #156 the panels broken; issue
+        // #225 the dedicated server's news, a seat asked of it and its leader's orders.
+        assert_eq!(kinds.len(), 40);
         assert_eq!(
             TETHER_ENDS.len(),
             10,
@@ -3562,6 +3690,14 @@ mod tests {
         let invalid = |bytes: &[u8]| matches!(Message::decode(bytes), Err(DecodeError::Invalid(_)));
         // A boolean of 2.
         assert!(invalid(&[v, READY, 2]));
+        // Issue #225: a server with more players than seats, an unknown order of the leader.
+        let mut server = Message::Server(ServerInfo::default()).to_bytes();
+        server[2] = MAX_PLAYERS as u8 + 1;
+        assert!(invalid(&server));
+        assert!(invalid(&[v, LEAD, 2]));
+        let mut lead = Message::Lead(LeadOrder::Setup(RoomSetup::default())).to_bytes();
+        lead[4] = 0x80;
+        assert!(invalid(&lead), "room settings' bits");
         // Unknown profile flags.
         assert!(invalid(&[v, HELLO, 0, 0, 0, 0, 0, 0b100]));
         // Issue #55: a color outside the palette.

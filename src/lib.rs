@@ -128,7 +128,13 @@ impl Plugin for GamePlugin {
                 ),
             ))
             .add_systems(Startup, spawn_light)
-            .add_systems(Update, spawn_player.run_if(resource_added::<PlayerStart>));
+            // Issue #225: a dedicated server has no player.
+            .add_systems(
+                Update,
+                spawn_player
+                    .run_if(resource_added::<PlayerStart>)
+                    .run_if(not(net::dedicated::dedicated)),
+            );
         // Issue #56: the main menu, with Échap; issue #89: the home screen at launch, and its
         // background. Only on screen: the headless game (the tests, the bot races) keeps the
         // world it was measured with (`menu`).
@@ -169,6 +175,49 @@ impl Plugin for GamePlugin {
             app.add_plugins(track::HazardVisualPlugin);
         }
     }
+}
+
+/// Issue #225: the dedicated server's game (`src/bin/server.rs`, `docs/SERVEUR.md`): the headless
+/// world of the tests (no window, no renderer, no sound, no GPU: `MinimalPlugins`), its frames
+/// paced at the simulation's rate (60 per second, a tick each: it never waits for a render), the
+/// whole game without a player (`net::dedicated`), in `server`'s room.
+pub fn server_app(server: net::dedicated::DedicatedServer) -> App {
+    use bevy::app::ScheduleRunnerPlugin;
+    use bevy::asset::AssetMetaCheck;
+    use bevy::log::{DEFAULT_FILTER, LogPlugin};
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::from_secs_f64(1.0 / TICK_HZ),
+        )),
+        LogPlugin {
+            // The room's news; not the karts' and items' reports every 3 s (a client's console).
+            filter: format!("{DEFAULT_FILTER},matchbox_socket=info,fluffy_racers::net::sync=warn"),
+            ..default()
+        },
+        AssetPlugin {
+            meta_check: AssetMetaCheck::Never,
+            ..default()
+        },
+        TransformPlugin,
+        bevy::input::InputPlugin,
+    ))
+    .init_asset::<Mesh>()
+    .init_asset::<StandardMaterial>()
+    .insert_resource(track::TrackChoice::Salon)
+    .insert_resource(RaceGrid {
+        bots: 0,
+        ..default()
+    })
+    .insert_resource(server)
+    .add_plugins((GamePlugin, net::dedicated::DedicatedPlugin));
+    // Every schedule on one thread, in a fixed order (like the browser and the tests): Bevy's
+    // multi-threaded executor costs several times more per tick for a world this small (measured:
+    // about 30 % of a core idle, against 2 %).
+    for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    }
+    app
 }
 
 /// Spawns the player's kart, when the track says where to start, and the camera the first time

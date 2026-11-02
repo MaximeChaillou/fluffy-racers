@@ -129,6 +129,50 @@ mod tests {
         out
     }
 
+    /// Issue #225: the dedicated server's relay, warm, on a full grid (12 players and no kart of
+    /// its own, or 4 players and its 8 bots): every tick, the states that come, the bundles for
+    /// each client, nothing allocated.
+    #[test]
+    fn the_relay_allocates_nothing_per_tick_once_warm() {
+        use crate::vfx::alloc_tests::{allocations, traces};
+        for (players, bots) in [(12u8, 0u8), (4, 8)] {
+            let clients: Vec<PeerKey> = (1..=u128::from(players))
+                .map(|n| PeerKey(n << 100))
+                .collect();
+            let own: Vec<KartSnapshot> = (players..players + bots)
+                .map(|kart| state(kart, 0))
+                .collect();
+            let mut relay = StateRelay::default();
+            let mut sent = 0usize;
+            let mut tick = |relay: &mut StateRelay, tick: u32, own: &[KartSnapshot]| {
+                for (slot, client) in clients.iter().enumerate() {
+                    relay.push(*client, state(slot as u8, tick));
+                }
+                if relay.due(u64::from(tick) * 16, !own.is_empty(), 33) {
+                    for client in &clients {
+                        relay.bundles_for(*client, HOST, own, |message| {
+                            if let Message::KartStates(states) = message {
+                                sent += states.len();
+                            }
+                        });
+                    }
+                    relay.sent(u64::from(tick) * 16);
+                }
+            };
+            for warm in 0..10 {
+                tick(&mut relay, warm, &own);
+                tick(&mut relay, warm, &[]);
+            }
+            let counted = allocations(|| {
+                for t in 10..300 {
+                    tick(&mut relay, t, if t % 2 == 0 { &own } else { &[] });
+                }
+            });
+            assert_eq!(counted, 0, "{players} players, {bots} bots: {}", traces());
+            assert!(sent > 0);
+        }
+    }
+
     /// Issue #63: one packet per client, with the host's karts (its own and its bots) and the
     /// newest state of every other client's kart, never the client's own; the packet reads back
     /// the same (grouped by peer).

@@ -49,6 +49,21 @@ pub struct NetTuning {
     pub name_tag_distance: f32,
     /// The network simulator (debug, `?netsim=120,20,5`): off by default.
     pub simulator: NetSimTuning,
+    /// Issue #225, the dedicated server: everyone back in the lobby this long after a race's
+    /// results closed (s; the host's own lobby waits `SalonTuning::back_after_results`, the
+    /// same 6 s), unless the leader says so before.
+    pub server_results_s: f32,
+    /// ...a championship's standings shown this long before its next race or its podium (s,
+    /// as `SalonTuning::standings_seconds`)...
+    pub server_standings_s: f32,
+    /// ...its podium this long before everyone is back in the lobby (s, as
+    /// `SalonTuning::podium_seconds`).
+    pub server_podium_s: f32,
+    /// The dedicated server joins its room again this long after its signaling dropped it (s).
+    pub server_retry_s: f32,
+    /// Nobody in its room, the dedicated server's frames are this long at least (ms): it waits
+    /// almost without a cost (a newcomer's arrival is seen that much later, once).
+    pub server_idle_frame_ms: f32,
 }
 
 impl Default for NetTuning {
@@ -68,6 +83,11 @@ impl Default for NetTuning {
             name_tag_height: 1.9,
             name_tag_distance: 90.0,
             simulator: NetSimTuning::default(),
+            server_results_s: 6.0,
+            server_standings_s: 8.0,
+            server_podium_s: 12.0,
+            server_retry_s: 3.0,
+            server_idle_frame_ms: 100.0,
         }
     }
 }

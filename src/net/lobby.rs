@@ -43,13 +43,23 @@
 //! ([`Lobby::championship_podium`]): each time, everyone is told its state
 //! ([`Message::Championship`]), and so is a player seated meanwhile (it watches). The room's
 //! settings again (the lobby's) end it.
+//!
+//! **The dedicated server** (issue #225): a host without a kart nor a seat ([`Lobby::dedicated`]):
+//! the 12 seats stay the players'. It tells each newcomer what it hosts ([`Message::Server`]:
+//! the players, the settings, the race or the championship on), and seats a newcomer only once
+//! it asks ([`Message::Enter`]): a client that came to create a game while one is on is told so
+//! ([`LobbyEvent::GameOn`]) and chooses to join it ([`Lobby::enter`]) or to leave; one that came
+//! to join (an invitation) asks at once. **The leader** of the game is the first seated player
+//! ([`Lobby::leader`]): its choices go to the server ([`Message::Lead`]: the settings, applied at
+//! once; the start, which the game applies, [`Lobby::take_start_order`]); it leaves, the next
+//! seat leads. Everyone gone, the server forgets the game and waits ([`LobbyEvent::ServerWaits`]).
 
 use super::championship::Championship;
 use super::clock::{PeerClock, RoomClock};
 use super::links::Stuck;
 use super::protocol::{
-    ChampionshipState, DecodeError, MAX_PLAYERS, Message, PeerKey, Profile, RaceResults, RaceStart,
-    RoomSetup,
+    ChampionshipState, DecodeError, LeadOrder, MAX_PLAYERS, Message, PeerKey, Profile, RaceResults,
+    RaceStart, RoomSetup, ServerInfo,
 };
 use crate::kart::{KartColor, resolve_players};
 
@@ -94,6 +104,21 @@ pub enum LobbyEvent {
     SetupChosen(RoomSetup),
     /// Issue #122: the host told its championship in progress (its races scored, its podium).
     ChampionshipTold(u8),
+    /// Issue #225, a client that came to create a game: the dedicated server hosts one already
+    /// (join it with [`Lobby::enter`], or leave).
+    GameOn(ServerInfo),
+    /// Issue #225, the dedicated server: everyone left, the game is forgotten.
+    ServerWaits,
+}
+
+/// Issue #225: what a client came to a dedicated server for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Intent {
+    /// Join the game on (an invitation, « Rejoindre »).
+    #[default]
+    Join,
+    /// Create a game (« Créer une partie »): told first when one is on.
+    Create,
 }
 
 /// Another player of the room (or a peer waiting for its seat), as we know it.
@@ -113,6 +138,8 @@ pub struct LobbyPeer {
     pub clock: PeerClock,
     pub last_heard_ms: u64,
     next_ping_ms: u64,
+    /// Issue #225, the dedicated server: it asked for its seat ([`Message::Enter`]).
+    entering: bool,
 }
 
 impl LobbyPeer {
@@ -127,6 +154,7 @@ impl LobbyPeer {
             clock: PeerClock::default(),
             last_heard_ms: now_ms,
             next_ping_ms: now_ms,
+            entering: false,
         }
     }
 
@@ -212,6 +240,17 @@ pub struct Lobby {
     left_results: Option<u16>,
     /// The room's clock (issue #9): the host's.
     room: RoomClock,
+    /// Issue #225: we are a dedicated server (hosting, never seated).
+    dedicated: bool,
+    /// Issue #225, the dedicated server: what it last told the peers without a seat.
+    told_info: Option<ServerInfo>,
+    /// Issue #225, the dedicated server: its leader asked to start (taken by the game).
+    start_order: bool,
+    /// Issue #225, a client: our host is a dedicated server, and what it hosts (its last news).
+    server: Option<ServerInfo>,
+    /// Issue #225, a client: what we came for, and whether we asked for our seat.
+    intent: Intent,
+    entered: bool,
     outbox: Vec<Outgoing>,
     events: Vec<LobbyEvent>,
 }
@@ -243,12 +282,122 @@ impl Lobby {
             told: None,
             left_results: None,
             room,
+            dedicated: false,
+            told_info: None,
+            start_order: false,
+            server: None,
+            intent: Intent::Join,
+            entered: false,
             outbox: Vec::new(),
             events: if hosting {
                 vec![LobbyEvent::Seated(me)]
             } else {
                 Vec::new()
             },
+        }
+    }
+
+    /// Issue #225: a dedicated server's lobby: it hosts the room from the start without a seat
+    /// (no kart: the 12 seats are the players'), and the room's clock is its own.
+    pub fn dedicated(me: PeerKey, profile: Profile, now_ms: u64) -> Self {
+        let mut lobby = Self::new(me, profile, now_ms, true);
+        lobby.dedicated = true;
+        lobby.profile.seated = false;
+        lobby.seats.clear();
+        lobby.events.clear();
+        lobby
+    }
+
+    /// Issue #225, a client: what we come for (by default, to join).
+    pub fn with_intent(mut self, intent: Intent) -> Self {
+        self.intent = intent;
+        self
+    }
+
+    /// Issue #225: we are a dedicated server.
+    pub fn is_dedicated(&self) -> bool {
+        self.dedicated
+    }
+
+    /// Issue #225, a client: our host is a dedicated server: its last news.
+    pub fn server(&self) -> Option<&ServerInfo> {
+        self.server.as_ref()
+    }
+
+    /// Issue #225: the room is a dedicated server's (we are it, or our host is).
+    pub fn on_server(&self) -> bool {
+        self.dedicated || self.server.is_some()
+    }
+
+    /// Issue #225: who leads the game (chooses its settings, starts its races): the host, or on a
+    /// dedicated server the first seated player (the one who created the game; then the next).
+    pub fn leader(&self) -> Option<PeerKey> {
+        if self.on_server() {
+            self.seats.first().copied()
+        } else {
+            self.host
+        }
+    }
+
+    /// Issue #225: we lead the game: the host of a room, or the leader on a dedicated server.
+    pub fn leads(&self) -> bool {
+        !self.dedicated && self.leader() == Some(self.me)
+    }
+
+    /// Issue #225, a client of a dedicated server: we did not ask for our seat yet, because a
+    /// game is on and we came to create one (« Rejoindre » or leave).
+    pub fn deciding(&self) -> Option<&ServerInfo> {
+        self.server
+            .as_ref()
+            .filter(|_| !self.entered && !self.profile.seated && !self.stopped())
+    }
+
+    /// Issue #225, a client of a dedicated server: we ask for our seat (we join the game on, or
+    /// create one). Once.
+    pub fn enter(&mut self) -> bool {
+        let Some(host) = self.host.filter(|_| self.server.is_some()) else {
+            return false;
+        };
+        if self.entered || self.stopped() {
+            return false;
+        }
+        self.entered = true;
+        self.send(host, Message::Enter);
+        true
+    }
+
+    /// Issue #225, the dedicated server: its leader asked to start (« Lancer la course », « Course
+    /// suivante », « Le podium »), since the last call.
+    pub fn take_start_order(&mut self) -> bool {
+        std::mem::take(&mut self.start_order)
+    }
+
+    /// Issue #225, the leader of a dedicated server's game: « Lancer la course » (or the next
+    /// stage of the championship), to the server.
+    pub fn lead_start(&mut self) -> bool {
+        let Some(host) = self.host.filter(|_| self.server.is_some() && self.leads()) else {
+            return false;
+        };
+        if self.stopped() {
+            return false;
+        }
+        self.send(host, Message::Lead(LeadOrder::Start));
+        true
+    }
+
+    /// Issue #225, the dedicated server: what it hosts now.
+    pub fn server_info(&self) -> ServerInfo {
+        let (race, track, round) = self
+            .announced
+            .as_ref()
+            .map_or((0, 0, 0), |start| (start.race, start.track, start.round));
+        ServerInfo {
+            players: self.seats.len().min(MAX_PLAYERS) as u8,
+            setup: self.setup,
+            race,
+            track,
+            round,
+            scored: self.run.as_ref().map_or(0, |run| run.state.scored),
         }
     }
 
@@ -360,6 +509,20 @@ impl Lobby {
 
     /// At least two players, all of them ready.
     pub fn all_ready(&self) -> bool {
+        // Issue #225: on a dedicated server, every player but the leader (it starts).
+        if self.dedicated {
+            let leader = self.leader();
+            return self.seats.len() >= 2
+                && self
+                    .seats
+                    .iter()
+                    .filter(|key| Some(**key) != leader)
+                    .all(|key| {
+                        self.peer(*key)
+                            .and_then(|peer| peer.profile.as_ref())
+                            .is_some_and(|profile| profile.ready)
+                    });
+        }
         self.seats.len() >= 2
             && self.profile.ready
             && self.seats.iter().filter(|key| **key != self.me).all(|key| {
@@ -405,6 +568,10 @@ impl Lobby {
         self.peers.push(LobbyPeer::new(peer, true, now_ms));
         self.events.push(LobbyEvent::Connected(peer));
         self.send(peer, Message::Hello(self.profile.clone()));
+        // Issue #225: a dedicated server tells what it hosts.
+        if self.dedicated {
+            self.send(peer, Message::Server(self.server_info()));
+        }
         self.refresh();
     }
 
@@ -523,6 +690,34 @@ impl Lobby {
             Message::Relayed { origin, message } => {
                 if !self.hosting {
                     self.relayed(origin, *message, now_ms);
+                }
+            }
+            // Issue #225: a dedicated server's news, a newcomer's request, the leader's orders.
+            Message::Server(info) => {
+                if !self.hosting {
+                    self.server = Some(info);
+                    if !self.entered && !self.profile.seated {
+                        if self.intent == Intent::Join || !info.game() {
+                            self.enter();
+                        } else {
+                            self.events.push(LobbyEvent::GameOn(info));
+                        }
+                    }
+                }
+            }
+            Message::Enter => {
+                if self.dedicated {
+                    peer.entering = true;
+                }
+            }
+            Message::Lead(order) => {
+                if self.dedicated && self.leader() == Some(from) {
+                    match order {
+                        LeadOrder::Setup(setup) => {
+                            self.choose_setup(setup);
+                        }
+                        LeadOrder::Start => self.start_order = true,
+                    }
                 }
             }
             // The race's events, the interactions between karts (issue #9), the items (issue
@@ -812,6 +1007,16 @@ impl Lobby {
     /// is gone, and the next race takes them. Only the host may. Issue #122: with the mode and the
     /// championship; the championship in progress (or over) is gone too.
     pub fn choose_setup(&mut self, setup: RoomSetup) -> bool {
+        // Issue #225: the leader of a dedicated server's game sends its choice (kept at once:
+        // the next one builds on it); the server tells everyone.
+        if !self.hosting
+            && let Some(host) = self.host.filter(|_| self.server.is_some() && self.leads())
+            && !self.stopped()
+        {
+            self.setup = setup;
+            self.send(host, Message::Lead(LeadOrder::Setup(setup)));
+            return true;
+        }
         if !self.hosting || self.stopped() {
             return false;
         }
@@ -898,7 +1103,8 @@ impl Lobby {
                 color: self.color_of(peer.key),
                 ready: profile.ready,
                 me: false,
-                host: self.host == Some(peer.key),
+                // Issue #225: on a dedicated server, its game's leader.
+                host: self.leader() == Some(peer.key),
                 seated: peer.seated,
                 link: if peer.direct {
                     RowLink::Direct
@@ -918,7 +1124,7 @@ impl Lobby {
             color: self.color_of(self.me),
             ready: self.profile.ready,
             me: true,
-            host: self.hosting,
+            host: self.leads(),
             seated: self.profile.seated,
             link: RowLink::Me,
             ping_ms: None,
@@ -932,12 +1138,18 @@ impl Lobby {
                 rows.push(row_of_peer(peer));
             }
         }
-        if !self.profile.seated {
+        // Issue #225: a dedicated server is nobody's player: not listed.
+        if !self.profile.seated && !self.dedicated {
             rows.push(my_row);
         }
+        let server = self.host.filter(|_| self.server.is_some());
         for waiting in [true, false] {
             for peer in &self.peers {
-                if !peer.seated && !peer.refused && peer.other_version.is_none() == waiting {
+                if !peer.seated
+                    && !peer.refused
+                    && peer.other_version.is_none() == waiting
+                    && Some(peer.key) != server
+                {
                     rows.push(row_of_peer(peer));
                 }
             }
@@ -1009,7 +1221,12 @@ impl Lobby {
         }
         for index in 0..self.peers.len() {
             let peer = &self.peers[index];
-            if peer.seated || !peer.talks() || peer.profile.is_none() {
+            // Issue #225: a dedicated server seats those who asked (to create, or to join).
+            if peer.seated
+                || !peer.talks()
+                || peer.profile.is_none()
+                || (self.dedicated && !peer.entering)
+            {
                 continue;
             }
             let key = peer.key;
@@ -1029,6 +1246,39 @@ impl Lobby {
                         message: seats.clone(),
                     });
                 }
+            }
+        }
+        if self.dedicated {
+            self.serve();
+        }
+    }
+
+    /// Issue #225, the dedicated server, after every change: everyone gone, it forgets the game
+    /// (it waits); what it hosts changed, the peers without a seat are told (those deciding
+    /// whether to join). Nothing allocated when nothing changed.
+    fn serve(&mut self) {
+        if self.seats.is_empty()
+            && (self.announced.is_some()
+                || self.run.is_some()
+                || self.setup != RoomSetup::default())
+        {
+            self.setup = RoomSetup::default();
+            self.announced = None;
+            self.run = None;
+            self.start_order = false;
+            self.events.push(LobbyEvent::ServerWaits);
+        }
+        let info = self.server_info();
+        if self.told_info == Some(info) {
+            return;
+        }
+        self.told_info = Some(info);
+        for peer in &self.peers {
+            if peer.direct && !peer.seated && peer.talks() {
+                self.outbox.push(Outgoing {
+                    to: peer.key,
+                    message: Message::Server(info),
+                });
             }
         }
     }
@@ -1109,6 +1359,25 @@ mod tests {
             let key = Self::key(n);
             let profile = Self::profile(&format!("Joueur {n}"));
             self.add(Lobby::new(key, profile, 0, false));
+            if let Some(host) = self.host {
+                self.link(host, key);
+            }
+            key
+        }
+
+        /// Issue #225: the dedicated server opens the room: it hosts it, without a seat.
+        fn serve(&mut self, n: u128) -> PeerKey {
+            let key = Self::key(n);
+            self.add(Lobby::dedicated(key, Self::profile("Serveur"), 0));
+            self.host = Some(key);
+            key
+        }
+
+        /// Issue #225: a player comes to the server's room, to create a game or to join one.
+        fn come(&mut self, n: u128, intent: Intent) -> PeerKey {
+            let key = Self::key(n);
+            let profile = Self::profile(&format!("Joueur {n}"));
+            self.add(Lobby::new(key, profile, 0, false).with_intent(intent));
             if let Some(host) = self.host {
                 self.link(host, key);
             }
@@ -1267,6 +1536,100 @@ mod tests {
             }
             (first.host(), first.seats().to_vec())
         }
+    }
+
+    /// Issue #225 acceptance (the lobby's part): the dedicated server hosts without a seat; the
+    /// first player who comes to create a game takes the first seat and leads it; a second one
+    /// who comes to create is told the game on (what it is), takes no seat until it joins; one
+    /// who comes from an invitation joins at once. The leader's choices go through the server to
+    /// everyone; another player's are not taken. The leader gone, the next seat leads; everyone
+    /// gone, the server forgets the game and waits.
+    #[test]
+    fn a_dedicated_server_hosts_the_game_of_its_first_player() {
+        let mut star = Star::new();
+        let server = star.serve(1);
+        star.settle(100);
+        assert!(star.view(server).seats().is_empty());
+        assert!(star.view(server).players(star.now).is_empty());
+        let ana = star.come(2, Intent::Create);
+        star.settle(100);
+        assert_eq!(star.view(server).seats(), [ana]);
+        assert!(star.view(ana).seated() && star.view(ana).leads());
+        assert_eq!(star.view(ana).leader(), Some(ana));
+        assert!(star.view(ana).on_server() && !star.view(ana).is_host());
+        // The server is nobody's player: not in Ana's list.
+        let rows = star.view(ana).players(star.now);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].me && rows[0].host);
+        // The leader's settings: to the server, which tells everyone.
+        let chosen = RoomSetup {
+            track: 2,
+            mirror: true,
+            ..RoomSetup::default()
+        };
+        assert!(star.lobby(ana).choose_setup(chosen));
+        star.settle(100);
+        assert_eq!(star.view(server).setup(), chosen);
+        // Bob came to create: a game is on, he is told what it is and waits.
+        let bob = star.come(3, Intent::Create);
+        star.settle(100);
+        assert!(!star.view(bob).seated());
+        let info = *star.view(bob).deciding().expect("a game on");
+        assert_eq!((info.players, info.setup, info.race), (1, chosen, 0));
+        assert!(
+            star.lobby(bob)
+                .drain_events()
+                .any(|event| event == LobbyEvent::GameOn(info))
+        );
+        assert_eq!(star.view(server).seats(), [ana]);
+        // Cyd opened an invitation: in at once.
+        let cyd = star.come(4, Intent::Join);
+        star.settle(100);
+        assert_eq!(star.view(server).seats(), [ana, cyd]);
+        // Bob's news follow the game while he decides.
+        assert_eq!(star.view(bob).deciding().map(|info| info.players), Some(2));
+        assert!(star.lobby(bob).enter());
+        star.settle(100);
+        assert_eq!(star.agreed().1, [ana, cyd, bob]);
+        assert!(star.view(bob).deciding().is_none());
+        assert_eq!(star.view(cyd).setup(), chosen);
+        assert_eq!(star.view(bob).setup(), chosen);
+        // Only the leader chooses.
+        assert!(!star.lobby(bob).choose_setup(RoomSetup::default()));
+        assert!(!star.lobby(bob).lead_start());
+        assert!(star.lobby(ana).lead_start());
+        star.settle(100);
+        assert!(star.lobby(server).take_start_order());
+        assert!(!star.lobby(server).take_start_order());
+        // Ready: everyone but the leader.
+        assert!(!star.view(server).all_ready());
+        star.lobby(cyd).set_ready(true);
+        star.lobby(bob).set_ready(true);
+        star.settle(100);
+        assert!(star.view(server).all_ready());
+        // Ana leaves: Cyd leads, everyone agrees.
+        star.close(ana);
+        star.settle(100);
+        assert_eq!(star.agreed().1, [cyd, bob]);
+        assert!(star.view(cyd).leads() && !star.view(bob).leads());
+        assert_eq!(star.view(bob).leader(), Some(cyd));
+        // Everyone gone: the server waits, its game forgotten.
+        star.close(cyd);
+        star.close(bob);
+        star.settle(100);
+        assert!(star.view(server).seats().is_empty());
+        assert_eq!(star.view(server).setup(), RoomSetup::default());
+        assert!(
+            star.lobby(server)
+                .drain_events()
+                .any(|event| event == LobbyEvent::ServerWaits)
+        );
+        // The next one to come creates a new game.
+        let eve = star.come(5, Intent::Create);
+        star.settle(100);
+        assert_eq!(star.view(server).seats(), [eve]);
+        assert!(star.view(eve).leads());
+        assert_eq!(star.view(eve).setup(), RoomSetup::default());
     }
 
     /// Issue #7 (issue #63: was « the smallest id hosts »): two players find each other, see

@@ -72,7 +72,7 @@ Tu travailles **sans surveillance**, en général lancé par une routine planifi
 | Réseau | **matchbox_socket 0.14** (WebRTC) + **notre propre netcode** | Indépendant de Bevy. Voir `docs/ARCHITECTURE.md`. |
 | Build web | **trunk** | `index.html` à la racine. |
 | Rendu web | WebGL2 (défaut de Bevy) | Compatibilité maximale. WebGPU sera évalué plus tard. |
-| Serveurs | **Aucun serveur de jeu** | Seulement une signalisation WebRTC (voir l'architecture). |
+| Serveurs | **Serveur dédié optionnel** (#225) | Décision de Max du 2026-11-01 : « Je voudrais pouvoir lancer un serveur dédié sur une machine à part simplement, car je veux absolument que les perfs soient bonnes. » C'est le jeu sans fenêtre (`fluffy-racers-server`), hôte de l'étoile sans kart ni place, avec sa propre signalisation (`matchbox_signaling` 0.14). Sans serveur configuré, le navigateur du créateur reste l'hôte. Voir `docs/SERVEUR.md`. |
 
 **À ne pas ajouter** tant qu'ils ne supportent pas Bevy 0.20 : `avian3d`, `lightyear`, `bevy_ggrs`, `bevy_matchbox`. Si l'un d'eux passe en 0.20 et te semble utile, propose-le dans `STATUS.md` sans l'ajouter.
 
@@ -86,6 +86,7 @@ trunk serve                                 # version web sur http://localhost:8
 trunk build --release                       # build web de prod dans dist/
 cargo test                                  # tests
 cargo check --target wasm32-unknown-unknown # vérifie que ça compile pour le web
+cargo run --bin fluffy-racers-server        # le serveur dédié (#225), sans fenêtre, docs/SERVEUR.md
 ```
 
 Multijoueur en local : `cargo install matchbox_server && matchbox_server` (port 3536), puis ouvre plusieurs onglets avec la même room.

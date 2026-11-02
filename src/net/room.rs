@@ -41,6 +41,10 @@ pub const SIGNAL_PORT: u16 = 3536;
 /// Prefix of our rooms on the signaling server: another game on the same server never meets ours.
 pub const ROOM_PREFIX: &str = "fluffy-racers-";
 
+/// Issue #225: the room of a dedicated server, fixed and known of the game (« Créer une partie »
+/// with a server goes there): nobody types its code.
+pub const SERVER_ROOM: &str = "SERVEUR";
+
 /// A room's code: capitals and digits, 1 to [`MAX_CODE_LENGTH`] of them.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RoomCode(String);
@@ -140,6 +144,9 @@ pub struct LaunchOptions {
     pub netsim: Option<NetSimTuning>,
     /// An unreadable `netsim` value, kept for the warning.
     pub netsim_refused: Option<String>,
+    /// Issue #225: `?server=ws://…:3536`, `--server ws://…`: the dedicated server where « Créer
+    /// une partie » goes (kept in the browser). `Some(None)`: `?server=` (or `none`), forget it.
+    pub server: Option<Option<String>>,
 }
 
 impl LaunchOptions {
@@ -193,6 +200,14 @@ impl LaunchOptions {
                 )
             }
             "signal" => self.signal = parse_signal(value),
+            "server" => {
+                let value = value.trim();
+                self.server = if value.is_empty() || value.eq_ignore_ascii_case("none") {
+                    Some(None)
+                } else {
+                    parse_signal(value).map(Some)
+                };
+            }
             "pseudo" => {
                 let name = crate::net::Profile::clean_name(value);
                 self.pseudo = (!name.is_empty()).then_some(name);
@@ -253,8 +268,8 @@ impl LaunchOptions {
 }
 
 /// The parameters of the page address and the command line.
-const LAUNCH_KEYS: [&str; 8] = [
-    "room", "signal", "pseudo", "stun", "turn", "turnuser", "turnpass", "netsim",
+const LAUNCH_KEYS: [&str; 9] = [
+    "room", "signal", "pseudo", "stun", "turn", "turnuser", "turnpass", "netsim", "server",
 ];
 
 /// The invitation link: the game's page (`page`: its address without query, like
@@ -267,6 +282,12 @@ pub fn invite_link(page: &str, code: &RoomCode, signal: &str) -> String {
         link.push_str(&percent_encode(signal));
     }
     link
+}
+
+/// Issue #225: an invitation `link` that also sets the dedicated server (`&server=…`): the
+/// friend's « Créer une partie » goes there too.
+pub fn with_server(link: &str, server: &str) -> String {
+    format!("{link}&server={}", percent_encode(server))
 }
 
 /// The page's query with `room=CODE` set (`None`: removed), the other parameters kept
@@ -381,6 +402,47 @@ mod tests {
         }
         assert!(codes.len() > 1_990, "{} different codes", codes.len());
         assert_eq!(CODE_ALPHABET.len(), 31);
+    }
+
+    /// Issue #225: `?server=` names the dedicated server (or forgets it), `--server` too; the
+    /// server's room is a code like any other; an invitation can carry the server.
+    #[test]
+    fn the_dedicated_server_is_given_by_the_address() {
+        let options = LaunchOptions::from_query("?server=ws%3A%2F%2F192.168.1.30%3A3536%2F");
+        assert_eq!(
+            options.server,
+            Some(Some("ws://192.168.1.30:3536".to_string()))
+        );
+        assert_eq!(LaunchOptions::from_query("?server=").server, Some(None));
+        assert_eq!(LaunchOptions::from_query("?server=none").server, Some(None));
+        // Unreadable: ignored (nothing changes).
+        assert_eq!(LaunchOptions::from_query("?server=http://x").server, None);
+        assert_eq!(LaunchOptions::from_query("?room=AB3CD").server, None);
+        let args = ["--server", "wss://jeu.example.org"].map(String::from);
+        assert_eq!(
+            LaunchOptions::from_args(args).server,
+            Some(Some("wss://jeu.example.org".to_string()))
+        );
+        let room = RoomCode::parse(SERVER_ROOM).expect("a code");
+        assert_eq!(room.as_str(), "SERVEUR");
+        assert_eq!(
+            room_url("ws://192.168.1.30:3536", &room),
+            "ws://192.168.1.30:3536/fluffy-racers-SERVEUR"
+        );
+        let link = invite_link("https://x.github.io/fr/", &room, "ws://192.168.1.30:3536");
+        let link = with_server(&link, "ws://192.168.1.30:3536");
+        assert_eq!(
+            link,
+            "https://x.github.io/fr/?room=SERVEUR&signal=ws%3A%2F%2F192.168.1.30%3A3536\
+             &server=ws%3A%2F%2F192.168.1.30%3A3536"
+        );
+        let back = LaunchOptions::from_query(link.split_once('?').unwrap().1);
+        assert_eq!(back.room, Some(room));
+        assert_eq!(back.signal.as_deref(), Some("ws://192.168.1.30:3536"));
+        assert_eq!(
+            back.server,
+            Some(Some("ws://192.168.1.30:3536".to_string()))
+        );
     }
 
     #[test]
