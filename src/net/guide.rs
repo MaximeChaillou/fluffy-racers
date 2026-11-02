@@ -15,7 +15,7 @@ use std::fmt;
 
 use super::lobby::Lobby;
 use super::online::OnlineRace;
-use super::protocol::{RaceStart, RoomSetup};
+use super::protocol::{RaceStart, RoomSetup, ServerInfo};
 use super::{NetSession, NetStatus};
 use crate::bots::BotDifficulty;
 use crate::modes::BotsChoice;
@@ -88,6 +88,9 @@ pub enum Stage {
     Arriving,
     /// Seated in the room.
     Seated(Seated),
+    /// Issue #225: we came to a dedicated server to create a game, and one is on: « Rejoindre »
+    /// or leave.
+    GameOn(ServerInfo),
     /// Nothing more to do in this room: unreachable, full, its host gone, or ours already hosted
     /// (the window says which and what to do; no banner).
     Over,
@@ -96,11 +99,14 @@ pub enum Stage {
 /// A seated player's room.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seated {
-    /// We host it (we created it).
+    /// We host it (we created it). Issue #225: on a dedicated server, we lead its game.
     pub hosting: bool,
+    /// Issue #225: the room is a dedicated server's: its leader chooses and starts.
+    pub server: bool,
     /// Seated players, us included.
     pub players: usize,
-    /// The host's name (empty: its `Hello` has not come yet).
+    /// The host's name (empty: its `Hello` has not come yet); issue #225, on a dedicated
+    /// server, its game's leader's.
     pub host: String,
     /// We said « Prêt » (a client).
     pub ready: bool,
@@ -154,9 +160,12 @@ impl RoomFacts {
         let stage = match &session.status {
             NetStatus::Connecting => Stage::Connecting,
             NetStatus::InRoom if session.host_missing(now_ms) => Stage::NoHost,
-            NetStatus::InRoom => match session.lobby.as_ref().filter(|lobby| lobby.seated()) {
-                Some(lobby) => Stage::Seated(Seated::of(lobby, race)),
-                None => Stage::Arriving,
+            NetStatus::InRoom => match session.lobby.as_ref() {
+                Some(lobby) if lobby.seated() => Stage::Seated(Seated::of(lobby, race)),
+                Some(lobby) if lobby.deciding().is_some_and(ServerInfo::game) => {
+                    Stage::GameOn(*lobby.deciding().unwrap_or(&ServerInfo::default()))
+                }
+                _ => Stage::Arriving,
             },
             NetStatus::Failed(_) | NetStatus::Full | NetStatus::HostLeft | NetStatus::HostTaken => {
                 Stage::Over
@@ -175,6 +184,10 @@ impl RoomFacts {
             Stage::Connecting => (format!("Salon {room}"), "Connexion…".to_string()),
             Stage::Arriving => (format!("Salon {room}"), "Connexion à l'hôte…".to_string()),
             Stage::NoHost => (String::new(), "Cette partie n'existe plus".to_string()),
+            Stage::GameOn(_) => (
+                format!("Salon {room}"),
+                "Une partie est en cours : rejoins-la".to_string(),
+            ),
             Stage::Over => return None,
             Stage::Seated(seated) => {
                 if seated.race == RaceStage::Racing {
@@ -244,7 +257,8 @@ fn race_stage(lobby: &Lobby, race: Option<&OnlineRace>) -> RaceStage {
 
 impl Seated {
     fn of(lobby: &Lobby, race: Option<&OnlineRace>) -> Seated {
-        let host = lobby.host();
+        // Issue #225: on a dedicated server, its game's leader stands for the host.
+        let host = lobby.leader();
         let name_of = |key| {
             if key == lobby.me() {
                 Some(lobby.profile().name.clone())
@@ -269,7 +283,8 @@ impl Seated {
             })
             .collect();
         Seated {
-            hosting: lobby.is_host(),
+            hosting: lobby.leads(),
+            server: lobby.on_server(),
             players: lobby.seats().len(),
             host: host.and_then(name_of).unwrap_or_default(),
             ready: lobby.profile().ready,
@@ -302,20 +317,41 @@ impl Seated {
         match (self.hosting, self.race) {
             (_, RaceStage::Watching) => "Course en cours : tu seras de la prochaine".to_string(),
             (true, _) if self.players < 2 => {
-                "Tu es l'hôte : envoie le lien d'invitation à tes amis".to_string()
+                format!(
+                    "{} : envoie le lien d'invitation à tes amis",
+                    self.you_lead()
+                )
             }
-            (true, _) => "Tu es l'hôte : choisis le circuit puis lance la course".to_string(),
+            (true, _) => format!(
+                "{} : choisis le circuit puis lance la course",
+                self.you_lead()
+            ),
             (false, _) if self.ready => format!("En attente de {host}…"),
             (false, _) => "Clique sur « Prêt ! »".to_string(),
         }
     }
 
-    /// « l'hôte (Ana) », « l'hôte » before its name comes.
-    fn host_named(&self) -> String {
-        if self.host.is_empty() {
-            "l'hôte".to_string()
+    /// « Tu es l'hôte »; issue #225, on a dedicated server, « Tu es le chef de partie ».
+    fn you_lead(&self) -> &'static str {
+        if self.server {
+            "Tu es le chef de partie"
         } else {
-            format!("l'hôte ({})", self.host)
+            "Tu es l'hôte"
+        }
+    }
+
+    /// « l'hôte (Ana) », « l'hôte » before its name comes; issue #225, on a dedicated server,
+    /// « le chef de partie (Ana) ».
+    fn host_named(&self) -> String {
+        let who = if self.server {
+            "le chef de partie"
+        } else {
+            "l'hôte"
+        };
+        if self.host.is_empty() {
+            who.to_string()
+        } else {
+            format!("{who} ({})", self.host)
         }
     }
 
@@ -323,9 +359,15 @@ impl Seated {
     pub fn role(&self) -> String {
         if self.hosting {
             if self.players < 2 {
-                "Tu es l'hôte : envoie le lien d'invitation à tes amis.".to_string()
+                format!(
+                    "{} : envoie le lien d'invitation à tes amis.",
+                    self.you_lead()
+                )
             } else {
-                "Tu es l'hôte : choisis le circuit puis lance la course.".to_string()
+                format!(
+                    "{} : choisis le circuit puis lance la course.",
+                    self.you_lead()
+                )
             }
         } else {
             format!(
@@ -431,6 +473,7 @@ mod tests {
     fn seated(hosting: bool, players: usize, ready: bool, not_ready: &[&str]) -> Seated {
         Seated {
             hosting,
+            server: false,
             players,
             host: "Ana".to_string(),
             ready,

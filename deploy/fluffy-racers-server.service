@@ -1,0 +1,19 @@
+# Issue #225: the dedicated server as a systemd service (docs/SERVEUR.md, « Sans Docker »).
+#   sudo cp deploy/fluffy-racers-server.service /etc/systemd/system/
+#   sudo systemctl enable --now fluffy-racers-server
+[Unit]
+Description=Fluffy Racers, serveur dédié
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=fluffy
+WorkingDirectory=/opt/fluffy-racers
+Environment=BEVY_ASSET_ROOT=/opt/fluffy-racers
+ExecStart=/opt/fluffy-racers/fluffy-racers-server --port 3536
+# Comes back after a crash, and starts with the machine.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

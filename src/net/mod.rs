@@ -51,6 +51,7 @@
 mod browser;
 pub mod championship;
 mod clock;
+pub mod dedicated;
 pub mod foot;
 mod guide;
 mod ice;
@@ -67,6 +68,8 @@ pub mod pseudo;
 mod race;
 mod relay;
 mod room;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod signal_server;
 mod signaling;
 mod snapshot;
 mod socket;
@@ -98,6 +101,8 @@ mod salon_tests;
 #[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod server_tests;
+#[cfg(test)]
 mod setup_tests;
 #[cfg(test)]
 mod star_tests;
@@ -123,8 +128,8 @@ pub use links::{
     CONNECTING_SHOWN_MS, Diagnosis, Link, Links, NO_CANDIDATE_MS, Role, STUCK_MS, Stuck,
 };
 pub use lobby::{
-    Lobby, LobbyEvent, LobbyPeer, NO_HOST_MS, Outgoing, PING_INTERVAL_MS, PlayerRow, RowLink,
-    SILENT_MS,
+    Intent, Lobby, LobbyEvent, LobbyPeer, NO_HOST_MS, Outgoing, PING_INTERVAL_MS, PlayerRow,
+    RowLink, SILENT_MS,
 };
 pub use netsim::{NetSim, NetSimTuning};
 pub use online::{
@@ -134,18 +139,18 @@ pub use pickups::{Arbiter, ClaimKey, Pillow, PillowRules};
 pub use protocol::{
     BlastOut, ChampionshipSetup, ChampionshipState, Channel, Claim, DecodeError, EFFECT_ITEMS,
     EffectOut, FOOT_POSE_BITS, FootState, FootStrike, Grab, HELD_ITEMS, Honk, ItemBreak, ItemId,
-    ItemOut, KartId, KartSnapshot, LooseId, MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES,
+    ItemOut, KartId, KartSnapshot, LeadOrder, LooseId, MAX_BUNDLED_STATES, MAX_KART_STATE_BYTES,
     MAX_NAME_CHARS, MAX_PLAYERS, MAX_PROGRAM, MAX_SCATTER, Message, OUT_ITEMS, OutMotion,
     OutPillow, PROTOCOL_VERSION, PanelDown, PeerKey, Pickup, PillowGone, Profile, Program,
     Progress, RAM_ITEMS, RaceOver, RaceResults, RaceStart, Rammed, Retarget, RoomSetup, Scatter,
-    Spot, Strike, StrikeReply, TetherBreak, Verdict,
+    ServerInfo, Spot, Strike, StrikeReply, TetherBreak, Verdict,
 };
 pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
 pub use room::{
-    CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SIGNAL_PORT,
-    default_signal, host_query, invite_link, native_command, parse_signal, query_with_room,
-    room_url,
+    CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SERVER_ROOM,
+    SIGNAL_PORT, default_signal, host_query, invite_link, native_command, parse_signal,
+    query_with_room, room_url,
 };
 pub use signaling::{
     Admit, ObservedSignallerBuilder, SignalFilter, SignalNote, WebSocketSignallerBuilder,
@@ -200,6 +205,10 @@ pub struct NetSettings {
     /// 40 s, and a machine without IPv6 can keep it waiting for ever. 3 s leave a STUN server
     /// several tries; on a local network, the candidates come in a few milliseconds.
     pub ice_gathering_max_ms: u32,
+    /// Issue #225: the dedicated server (its signaling address, `ws://…:3536`): « Créer une
+    /// partie » goes there (its room [`SERVER_ROOM`]) instead of hosting in this page. `None`:
+    /// the page hosts, as before. `?server=` (kept in the browser), `--server`.
+    pub server: Option<String>,
 }
 
 impl Default for NetSettings {
@@ -211,6 +220,7 @@ impl Default for NetSettings {
             stun: StunChoice::Auto,
             turn: None,
             ice_gathering_max_ms: 3_000,
+            server: None,
         }
     }
 }
@@ -259,8 +269,11 @@ pub enum NetAction {
     /// Issue #99: the host chooses the room's settings (the circuit, the mirror, the bots, the
     /// items).
     ChooseSetup(RoomSetup),
-    /// The host starts a race (issue #9) on the room's circuit, with everyone seated.
+    /// The host starts a race (issue #9) on the room's circuit, with everyone seated. Issue
+    /// #225: on a dedicated server, its leader asks it to (or to go on with the championship).
     StartRace,
+    /// Issue #225: « Rejoindre » the game a dedicated server hosts (we came to create one).
+    JoinGame,
 }
 
 /// Where we are with the room.
@@ -298,6 +311,10 @@ pub struct NetSession {
     pub ice: IceServers,
     /// Issue #63: we host the room (we created it), or are a client.
     pub hosting: bool,
+    /// Issue #225: we are the dedicated server (hosting, without a kart nor a seat).
+    pub dedicated: bool,
+    /// Issue #225, a client: what we came for (to a dedicated server: create a game, or join).
+    pub intent: Intent,
     pub status: NetStatus,
     /// From our id on.
     pub lobby: Option<Lobby>,
@@ -326,6 +343,8 @@ impl NetSession {
             signal,
             ice,
             hosting,
+            dedicated: false,
+            intent: Intent::Join,
             status: NetStatus::Connecting,
             lobby: None,
             links: Links::default(),
@@ -333,6 +352,15 @@ impl NetSession {
             failures_seen: browser::ice_failures(),
             relay: StateRelay::default(),
             own_states: Vec::new(),
+        }
+    }
+
+    /// Issue #225: we lead the room's game: its host (not a dedicated server), or the leader of a
+    /// dedicated server's game. Before the lobby, the host does.
+    pub fn leads(&self) -> bool {
+        match self.lobby.as_ref() {
+            Some(lobby) => lobby.leads(),
+            None => self.hosting && !self.dedicated,
         }
     }
 
@@ -515,17 +543,41 @@ fn apply_net_actions(
             NetAction::Toggle => window.open = !window.open,
             NetAction::Close => window.open = false,
             NetAction::CreateRoom | NetAction::Join(_) | NetAction::Host(_) => {
+                // Issue #225: with a dedicated server, « Créer une partie » goes to its room, as
+                // a client that came to create (told first when a game is on).
+                let server = settings
+                    .server
+                    .clone()
+                    .filter(|_| *action == NetAction::CreateRoom);
                 let (room, hosting) = match action {
                     NetAction::Join(room) => (room.clone(), false),
                     NetAction::Host(room) => (room.clone(), true),
+                    _ if server.is_some() => (server_room(), false),
                     _ => (
                         RoomCode::generate(random_seed(time.elapsed().as_nanos() as u64)),
                         true,
                     ),
                 };
+                // The same room again (« Réessayer », « Rejoindre »): through the same signaling
+                // (issue #225: a server's).
+                let again = session
+                    .as_deref()
+                    .filter(
+                        |current| matches!(action, NetAction::Join(room) if *room == current.room),
+                    )
+                    .map(|current| current.signal.clone());
+                let signal = server
+                    .clone()
+                    .or(again)
+                    .unwrap_or_else(|| settings.signal.clone());
+                let intent = if server.is_some() {
+                    Intent::Create
+                } else {
+                    Intent::Join
+                };
                 if let Some(current) = session.as_deref_mut() {
                     if current.room == room
-                        && current.signal == settings.signal
+                        && current.signal == signal
                         && current.hosting == hosting
                         && current.status.usable()
                     {
@@ -533,6 +585,10 @@ fn apply_net_actions(
                     }
                     depart(current, &mut departures, &time);
                 }
+                let settings = &NetSettings {
+                    signal,
+                    ..settings.clone()
+                };
                 let ice = settings.ice_servers();
                 browser::set_gathering_max_ms(settings.ice_gathering_max_ms);
                 info!(
@@ -543,7 +599,8 @@ fn apply_net_actions(
                 );
                 let url = room_url(&settings.signal, &room);
                 let socket = NetSocket::open(&url, settings.attempts, &ice, hosting);
-                let new = NetSession::new(room, settings.signal.clone(), ice, socket, hosting);
+                let mut new = NetSession::new(room, settings.signal.clone(), ice, socket, hosting);
+                new.intent = intent;
                 // Commands apply after this system: the next action of this frame (rare) sees
                 // the old session.
                 commands.insert_resource(new);
@@ -577,10 +634,22 @@ fn apply_net_actions(
                     info!("network: we choose the room's settings: {setup:?}");
                 }
             }
+            NetAction::JoinGame => {
+                if let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut())
+                    && lobby.enter()
+                {
+                    info!("network: we join the game of the server");
+                }
+            }
             NetAction::StartRace => {
                 let Some(lobby) = session.as_deref_mut().and_then(|s| s.lobby.as_mut()) else {
                     continue;
                 };
+                // Issue #225: the leader of a dedicated server's game asks it.
+                if lobby.lead_start() {
+                    info!("network: we ask the server to start");
+                    continue;
+                }
                 let seed = random_seed(time.elapsed().as_nanos() as u64);
                 // Issue #122: the room's mode is the championship: it starts with this race
                 // (its seed the seed of its bots), or goes on.
@@ -594,28 +663,45 @@ fn apply_net_actions(
                     lobby.start_championship(championship);
                 }
                 let tuning = net_tuning.as_deref().cloned().unwrap_or_default();
-                let laps = online::race_laps(race_tuning.as_deref());
-                match race_to_start(lobby, now_ms(&time), seed, laps, &tuning) {
-                    Some(start) => {
-                        info!(
-                            "network: we start race {} on circuit {} at tick {}, {} players and {} bots (round {}, grid {:?})",
-                            start.race,
-                            start.track,
-                            start.start_tick,
-                            start.players.len(),
-                            start.bots,
-                            start.round,
-                            start.lineup
-                        );
-                        lobby.announce_race(start);
-                    }
-                    None => {
-                        warn!("network: no race: we do not host, or the room's clock is unknown")
-                    }
-                }
+                start_race_now(lobby, now_ms(&time), seed, race_tuning.as_deref(), &tuning);
             }
         }
     }
+}
+
+/// The host starts the next race now (issue #9; issue #122, of the championship in progress).
+pub(crate) fn start_race_now(
+    lobby: &mut Lobby,
+    now_ms: u64,
+    seed: u64,
+    race_tuning: Option<&RaceTuning>,
+    tuning: &NetTuning,
+) -> bool {
+    let laps = online::race_laps(race_tuning);
+    match race_to_start(lobby, now_ms, seed, laps, tuning) {
+        Some(start) => {
+            info!(
+                "network: we start race {} on circuit {} at tick {}, {} players and {} bots (round {}, grid {:?})",
+                start.race,
+                start.track,
+                start.start_tick,
+                start.players.len(),
+                start.bots,
+                start.round,
+                start.lineup
+            );
+            lobby.announce_race(start)
+        }
+        None => {
+            warn!("network: no race: we do not host, or the room's clock is unknown");
+            false
+        }
+    }
+}
+
+/// Issue #225: the room of a dedicated server ([`SERVER_ROOM`]).
+pub fn server_room() -> RoomCode {
+    RoomCode::parse(SERVER_ROOM).expect("a room code")
 }
 
 /// Our `Bye`, then the socket closes in the background.
@@ -834,6 +920,7 @@ fn poll_session(
     };
     let idle = session.links.pending().is_empty();
     let hosting = session.hosting;
+    let (dedicated, intent) = (session.dedicated, session.intent);
     let lobby = &mut session.lobby;
     let status = &mut session.status;
     let links = &mut session.links;
@@ -847,7 +934,11 @@ fn poll_session(
                 color: color_of(color.as_deref()),
                 ..Default::default()
             };
-            *lobby = Some(Lobby::new(me, profile, now, hosting));
+            *lobby = Some(if dedicated {
+                Lobby::dedicated(me, profile, now)
+            } else {
+                Lobby::new(me, profile, now, hosting).with_intent(intent)
+            });
             *status = NetStatus::InRoom;
         }
         SocketEvent::Connected(peer) => {
@@ -1101,6 +1192,6 @@ fn poll_departures(mut departures: ResMut<Departures>, time: Res<Time<Real>>) {
 
 /// A random number for a new room code (`fallback`: without any source of randomness, the time
 /// since the start will do for a room code).
-fn random_seed(fallback: u64) -> u64 {
+pub(crate) fn random_seed(fallback: u64) -> u64 {
     getrandom::u64().unwrap_or(fallback.wrapping_mul(0x9e37_79b9_7f4a_7c15))
 }

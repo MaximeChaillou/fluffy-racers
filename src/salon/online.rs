@@ -417,10 +417,11 @@ pub fn report_walkers(
     }
 }
 
-/// While the race's results are on: we host it, the lobby is ours (a renderer).
+/// While the race's results are on: we host it, the lobby is ours (a renderer). Issue #225: or
+/// we lead the game of a dedicated server (its « Retour au salon » goes to the server).
 pub fn results_shown(race: Option<Res<OnlineRace>>, session: Option<Res<NetSession>>) -> bool {
     race.is_some_and(|race| race.shared.results().is_some())
-        && session.is_some_and(|session| session.hosting)
+        && session.is_some_and(|session| session.leads())
 }
 
 /// The host, once the race's results are closed and showed for a while: the room's settings
@@ -435,7 +436,7 @@ pub fn back_to_the_salon(
     mut since: Local<Option<(u16, f64)>>,
     mut actions: MessageWriter<NetAction>,
 ) {
-    let Some(lobby) = session.lobby.as_ref().filter(|lobby| lobby.is_host()) else {
+    let Some(lobby) = session.lobby.as_ref().filter(|lobby| lobby.leads()) else {
         return;
     };
     // Only for the race still announced (a new one starts over); issue #122, not in a
@@ -459,16 +460,18 @@ pub fn back_to_the_salon(
     let chosen = end
         .and_then(|mut end| end.take(|button| button == EndButton::BackToSalon))
         .is_some();
-    if chosen || now - start >= f64::from(tuning.back_after_results.max(0.0)) {
+    // Issue #225: a dedicated server keeps its own time (its leader only says « now »).
+    let due = lobby.is_host() && now - start >= f64::from(tuning.back_after_results.max(0.0));
+    if chosen || due {
         info!("lobby: race {number} over, everyone back in the lobby");
         actions.write(NetAction::ChooseSetup(lobby.setup()));
         *since = Some((number, f64::INFINITY));
     }
 }
 
-/// Issue #122: we host the room.
+/// Issue #122: we host the room. Issue #225: or we lead a dedicated server's game.
 pub fn hosting(session: Option<Res<NetSession>>) -> bool {
-    session.is_some_and(|session| session.hosting)
+    session.is_some_and(|session| session.leads())
 }
 
 /// What [`show_the_championship`] last showed: the race (its number), the races scored, the
@@ -541,7 +544,7 @@ pub fn show_the_championship(
         start.round,
         names,
         me,
-        lobby.is_host(),
+        lobby.leads(),
     );
     info!(
         "lobby: the championship, race {}/{}: {:?}",
@@ -582,9 +585,11 @@ pub fn run_the_championship(
     mut actions: MessageWriter<NetAction>,
 ) {
     let seed = room_seed(&session.room);
-    let Some(lobby) = session.lobby.as_mut().filter(|lobby| lobby.is_host()) else {
+    let Some(lobby) = session.lobby.as_mut().filter(|lobby| lobby.leads()) else {
         return;
     };
+    // Issue #225: a dedicated server keeps its own time: its leader only says « now ».
+    let host = lobby.is_host();
     let (Some(state), Some(start)) = (lobby.championship(), lobby.announced()) else {
         *waiting = None;
         return;
@@ -643,12 +648,16 @@ pub fn run_the_championship(
     } else {
         tuning.standings_seconds
     };
-    if now - since < f64::from(wait.max(0.0)) && !pressed {
+    if (now - since < f64::from(wait.max(0.0)) || !host) && !pressed {
         return;
     }
     *waiting = Some((key, since, true));
     let finished = usize::from(state.scored) >= state.setup.program.len();
-    if state.podium {
+    if !host && !state.podium {
+        // The server knows which: the next race, or the podium.
+        info!("lobby: we ask the server for the championship's next stage");
+        actions.write(NetAction::StartRace);
+    } else if state.podium {
         let catalog = Catalog::game(cups.as_deref().map_or(4, |tuning| tuning.races as usize));
         let next = after_a_championship(lobby.setup(), seed, &catalog);
         info!("lobby: the championship is over, everyone back in the lobby");

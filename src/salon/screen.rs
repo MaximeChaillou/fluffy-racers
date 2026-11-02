@@ -554,6 +554,10 @@ pub fn apply_salon_actions(
             ButtonKind::StartRace => {
                 net.write(NetAction::StartRace);
             }
+            // Issue #225: the game the server hosts.
+            ButtonKind::JoinGame => {
+                net.write(NetAction::JoinGame);
+            }
             ButtonKind::Copy => {
                 if let (Some(link), Some(clipboard)) = (view.invite.as_deref(), clipboard.as_mut())
                     && let Err(error) = clipboard.set_text(link.to_string())
@@ -696,6 +700,7 @@ pub fn sync_salon_tree(
         loopback_page: loopback_page(),
         signal: session.map_or(&settings.signal, |s| &s.signal),
         local_signal: is_local_signal(session.map_or(&settings.signal, |s| &s.signal)),
+        server: settings.server.as_deref(),
         now_ms: now_ms(&time),
     });
     let focus_count = focusables(&view).len();
@@ -847,7 +852,7 @@ fn accent(kind: ButtonKind) -> Color {
     match kind {
         ButtonKind::StartRace | ButtonKind::Ready | ButtonKind::NotReady => palette::MENTHE,
         ButtonKind::CreateRoom | ButtonKind::Retry | ButtonKind::JoinAgain => palette::FRAISE,
-        ButtonKind::JoinAsGuest => palette::FRAISE,
+        ButtonKind::JoinAsGuest | ButtonKind::JoinGame => palette::FRAISE,
         ButtonKind::Copy => palette::LAGON,
         ButtonKind::Pilot => palette::CAROTTE,
         // Issue #136: the options' color (their list of commands).

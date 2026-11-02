@@ -1,0 +1,29 @@
+# Issue #225: the dedicated server, always on (docs/SERVEUR.md).
+#   docker compose up -d --build                 the server (ws://ADRESSE:3536)
+#   DOMAINE=jeu.example.org docker compose --profile https up -d --build
+#                                                the same, behind HTTPS (wss://jeu.example.org)
+services:
+  serveur:
+    build: .
+    image: fluffy-racers-server
+    # Starts with the machine, comes back after a crash.
+    restart: always
+    # WebRTC takes UDP ports at random: the host's network, nothing to publish one by one.
+    network_mode: host
+    command: ["--port", "3536"]
+
+  # Optional: HTTPS for a page served in HTTPS (GitHub Pages refuses ws://): Caddy gets the
+  # certificate of DOMAINE by itself and passes wss://DOMAINE to the server.
+  https:
+    image: caddy:2
+    profiles: ["https"]
+    restart: always
+    network_mode: host
+    environment:
+      - DOMAINE=${DOMAINE:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  caddy-data:

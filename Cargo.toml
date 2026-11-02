@@ -3,6 +3,8 @@ name = "fluffy-racers"
 version = "0.1.0"
 edition = "2024"
 publish = false
+# Issue #225: `cargo run` is the game (the dedicated server: `--bin fluffy-racers-server`).
+default-run = "fluffy-racers"
 
 [dependencies]
 bevy = "0.20"
@@ -35,6 +37,12 @@ futures-timer = { version = "3", default-features = false }
 getrandom = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Issue #225: the dedicated server embeds its signaling (`net/signal_server.rs`): the same server
+# as `matchbox_server` (its crate, the same version as matchbox_socket's protocol), so nothing has
+# to run beside it. Native only: never in the wasm build. It adds axum, hyper and tower-http to
+# the native build (tokio is already there, for matchbox_socket's WebRTC).
+matchbox_signaling = "0.14"
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
 # Issue #49: matchbox_socket's WebSocket natively (see `serde_json` above).
 async-tungstenite = { version = "0.32", default-features = false, features = [
     "async-std-runtime",
@@ -54,6 +62,13 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # Already compiled for Bevy (bevy_winit), no feature added: while the panel's text field has the
 # keyboard, the browser handles the keys again (Cmd+V pastes, Cmd+C copies).
 winit = { version = "0.30", default-features = false }
+
+# Issue #225: the dedicated server, without a window (`docs/SERVEUR.md`). No test harness of its
+# own (its logic is the library's, tested there): one big test binary less to link.
+[[bin]]
+name = "fluffy-racers-server"
+path = "src/bin/server.rs"
+test = false
 
 # Compile dependencies with optimizations even in dev: Bevy is very slow otherwise.
 [profile.dev]

@@ -476,7 +476,8 @@ impl EndState<'_> {
                 .as_deref()
                 .and_then(|gp| gp.online.as_ref())
                 .map(|online| online.hosting)
-                .or(self.session.as_deref().map(|session| session.hosting))
+                // Issue #225: the leader of a dedicated server's game has the host's buttons.
+                .or(self.session.as_deref().map(NetSession::leads))
                 .unwrap_or(false)
         });
         EndFacts {

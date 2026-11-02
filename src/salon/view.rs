@@ -150,8 +150,11 @@ fn program_of(setup: &RoomSetup, catalog: &Catalog) -> (String, Vec<String>) {
 /// What a button of the lobby does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ButtonKind {
-    /// « Créer une partie »: a new room, hosted.
+    /// « Créer une partie »: a new room, hosted (issue #225: on the dedicated server, when the
+    /// game has one).
     CreateRoom,
+    /// Issue #225: « Rejoindre » the game the dedicated server hosts.
+    JoinGame,
     /// The room again (the server could not be reached, its host reloaded, our address hosted
     /// it already: as a client).
     Retry,
@@ -230,6 +233,8 @@ pub struct ViewInput<'a> {
     /// The signaling server we would use, and whether it is local.
     pub signal: &'a str,
     pub local_signal: bool,
+    /// Issue #225: the dedicated server « Créer une partie » goes to (`None`: this page hosts).
+    pub server: Option<&'a str>,
     pub now_ms: u64,
 }
 
@@ -331,16 +336,36 @@ pub fn salon_view(input: &ViewInput) -> SalonView {
     let create = button(
         ButtonKind::CreateRoom,
         "Créer une partie",
-        "Tu en es l'hôte : invite tes amis.",
+        if input.server.is_some() {
+            "Sur ton serveur : tu choisis la course."
+        } else {
+            "Tu en es l'hôte : invite tes amis."
+        },
     );
     let Some(session) = input.session else {
-        view.lines.push(
-            "Joue avec tes amis : crée une partie (tu en es l'hôte), puis envoie-leur le lien."
-                .to_string(),
-        );
+        match input.server {
+            // Issue #225: the dedicated server hosts the games.
+            Some(server) => {
+                view.lines.push(
+                    "Joue avec tes amis : crée une partie sur ton serveur (tu la mènes), puis \
+                     envoie-leur le lien."
+                        .to_string(),
+                );
+                view.lines.push(format!("Serveur : {server}"));
+            }
+            None => {
+                view.lines.push(
+                    "Joue avec tes amis : crée une partie (tu en es l'hôte), puis envoie-leur \
+                     le lien."
+                        .to_string(),
+                );
+            }
+        }
         view.lines
             .push("Pour rejoindre une partie : ouvre le lien d'invitation.".to_string());
-        signal_lines(&mut view.lines, input, input.signal);
+        if input.server.is_none() {
+            signal_lines(&mut view.lines, input, input.signal);
+        }
         view.buttons.push(create);
         view.buttons
             .push(button(ButtonKind::Back, "Retour", "Retour à l'accueil."));
@@ -439,6 +464,12 @@ pub fn salon_view(input: &ViewInput) -> SalonView {
         (_, Some(Stage::Seated(seated))) => {
             seated_view(&mut view, input, session, seated);
         }
+        // Issue #225: we came to create a game, the server hosts one: join it, or leave (never
+        // replace another's game).
+        (_, Some(Stage::GameOn(info))) => {
+            game_on_view(&mut view, input, info);
+            players = false;
+        }
         _ => {
             view.lines
                 .push("Connexion à l'hôte de la partie…".to_string());
@@ -450,6 +481,64 @@ pub fn salon_view(input: &ViewInput) -> SalonView {
     }
     connections(&mut view, session, input.now_ms);
     view
+}
+
+/// Issue #225: the game a dedicated server hosts, for a player who came to create one: what it is
+/// (its mode, its circuit, its players, where its race or its championship is), « Rejoindre » or
+/// « Retour ».
+fn game_on_view(view: &mut SalonView, input: &ViewInput, info: &crate::net::ServerInfo) {
+    let name = |track: u8| {
+        input
+            .catalog
+            .circuits
+            .get(usize::from(track))
+            .map_or("?", |entry| entry.name.as_str())
+    };
+    view.lines
+        .push("Une partie est déjà en cours sur le serveur.".to_string());
+    let setup = info.setup;
+    let players = usize::from(info.players);
+    view.lines.push(if setup.championship {
+        let races = setup.plan.program.len();
+        format!(
+            "Championnat : {}, {races} course{} · {players} joueur{}.",
+            title_of(&setup.plan, input.catalog),
+            plural(races),
+            plural(players)
+        )
+    } else {
+        format!(
+            "Course sur {} · {players} joueur{}.",
+            name(setup.track),
+            plural(players)
+        )
+    });
+    view.lines.push(match (info.race, info.round) {
+        (0, _) => "Les joueurs sont au salon : la course n'a pas commencé.".to_string(),
+        (_, round) if round > 0 && setup.championship => format!(
+            "Course {round} sur {} en cours sur {}, {} terminée{}.",
+            setup.plan.program.len(),
+            name(info.track),
+            info.scored,
+            plural(usize::from(info.scored))
+        ),
+        (race, _) => format!("Course n° {race} sur {}.", name(info.track)),
+    });
+    view.lines.push(
+        "Rejoins-la : tu entres au salon, et tu seras de la prochaine course si celle-ci a \
+         commencé."
+            .to_string(),
+    );
+    view.buttons.push(button(
+        ButtonKind::JoinGame,
+        "Rejoindre",
+        "Tu entres dans la partie en cours.",
+    ));
+    view.buttons.push(button(
+        ButtonKind::Leave,
+        "Retour",
+        "Retour à l'accueil, la partie continue sans toi.",
+    ));
 }
 
 /// Seated in the room: who does what, the race on (or over), the settings, the main action.
@@ -516,7 +605,9 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
         program_title,
         program,
         editable: seated.hosting && !racing,
-        locked: if !seated.hosting {
+        locked: if !seated.hosting && seated.server {
+            Some("Sur le serveur, c'est le chef de partie qui choisit la course.")
+        } else if !seated.hosting {
             Some("En ligne, c'est l'hôte qui choisit la course.")
         } else if racing {
             Some("Une course est en cours.")
@@ -530,13 +621,15 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
         view.lines.push(if setup.championship {
             let races = setup.plan.program.len();
             format!(
-                "Réglages de l'hôte : {}, {races} course{}.",
+                "Réglages {} : {}, {races} course{}.",
+                whose(seated),
                 title_of(&setup.plan, input.catalog),
                 plural(races)
             )
         } else {
             format!(
-                "Réglages de l'hôte : {} · {}",
+                "Réglages {} : {} · {}",
+                whose(seated),
                 name(setup.track),
                 settings_line(setup)
             )
@@ -595,6 +688,15 @@ fn seated_view(view: &mut SalonView, input: &ViewInput, session: &NetSession, se
                 "Le lien d'invitation, pour tes amis."
             },
         ));
+    }
+}
+
+/// « de l'hôte »; issue #225, on a dedicated server, « du chef de partie ».
+fn whose(seated: &Seated) -> &'static str {
+    if seated.server {
+        "du chef de partie"
+    } else {
+        "de l'hôte"
     }
 }
 
@@ -725,6 +827,7 @@ mod tests {
             loopback_page: false,
             signal: "ws://localhost:3536",
             local_signal: true,
+            server: None,
             now_ms: 1_000,
         }
     }

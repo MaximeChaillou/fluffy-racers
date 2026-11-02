@@ -46,7 +46,7 @@ fn note() {
 }
 
 /// Where the first allocations counted were made.
-fn traces() -> String {
+pub(crate) fn traces() -> String {
     TRACES.with(|traces| traces.borrow().join("\n---\n"))
 }
 
@@ -75,7 +75,7 @@ unsafe impl GlobalAlloc for Counting {
 static ALLOCATOR: Counting = Counting;
 
 /// How many allocations `f` makes (on this thread).
-fn allocations(f: impl FnOnce()) -> usize {
+pub(crate) fn allocations(f: impl FnOnce()) -> usize {
     COUNT.with(|count| count.set(0));
     TRACES.with(|traces| traces.borrow_mut().clear());
     COUNTING.with(|on| on.set(true));

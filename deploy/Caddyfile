@@ -1,0 +1,4 @@
+# Issue #225: wss://DOMAINE to the dedicated server (docs/SERVEUR.md, « HTTPS »).
+{$DOMAINE} {
+	reverse_proxy 127.0.0.1:3536
+}

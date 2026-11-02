@@ -220,7 +220,7 @@ pub fn race_colors(lobby: &Lobby, start: &RaceStart) -> ([KartColor; PALETTE_SIZ
 }
 
 /// The circuit of index `track` in `assets/tracks/index.ron` (the first one if unknown).
-fn circuit(track: u8) -> TrackChoice {
+pub(super) fn circuit(track: u8) -> TrackChoice {
     circuits()
         .get(usize::from(track))
         .map_or_else(TrackChoice::default, |entry| entry.choice())
@@ -237,11 +237,14 @@ impl Plugin for OnlineRacePlugin {
         app.add_systems(
             Update,
             (
-                online_mode.run_if(
-                    |session: Option<Res<NetSession>>, online: Option<Res<OnlineLevel>>| {
-                        session.is_some() || online.is_some()
-                    },
-                ),
+                online_mode
+                    .run_if(
+                        |session: Option<Res<NetSession>>, online: Option<Res<OnlineLevel>>| {
+                            session.is_some() || online.is_some()
+                        },
+                    )
+                    // Issue #225: a dedicated server has no seat: `dedicated::serve_the_room`.
+                    .run_if(not(super::dedicated::dedicated)),
                 tag_local_bots
                     .run_if(resource_exists::<OnlineRace>)
                     .run_if(resource_exists::<KartSync>)
@@ -297,7 +300,7 @@ impl Plugin for OnlineRacePlugin {
 
 /// Issue #99: the circuits built from now on have their item boxes (`on`) or not
 /// (`track::NoItemBoxes`).
-fn items_on(commands: &mut Commands, on: bool) {
+pub(super) fn items_on(commands: &mut Commands, on: bool) {
     if on {
         commands.remove_resource::<NoItemBoxes>();
     } else {
@@ -582,7 +585,7 @@ fn online_mode(
 
 /// The karts of the race we show and do not drive: the other players' (theirs), and the bots
 /// unless we host (the host's).
-fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
+pub(super) fn set_race_roster(sync: &mut KartSync, lobby: &Lobby, race: &OnlineRace) {
     let (me, host, hosting) = (lobby.me(), lobby.host(), lobby.is_host());
     let (colors, _) = race_colors(lobby, &race.shared.start);
     sync.set_roster(race.shared.karts().iter().filter_map(|kart| {
