@@ -149,8 +149,9 @@ pub use race::{Driver, RaceKart, SharedRace};
 pub use relay::StateRelay;
 pub use room::{
     CODE_ALPHABET, CODE_LENGTH, DEFAULT_SIGNAL_URL, LaunchOptions, RoomCode, SERVER_ROOM,
-    SIGNAL_PORT, default_signal, host_query, invite_link, native_command, parse_signal,
-    query_with_room, room_url,
+    SIGNAL_PORT, ServerEntry, blocked_from_secure_page, default_signal, host_query, invite_link,
+    launch_server, native_command, parse_signal, query_with_room, room_url, server_from_stored,
+    server_to_stored,
 };
 pub use signaling::{
     Admit, ObservedSignallerBuilder, SignalFilter, SignalNote, WebSocketSignallerBuilder,
@@ -165,7 +166,7 @@ pub use sync::{
 };
 pub use tags::NameTagPlugin;
 pub use tuning::NetTuning;
-pub use ui::{NetUiPlugin, invitation, loopback_page};
+pub use ui::{NetUiPlugin, SERVER_STORAGE_KEY, invitation, loopback_page, page_is_secure};
 
 use bevy::prelude::*;
 

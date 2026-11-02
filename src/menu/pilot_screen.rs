@@ -149,7 +149,7 @@ pub struct PilotButton {
 pub struct PreviewFrame;
 
 /// The pseudo is kept in the browser: in the game only (`PilotPlugin::storage`), never in the
-/// tests.
+/// tests. Issue #231: so is the dedicated server typed in the options (`options_screen.rs`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PilotStorage(pub bool);
 

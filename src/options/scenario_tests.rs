@@ -78,7 +78,8 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     assert_eq!(options(&app).keyboard, KeyboardLayout::Qwerty);
     // Issue #80: down goes to the second line, the names over the karts (Entrée turns them
     // off, right on again: the keyboard stays); issue #103: then the three volumes (left lowers
-    // the general one by 10 %), and around back to the keyboard; up goes the other way round.
+    // the general one by 10 %); issue #231: the server, and around back to the keyboard; up goes
+    // the other way round.
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::NameTags);
     tap(&mut app, KeyCode::Enter);
@@ -96,7 +97,28 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
     tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::Server);
+    tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::Keyboard);
+    tap(&mut app, KeyCode::ArrowUp);
+    assert_eq!(menu(&app).row(), OptionRow::Server);
+    // Issue #231: left on the server's line does nothing; Entrée types in it, and meanwhile the
+    // lines and the options wait (headless, no field: the keys still reach the menu).
+    tap(&mut app, KeyCode::ArrowLeft);
+    assert!(!menu(&app).typing);
+    let before = options(&app);
+    tap(&mut app, KeyCode::Enter);
+    assert!(menu(&app).typing && menu(&app).open);
+    for key in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowRight] {
+        tap(&mut app, key);
+        assert_eq!(menu(&app).row(), OptionRow::Server, "{key:?}");
+    }
+    app.world_mut().write_message(OptionsAction::Focus(0));
+    app.update();
+    assert_eq!(menu(&app).row(), OptionRow::Server);
+    assert_eq!(options(&app), before);
+    // The screen ends the typing (Entrée in the field); then up goes on.
+    app.world_mut().resource_mut::<OptionsMenu>().typing = false;
     tap(&mut app, KeyCode::ArrowUp);
     assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
     for _ in 0..3 {

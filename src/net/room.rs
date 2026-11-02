@@ -98,6 +98,64 @@ pub fn parse_signal(text: &str) -> Option<String> {
     (!host.is_empty() && !host.contains(char::is_whitespace)).then(|| text.to_string())
 }
 
+/// Issue #231: what the « Serveur » field of the options holds, read before anything is kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerEntry {
+    /// Nothing (spaces only): no dedicated server, the creator's page hosts, as before.
+    Empty,
+    /// A readable address ([`parse_signal`]: `ws://` or `wss://`, then a host).
+    Address(String),
+    /// Anything else: nothing is kept, the field says why.
+    Unreadable,
+}
+
+impl ServerEntry {
+    pub fn read(text: &str) -> Self {
+        if text.trim().is_empty() {
+            Self::Empty
+        } else {
+            parse_signal(text).map_or(Self::Unreadable, Self::Address)
+        }
+    }
+
+    /// The server it names, as kept (`None`: none).
+    pub fn server(&self) -> Option<&str> {
+        match self {
+            Self::Address(address) => Some(address),
+            Self::Empty | Self::Unreadable => None,
+        }
+    }
+}
+
+/// Issue #231: the text kept in the browser for a server ([`ServerEntry`]; empty: none, the key
+/// is removed).
+pub fn server_to_stored(server: Option<&str>) -> &str {
+    server.unwrap_or("")
+}
+
+/// Issue #231: the server kept in the browser, from its text (`None` when there is none, or when
+/// it cannot be read: the page hosts).
+pub fn server_from_stored(text: Option<&str>) -> Option<String> {
+    text.and_then(parse_signal)
+}
+
+/// Issue #231: the server used at launch: `?server=` (`--server`) wins over the one kept, without
+/// replacing it, like `?pseudo=` (issue #80); `?server=` empty (or `none`): none this time.
+pub fn launch_server(kept: Option<String>, link: Option<Option<String>>) -> Option<String> {
+    match link {
+        Some(link) => link,
+        None => kept,
+    }
+}
+
+/// Issue #231: a page served in `https://` (GitHub Pages) cannot open a `ws://` address: the
+/// browser blocks it (mixed content), except towards this very machine (`localhost`, loopback).
+/// It needs `wss://` (`docs/SERVEUR.md`, « HTTPS »).
+pub fn blocked_from_secure_page(address: &str) -> bool {
+    address.trim().starts_with("ws://")
+        && !url_host(address).is_some_and(super::ice::is_loopback_host)
+}
+
 /// The signaling server by default for a page served from `page_host` (issue #49): when the page
 /// comes from this machine or the local network (`localhost`, `192.168.1.20`, `mon-mac.local`...),
 /// `matchbox_server` on that same machine (`ws://HOST:3536`). Another device of the network that
@@ -145,7 +203,8 @@ pub struct LaunchOptions {
     /// An unreadable `netsim` value, kept for the warning.
     pub netsim_refused: Option<String>,
     /// Issue #225: `?server=ws://…:3536`, `--server ws://…`: the dedicated server where « Créer
-    /// une partie » goes (kept in the browser). `Some(None)`: `?server=` (or `none`), forget it.
+    /// une partie » goes. Issue #231: it wins over the one kept (the options' « Serveur »)
+    /// without replacing it. `Some(None)`: `?server=` (or `none`), no server this time.
     pub server: Option<Option<String>>,
 }
 
@@ -443,6 +502,88 @@ mod tests {
             back.server,
             Some(Some("ws://192.168.1.30:3536".to_string()))
         );
+    }
+
+    /// Issue #231: the options' « Serveur » field: `ws://` or `wss://` then a host is kept (its
+    /// ends' spaces and its trailing slash dropped), nothing means no server, anything else is
+    /// refused. What is kept comes back the same at launch, an unreadable kept text is none, and
+    /// `?server=` wins over it (empty: none this time) without replacing it.
+    #[test]
+    fn the_server_typed_in_the_options_is_read_kept_and_given_back() {
+        for (typed, wanted) in [
+            ("ws://192.168.1.30:3536", Some("ws://192.168.1.30:3536")),
+            (
+                "  wss://fluffy.duckdns.org/ ",
+                Some("wss://fluffy.duckdns.org"),
+            ),
+            ("ws://[::1]:3536", Some("ws://[::1]:3536")),
+        ] {
+            let entry = ServerEntry::read(typed);
+            assert_eq!(entry.server(), wanted, "{typed}");
+            assert!(matches!(entry, ServerEntry::Address(_)));
+            let stored = server_to_stored(entry.server());
+            assert_eq!(
+                server_from_stored(Some(stored)).as_deref(),
+                wanted,
+                "kept, then read at launch"
+            );
+        }
+        for empty in ["", "   "] {
+            assert_eq!(ServerEntry::read(empty), ServerEntry::Empty);
+            assert_eq!(ServerEntry::read(empty).server(), None);
+        }
+        assert_eq!(server_to_stored(None), "", "none: the key is removed");
+        assert_eq!(server_from_stored(Some("")), None);
+        assert_eq!(server_from_stored(None), None);
+        for bad in [
+            "192.168.1.30:3536",
+            "http://192.168.1.30:3536",
+            "https://fluffy.duckdns.org",
+            "ws://",
+            "wss://",
+            "ws://mon serveur",
+            "fluffy.duckdns.org",
+            "n'importe quoi",
+        ] {
+            assert_eq!(ServerEntry::read(bad), ServerEntry::Unreadable, "{bad}");
+            assert_eq!(server_from_stored(Some(bad)), None, "{bad}");
+        }
+        // The launch: the link wins, without replacing what is kept.
+        let kept = Some("wss://a.example.org".to_string());
+        let link = Some("ws://192.168.1.30:3536".to_string());
+        assert_eq!(launch_server(kept.clone(), None), kept);
+        assert_eq!(launch_server(None, None), None);
+        assert_eq!(launch_server(kept.clone(), Some(link.clone())), link);
+        assert_eq!(launch_server(None, Some(link.clone())), link);
+        assert_eq!(launch_server(kept.clone(), Some(None)), None);
+        let from_link = LaunchOptions::from_query("?server=").server;
+        assert_eq!(launch_server(kept.clone(), from_link), None);
+        let unreadable = LaunchOptions::from_query("?server=http://x").server;
+        assert_eq!(launch_server(kept.clone(), unreadable), kept);
+    }
+
+    /// Issue #231: a page in `https://` cannot reach `ws://` (except this very machine): it
+    /// needs `wss://`.
+    #[test]
+    fn a_secure_page_needs_wss() {
+        for blocked in [
+            "ws://192.168.1.30:3536",
+            "ws://203.0.113.7:3536",
+            "ws://fluffy.duckdns.org",
+            "ws://[2001:db8::1]:3536",
+        ] {
+            assert!(blocked_from_secure_page(blocked), "{blocked}");
+        }
+        for fine in [
+            "wss://fluffy.duckdns.org",
+            "wss://203.0.113.7:3536",
+            "ws://localhost:3536",
+            "ws://127.0.0.1:3536",
+            "ws://[::1]:3536",
+            "ws://jeu.localhost:3536",
+        ] {
+            assert!(!blocked_from_secure_page(fine), "{fine}");
+        }
     }
 
     #[test]

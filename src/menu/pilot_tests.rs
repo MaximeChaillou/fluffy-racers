@@ -37,7 +37,7 @@ use crate::track::TrackChoice;
 /// What Bevy's `EditableText` needs headless: its text (`TextPlugin`), the focus and the keys
 /// sent to the focused entity, a primary window (the keys are dispatched from it), and the few
 /// resources of the UI and of picking its systems read.
-fn with_text_fields(app: &mut App) {
+pub(super) fn with_text_fields(app: &mut App) {
     app.add_plugins((
         TextPlugin,
         InputFocusPlugin,
