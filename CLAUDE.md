@@ -68,7 +68,7 @@ Tu travailles **sans surveillance**, en général lancé par une routine planifi
 | Domaine | Choix | Notes |
 |---|---|---|
 | Langage | Rust stable ≥ 1.97.1, édition 2024 | `rust-toolchain.toml` |
-| Moteur | **Bevy 0.20** | Aucune autre version. Vérifie l'API 0.20 (docs.rs/bevy/0.20.0) plutôt que de te fier à ta mémoire : beaucoup d'API ont changé entre les versions. |
+| Moteur | **Bevy 0.20** (0.20.1 depuis #249) | Aucune autre version que la 0.20. Vérifie l'API 0.20 (docs.rs/bevy/0.20.1) plutôt que de te fier à ta mémoire : beaucoup d'API ont changé entre les versions. |
 | Physique | **bevy_rapier3d 0.37** | Seule lib physique compatible Bevy 0.20 au 12/10/2026. |
 | Réseau | **matchbox_socket 0.14** (WebRTC) + **notre propre netcode** | Indépendant de Bevy. Voir `docs/ARCHITECTURE.md`. |
 | Build web | **trunk** | `index.html` à la racine. |
