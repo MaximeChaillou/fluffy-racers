@@ -126,6 +126,15 @@
          seconds: 144.0, bpm: 140.0, volume: 0.82, faster: "fairy-adventure-fast"),
         (id: "fairy-adventure-fast", file: "music/mintodog/fairy_adventure_fast_bpm155.ogg",
          seconds: 130.065125, bpm: 155.0, volume: 0.83),
+        // Odyssée Ouatée (issue #112, the final of the fourth cup, a long race on the moon):
+        // « Space Adventure » (« synthwave music for field theme »); it has no « Climax »: its
+        // version of the last section is the same music made faster for the game, 140 to 155 bpm
+        // at the same pitch (`ffmpeg -af atempo`, cut to a whole number of bars; -11.1 and -11.2
+        // LUFS).
+        (id: "space-adventure", file: "music/mintodog/space_adventure_bpm140.ogg",
+         seconds: 130.285714, bpm: 140.0, volume: 0.81, faster: "space-adventure-fast"),
+        (id: "space-adventure-fast", file: "music/mintodog/space_adventure_fast_bpm155.ogg",
+         seconds: 117.67873, bpm: 155.0, volume: 0.82),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

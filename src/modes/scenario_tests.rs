@@ -328,6 +328,96 @@ fn a_grand_prix_races_the_cup_scores_it_and_ends_on_the_podium() {
     assert_eq!(world.query::<&PodiumScene>().iter(world).count(), 0);
 }
 
+/// Issue #112 acceptance: with its sixteenth circuit, the fourth cup, the Coupe Pantoufle, is
+/// offered (its four circuits: the Bourg Bouillotte, the Manège Mousseline, the Marais Mitaine and
+/// the Odyssée Ouatée, its long race, its final). Chosen in the race menu (the fourth cup), its
+/// Grand Prix races them in that order under its name, scores each race, and ends on the podium
+/// after the long race.
+#[test]
+fn the_coupe_pantoufle_is_offered_and_its_grand_prix_races_its_four_circuits() {
+    let catalog = Catalog::game(4);
+    assert_eq!(
+        catalog
+            .cups
+            .iter()
+            .map(|cup| cup.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Coupe Doudou",
+            "Coupe Nuage",
+            "Coupe Câlin",
+            "Coupe Pantoufle"
+        ]
+    );
+    let pantoufle = catalog.cups[3].clone();
+    assert_eq!(pantoufle.circuits, [12, 13, 14, 15]);
+    let names: Vec<String> = pantoufle
+        .circuits
+        .iter()
+        .map(|i| catalog.name(*i).to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Bourg Bouillotte",
+            "Manège Mousseline",
+            "Marais Mitaine",
+            "Odyssée Ouatée"
+        ]
+    );
+    assert!(catalog.circuits[15].long, "its final is a long race");
+
+    let mut app = quick_game(2);
+    // N, the championship (a cup), the cup line, three to the right: the fourth cup.
+    tap(&mut app, RACE_MENU_KEY, Key::Character("n".into()));
+    arrow(&mut app, KeyCode::ArrowRight, 1);
+    arrow(&mut app, KeyCode::ArrowDown, 2);
+    assert_eq!(menu(&app).row(), MenuRow::Cup);
+    arrow(&mut app, KeyCode::ArrowRight, 3);
+    let setup = menu(&app).setup;
+    assert_eq!(
+        (setup.mode, setup.formula, setup.cup),
+        (GameMode::GrandPrix, Formula::Cup, 3)
+    );
+    enter(&mut app);
+    for (race, name) in names.iter().enumerate() {
+        wait_for_the_level(&mut app, name);
+        let gp = grand_prix(&app);
+        assert_eq!((gp.race, gp.stage), (race, GrandPrixStage::Racing));
+        assert_eq!(gp.title, "Coupe Pantoufle", "the cup's name");
+        assert_eq!(
+            gp.cup.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            names
+        );
+        player_becomes_a_bot(&mut app);
+        // A long race takes about 3 min (its three sections), the others a lap.
+        for tick in 0.. {
+            app.update();
+            let r = app.world().resource::<Race>();
+            if r.phase() == RacePhase::Results && r.flow.can_restart(&r.timings) {
+                break;
+            }
+            assert!(tick < 300 * 60, "{name}: the race never ended");
+        }
+        enter(&mut app);
+        for _ in 0..5 {
+            app.update();
+        }
+        let gp = grand_prix(&app);
+        assert_eq!(gp.stage, GrandPrixStage::Standings, "{name}");
+        assert_eq!(gp.orders.len(), race + 1);
+        assert_eq!(
+            screens::standings_title(&gp),
+            format!("Coupe Pantoufle {}/4 · {name}", race + 1)
+        );
+        enter(&mut app);
+    }
+    for _ in 0..30 {
+        app.update();
+    }
+    assert_eq!(grand_prix(&app).stage, GrandPrixStage::Podium);
+}
+
 /// Issue #19: the race menu starts a free race on the circuit chosen, in its mirror mode, and ends
 /// a Grand Prix in progress (its grid order with it); Échap closes it unchanged; online, N does
 /// nothing (the room chooses).

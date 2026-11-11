@@ -27,7 +27,7 @@ use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice,
 /// Échappée Pissenlit, the first long race; issue #110: the Forêt Frimousse and the Falaises
 /// Flanelle; issue #111: the Coteau Citrouille and the Périple Polochon; issue #148: the Anneau
 /// Guimauve and the Crique Câline redrawn; issue #168: the Bourg Bouillotte; issue #112: the
-/// Manège Mousseline and the Marais Mitaine), and where the tests
+/// Manège Mousseline, the Marais Mitaine and the Odyssée Ouatée), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -39,7 +39,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 14] = [
+const CIRCUITS: [Circuit; 15] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -172,6 +172,16 @@ const CIRCUITS: [Circuit; 14] = [
     Circuit {
         path: "tracks/marais.track.ron",
         name: "Marais Mitaine",
+        jump_approach: 50.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #112, the Odyssée Ouatée, the third long race (the Périple Polochon's pieces, other
+    // covers): the jump from out of the tight corner before the ridge's top, the grass bridge from
+    // out of the bulge, the hidden road from out of the tight corner before its climb.
+    Circuit {
+        path: "tracks/odyssee.track.ron",
+        name: "Odyssée Ouatée",
         jump_approach: 50.0,
         grass_approach: 20.0,
         road_approach: 60.0,
@@ -1040,6 +1050,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Manège Mousseline", CoverKind::Panel),
         ("Marais Mitaine", CoverKind::Crates),
         ("Marais Mitaine", CoverKind::Foliage),
+        ("Odyssée Ouatée", CoverKind::Crates),
+        ("Odyssée Ouatée", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),

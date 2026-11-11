@@ -1,0 +1,993 @@
+// "Odyssée Ouatée": the third long race (issue #112, GD § 1 « Les courses longues »), the 16th
+// circuit, the final of the fourth cup (the Coupe Pantoufle): one long way of about 5.5 km across
+// a hushed moon, from its start line to a finish elsewhere, in three sections (no lap). Original
+// layout. A journey: the runway of the moon base, the S of its hangars, the lacets up a ridge,
+// the risky jump's corner on its top and the glide down into a crater (section 1); the lacets
+// across the crater's floor (a drop of 4 m), the wall along its rampart (anti-gravity), back
+// down its outer slope (section 2); the level climb to a plateau in anti-gravity, the bulge whose
+// hidden road runs behind a stack of crates, the grass bridge behind a panel, the lacets down to
+// the spaceport and the finish (section 3). It follows the guide « Conception des circuits »:
+// many hairpins in each section (a section is as dense as a lap), walls but where a drop is
+// worth the risk, the hidden shortcuts of issue #156. The pieces of the jump and the glide, of
+// the wall, and of the climb, the bulge and the grass bridge are the Périple Polochon's (tuned:
+// their gains, their hiding), with another pair of covers; the rest is new (the S of two hairpins
+// back to back, the four sets of lacets, the drop, the finish). No water.
+//
+// Drawn as a plan of straights and arcs (hairpins of 22 m, tight corners of 18 m), its points
+// every 8 m along it (the parameters below follow them). The generator is not in the repository.
+//
+// Format: see src/track/data.rs (`open`: the finish, the road's ends, the sections). Point 0 is
+// the start line; karts drive toward point 1 (north, -Z).
+(
+    name: "Odyssée Ouatée",
+    // Dressing (issue #11): the moon (`assets/data/biomes.ron`, Kenney's Space Kit and the Nature
+    // Kit's grey stones), the same every time (seed), and pieces placed by hand: checkered flags
+    // at the start line and at the finish, a giant satellite dish by the jump's corner, a giant
+    // crystal that hides the hidden road, the spaceport's hangars by the finish.
+    biome: "Lune",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "space-adventure",
+    decor_seed: 116,
+    // Issue #195: the moon's terrain (`assets/data/biomes.ron`), hugging the road (`embank`, as
+    // on the circuits of #211): the ridge of the base, the crater's rim and the plateau carried
+    // by their slopes. The voids stay (the jump's corner, the glide's drop).
+    terrain: (height: 46.0, scale: 160.0, ridges: 0.2, floor: 0.25, rock: (0.52, 0.52, 0.56),
+              embank: 0.6),
+    checkpoint_spacing: 25.0,
+    // Issue #146: more far decor than the moon's: a long race crosses a wide country, the corners
+    // of its ground far from the road; a ring of low grey rims right beyond its ground, and giant
+    // dishes, crystals and hangars deep in the plains between its loops.
+    far_decor: [
+        Range(distance: 30.0, depth: 40.0, height: (60.0, 80.0), spacing: 40.0,
+              color: (0.50, 0.50, 0.56)),
+        Pieces(models: ["space-kit/satelliteDish_large", "space-kit/rock_crystalsLargeA",
+                        "space-kit/hangar_roundGlass"],
+               count: 40, height: (22.0, 30.0), radius: 9.0, distance: (100.0, 380.0)),
+    ],
+    props: [
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
+        (model: "racing-kit/flagCheckers", at: 692.267, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
+        // Hangars along the runway.
+        (model: "space-kit/hangar_largeA", at: 3.0, side: Right, height: 9.0, radius: 7.0, gap: 3.0),
+        (model: "space-kit/hangar_roundA", at: 9.0, side: Left, height: 8.0, radius: 6.0, gap: 3.0),
+        // A giant satellite dish by the jump's corner, over the crater.
+        (model: "space-kit/satelliteDish_large", at: 189.204, side: Left, height: 22.0, radius: 6.0, gap: 2.0),
+        // A giant crystal in the bulge: the hidden road runs behind it.
+        (model: "space-kit/rock_crystalsLargeA", at: 541.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
+        // The spaceport by the finish.
+        (model: "space-kit/hangar_largeB", at: 697.267, side: Right, height: 14.0, radius: 9.0, gap: 3.0),
+        (model: "space-kit/hangar_roundGlass", at: 701.267, side: Left, height: 12.0, radius: 8.0, gap: 3.0),
+        (model: "space-kit/satelliteDish_detailed", at: 705.267, side: Right, height: 10.0, radius: 5.0, gap: 3.0),
+    ],
+    open: (finish: 692.267, road_end: 710.000, road_start: 738.000, sections: [239.000, 452.000]),
+    points: [
+        (pos: (0.00, 4.00, 0.00), width: 15.0, shoulder: 3.0),  // 0
+        // Section 1, la base: the start straight on the runway of the moon base, heading north: the
+        // one long straight (the slipstream, the items, two bumps). The grid sits behind point 0.
+        (pos: (0.00, 4.00, -8.00), width: 15.0, shoulder: 3.0),  // 1
+        (pos: (0.00, 4.00, -16.00), width: 15.0, shoulder: 3.0),  // 2
+        (pos: (0.00, 4.00, -24.00), width: 15.0, shoulder: 3.0),  // 3
+        (pos: (0.00, 4.00, -32.00), width: 15.0, shoulder: 3.0),  // 4
+        (pos: (0.00, 4.00, -40.00), width: 15.0, shoulder: 3.0),  // 5
+        (pos: (0.00, 4.00, -48.00), width: 15.0, shoulder: 3.0),  // 6
+        (pos: (0.00, 4.00, -56.00), width: 15.0, shoulder: 3.0),  // 7
+        (pos: (0.00, 4.00, -64.00), width: 15.0, shoulder: 3.0),  // 8
+        (pos: (0.00, 4.00, -72.00), width: 15.0, shoulder: 3.0),  // 9
+        (pos: (0.00, 4.00, -80.00), width: 15.0, shoulder: 3.0),  // 10
+        (pos: (0.00, 4.00, -88.00), width: 15.0, shoulder: 3.0),  // 11
+        (pos: (0.00, 4.00, -96.00), width: 15.0, shoulder: 3.0),  // 12
+        (pos: (0.00, 4.00, -104.00), width: 15.0, shoulder: 3.0),  // 13
+        (pos: (0.00, 4.00, -112.00), width: 15.0, shoulder: 3.0),  // 14
+        (pos: (0.00, 4.00, -120.00), width: 15.0, shoulder: 3.0),  // 15
+        (pos: (0.00, 4.00, -128.00), width: 15.0, shoulder: 3.0),  // 16
+        (pos: (0.00, 4.00, -136.00), width: 15.0, shoulder: 3.0),  // 17
+        (pos: (0.00, 4.00, -144.00), width: 15.0, shoulder: 3.0),  // 18
+        (pos: (0.00, 4.00, -152.00), width: 15.0, shoulder: 3.0),  // 19
+        (pos: (0.00, 4.00, -160.00), width: 15.0, shoulder: 3.0),  // 20
+        (pos: (0.00, 4.00, -168.00), width: 15.0, shoulder: 3.0),  // 21
+        (pos: (0.00, 4.00, -176.00), width: 15.0, shoulder: 3.0),  // 22
+        (pos: (0.00, 4.00, -184.00), width: 15.0, shoulder: 3.0),  // 23
+        (pos: (0.00, 4.00, -192.00), width: 15.0, shoulder: 3.0),  // 24
+        (pos: (0.00, 4.00, -200.00), width: 15.0, shoulder: 3.0),  // 25
+        // The S of the hangars: a hairpin to the left (radius 22 m, 180°), south...
+        (pos: (-1.33, 4.00, -207.52), width: 13.0, shoulder: 2.0),  // 26
+        (pos: (-5.15, 4.00, -214.14), width: 13.0, shoulder: 2.0),  // 27
+        (pos: (-11.00, 4.00, -219.05), width: 13.0, shoulder: 2.0),  // 28
+        (pos: (-18.18, 4.00, -221.67), width: 13.0, shoulder: 2.0),  // 29
+        (pos: (-25.82, 4.00, -221.67), width: 13.0, shoulder: 2.0),  // 30
+        (pos: (-33.00, 4.00, -219.05), width: 13.0, shoulder: 2.0),  // 31
+        (pos: (-38.85, 4.00, -214.14), width: 13.0, shoulder: 2.0),  // 32
+        (pos: (-42.67, 4.00, -207.52), width: 13.0, shoulder: 2.0),  // 33
+        (pos: (-44.00, 4.00, -200.00), width: 13.0, shoulder: 2.0),  // 34
+        // ...and at once a hairpin to the right, north.
+        (pos: (-45.33, 4.00, -192.48), width: 13.0, shoulder: 2.0),  // 35
+        (pos: (-49.15, 4.00, -185.86), width: 13.0, shoulder: 2.0),  // 36
+        (pos: (-55.00, 4.00, -180.95), width: 13.0, shoulder: 2.0),  // 37
+        (pos: (-62.18, 4.00, -178.33), width: 13.0, shoulder: 2.0),  // 38
+        (pos: (-69.82, 4.00, -178.33), width: 13.0, shoulder: 2.0),  // 39
+        (pos: (-77.00, 4.00, -180.95), width: 13.0, shoulder: 2.0),  // 40
+        (pos: (-82.85, 4.00, -185.86), width: 13.0, shoulder: 2.0),  // 41
+        (pos: (-86.67, 4.00, -192.48), width: 13.0, shoulder: 2.0),  // 42
+        (pos: (-88.00, 4.00, -200.00), width: 13.0, shoulder: 2.0),  // 43
+        // North.
+        (pos: (-88.00, 4.00, -208.00), width: 13.0, shoulder: 2.0),  // 44
+        (pos: (-88.00, 4.00, -216.00), width: 13.0, shoulder: 2.0),  // 45
+        (pos: (-88.00, 4.00, -224.00), width: 13.0, shoulder: 2.0),  // 46
+        (pos: (-88.00, 4.00, -232.00), width: 13.0, shoulder: 2.0),  // 47
+        (pos: (-88.00, 4.00, -240.00), width: 13.0, shoulder: 2.0),  // 48
+        (pos: (-88.00, 4.00, -248.00), width: 13.0, shoulder: 2.0),  // 49
+        (pos: (-88.00, 4.00, -256.00), width: 13.0, shoulder: 2.0),  // 50
+        (pos: (-88.00, 4.00, -264.00), width: 13.0, shoulder: 2.0),  // 51
+        // A tight corner to the right (radius 18 m), east.
+        (pos: (-86.63, 4.00, -270.89), width: 13.0, shoulder: 2.0),  // 52
+        (pos: (-82.73, 4.00, -276.73), width: 13.0, shoulder: 2.0),  // 53
+        (pos: (-76.89, 4.00, -280.63), width: 13.0, shoulder: 2.0),  // 54
+        (pos: (-70.00, 4.00, -282.00), width: 13.0, shoulder: 2.0),  // 55
+        // The lacets up the ridge: east, climbing (a trick ramp at its foot)...
+        (pos: (-62.13, 4.06, -282.00), width: 13.0, shoulder: 2.0),  // 56
+        (pos: (-54.27, 4.24, -282.00), width: 13.0, shoulder: 2.0),  // 57
+        (pos: (-46.40, 4.52, -282.00), width: 13.0, shoulder: 2.0),  // 58
+        (pos: (-38.53, 4.88, -282.00), width: 13.0, shoulder: 2.0),  // 59
+        (pos: (-30.67, 5.30, -282.00), width: 13.0, shoulder: 2.0),  // 60
+        (pos: (-22.80, 5.76, -282.00), width: 13.0, shoulder: 2.0),  // 61
+        (pos: (-14.93, 6.25, -282.00), width: 13.0, shoulder: 2.0),  // 62
+        (pos: (-7.07, 6.75, -282.00), width: 13.0, shoulder: 2.0),  // 63
+        (pos: (0.80, 7.24, -282.00), width: 13.0, shoulder: 2.0),  // 64
+        (pos: (8.67, 7.70, -282.00), width: 13.0, shoulder: 2.0),  // 65
+        (pos: (16.53, 8.12, -282.00), width: 13.0, shoulder: 2.0),  // 66
+        (pos: (24.40, 8.48, -282.00), width: 13.0, shoulder: 2.0),  // 67
+        (pos: (32.27, 8.76, -282.00), width: 13.0, shoulder: 2.0),  // 68
+        (pos: (40.13, 8.94, -282.00), width: 13.0, shoulder: 2.0),  // 69
+        (pos: (48.00, 9.00, -282.00), width: 13.0, shoulder: 2.0),  // 70
+        // ...a hairpin to the left...
+        (pos: (55.52, 9.06, -283.33), width: 13.0, shoulder: 2.0),  // 71
+        (pos: (62.14, 9.11, -287.15), width: 13.0, shoulder: 2.0),  // 72
+        (pos: (67.05, 9.17, -293.00), width: 13.0, shoulder: 2.0),  // 73
+        (pos: (69.67, 9.22, -300.18), width: 13.0, shoulder: 2.0),  // 74
+        (pos: (69.67, 9.28, -307.82), width: 13.0, shoulder: 2.0),  // 75
+        (pos: (67.05, 9.33, -315.00), width: 13.0, shoulder: 2.0),  // 76
+        (pos: (62.14, 9.39, -320.85), width: 13.0, shoulder: 2.0),  // 77
+        (pos: (55.52, 9.44, -324.67), width: 13.0, shoulder: 2.0),  // 78
+        (pos: (48.00, 9.50, -326.00), width: 13.0, shoulder: 2.0),  // 79
+        // ...west (a boost pad, the bison)...
+        (pos: (40.13, 9.56, -326.00), width: 13.0, shoulder: 2.0),  // 80
+        (pos: (32.27, 9.74, -326.00), width: 13.0, shoulder: 2.0),  // 81
+        (pos: (24.40, 10.02, -326.00), width: 13.0, shoulder: 2.0),  // 82
+        (pos: (16.53, 10.38, -326.00), width: 13.0, shoulder: 2.0),  // 83
+        (pos: (8.67, 10.80, -326.00), width: 13.0, shoulder: 2.0),  // 84
+        (pos: (0.80, 11.26, -326.00), width: 13.0, shoulder: 2.0),  // 85
+        (pos: (-7.07, 11.75, -326.00), width: 13.0, shoulder: 2.0),  // 86
+        (pos: (-14.93, 12.25, -326.00), width: 13.0, shoulder: 2.0),  // 87
+        (pos: (-22.80, 12.74, -326.00), width: 13.0, shoulder: 2.0),  // 88
+        (pos: (-30.67, 13.20, -326.00), width: 13.0, shoulder: 2.0),  // 89
+        (pos: (-38.53, 13.62, -326.00), width: 13.0, shoulder: 2.0),  // 90
+        (pos: (-46.40, 13.98, -326.00), width: 13.0, shoulder: 2.0),  // 91
+        (pos: (-54.27, 14.26, -326.00), width: 13.0, shoulder: 2.0),  // 92
+        (pos: (-62.13, 14.44, -326.00), width: 13.0, shoulder: 2.0),  // 93
+        (pos: (-70.00, 14.50, -326.00), width: 13.0, shoulder: 2.0),  // 94
+        // ...a hairpin to the right...
+        (pos: (-77.52, 14.56, -327.33), width: 13.0, shoulder: 2.0),  // 95
+        (pos: (-84.14, 14.61, -331.15), width: 13.0, shoulder: 2.0),  // 96
+        (pos: (-89.05, 14.67, -337.00), width: 13.0, shoulder: 2.0),  // 97
+        (pos: (-91.67, 14.72, -344.18), width: 13.0, shoulder: 2.0),  // 98
+        (pos: (-91.67, 14.78, -351.82), width: 13.0, shoulder: 2.0),  // 99
+        (pos: (-89.05, 14.83, -359.00), width: 13.0, shoulder: 2.0),  // 100
+        (pos: (-84.14, 14.89, -364.85), width: 13.0, shoulder: 2.0),  // 101
+        (pos: (-77.52, 14.94, -368.67), width: 13.0, shoulder: 2.0),  // 102
+        (pos: (-70.00, 15.00, -370.00), width: 13.0, shoulder: 2.0),  // 103
+        // ...east...
+        (pos: (-62.13, 15.06, -370.00), width: 13.0, shoulder: 2.0),  // 104
+        (pos: (-54.27, 15.24, -370.00), width: 13.0, shoulder: 2.0),  // 105
+        (pos: (-46.40, 15.52, -370.00), width: 13.0, shoulder: 2.0),  // 106
+        (pos: (-38.53, 15.88, -370.00), width: 13.0, shoulder: 2.0),  // 107
+        (pos: (-30.67, 16.30, -370.00), width: 13.0, shoulder: 2.0),  // 108
+        (pos: (-22.80, 16.76, -370.00), width: 13.0, shoulder: 2.0),  // 109
+        (pos: (-14.93, 17.25, -370.00), width: 13.0, shoulder: 2.0),  // 110
+        (pos: (-7.07, 17.75, -370.00), width: 13.0, shoulder: 2.0),  // 111
+        (pos: (0.80, 18.24, -370.00), width: 13.0, shoulder: 2.0),  // 112
+        (pos: (8.67, 18.70, -370.00), width: 13.0, shoulder: 2.0),  // 113
+        (pos: (16.53, 19.12, -370.00), width: 13.0, shoulder: 2.0),  // 114
+        (pos: (24.40, 19.48, -370.00), width: 13.0, shoulder: 2.0),  // 115
+        (pos: (32.27, 19.76, -370.00), width: 13.0, shoulder: 2.0),  // 116
+        (pos: (40.13, 19.94, -370.00), width: 13.0, shoulder: 2.0),  // 117
+        (pos: (48.00, 20.00, -370.00), width: 13.0, shoulder: 2.0),  // 118
+        // ...a hairpin to the left...
+        (pos: (55.52, 20.06, -371.33), width: 13.0, shoulder: 2.0),  // 119
+        (pos: (62.14, 20.11, -375.15), width: 13.0, shoulder: 2.0),  // 120
+        (pos: (67.05, 20.17, -381.00), width: 13.0, shoulder: 2.0),  // 121
+        (pos: (69.67, 20.22, -388.18), width: 13.0, shoulder: 2.0),  // 122
+        (pos: (69.67, 20.28, -395.82), width: 13.0, shoulder: 2.0),  // 123
+        (pos: (67.05, 20.33, -403.00), width: 13.0, shoulder: 2.0),  // 124
+        (pos: (62.14, 20.39, -408.85), width: 13.0, shoulder: 2.0),  // 125
+        (pos: (55.52, 20.44, -412.67), width: 13.0, shoulder: 2.0),  // 126
+        (pos: (48.00, 20.50, -414.00), width: 13.0, shoulder: 2.0),  // 127
+        // ...west (a log rolls)...
+        (pos: (40.13, 20.56, -414.00), width: 13.0, shoulder: 2.0),  // 128
+        (pos: (32.27, 20.74, -414.00), width: 13.0, shoulder: 2.0),  // 129
+        (pos: (24.40, 21.02, -414.00), width: 13.0, shoulder: 2.0),  // 130
+        (pos: (16.53, 21.38, -414.00), width: 13.0, shoulder: 2.0),  // 131
+        (pos: (8.67, 21.80, -414.00), width: 13.0, shoulder: 2.0),  // 132
+        (pos: (0.80, 22.26, -414.00), width: 13.0, shoulder: 2.0),  // 133
+        (pos: (-7.07, 22.75, -414.00), width: 13.0, shoulder: 2.0),  // 134
+        (pos: (-14.93, 23.25, -414.00), width: 13.0, shoulder: 2.0),  // 135
+        (pos: (-22.80, 23.74, -414.00), width: 13.0, shoulder: 2.0),  // 136
+        (pos: (-30.67, 24.20, -414.00), width: 13.0, shoulder: 2.0),  // 137
+        (pos: (-38.53, 24.62, -414.00), width: 13.0, shoulder: 2.0),  // 138
+        (pos: (-46.40, 24.98, -414.00), width: 13.0, shoulder: 2.0),  // 139
+        (pos: (-54.27, 25.26, -414.00), width: 13.0, shoulder: 2.0),  // 140
+        (pos: (-62.13, 25.44, -414.00), width: 13.0, shoulder: 2.0),  // 141
+        (pos: (-70.00, 25.50, -414.00), width: 13.0, shoulder: 2.0),  // 142
+        // ...a hairpin to the right...
+        (pos: (-77.52, 25.56, -415.33), width: 13.0, shoulder: 2.0),  // 143
+        (pos: (-84.14, 25.61, -419.15), width: 13.0, shoulder: 2.0),  // 144
+        (pos: (-89.05, 25.67, -425.00), width: 13.0, shoulder: 2.0),  // 145
+        (pos: (-91.67, 25.72, -432.18), width: 13.0, shoulder: 2.0),  // 146
+        (pos: (-91.67, 25.78, -439.82), width: 13.0, shoulder: 2.0),  // 147
+        (pos: (-89.05, 25.83, -447.00), width: 13.0, shoulder: 2.0),  // 148
+        (pos: (-84.14, 25.89, -452.85), width: 13.0, shoulder: 2.0),  // 149
+        (pos: (-77.52, 25.94, -456.67), width: 13.0, shoulder: 2.0),  // 150
+        (pos: (-70.00, 26.00, -458.00), width: 13.0, shoulder: 2.0),  // 151
+        // ...east, to the top of the ridge, 31 m up.
+        (pos: (-62.13, 26.06, -458.00), width: 13.0, shoulder: 2.0),  // 152
+        (pos: (-54.27, 26.24, -458.00), width: 13.0, shoulder: 2.0),  // 153
+        (pos: (-46.40, 26.52, -458.00), width: 13.0, shoulder: 2.0),  // 154
+        (pos: (-38.53, 26.88, -458.00), width: 13.0, shoulder: 2.0),  // 155
+        (pos: (-30.67, 27.30, -458.00), width: 13.0, shoulder: 2.0),  // 156
+        (pos: (-22.80, 27.76, -458.00), width: 13.0, shoulder: 2.0),  // 157
+        (pos: (-14.93, 28.25, -458.00), width: 13.0, shoulder: 2.0),  // 158
+        (pos: (-7.07, 28.75, -458.00), width: 13.0, shoulder: 2.0),  // 159
+        (pos: (0.80, 29.24, -458.00), width: 13.0, shoulder: 2.0),  // 160
+        (pos: (8.67, 29.70, -458.00), width: 13.0, shoulder: 2.0),  // 161
+        (pos: (16.53, 30.12, -458.00), width: 13.0, shoulder: 2.0),  // 162
+        (pos: (24.40, 30.48, -458.00), width: 13.0, shoulder: 2.0),  // 163
+        (pos: (32.27, 30.76, -458.00), width: 13.0, shoulder: 2.0),  // 164
+        (pos: (40.13, 30.94, -458.00), width: 13.0, shoulder: 2.0),  // 165
+        (pos: (48.00, 31.00, -458.00), width: 13.0, shoulder: 2.0),  // 166
+        // A tight corner to the left, north.
+        (pos: (54.89, 31.00, -459.37), width: 13.0, shoulder: 2.0),  // 167
+        (pos: (60.73, 31.00, -463.27), width: 13.0, shoulder: 2.0),  // 168
+        (pos: (64.63, 31.00, -469.11), width: 13.0, shoulder: 2.0),  // 169
+        (pos: (66.00, 31.00, -476.00), width: 13.0, shoulder: 2.0),  // 170
+        // North, along the ridge.
+        (pos: (66.00, 31.00, -484.00), width: 13.0, shoulder: 2.0),  // 171
+        (pos: (66.00, 31.00, -492.00), width: 13.0, shoulder: 2.0),  // 172
+        (pos: (66.00, 31.00, -500.00), width: 13.0, shoulder: 2.0),  // 173
+        (pos: (66.00, 31.00, -508.00), width: 13.0, shoulder: 2.0),  // 174
+        (pos: (66.00, 31.00, -516.00), width: 13.0, shoulder: 2.0),  // 175
+        (pos: (66.00, 31.00, -524.00), width: 13.0, shoulder: 2.0),  // 176
+        (pos: (66.00, 31.00, -532.00), width: 13.0, shoulder: 2.0),  // 177
+        // The risky jump's corner and the glide (the Périple Polochon's piece): north, then a tight
+        // corner to the right (90°), its inside a drop that the jump cuts across; the wide landing,
+        // east, the glide ramp; the glide down into the crater (no road: the gap), 12 m; a hairpin
+        // to the left, west, on the crater's floor.
+        (pos: (66.00, 30.82, -540.00), width: 13.0, shoulder: 2.0),  // 178
+        (pos: (66.00, 30.82, -548.00), width: 13.0, shoulder: 2.0),  // 179
+        (pos: (66.00, 30.82, -556.00), width: 13.0, shoulder: 2.0),  // 180
+        (pos: (66.00, 30.82, -564.02), width: 13.0, shoulder: 2.0),  // 181
+        (pos: (66.00, 30.82, -572.04), width: 13.0, shoulder: 2.0),  // 182
+        (pos: (65.99, 30.82, -580.06), width: 13.0, shoulder: 2.0),  // 183
+        (pos: (65.99, 30.82, -588.08), width: 13.0, shoulder: 2.0),  // 184
+        (pos: (65.98, 30.82, -596.10), width: 13.0, shoulder: 2.0),  // 185
+        (pos: (65.98, 30.82, -604.13), width: 13.0, shoulder: 2.0),  // 186
+        (pos: (65.99, 30.82, -612.14), width: 13.0, shoulder: 2.0),  // 187
+        (pos: (66.55, 30.82, -620.12), width: 13.0, shoulder: 2.0),  // 188
+        (pos: (70.15, 30.82, -627.21), width: 13.0, shoulder: 2.0),  // 189
+        (pos: (76.48, 30.82, -632.04), width: 13.0, shoulder: 2.0),  // 190
+        (pos: (84.26, 30.81, -633.69), width: 20.0, shoulder: 2.0),  // 191
+        (pos: (92.28, 30.64, -633.69), width: 20.0, shoulder: 2.0),  // 192
+        (pos: (100.30, 30.46, -633.70), width: 20.0, shoulder: 2.0),  // 193
+        (pos: (108.32, 30.28, -633.69), width: 20.0, shoulder: 2.0),  // 194
+        (pos: (116.34, 30.10, -633.70), width: 20.0, shoulder: 2.0),  // 195
+        (pos: (124.36, 29.92, -633.70), width: 20.0, shoulder: 2.0),  // 196
+        (pos: (132.39, 29.30, -633.70), width: 20.0, shoulder: 2.0),  // 197
+        (pos: (140.41, 28.09, -633.71), width: 20.0, shoulder: 2.0),  // 198
+        (pos: (148.42, 26.87, -633.71), width: 20.0, shoulder: 2.0),  // 199
+        (pos: (156.45, 25.66, -633.72), width: 20.0, shoulder: 2.0),  // 200
+        (pos: (164.47, 24.44, -633.72), width: 20.0, shoulder: 2.0),  // 201
+        (pos: (172.49, 23.23, -633.72), width: 20.0, shoulder: 2.0),  // 202
+        (pos: (180.52, 22.01, -633.73), width: 20.0, shoulder: 2.0),  // 203
+        (pos: (188.54, 20.80, -633.73), width: 20.0, shoulder: 2.0),  // 204
+        (pos: (196.55, 19.79, -633.73), width: 18.0, shoulder: 2.0),  // 205
+        (pos: (204.58, 19.63, -633.74), width: 18.0, shoulder: 2.0),  // 206
+        (pos: (212.60, 19.47, -633.74), width: 18.0, shoulder: 2.0),  // 207
+        (pos: (220.62, 19.31, -633.75), width: 18.0, shoulder: 2.0),  // 208
+        (pos: (228.65, 19.15, -633.75), width: 18.0, shoulder: 2.0),  // 209
+        (pos: (236.66, 18.99, -633.74), width: 18.0, shoulder: 2.0),  // 210
+        (pos: (244.68, 18.83, -633.75), width: 18.0, shoulder: 2.0),  // 211
+        (pos: (252.68, 18.83, -633.75), width: 13.0, shoulder: 2.0),  // 212
+        (pos: (260.20, 18.83, -635.08), width: 13.0, shoulder: 2.0),  // 213
+        (pos: (266.82, 18.83, -638.90), width: 13.0, shoulder: 2.0),  // 214
+        (pos: (271.73, 18.83, -644.75), width: 13.0, shoulder: 2.0),  // 215
+        (pos: (274.35, 18.83, -651.93), width: 13.0, shoulder: 2.0),  // 216
+        (pos: (274.35, 18.83, -659.57), width: 13.0, shoulder: 2.0),  // 217
+        (pos: (271.73, 18.83, -666.75), width: 13.0, shoulder: 2.0),  // 218
+        (pos: (266.82, 18.83, -672.60), width: 13.0, shoulder: 2.0),  // 219
+        (pos: (260.20, 18.83, -676.42), width: 13.0, shoulder: 2.0),  // 220
+        (pos: (252.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 221
+        // West, on the crater's floor (a kart that glided far lands here).
+        (pos: (244.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 222
+        (pos: (236.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 223
+        (pos: (228.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 224
+        (pos: (220.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 225
+        (pos: (212.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 226
+        (pos: (204.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 227
+        (pos: (196.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 228
+        (pos: (188.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 229
+        (pos: (180.68, 18.83, -677.75), width: 13.0, shoulder: 2.0),  // 230
+        // A tight corner to the right, north...
+        (pos: (173.79, 18.83, -679.12), width: 13.0, shoulder: 2.0),  // 231
+        (pos: (167.95, 18.83, -683.02), width: 13.0, shoulder: 2.0),  // 232
+        (pos: (164.05, 18.83, -688.86), width: 13.0, shoulder: 2.0),  // 233
+        (pos: (162.68, 18.83, -695.75), width: 13.0, shoulder: 2.0),  // 234
+        // North across the crater's floor...
+        (pos: (162.68, 18.83, -703.75), width: 13.0, shoulder: 2.0),  // 235
+        (pos: (162.68, 18.83, -711.75), width: 13.0, shoulder: 2.0),  // 236
+        // ...a tight corner to the right, east.
+        (pos: (164.05, 18.83, -718.64), width: 13.0, shoulder: 2.0),  // 237
+        (pos: (167.95, 18.83, -724.48), width: 13.0, shoulder: 2.0),  // 238
+        // Section 2, le cratère.
+        (pos: (173.79, 18.83, -728.38), width: 13.0, shoulder: 2.0),  // 239
+        (pos: (180.68, 18.83, -729.75), width: 13.0, shoulder: 2.0),  // 240
+        // The lacets across the crater: east, climbing (a bump)...
+        (pos: (188.78, 18.85, -729.75), width: 13.0, shoulder: 2.0),  // 241
+        (pos: (196.88, 18.91, -729.75), width: 13.0, shoulder: 2.0),  // 242
+        (pos: (204.98, 19.01, -729.75), width: 13.0, shoulder: 2.0),  // 243
+        (pos: (213.08, 19.14, -729.75), width: 13.0, shoulder: 2.0),  // 244
+        (pos: (221.18, 19.30, -729.75), width: 13.0, shoulder: 2.0),  // 245
+        (pos: (229.28, 19.48, -729.75), width: 13.0, shoulder: 2.0),  // 246
+        (pos: (237.38, 19.68, -729.75), width: 13.0, shoulder: 2.0),  // 247
+        (pos: (245.48, 19.89, -729.75), width: 13.0, shoulder: 2.0),  // 248
+        (pos: (253.58, 20.11, -729.75), width: 13.0, shoulder: 2.0),  // 249
+        (pos: (261.68, 20.33, -729.75), width: 13.0, shoulder: 2.0),  // 250
+        (pos: (269.78, 20.55, -729.75), width: 13.0, shoulder: 2.0),  // 251
+        (pos: (277.88, 20.77, -729.75), width: 13.0, shoulder: 2.0),  // 252
+        (pos: (285.98, 20.98, -729.75), width: 13.0, shoulder: 2.0),  // 253
+        (pos: (294.08, 21.18, -729.75), width: 13.0, shoulder: 2.0),  // 254
+        (pos: (302.18, 21.36, -729.75), width: 13.0, shoulder: 2.0),  // 255
+        (pos: (310.28, 21.52, -729.75), width: 13.0, shoulder: 2.0),  // 256
+        (pos: (318.38, 21.65, -729.75), width: 13.0, shoulder: 2.0),  // 257
+        (pos: (326.48, 21.75, -729.75), width: 13.0, shoulder: 2.0),  // 258
+        (pos: (334.58, 21.81, -729.75), width: 13.0, shoulder: 2.0),  // 259
+        (pos: (342.68, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 260
+        // ...a hairpin to the left...
+        (pos: (350.20, 21.86, -731.08), width: 13.0, shoulder: 2.0),  // 261
+        (pos: (356.82, 21.90, -734.90), width: 13.0, shoulder: 2.0),  // 262
+        (pos: (361.73, 21.93, -740.75), width: 13.0, shoulder: 2.0),  // 263
+        (pos: (364.35, 21.96, -747.93), width: 13.0, shoulder: 2.0),  // 264
+        (pos: (364.35, 22.00, -755.57), width: 13.0, shoulder: 2.0),  // 265
+        (pos: (361.73, 22.03, -762.75), width: 13.0, shoulder: 2.0),  // 266
+        (pos: (356.82, 22.06, -768.60), width: 13.0, shoulder: 2.0),  // 267
+        (pos: (350.20, 22.10, -772.42), width: 13.0, shoulder: 2.0),  // 268
+        (pos: (342.68, 22.13, -773.75), width: 13.0, shoulder: 2.0),  // 269
+        // ...west, the drop of 4 m (66 m after the hairpin, 35 m straight below it)...
+        (pos: (334.58, 22.43, -773.75), width: 13.0, shoulder: 2.0),  // 270
+        (pos: (326.48, 23.22, -773.75), width: 13.0, shoulder: 2.0),  // 271
+        (pos: (318.38, 24.34, -773.75), width: 13.0, shoulder: 2.0),  // 272
+        (pos: (310.28, 25.63, -773.75), width: 13.0, shoulder: 2.0),  // 273
+        (pos: (302.18, 26.92, -773.75), width: 13.0, shoulder: 2.0),  // 274
+        (pos: (294.08, 28.04, -773.75), width: 13.0, shoulder: 2.0),  // 275
+        (pos: (285.98, 28.83, -773.75), width: 13.0, shoulder: 2.0),  // 276
+        (pos: (277.88, 29.13, -773.75), width: 13.0, shoulder: 2.0),  // 277
+        (pos: (269.78, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 278
+        (pos: (261.68, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 279
+        (pos: (253.58, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 280
+        (pos: (245.48, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 281
+        (pos: (237.38, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 282
+        (pos: (229.28, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 283
+        (pos: (221.18, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 284
+        (pos: (213.08, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 285
+        (pos: (204.98, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 286
+        (pos: (196.88, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 287
+        (pos: (188.78, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 288
+        (pos: (180.68, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 289
+        // ...a hairpin to the right...
+        (pos: (173.16, 25.16, -775.08), width: 13.0, shoulder: 2.0),  // 290
+        (pos: (166.54, 25.20, -778.90), width: 13.0, shoulder: 2.0),  // 291
+        (pos: (161.63, 25.23, -784.75), width: 13.0, shoulder: 2.0),  // 292
+        (pos: (159.01, 25.26, -791.93), width: 13.0, shoulder: 2.0),  // 293
+        (pos: (159.01, 25.30, -799.57), width: 13.0, shoulder: 2.0),  // 294
+        (pos: (161.63, 25.33, -806.75), width: 13.0, shoulder: 2.0),  // 295
+        (pos: (166.54, 25.36, -812.60), width: 13.0, shoulder: 2.0),  // 296
+        (pos: (173.16, 25.40, -816.42), width: 13.0, shoulder: 2.0),  // 297
+        (pos: (180.68, 25.43, -817.75), width: 13.0, shoulder: 2.0),  // 298
+        // ...east (a boost pad, a bump)...
+        (pos: (188.78, 25.45, -817.75), width: 13.0, shoulder: 2.0),  // 299
+        (pos: (196.88, 25.51, -817.75), width: 13.0, shoulder: 2.0),  // 300
+        (pos: (204.98, 25.61, -817.75), width: 13.0, shoulder: 2.0),  // 301
+        (pos: (213.08, 25.74, -817.75), width: 13.0, shoulder: 2.0),  // 302
+        (pos: (221.18, 25.90, -817.75), width: 13.0, shoulder: 2.0),  // 303
+        (pos: (229.28, 26.08, -817.75), width: 13.0, shoulder: 2.0),  // 304
+        (pos: (237.38, 26.28, -817.75), width: 13.0, shoulder: 2.0),  // 305
+        (pos: (245.48, 26.49, -817.75), width: 13.0, shoulder: 2.0),  // 306
+        (pos: (253.58, 26.71, -817.75), width: 13.0, shoulder: 2.0),  // 307
+        (pos: (261.68, 26.93, -817.75), width: 13.0, shoulder: 2.0),  // 308
+        (pos: (269.78, 27.15, -817.75), width: 13.0, shoulder: 2.0),  // 309
+        (pos: (277.88, 27.37, -817.75), width: 13.0, shoulder: 2.0),  // 310
+        (pos: (285.98, 27.58, -817.75), width: 13.0, shoulder: 2.0),  // 311
+        (pos: (294.08, 27.78, -817.75), width: 13.0, shoulder: 2.0),  // 312
+        (pos: (302.18, 27.96, -817.75), width: 13.0, shoulder: 2.0),  // 313
+        (pos: (310.28, 28.12, -817.75), width: 13.0, shoulder: 2.0),  // 314
+        (pos: (318.38, 28.25, -817.75), width: 13.0, shoulder: 2.0),  // 315
+        (pos: (326.48, 28.35, -817.75), width: 13.0, shoulder: 2.0),  // 316
+        (pos: (334.58, 28.41, -817.75), width: 13.0, shoulder: 2.0),  // 317
+        (pos: (342.68, 28.43, -817.75), width: 13.0, shoulder: 2.0),  // 318
+        // ...a hairpin to the left...
+        (pos: (350.20, 28.46, -819.08), width: 13.0, shoulder: 2.0),  // 319
+        (pos: (356.82, 28.50, -822.90), width: 13.0, shoulder: 2.0),  // 320
+        (pos: (361.73, 28.53, -828.75), width: 13.0, shoulder: 2.0),  // 321
+        (pos: (364.35, 28.56, -835.93), width: 13.0, shoulder: 2.0),  // 322
+        (pos: (364.35, 28.60, -843.57), width: 13.0, shoulder: 2.0),  // 323
+        (pos: (361.73, 28.63, -850.75), width: 13.0, shoulder: 2.0),  // 324
+        (pos: (356.82, 28.66, -856.60), width: 13.0, shoulder: 2.0),  // 325
+        (pos: (350.20, 28.70, -860.42), width: 13.0, shoulder: 2.0),  // 326
+        (pos: (342.68, 28.73, -861.75), width: 13.0, shoulder: 2.0),  // 327
+        // ...west (a trick ramp at its start, crates)...
+        (pos: (334.58, 28.75, -861.75), width: 13.0, shoulder: 2.0),  // 328
+        (pos: (326.48, 28.81, -861.75), width: 13.0, shoulder: 2.0),  // 329
+        (pos: (318.38, 28.91, -861.75), width: 13.0, shoulder: 2.0),  // 330
+        (pos: (310.28, 29.04, -861.75), width: 13.0, shoulder: 2.0),  // 331
+        (pos: (302.18, 29.20, -861.75), width: 13.0, shoulder: 2.0),  // 332
+        (pos: (294.08, 29.38, -861.75), width: 13.0, shoulder: 2.0),  // 333
+        (pos: (285.98, 29.58, -861.75), width: 13.0, shoulder: 2.0),  // 334
+        (pos: (277.88, 29.79, -861.75), width: 13.0, shoulder: 2.0),  // 335
+        (pos: (269.78, 30.01, -861.75), width: 13.0, shoulder: 2.0),  // 336
+        (pos: (261.68, 30.23, -861.75), width: 13.0, shoulder: 2.0),  // 337
+        (pos: (253.58, 30.45, -861.75), width: 13.0, shoulder: 2.0),  // 338
+        (pos: (245.48, 30.67, -861.75), width: 13.0, shoulder: 2.0),  // 339
+        (pos: (237.38, 30.88, -861.75), width: 13.0, shoulder: 2.0),  // 340
+        (pos: (229.28, 31.08, -861.75), width: 13.0, shoulder: 2.0),  // 341
+        (pos: (221.18, 31.26, -861.75), width: 13.0, shoulder: 2.0),  // 342
+        (pos: (213.08, 31.42, -861.75), width: 13.0, shoulder: 2.0),  // 343
+        (pos: (204.98, 31.55, -861.75), width: 13.0, shoulder: 2.0),  // 344
+        (pos: (196.88, 31.65, -861.75), width: 13.0, shoulder: 2.0),  // 345
+        (pos: (188.78, 31.71, -861.75), width: 13.0, shoulder: 2.0),  // 346
+        (pos: (180.68, 31.73, -861.75), width: 13.0, shoulder: 2.0),  // 347
+        // ...a hairpin to the right...
+        (pos: (173.16, 31.76, -863.08), width: 13.0, shoulder: 2.0),  // 348
+        (pos: (166.54, 31.80, -866.90), width: 13.0, shoulder: 2.0),  // 349
+        (pos: (161.63, 31.83, -872.75), width: 13.0, shoulder: 2.0),  // 350
+        (pos: (159.01, 31.86, -879.93), width: 13.0, shoulder: 2.0),  // 351
+        (pos: (159.01, 31.90, -887.57), width: 13.0, shoulder: 2.0),  // 352
+        (pos: (161.63, 31.93, -894.75), width: 13.0, shoulder: 2.0),  // 353
+        (pos: (166.54, 31.96, -900.60), width: 13.0, shoulder: 2.0),  // 354
+        (pos: (173.16, 32.00, -904.42), width: 13.0, shoulder: 2.0),  // 355
+        (pos: (180.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 356
+        // East, on the crater's rim.
+        (pos: (188.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 357
+        (pos: (196.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 358
+        (pos: (204.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 359
+        (pos: (212.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 360
+        (pos: (220.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 361
+        // The wall (the Périple Polochon's piece, the Ruban Réglisse's first zone): east, a tight
+        // corner to the left and one to the right, then the road twists up to 90° along the crater's
+        // rampart (anti-gravity, two boost pads and croquettes on its face) and back down; a tight
+        // corner to the right and one to the left, east.
+        (pos: (228.46, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 362
+        (pos: (236.24, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 363
+        (pos: (244.01, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 364
+        (pos: (251.79, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 365
+        (pos: (259.57, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 366
+        (pos: (267.35, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 367
+        (pos: (275.12, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 368
+        (pos: (282.90, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 369
+        (pos: (290.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 370
+        (pos: (297.57, 32.03, -907.12), width: 13.0, shoulder: 2.0),  // 371
+        (pos: (303.41, 32.03, -911.02), width: 13.0, shoulder: 2.0),  // 372
+        (pos: (307.31, 32.03, -916.86), width: 13.0, shoulder: 2.0),  // 373
+        (pos: (308.68, 32.03, -923.75), width: 13.0, shoulder: 2.0),  // 374
+        (pos: (308.68, 32.03, -931.75), width: 13.0, shoulder: 2.0),  // 375
+        (pos: (308.68, 32.03, -939.75), width: 13.0, shoulder: 2.0),  // 376
+        (pos: (308.68, 32.03, -947.75), width: 13.0, shoulder: 2.0),  // 377
+        (pos: (310.05, 32.03, -954.64), width: 13.0, shoulder: 2.0),  // 378
+        (pos: (313.95, 32.03, -960.48), width: 13.0, shoulder: 2.0),  // 379
+        (pos: (319.79, 32.03, -964.38), width: 13.0, shoulder: 2.0),  // 380
+        (pos: (326.68, 32.03, -965.75), width: 13.0, shoulder: 2.0),  // 381
+        (pos: (334.68, 32.03, -965.75), width: 13.0, shoulder: 2.0),  // 382
+        (pos: (342.68, 32.03, -965.75), width: 13.0, shoulder: 2.0),  // 383
+        (pos: (367.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 15.0),  // 384
+        (pos: (392.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 45.0),  // 385
+        (pos: (417.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 75.0),  // 386
+        (pos: (442.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 90.0),  // 387
+        (pos: (467.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 90.0),  // 388
+        (pos: (492.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 90.0),  // 389
+        (pos: (517.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 75.0),  // 390
+        (pos: (542.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 45.0),  // 391
+        (pos: (567.68, 32.03, -965.75), width: 12.0, shoulder: 1.0, bank: 15.0),  // 392
+        (pos: (592.68, 32.03, -965.75), width: 12.0, shoulder: 1.0),  // 393
+        (pos: (600.68, 32.03, -965.75), width: 14.0, shoulder: 3.0),  // 394
+        (pos: (608.68, 32.03, -965.75), width: 13.0, shoulder: 2.0),  // 395
+        (pos: (616.68, 32.03, -965.75), width: 13.0, shoulder: 2.0),  // 396
+        (pos: (623.57, 32.03, -964.38), width: 13.0, shoulder: 2.0),  // 397
+        (pos: (629.41, 32.03, -960.48), width: 13.0, shoulder: 2.0),  // 398
+        (pos: (633.31, 32.03, -954.64), width: 13.0, shoulder: 2.0),  // 399
+        (pos: (634.68, 32.03, -947.75), width: 13.0, shoulder: 2.0),  // 400
+        (pos: (634.68, 32.03, -939.75), width: 13.0, shoulder: 2.0),  // 401
+        (pos: (634.68, 32.03, -931.75), width: 13.0, shoulder: 2.0),  // 402
+        (pos: (634.68, 32.03, -923.75), width: 13.0, shoulder: 2.0),  // 403
+        (pos: (636.05, 32.03, -916.86), width: 13.0, shoulder: 2.0),  // 404
+        (pos: (639.95, 32.03, -911.02), width: 13.0, shoulder: 2.0),  // 405
+        (pos: (645.79, 32.03, -907.12), width: 13.0, shoulder: 2.0),  // 406
+        (pos: (652.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 407
+        (pos: (660.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 408
+        (pos: (668.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 409
+        (pos: (676.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 410
+        (pos: (684.68, 32.03, -905.75), width: 13.0, shoulder: 2.0),  // 411
+        // A hairpin to the right, west, down the crater's outer slope.
+        (pos: (692.20, 32.00, -904.42), width: 13.0, shoulder: 2.0),  // 412
+        (pos: (698.82, 31.96, -900.60), width: 13.0, shoulder: 2.0),  // 413
+        (pos: (703.73, 31.93, -894.75), width: 13.0, shoulder: 2.0),  // 414
+        (pos: (706.35, 31.90, -887.57), width: 13.0, shoulder: 2.0),  // 415
+        (pos: (706.35, 31.86, -879.93), width: 13.0, shoulder: 2.0),  // 416
+        (pos: (703.73, 31.83, -872.75), width: 13.0, shoulder: 2.0),  // 417
+        (pos: (698.82, 31.80, -866.90), width: 13.0, shoulder: 2.0),  // 418
+        (pos: (692.20, 31.76, -863.08), width: 13.0, shoulder: 2.0),  // 419
+        (pos: (684.68, 31.73, -861.75), width: 13.0, shoulder: 2.0),  // 420
+        // West, down (the second bison)...
+        (pos: (676.79, 31.71, -861.75), width: 13.0, shoulder: 2.0),  // 421
+        (pos: (668.89, 31.64, -861.75), width: 13.0, shoulder: 2.0),  // 422
+        (pos: (661.00, 31.53, -861.75), width: 13.0, shoulder: 2.0),  // 423
+        (pos: (653.10, 31.39, -861.75), width: 13.0, shoulder: 2.0),  // 424
+        (pos: (645.21, 31.22, -861.75), width: 13.0, shoulder: 2.0),  // 425
+        (pos: (637.31, 31.02, -861.75), width: 13.0, shoulder: 2.0),  // 426
+        (pos: (629.42, 30.81, -861.75), width: 13.0, shoulder: 2.0),  // 427
+        (pos: (621.52, 30.58, -861.75), width: 13.0, shoulder: 2.0),  // 428
+        (pos: (613.63, 30.35, -861.75), width: 13.0, shoulder: 2.0),  // 429
+        (pos: (605.73, 30.11, -861.75), width: 13.0, shoulder: 2.0),  // 430
+        (pos: (597.84, 29.88, -861.75), width: 13.0, shoulder: 2.0),  // 431
+        (pos: (589.94, 29.65, -861.75), width: 13.0, shoulder: 2.0),  // 432
+        (pos: (582.05, 29.44, -861.75), width: 13.0, shoulder: 2.0),  // 433
+        (pos: (574.15, 29.24, -861.75), width: 13.0, shoulder: 2.0),  // 434
+        (pos: (566.26, 29.07, -861.75), width: 13.0, shoulder: 2.0),  // 435
+        (pos: (558.36, 28.93, -861.75), width: 13.0, shoulder: 2.0),  // 436
+        (pos: (550.47, 28.82, -861.75), width: 13.0, shoulder: 2.0),  // 437
+        (pos: (542.57, 28.75, -861.75), width: 13.0, shoulder: 2.0),  // 438
+        (pos: (534.68, 28.73, -861.75), width: 13.0, shoulder: 2.0),  // 439
+        // ...a hairpin to the left...
+        (pos: (527.16, 28.70, -860.42), width: 13.0, shoulder: 2.0),  // 440
+        (pos: (520.54, 28.66, -856.60), width: 13.0, shoulder: 2.0),  // 441
+        (pos: (515.63, 28.63, -850.75), width: 13.0, shoulder: 2.0),  // 442
+        (pos: (513.01, 28.60, -843.57), width: 13.0, shoulder: 2.0),  // 443
+        (pos: (513.01, 28.56, -835.93), width: 13.0, shoulder: 2.0),  // 444
+        (pos: (515.63, 28.53, -828.75), width: 13.0, shoulder: 2.0),  // 445
+        (pos: (520.54, 28.50, -822.90), width: 13.0, shoulder: 2.0),  // 446
+        (pos: (527.16, 28.46, -819.08), width: 13.0, shoulder: 2.0),  // 447
+        (pos: (534.68, 28.43, -817.75), width: 13.0, shoulder: 2.0),  // 448
+        // ...east (a bump)...
+        (pos: (542.57, 28.41, -817.75), width: 13.0, shoulder: 2.0),  // 449
+        (pos: (550.47, 28.34, -817.75), width: 13.0, shoulder: 2.0),  // 450
+        (pos: (558.36, 28.23, -817.75), width: 13.0, shoulder: 2.0),  // 451
+        // Section 3, le retour.
+        (pos: (566.26, 28.09, -817.75), width: 13.0, shoulder: 2.0),  // 452
+        (pos: (574.15, 27.92, -817.75), width: 13.0, shoulder: 2.0),  // 453
+        (pos: (582.05, 27.72, -817.75), width: 13.0, shoulder: 2.0),  // 454
+        (pos: (589.94, 27.51, -817.75), width: 13.0, shoulder: 2.0),  // 455
+        (pos: (597.84, 27.28, -817.75), width: 13.0, shoulder: 2.0),  // 456
+        (pos: (605.73, 27.05, -817.75), width: 13.0, shoulder: 2.0),  // 457
+        (pos: (613.63, 26.81, -817.75), width: 13.0, shoulder: 2.0),  // 458
+        (pos: (621.52, 26.58, -817.75), width: 13.0, shoulder: 2.0),  // 459
+        (pos: (629.42, 26.35, -817.75), width: 13.0, shoulder: 2.0),  // 460
+        (pos: (637.31, 26.14, -817.75), width: 13.0, shoulder: 2.0),  // 461
+        (pos: (645.21, 25.94, -817.75), width: 13.0, shoulder: 2.0),  // 462
+        (pos: (653.10, 25.77, -817.75), width: 13.0, shoulder: 2.0),  // 463
+        (pos: (661.00, 25.63, -817.75), width: 13.0, shoulder: 2.0),  // 464
+        (pos: (668.89, 25.52, -817.75), width: 13.0, shoulder: 2.0),  // 465
+        (pos: (676.79, 25.45, -817.75), width: 13.0, shoulder: 2.0),  // 466
+        (pos: (684.68, 25.43, -817.75), width: 13.0, shoulder: 2.0),  // 467
+        // ...a hairpin to the right...
+        (pos: (692.20, 25.40, -816.42), width: 13.0, shoulder: 2.0),  // 468
+        (pos: (698.82, 25.36, -812.60), width: 13.0, shoulder: 2.0),  // 469
+        (pos: (703.73, 25.33, -806.75), width: 13.0, shoulder: 2.0),  // 470
+        (pos: (706.35, 25.30, -799.57), width: 13.0, shoulder: 2.0),  // 471
+        (pos: (706.35, 25.26, -791.93), width: 13.0, shoulder: 2.0),  // 472
+        (pos: (703.73, 25.23, -784.75), width: 13.0, shoulder: 2.0),  // 473
+        (pos: (698.82, 25.20, -778.90), width: 13.0, shoulder: 2.0),  // 474
+        (pos: (692.20, 25.16, -775.08), width: 13.0, shoulder: 2.0),  // 475
+        (pos: (684.68, 25.13, -773.75), width: 13.0, shoulder: 2.0),  // 476
+        // ...west (a trunk on the shoulder)...
+        (pos: (676.79, 25.11, -773.75), width: 13.0, shoulder: 2.0),  // 477
+        (pos: (668.89, 25.04, -773.75), width: 13.0, shoulder: 2.0),  // 478
+        (pos: (661.00, 24.93, -773.75), width: 13.0, shoulder: 2.0),  // 479
+        (pos: (653.10, 24.79, -773.75), width: 13.0, shoulder: 2.0),  // 480
+        (pos: (645.21, 24.62, -773.75), width: 13.0, shoulder: 2.0),  // 481
+        (pos: (637.31, 24.42, -773.75), width: 13.0, shoulder: 2.0),  // 482
+        (pos: (629.42, 24.21, -773.75), width: 13.0, shoulder: 2.0),  // 483
+        (pos: (621.52, 23.98, -773.75), width: 13.0, shoulder: 2.0),  // 484
+        (pos: (613.63, 23.75, -773.75), width: 13.0, shoulder: 2.0),  // 485
+        (pos: (605.73, 23.51, -773.75), width: 13.0, shoulder: 2.0),  // 486
+        (pos: (597.84, 23.28, -773.75), width: 13.0, shoulder: 2.0),  // 487
+        (pos: (589.94, 23.05, -773.75), width: 13.0, shoulder: 2.0),  // 488
+        (pos: (582.05, 22.84, -773.75), width: 13.0, shoulder: 2.0),  // 489
+        (pos: (574.15, 22.64, -773.75), width: 13.0, shoulder: 2.0),  // 490
+        (pos: (566.26, 22.47, -773.75), width: 13.0, shoulder: 2.0),  // 491
+        (pos: (558.36, 22.33, -773.75), width: 13.0, shoulder: 2.0),  // 492
+        (pos: (550.47, 22.22, -773.75), width: 13.0, shoulder: 2.0),  // 493
+        (pos: (542.57, 22.15, -773.75), width: 13.0, shoulder: 2.0),  // 494
+        (pos: (534.68, 22.13, -773.75), width: 13.0, shoulder: 2.0),  // 495
+        // ...a hairpin to the left...
+        (pos: (527.16, 22.10, -772.42), width: 13.0, shoulder: 2.0),  // 496
+        (pos: (520.54, 22.06, -768.60), width: 13.0, shoulder: 2.0),  // 497
+        (pos: (515.63, 22.03, -762.75), width: 13.0, shoulder: 2.0),  // 498
+        (pos: (513.01, 22.00, -755.57), width: 13.0, shoulder: 2.0),  // 499
+        (pos: (513.01, 21.96, -747.93), width: 13.0, shoulder: 2.0),  // 500
+        (pos: (515.63, 21.93, -740.75), width: 13.0, shoulder: 2.0),  // 501
+        (pos: (520.54, 21.90, -734.90), width: 13.0, shoulder: 2.0),  // 502
+        (pos: (527.16, 21.86, -731.08), width: 13.0, shoulder: 2.0),  // 503
+        (pos: (534.68, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 504
+        // East.
+        (pos: (542.28, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 505
+        (pos: (549.88, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 506
+        (pos: (557.48, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 507
+        (pos: (565.08, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 508
+        (pos: (572.68, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 509
+        (pos: (580.28, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 510
+        (pos: (587.88, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 511
+        (pos: (595.48, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 512
+        (pos: (603.08, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 513
+        (pos: (610.68, 21.83, -729.75), width: 13.0, shoulder: 2.0),  // 514
+        // A tight corner to the right, south.
+        (pos: (617.57, 21.83, -728.38), width: 13.0, shoulder: 2.0),  // 515
+        (pos: (623.41, 21.83, -724.48), width: 13.0, shoulder: 2.0),  // 516
+        (pos: (627.31, 21.83, -718.64), width: 13.0, shoulder: 2.0),  // 517
+        (pos: (628.68, 21.83, -711.75), width: 13.0, shoulder: 2.0),  // 518
+        // The climb to the plateau (anti-gravity, level: 18 m up), the bulge round a giant crystal
+        // (left 75°, right 150°, left 75°): the hidden road goes straight behind it, through a stack
+        // of crates; the grass bridge's corner (to the right, 90°), closed by a panel that breaks
+        // under a boost; north, and a tight corner to the right (the Périple Polochon's piece).
+        (pos: (628.68, 22.33, -703.89), width: 13.0, shoulder: 2.0),  // 519
+        (pos: (628.68, 23.41, -696.04), width: 13.0, shoulder: 2.0),  // 520
+        (pos: (628.68, 24.93, -688.18), width: 13.0, shoulder: 2.0),  // 521
+        (pos: (628.68, 26.47, -680.32), width: 13.0, shoulder: 2.0),  // 522
+        (pos: (628.68, 28.02, -672.46), width: 13.0, shoulder: 2.0),  // 523
+        (pos: (628.68, 29.56, -664.61), width: 13.0, shoulder: 2.0),  // 524
+        (pos: (628.68, 31.10, -656.75), width: 13.0, shoulder: 2.0),  // 525
+        (pos: (628.68, 32.64, -648.89), width: 13.0, shoulder: 2.0),  // 526
+        (pos: (628.68, 34.18, -641.04), width: 13.0, shoulder: 2.0),  // 527
+        (pos: (628.68, 35.73, -633.18), width: 13.0, shoulder: 2.0),  // 528
+        (pos: (628.68, 37.27, -625.32), width: 13.0, shoulder: 2.0),  // 529
+        (pos: (628.68, 38.79, -617.46), width: 13.0, shoulder: 2.0),  // 530
+        (pos: (628.68, 39.86, -609.61), width: 13.0, shoulder: 2.0),  // 531
+        (pos: (628.68, 40.35, -601.75), width: 13.0, shoulder: 2.0),  // 532
+        (pos: (629.66, 40.35, -593.81), width: 13.0, shoulder: 2.0),  // 533
+        (pos: (632.84, 40.35, -586.48), width: 13.0, shoulder: 2.0),  // 534
+        (pos: (637.96, 40.35, -580.34), width: 13.0, shoulder: 2.0),  // 535
+        (pos: (644.61, 40.35, -575.90), width: 13.0, shoulder: 2.0),  // 536
+        (pos: (652.16, 40.35, -573.23), width: 13.0, shoulder: 2.0),  // 537
+        (pos: (659.15, 40.35, -569.34), width: 13.0, shoulder: 2.0),  // 538
+        (pos: (664.75, 40.35, -563.64), width: 13.0, shoulder: 2.0),  // 539
+        (pos: (668.51, 40.35, -556.59), width: 13.0, shoulder: 2.0),  // 540
+        (pos: (670.13, 40.35, -548.76), width: 13.0, shoulder: 2.0),  // 541
+        (pos: (669.47, 40.35, -540.80), width: 13.0, shoulder: 2.0),  // 542
+        (pos: (666.59, 40.35, -533.34), width: 13.0, shoulder: 2.0),  // 543
+        (pos: (661.71, 40.35, -527.01), width: 13.0, shoulder: 2.0),  // 544
+        (pos: (655.25, 40.35, -522.30), width: 13.0, shoulder: 2.0),  // 545
+        (pos: (647.75, 40.35, -519.51), width: 13.0, shoulder: 2.0),  // 546
+        (pos: (640.61, 40.35, -515.91), width: 13.0, shoulder: 2.0),  // 547
+        (pos: (634.79, 40.35, -510.43), width: 13.0, shoulder: 2.0),  // 548
+        (pos: (630.75, 40.35, -503.53), width: 13.0, shoulder: 2.0),  // 549
+        (pos: (628.82, 40.35, -495.77), width: 13.0, shoulder: 2.0),  // 550
+        (pos: (628.68, 40.35, -487.76), width: 15.0, shoulder: 3.0),  // 551
+        (pos: (628.68, 40.35, -479.74), width: 15.0, shoulder: 3.0),  // 552
+        (pos: (628.68, 40.35, -471.71), width: 15.0, shoulder: 3.0),  // 553
+        (pos: (628.68, 40.35, -463.69), width: 15.0, shoulder: 3.0),  // 554
+        (pos: (628.68, 40.35, -455.67), width: 15.0, shoulder: 3.0),  // 555
+        (pos: (628.68, 40.35, -447.65), width: 15.0, shoulder: 3.0),  // 556
+        (pos: (628.66, 40.35, -439.63), width: 15.0, shoulder: 3.0),  // 557
+        (pos: (626.77, 40.35, -431.89), width: 15.0, shoulder: 3.0),  // 558
+        (pos: (622.00, 40.35, -425.50), width: 15.0, shoulder: 3.0),  // 559
+        (pos: (615.13, 40.35, -421.48), width: 15.0, shoulder: 3.0),  // 560
+        (pos: (607.22, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 561
+        (pos: (599.20, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 562
+        (pos: (591.18, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 563
+        (pos: (583.16, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 564
+        (pos: (575.14, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 565
+        (pos: (567.12, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 566
+        (pos: (559.10, 40.35, -420.41), width: 15.0, shoulder: 3.0),  // 567
+        (pos: (551.10, 40.35, -420.41), width: 13.0, shoulder: 2.0),  // 568
+        (pos: (543.10, 40.35, -420.41), width: 13.0, shoulder: 2.0),  // 569
+        (pos: (535.10, 40.35, -420.41), width: 13.0, shoulder: 2.0),  // 570
+        (pos: (528.21, 40.25, -421.78), width: 13.0, shoulder: 2.0),  // 571
+        (pos: (522.37, 40.16, -425.68), width: 13.0, shoulder: 2.0),  // 572
+        (pos: (518.47, 40.06, -431.52), width: 13.0, shoulder: 2.0),  // 573
+        (pos: (517.10, 39.96, -438.41), width: 13.0, shoulder: 2.0),  // 574
+        // The lacets down to the spaceport: north (a trick ramp at its foot)...
+        (pos: (517.10, 39.88, -446.41), width: 13.0, shoulder: 2.0),  // 575
+        (pos: (517.10, 39.67, -454.41), width: 13.0, shoulder: 2.0),  // 576
+        (pos: (517.10, 39.34, -462.41), width: 13.0, shoulder: 2.0),  // 577
+        (pos: (517.10, 38.91, -470.41), width: 13.0, shoulder: 2.0),  // 578
+        (pos: (517.10, 38.40, -478.41), width: 13.0, shoulder: 2.0),  // 579
+        (pos: (517.10, 37.85, -486.41), width: 13.0, shoulder: 2.0),  // 580
+        (pos: (517.10, 37.26, -494.41), width: 13.0, shoulder: 2.0),  // 581
+        (pos: (517.10, 36.66, -502.41), width: 13.0, shoulder: 2.0),  // 582
+        (pos: (517.10, 36.07, -510.41), width: 13.0, shoulder: 2.0),  // 583
+        (pos: (517.10, 35.52, -518.41), width: 13.0, shoulder: 2.0),  // 584
+        (pos: (517.10, 35.01, -526.41), width: 13.0, shoulder: 2.0),  // 585
+        (pos: (517.10, 34.58, -534.41), width: 13.0, shoulder: 2.0),  // 586
+        (pos: (517.10, 34.25, -542.41), width: 13.0, shoulder: 2.0),  // 587
+        (pos: (517.10, 34.04, -550.41), width: 13.0, shoulder: 2.0),  // 588
+        (pos: (517.10, 33.96, -558.41), width: 13.0, shoulder: 2.0),  // 589
+        // ...a hairpin to the left...
+        (pos: (515.77, 33.92, -565.93), width: 13.0, shoulder: 2.0),  // 590
+        (pos: (511.95, 33.87, -572.55), width: 13.0, shoulder: 2.0),  // 591
+        (pos: (506.10, 33.83, -577.46), width: 13.0, shoulder: 2.0),  // 592
+        (pos: (498.92, 33.78, -580.08), width: 13.0, shoulder: 2.0),  // 593
+        (pos: (491.28, 33.74, -580.08), width: 13.0, shoulder: 2.0),  // 594
+        (pos: (484.10, 33.69, -577.46), width: 13.0, shoulder: 2.0),  // 595
+        (pos: (478.25, 33.65, -572.55), width: 13.0, shoulder: 2.0),  // 596
+        (pos: (474.43, 33.60, -565.93), width: 13.0, shoulder: 2.0),  // 597
+        (pos: (473.10, 33.56, -558.41), width: 13.0, shoulder: 2.0),  // 598
+        // ...south (a stone swings)...
+        (pos: (473.10, 33.48, -550.41), width: 13.0, shoulder: 2.0),  // 599
+        (pos: (473.10, 33.27, -542.41), width: 13.0, shoulder: 2.0),  // 600
+        (pos: (473.10, 32.94, -534.41), width: 13.0, shoulder: 2.0),  // 601
+        (pos: (473.10, 32.51, -526.41), width: 13.0, shoulder: 2.0),  // 602
+        (pos: (473.10, 32.00, -518.41), width: 13.0, shoulder: 2.0),  // 603
+        (pos: (473.10, 31.45, -510.41), width: 13.0, shoulder: 2.0),  // 604
+        (pos: (473.10, 30.86, -502.41), width: 13.0, shoulder: 2.0),  // 605
+        (pos: (473.10, 30.26, -494.41), width: 13.0, shoulder: 2.0),  // 606
+        (pos: (473.10, 29.67, -486.41), width: 13.0, shoulder: 2.0),  // 607
+        (pos: (473.10, 29.12, -478.41), width: 13.0, shoulder: 2.0),  // 608
+        (pos: (473.10, 28.61, -470.41), width: 13.0, shoulder: 2.0),  // 609
+        (pos: (473.10, 28.18, -462.41), width: 13.0, shoulder: 2.0),  // 610
+        (pos: (473.10, 27.85, -454.41), width: 13.0, shoulder: 2.0),  // 611
+        (pos: (473.10, 27.64, -446.41), width: 13.0, shoulder: 2.0),  // 612
+        (pos: (473.10, 27.56, -438.41), width: 13.0, shoulder: 2.0),  // 613
+        // ...a hairpin to the right...
+        (pos: (471.77, 27.52, -430.89), width: 13.0, shoulder: 2.0),  // 614
+        (pos: (467.95, 27.47, -424.27), width: 13.0, shoulder: 2.0),  // 615
+        (pos: (462.10, 27.43, -419.36), width: 13.0, shoulder: 2.0),  // 616
+        (pos: (454.92, 27.38, -416.74), width: 13.0, shoulder: 2.0),  // 617
+        (pos: (447.28, 27.34, -416.74), width: 13.0, shoulder: 2.0),  // 618
+        (pos: (440.10, 27.29, -419.36), width: 13.0, shoulder: 2.0),  // 619
+        (pos: (434.25, 27.25, -424.27), width: 13.0, shoulder: 2.0),  // 620
+        (pos: (430.43, 27.20, -430.89), width: 13.0, shoulder: 2.0),  // 621
+        (pos: (429.10, 27.16, -438.41), width: 13.0, shoulder: 2.0),  // 622
+        // ...north (a boost pad)...
+        (pos: (429.10, 27.08, -446.41), width: 13.0, shoulder: 2.0),  // 623
+        (pos: (429.10, 26.87, -454.41), width: 13.0, shoulder: 2.0),  // 624
+        (pos: (429.10, 26.54, -462.41), width: 13.0, shoulder: 2.0),  // 625
+        (pos: (429.10, 26.11, -470.41), width: 13.0, shoulder: 2.0),  // 626
+        (pos: (429.10, 25.60, -478.41), width: 13.0, shoulder: 2.0),  // 627
+        (pos: (429.10, 25.05, -486.41), width: 13.0, shoulder: 2.0),  // 628
+        (pos: (429.10, 24.46, -494.41), width: 13.0, shoulder: 2.0),  // 629
+        (pos: (429.10, 23.86, -502.41), width: 13.0, shoulder: 2.0),  // 630
+        (pos: (429.10, 23.27, -510.41), width: 13.0, shoulder: 2.0),  // 631
+        (pos: (429.10, 22.72, -518.41), width: 13.0, shoulder: 2.0),  // 632
+        (pos: (429.10, 22.21, -526.41), width: 13.0, shoulder: 2.0),  // 633
+        (pos: (429.10, 21.78, -534.41), width: 13.0, shoulder: 2.0),  // 634
+        (pos: (429.10, 21.45, -542.41), width: 13.0, shoulder: 2.0),  // 635
+        (pos: (429.10, 21.24, -550.41), width: 13.0, shoulder: 2.0),  // 636
+        (pos: (429.10, 21.16, -558.41), width: 13.0, shoulder: 2.0),  // 637
+        // ...a hairpin to the left...
+        (pos: (427.77, 21.12, -565.93), width: 13.0, shoulder: 2.0),  // 638
+        (pos: (423.95, 21.07, -572.55), width: 13.0, shoulder: 2.0),  // 639
+        (pos: (418.10, 21.03, -577.46), width: 13.0, shoulder: 2.0),  // 640
+        (pos: (410.92, 20.98, -580.08), width: 13.0, shoulder: 2.0),  // 641
+        (pos: (403.28, 20.94, -580.08), width: 13.0, shoulder: 2.0),  // 642
+        (pos: (396.10, 20.89, -577.46), width: 13.0, shoulder: 2.0),  // 643
+        (pos: (390.25, 20.85, -572.55), width: 13.0, shoulder: 2.0),  // 644
+        (pos: (386.43, 20.80, -565.93), width: 13.0, shoulder: 2.0),  // 645
+        (pos: (385.10, 20.76, -558.41), width: 13.0, shoulder: 2.0),  // 646
+        // South, down to the plain of the spaceport.
+        (pos: (385.10, 20.68, -550.23), width: 13.0, shoulder: 2.0),  // 647
+        (pos: (385.10, 20.46, -542.05), width: 13.0, shoulder: 2.0),  // 648
+        (pos: (385.10, 20.11, -533.86), width: 13.0, shoulder: 2.0),  // 649
+        (pos: (385.10, 19.65, -525.68), width: 13.0, shoulder: 2.0),  // 650
+        (pos: (385.10, 19.08, -517.50), width: 13.0, shoulder: 2.0),  // 651
+        (pos: (385.10, 18.43, -509.32), width: 13.0, shoulder: 2.0),  // 652
+        (pos: (385.10, 17.71, -501.14), width: 13.0, shoulder: 2.0),  // 653
+        (pos: (385.10, 16.93, -492.96), width: 13.0, shoulder: 2.0),  // 654
+        (pos: (385.10, 16.10, -484.77), width: 13.0, shoulder: 2.0),  // 655
+        (pos: (385.10, 15.25, -476.59), width: 13.0, shoulder: 2.0),  // 656
+        (pos: (385.10, 14.38, -468.41), width: 13.0, shoulder: 2.0),  // 657
+        (pos: (385.10, 13.51, -460.23), width: 13.0, shoulder: 2.0),  // 658
+        (pos: (385.10, 12.66, -452.05), width: 13.0, shoulder: 2.0),  // 659
+        (pos: (385.10, 11.83, -443.86), width: 13.0, shoulder: 2.0),  // 660
+        (pos: (385.10, 11.05, -435.68), width: 13.0, shoulder: 2.0),  // 661
+        (pos: (385.10, 10.33, -427.50), width: 13.0, shoulder: 2.0),  // 662
+        (pos: (385.10, 9.68, -419.32), width: 13.0, shoulder: 2.0),  // 663
+        (pos: (385.10, 9.11, -411.14), width: 13.0, shoulder: 2.0),  // 664
+        (pos: (385.10, 8.65, -402.96), width: 13.0, shoulder: 2.0),  // 665
+        (pos: (385.10, 8.30, -394.77), width: 13.0, shoulder: 2.0),  // 666
+        (pos: (385.10, 8.08, -386.59), width: 13.0, shoulder: 2.0),  // 667
+        (pos: (385.10, 8.00, -378.41), width: 13.0, shoulder: 2.0),  // 668
+        // A tight corner to the left, east.
+        (pos: (386.47, 8.00, -371.52), width: 13.0, shoulder: 2.0),  // 669
+        (pos: (390.37, 8.00, -365.68), width: 13.0, shoulder: 2.0),  // 670
+        (pos: (396.21, 8.00, -361.78), width: 13.0, shoulder: 2.0),  // 671
+        (pos: (403.10, 8.00, -360.41), width: 13.0, shoulder: 2.0),  // 672
+        // The finish straight, east, to the spaceport (a bump); the finish line, then the run-out.
+        (pos: (410.99, 8.00, -360.41), width: 15.0, shoulder: 3.0),  // 673
+        (pos: (418.89, 7.98, -360.41), width: 15.0, shoulder: 3.0),  // 674
+        (pos: (426.78, 7.96, -360.41), width: 15.0, shoulder: 3.0),  // 675
+        (pos: (434.68, 7.94, -360.41), width: 15.0, shoulder: 3.0),  // 676
+        (pos: (442.57, 7.91, -360.41), width: 15.0, shoulder: 3.0),  // 677
+        (pos: (450.47, 7.87, -360.41), width: 15.0, shoulder: 3.0),  // 678
+        (pos: (458.36, 7.82, -360.41), width: 15.0, shoulder: 3.0),  // 679
+        (pos: (466.26, 7.77, -360.41), width: 15.0, shoulder: 3.0),  // 680
+        (pos: (474.15, 7.72, -360.41), width: 15.0, shoulder: 3.0),  // 681
+        (pos: (482.05, 7.66, -360.41), width: 15.0, shoulder: 3.0),  // 682
+        (pos: (489.94, 7.59, -360.41), width: 15.0, shoulder: 3.0),  // 683
+        (pos: (497.84, 7.53, -360.41), width: 15.0, shoulder: 3.0),  // 684
+        (pos: (505.73, 7.46, -360.41), width: 15.0, shoulder: 3.0),  // 685
+        (pos: (513.63, 7.39, -360.41), width: 15.0, shoulder: 3.0),  // 686
+        (pos: (521.52, 7.31, -360.41), width: 15.0, shoulder: 3.0),  // 687
+        (pos: (529.42, 7.23, -360.41), width: 15.0, shoulder: 3.0),  // 688
+        (pos: (537.31, 7.16, -360.41), width: 15.0, shoulder: 3.0),  // 689
+        (pos: (545.21, 7.08, -360.41), width: 15.0, shoulder: 3.0),  // 690
+        (pos: (553.10, 7.00, -360.41), width: 15.0, shoulder: 3.0),  // 691
+        (pos: (560.99, 6.92, -360.41), width: 15.0, shoulder: 3.0),  // 692
+        (pos: (568.89, 6.84, -360.41), width: 15.0, shoulder: 3.0),  // 693
+        (pos: (576.78, 6.77, -360.41), width: 15.0, shoulder: 3.0),  // 694
+        (pos: (584.68, 6.69, -360.41), width: 15.0, shoulder: 3.0),  // 695
+        (pos: (592.57, 6.61, -360.41), width: 15.0, shoulder: 3.0),  // 696
+        (pos: (600.47, 6.54, -360.41), width: 15.0, shoulder: 3.0),  // 697
+        (pos: (608.36, 6.47, -360.41), width: 15.0, shoulder: 3.0),  // 698
+        (pos: (616.26, 6.41, -360.41), width: 15.0, shoulder: 3.0),  // 699
+        (pos: (624.15, 6.34, -360.41), width: 15.0, shoulder: 3.0),  // 700
+        (pos: (632.05, 6.28, -360.41), width: 15.0, shoulder: 3.0),  // 701
+        (pos: (639.94, 6.23, -360.41), width: 15.0, shoulder: 3.0),  // 702
+        (pos: (647.84, 6.18, -360.41), width: 15.0, shoulder: 3.0),  // 703
+        (pos: (655.73, 6.13, -360.41), width: 15.0, shoulder: 3.0),  // 704
+        (pos: (663.63, 6.09, -360.41), width: 15.0, shoulder: 3.0),  // 705
+        (pos: (671.52, 6.06, -360.41), width: 15.0, shoulder: 3.0),  // 706
+        (pos: (679.42, 6.04, -360.41), width: 15.0, shoulder: 3.0),  // 707
+        (pos: (687.31, 6.02, -360.41), width: 15.0, shoulder: 3.0),  // 708
+        (pos: (695.21, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 709
+        (pos: (703.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 710
+        // The way back (never built nor driven) round to the lead-in.
+        (pos: (711.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 711
+        (pos: (719.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 712
+        (pos: (727.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 713
+        (pos: (735.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 714
+        (pos: (743.10, 6.00, -360.41), width: 15.0, shoulder: 3.0),  // 715
+        (pos: (709.32, 5.91, -339.48), width: 15.0, shoulder: 3.0),  // 716
+        (pos: (675.55, 5.82, -318.55), width: 15.0, shoulder: 3.0),  // 717
+        (pos: (641.77, 5.73, -297.63), width: 15.0, shoulder: 3.0),  // 718
+        (pos: (607.99, 5.64, -276.70), width: 15.0, shoulder: 3.0),  // 719
+        (pos: (574.21, 5.55, -255.77), width: 15.0, shoulder: 3.0),  // 720
+        (pos: (540.44, 5.45, -234.84), width: 15.0, shoulder: 3.0),  // 721
+        (pos: (506.66, 5.36, -213.92), width: 15.0, shoulder: 3.0),  // 722
+        (pos: (472.88, 5.27, -192.99), width: 15.0, shoulder: 3.0),  // 723
+        (pos: (439.10, 5.18, -172.06), width: 15.0, shoulder: 3.0),  // 724
+        (pos: (405.33, 5.09, -151.13), width: 15.0, shoulder: 3.0),  // 725
+        (pos: (371.55, 5.00, -130.21), width: 15.0, shoulder: 3.0),  // 726
+        (pos: (337.77, 4.91, -109.28), width: 15.0, shoulder: 3.0),  // 727
+        (pos: (304.00, 4.82, -88.35), width: 15.0, shoulder: 3.0),  // 728
+        (pos: (270.22, 4.73, -67.42), width: 15.0, shoulder: 3.0),  // 729
+        (pos: (236.44, 4.64, -46.49), width: 15.0, shoulder: 3.0),  // 730
+        (pos: (202.66, 4.55, -25.57), width: 15.0, shoulder: 3.0),  // 731
+        (pos: (168.89, 4.45, -4.64), width: 15.0, shoulder: 3.0),  // 732
+        (pos: (135.11, 4.36, 16.29), width: 15.0, shoulder: 3.0),  // 733
+        (pos: (101.33, 4.27, 37.22), width: 15.0, shoulder: 3.0),  // 734
+        (pos: (67.55, 4.18, 58.14), width: 15.0, shoulder: 3.0),  // 735
+        (pos: (33.78, 4.09, 79.07), width: 15.0, shoulder: 3.0),  // 736
+        (pos: (0.00, 4.00, 100.00), width: 15.0, shoulder: 3.0),  // 737
+        // The lead-in: the straight where the grid stands, behind point 0.
+        (pos: (0.00, 4.00, 72.00), width: 15.0, shoulder: 3.0),  // 738
+        (pos: (0.00, 4.00, 64.00), width: 15.0, shoulder: 3.0),  // 739
+        (pos: (0.00, 4.00, 56.00), width: 15.0, shoulder: 3.0),  // 740
+        (pos: (0.00, 4.00, 48.00), width: 15.0, shoulder: 3.0),  // 741
+        (pos: (0.00, 4.00, 40.00), width: 15.0, shoulder: 3.0),  // 742
+        (pos: (0.00, 4.00, 32.00), width: 15.0, shoulder: 3.0),  // 743
+        (pos: (0.00, 4.00, 24.00), width: 15.0, shoulder: 3.0),  // 744
+        (pos: (0.00, 4.00, 16.00), width: 15.0, shoulder: 3.0),  // 745
+        (pos: (0.00, 4.00, 8.00), width: 15.0, shoulder: 3.0),  // 746
+    ],
+    // Issue #78: the wall on the crater's rampart (section 2). Issue #215: the climb to the plateau
+    // (section 3), level: a kart does not slow down going up.
+    anti_gravity: [
+        (from: 383.000, to: 393.000),
+        (from: 518.800, to: 532.000),
+    ],
+    // Issue #180 (GD § 16, rule 3): bumps, 2.2 m high, two a section at least, where nothing turns
+    // for 60 m and more after them: on the start straight (two), out of two hairpins of the crater,
+    // on a leg down the outer slope, and on the finish straight, 52 m out of its tight corner.
+    bumps: [
+        (at: 3.000, height: 2.2, length: 36.0),  // on the start straight, long and gentle
+        (at: 9.500, height: 2.2, length: 36.0),  // on the start straight, long and gentle
+        (at: 246.173, height: 2.2, length: 22.0),  // out of the first hairpin of the crater
+        (at: 304.173, height: 2.2, length: 22.0),  // on the third leg of the crater
+        (at: 454.333, height: 2.2, length: 22.0),  // on the second leg down the outer slope
+        (at: 678.587, height: 2.2, length: 22.0),  // on the finish straight
+    ],
+    // Issue #180: a drop of 4 m on the second leg of the crater, 66 m out of its hairpin: 35 m
+    // straight below it, and some 95 m on to the next hairpin.
+    drops: [
+        (at: 277.300, height: 4.0),
+    ],
+    glide_ramps: [
+        (at: 195.579, offset: 0.0, width: 24.0, length: 8.0, angle: 12.0),
+    ],
+    gaps: [
+        (from: 196.576, to: 204.804),
+    ],
+    // Issue #107: the sides without wall: the inside of the risky jump's corner, the bulge (the
+    // hidden road) and the inside of the grass bridge's corner. Everywhere else, walls.
+    open_edges: [
+        (from: 183.826, to: 194.457, side: Right),
+        (from: 533.000, to: 551.351, side: Right),
+        (from: 551.173, to: 564.900, side: Right),
+    ],
+    shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the
+        // tight corner, landing on the road after it.
+        (from: 184.450, to: 194.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(67.49, 30.82, -591.68), (69.48, 30.82, -606.69), (77.01, 30.82, -611.63), (102.99, 30.40, -628.69), (111.99, 30.40, -628.69)]),
+        // Issue #193: grass, like every shortcut: it pays only with a boost. The hidden road:
+        // narrow (5 m), straight behind the giant crystal while the road goes round it, behind a
+        // stack of crates 18 m in (they burst as one drives through them, and come back).
+        (from: 533.000, to: 550.603, kind: Grass, width: 5.0,
+         points: [(624.68, 40.35, -592.41), (624.68, 40.35, -541.68), (624.68, 40.35, -490.94)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the tight corner: narrow (5 m), closed by a panel 26 m in
+        // that breaks under a kart with a boost.
+        (from: 551.921, to: 564.828, kind: Grass, width: 5.0,
+         points: [(621.68, 40.35, -480.37), (620.83, 40.35, -473.90), (618.33, 40.35, -467.87), (615.46, 40.35, -462.89), (612.58, 40.35, -457.91), (609.71, 40.35, -452.93), (606.83, 40.35, -447.95), (603.33, 40.35, -442.95), (599.02, 40.35, -438.64), (594.02, 40.35, -435.14), (588.49, 40.35, -432.56), (582.60, 40.35, -430.98), (576.52, 40.35, -430.45)],
+         cover: Some((kind: Panel, at: 26.0))),
+    ],
+    // Issue #144 (GD § 16, rule 8): on one side of the road each, the side of the turn after it
+    // (the karts keep to the other one): a rock at the edge of the runway; a log rolls on the
+    // fourth leg up the ridge; a rock and a pillar at the edges of the glide's landing; a stone
+    // swings on the second leg down to the spaceport; a trunk on the shoulder of the outer slope.
+    obstacles: [
+        (kind: Rock, at: 8.5, offset: -0.95, size: 1.1, yaw: 20.0),
+        (kind: RollingLog, at: 134.500, offset: 0.50, sweep: 0.32, period: 5.0),
+        (kind: Rock, at: 206.600, offset: -0.92, size: 1.2, yaw: 25.0),
+        (kind: Pillar, at: 210.600, offset: 0.9),
+        (kind: SwingingStone, at: 605.500, offset: 0.50, sweep: 0.35, period: 3.6),
+        (kind: Trunk, at: 486.450, offset: -1.12, yaw: 4.0),
+    ],
+    // The bison paces on the second leg up the ridge, the second one on the first leg down the
+    // outer slope: far from the drop.
+    npcs: [
+        (kind: Bison, at: 87.250, offset: 0.55, sweep: 0.3, period: 6.5),
+        (kind: Bison, at: 429.500, offset: -0.55, sweep: 0.3, period: 7.0),
+    ],
+    // Balloons just after the start line (the pack bursts them at GO) and before the finish, a hay
+    // bale below the drop, crates on the last leg of the crater.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 280.300, offsets: [-0.6]),
+        (kind: Crate, at: 339.400, offsets: [0.60, 0.25]),
+        (kind: Balloon, at: 688.267, offsets: [-0.5, 0.0, 0.5]),
+    ],
+    // Trick ramps (issue #13): at the foot of the lacets up the ridge, of the last leg of the
+    // crater and of the lacets down to the spaceport, out of a turn.
+    trick_ramps: [
+        (at: 55.636, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 327.617, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 574.625, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    boost_pads: [
+        (at: 79.508, offset: 0.0),
+        (at: 298.494, offset: 0.0),
+        (at: 622.500, offset: 0.0),
+        (at: 387.300, offset: -0.35),
+        (at: 387.700, offset: 0.35),
+    ],
+    item_boxes: [
+        (at: 6.500, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 60.085, offsets: [-0.5, 0.0, 0.5]),
+        (at: 156.085, offsets: [-0.4, 0.4]),
+        (at: 242.963, offsets: [-0.5, 0.0, 0.5]),
+        (at: 208.600, offsets: [-0.4, 0.0, 0.4]),
+        (at: 423.040, offsets: [-0.5, 0.0, 0.5]),
+        (at: 529.670, offsets: [0.7], double: true),
+        (at: 579.000, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 687.200, offsets: [-0.4, 0.4]),
+    ],
+    croquettes: [
+        (from: 3.400, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 13.000, count: 4, spacing: 3.0, offset: -0.42),
+        (from: 104.017, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 269.988, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 386.700, count: 6, spacing: 4.0, offset: 0.45),
+        (from: 197.324, count: 6, spacing: 5.0, offset: 0.0),
+        (from: 459.400, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 599.500, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 550.853, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 673.013, count: 4, spacing: 3.0, offset: 0.4),
+    ],
+)

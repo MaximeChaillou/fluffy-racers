@@ -104,6 +104,9 @@ pub enum Paving {
     /// Issue #112: hexagonal stone pavers, each its own shade, moss (the `accent`) in their
     /// joints (the causeways of a marsh).
     Hexagons,
+    /// Issue #112: riveted metal deck plates in staggered rows, a fine diamond tread, the
+    /// `accent` in their seams (the runways of a moon base).
+    Plates,
 }
 
 impl Paving {
@@ -118,6 +121,7 @@ impl Paving {
             Paving::Cobbles
                 | Paving::Bricks
                 | Paving::Tiles
+                | Paving::Plates
                 | Paving::Planks
                 | Paving::Sugar
                 | Paving::Licorice
@@ -125,7 +129,7 @@ impl Paving {
         )
     }
 
-    pub const ALL: [Paving; 15] = [
+    pub const ALL: [Paving; 16] = [
         Paving::Asphalt,
         Paving::Dirt,
         Paving::Cobbles,
@@ -141,6 +145,7 @@ impl Paving {
         Paving::Bricks,
         Paving::Tiles,
         Paving::Hexagons,
+        Paving::Plates,
     ];
 }
 
@@ -487,7 +492,8 @@ mod tests {
     /// the canyon; issue #110: an eighth and a ninth, the undergrowth of giant mushrooms and the
     /// cliffs at sunset; issue #111: a tenth and an eleventh, the pumpkin hillside at dusk and the
     /// kingdom; issue #168: a twelfth, the hill town at the blue hour; issue #112: a thirteenth,
-    /// the fair on its hill; then a fourteenth, the marsh in the misty morning.
+    /// the fair on its hill; then a fourteenth, the marsh in the misty morning, and a fifteenth,
+    /// the hushed moon.
     #[test]
     fn the_biomes_file_is_valid_and_has_the_ten_ambiances() {
         let biomes = parse_biomes(BIOMES_RON).unwrap();
@@ -507,7 +513,8 @@ mod tests {
                 "Royaume",
                 "Bourg",
                 "Foire",
-                "Marais"
+                "Marais",
+                "Lune"
             ]
         );
         assert_eq!(biomes, super::biomes());

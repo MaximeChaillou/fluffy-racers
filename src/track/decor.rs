@@ -764,6 +764,7 @@ mod tests {
             ("bourg.track.ron", "Bourg"),
             ("manege.track.ron", "Foire"),
             ("marais.track.ron", "Marais"),
+            ("odyssee.track.ron", "Lune"),
         ] {
             let (data, center, plan) = plan_of(file);
             assert_eq!(data.biome.as_deref(), Some(biome));
