@@ -1026,7 +1026,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
     // Issue #110: and the new covers on the new circuits (a waterfall in the Forêt Frimousse, a
     // stack of crates in the Falaises Flanelle); issue #111: the Coteau Citrouille and the Périple
     // Polochon; issue #148: the Anneau Guimauve and the Crique Câline redrawn; issue #150: the
-    // Lagon Duvet redrawn; issue #168: the Bourg Bouillotte.
+    // Lagon Duvet redrawn; issue #168: the Bourg Bouillotte; issue #162: Prairie Pompon (a stack
+    // of hay bales, a curtain of tall grass) and the Col des Moufles (a cave, a stack of crates).
     for (circuit, kind) in [
         ("Corniche Cannelle", CoverKind::Panel),
         ("Corniche Cannelle", CoverKind::Foliage),
@@ -1052,6 +1053,10 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Marais Mitaine", CoverKind::Foliage),
         ("Odyssée Ouatée", CoverKind::Crates),
         ("Odyssée Ouatée", CoverKind::Panel),
+        ("Prairie Pompon", CoverKind::HayBales),
+        ("Prairie Pompon", CoverKind::Foliage),
+        ("Col des Moufles", CoverKind::Cave),
+        ("Col des Moufles", CoverKind::Crates),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),

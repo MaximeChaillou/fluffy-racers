@@ -456,6 +456,15 @@ pub enum CoverKind {
     /// `HazardTuning::crate_slowdown`), and comes back after a while
     /// (`HazardTuning::cover_respawn_seconds`, issue #193: sooner than the crates on the road).
     Crates,
+    /// Issue #162: a stack of hay bales across the path, two and three high: it bursts like a
+    /// hay bale of the road as a kart drives through it (straw, a « pof », a little slower: a
+    /// bale's `HazardTuning::hay_slowdown`), and comes back after a while
+    /// (`HazardTuning::cover_respawn_seconds`, like the crates).
+    HayBales,
+    /// Issue #162: the mouth of a cave in a rock, the path running into it: big rocks at its
+    /// sides, a lintel over it, its dark inside. One drives into it without slowing down (only
+    /// seen, like the foliage); from outside, one does not see the way through it.
+    Cave,
 }
 
 /// Issue #156: a cover of a shortcut, `at` meters along its path from its start, across it.
@@ -1760,8 +1769,15 @@ mod tests {
             change(&mut data.shortcuts[0]);
             data.validate().is_err()
         };
-        // Issue #110: the waterfall and the stack of crates stand on a path the same way.
-        for kind in [CoverKind::Foliage, CoverKind::Waterfall, CoverKind::Crates] {
+        // Issue #110: the waterfall and the stack of crates stand on a path the same way; issue
+        // #162: the hay bales and the cave too.
+        for kind in [
+            CoverKind::Foliage,
+            CoverKind::Waterfall,
+            CoverKind::Crates,
+            CoverKind::HayBales,
+            CoverKind::Cave,
+        ] {
             assert!(!broken(&|s| s.cover.as_mut().unwrap().kind = kind));
             assert!(broken(&|s| {
                 s.cover.as_mut().unwrap().kind = kind;

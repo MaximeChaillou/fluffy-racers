@@ -50,6 +50,14 @@ pub const WATERFALL_DEPTH: f32 = 1.2;
 /// along its path (two crates).
 pub const CRATES_HEIGHT: f32 = 3.0;
 pub const CRATES_DEPTH: f32 = 2.0;
+/// Issue #162: a stack of hay bales is this high (m: three bales in its middle), and this deep
+/// along its path (two bales).
+pub const HAY_BALES_HEIGHT: f32 = 2.9;
+pub const HAY_BALES_DEPTH: f32 = 2.2;
+/// Issue #162: a cave's mouth is this high (m, the underside of its lintel), and its rocks this
+/// deep along its path (its dark inside fills the mouth).
+pub const CAVE_HEIGHT: f32 = 4.2;
+pub const CAVE_DEPTH: f32 = 2.4;
 
 /// What a hazard is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -85,7 +93,7 @@ impl HazardKind {
     pub fn bursts(self) -> bool {
         matches!(
             self,
-            HazardKind::Breakable(_) | HazardKind::Cover(CoverKind::Crates)
+            HazardKind::Breakable(_) | HazardKind::Cover(CoverKind::Crates | CoverKind::HayBales)
         )
     }
 
@@ -95,6 +103,8 @@ impl HazardKind {
         match self {
             HazardKind::Breakable(kind) => Some(kind),
             HazardKind::Cover(CoverKind::Crates | CoverKind::Panel) => Some(BreakableKind::Crate),
+            // Issue #162: a stack of hay bales like a bale of the road.
+            HazardKind::Cover(CoverKind::HayBales) => Some(BreakableKind::HayBale),
             _ => None,
         }
     }
@@ -204,6 +214,24 @@ impl Shape {
                 COVER_WIDTH / 2.0 - 1.0,
                 CRATES_DEPTH / 2.0,
             ),
+            // Issue #162: the same for a stack of hay bales.
+            HazardKind::Cover(CoverKind::HayBales) => shape(
+                COVER_WIDTH / 2.0,
+                HAY_BALES_DEPTH / 2.0,
+                Vec3::X,
+                0.75,
+                COVER_WIDTH / 2.0 - 1.0,
+                HAY_BALES_DEPTH / 2.0,
+            ),
+            // Issue #162: only seen, like the foliage.
+            HazardKind::Cover(CoverKind::Cave) => shape(
+                COVER_WIDTH / 2.0,
+                CAVE_DEPTH / 2.0,
+                Vec3::X,
+                CAVE_HEIGHT / 2.0,
+                COVER_WIDTH / 2.0 - 1.0,
+                1.0,
+            ),
         }
     }
 
@@ -215,6 +243,8 @@ impl Shape {
             CoverKind::Foliage => Vec3::new(COVER_WIDTH, FOLIAGE_HEIGHT, FOLIAGE_DEPTH) / 2.0,
             CoverKind::Waterfall => Vec3::new(COVER_WIDTH, WATERFALL_HEIGHT, WATERFALL_DEPTH) / 2.0,
             CoverKind::Crates => Vec3::new(COVER_WIDTH, CRATES_HEIGHT, CRATES_DEPTH) / 2.0,
+            CoverKind::HayBales => Vec3::new(COVER_WIDTH, HAY_BALES_HEIGHT, HAY_BALES_DEPTH) / 2.0,
+            CoverKind::Cave => Vec3::new(COVER_WIDTH, CAVE_HEIGHT, CAVE_DEPTH) / 2.0,
         }
     }
 }
