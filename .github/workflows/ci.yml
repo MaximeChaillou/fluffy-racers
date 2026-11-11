@@ -26,7 +26,7 @@ jobs:
     if: github.ref != 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Tests run locally before the push (CLAUDE.md, step 4; #237)."
+      - run: echo "Tests run locally before the push, CLAUDE.md step 4, issue 237."
 
   deploy:
     name: Build web + deploy to GitHub Pages
