@@ -5,6 +5,11 @@
 - `FixedUpdate` à **60 Hz** pour toute la simulation : entrées, physique, règles de course, réseau.
 - `Update` pour le rendu : interpolation visuelle des transforms, caméra, UI, effets.
 - Le flux de chaque tick : `lecture entrées → KartInput → physique kart → règles (checkpoints, objets, interactions) → envoi réseau`.
+- **Les images par seconde sont plafonnées** (#234, `src/pacing/`) : 60 par défaut (l'option « Images/seconde » : 60, 30, sans limite ; `FramePacing::cap`). La décision « dessiner cette image ou non » est de la logique pure (`pacing/pacer.rs`) : toutes les images d'un écran pas plus rapide que le plafond, une image sur `n` sur un multiple entier (120 Hz : une sur deux, calée sur l'écran, sans dérive), une horloge sinon (144 Hz : des écarts de 2 et 3 images, 60 par seconde en moyenne).
+  - La mise à jour de l'app principale exécute `PacedMain` au lieu de `Main` : son unique système interroge le limiteur, puis exécute `Main` (toute l'image : `First` à `Last`, et `FixedUpdate`) ou non.
+  - **Navigateur** : winit fait une mise à jour à chaque `requestAnimationFrame`. Une image non dessinée n'exécute rien : ni `Main`, ni l'extraction vers le monde du rendu, ni le rendu (`PacedRender`, la mise à jour de l'app de rendu passe par la même porte). Le canvas garde son image. L'image dessinée suivante voit le temps écoulé (`Time<Real>`) : `FixedUpdate` fait les ticks dus (toujours 60 par seconde) et l'interpolation prend la bonne fraction du tick suivant. L'horloge est celle de l'image (`document.timeline.currentTime`, l'heure de la vsync).
+  - **Natif** : la vsync reste (`PresentMode::AutoVsync`) ; la mise à jour dort jusqu'à l'heure de l'image suivante, une demi-image d'écran en avance (la fréquence du moniteur de la fenêtre) ; sur un écran à 60 Hz ou moins, jamais.
+  - Le jeu sans fenêtre (tests, courses de bots) et le serveur dédié (#225) n'ont pas de porte : elle ne s'installe qu'avec un moteur de rendu.
 
 ## Le kart (arcade, pas simulation)
 

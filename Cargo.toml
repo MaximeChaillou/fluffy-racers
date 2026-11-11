@@ -56,7 +56,8 @@ futures-timer = { version = "3", default-features = false, features = ["wasm-bin
 # Already compiled for Bevy (winit, wgpu): the admin panel only adds the browser's local storage
 # (its settings survive a reload) and the page address (`?admin`).
 # Issue #7: the page's `History` puts `?room=CODE` in the address bar.
-web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "History"] }
+# Issue #234: the time of the animation frame (`document.timeline`), for the frame limiter.
+web-sys = { version = "0.3", features = ["Window", "Storage", "Location", "History", "Document", "DocumentTimeline", "AnimationTimeline"] }
 # getrandom asks the browser (`crypto.getRandomValues`); bevy_egui already enables it.
 getrandom = { version = "0.4", features = ["wasm_js"] }
 # Already compiled for Bevy (bevy_winit), no feature added: while the panel's text field has the
