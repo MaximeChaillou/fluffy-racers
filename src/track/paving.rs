@@ -343,6 +343,39 @@ fn paving_texel(paving: Paving, inks: &Inks, u: f32, v: f32) -> [f32; 3] {
             }
             scale(base, k)
         }
+        Paving::Bricks => {
+            // Issue #168: bricks across the road, in running bond: rows 0.25 m deep (32 a tile),
+            // bricks 0.5 m long (16 a tile), every other row shifted by half a brick; the
+            // mortar light, each brick its own shade.
+            let rows = 32.0;
+            let row = (v * rows).floor();
+            let per_row = 16.0;
+            let along = u * per_row
+                + if (row as i32).rem_euclid(2) == 1 {
+                    0.5
+                } else {
+                    0.0
+                };
+            let brick = along.floor();
+            let lx = (along.rem_euclid(1.0) - 0.5) * (t / per_row);
+            let ly = ((v * rows).rem_euclid(1.0) - 0.5) * (t / rows);
+            let mortar = 0.022;
+            let into = (t / per_row / 2.0 - lx.abs()).min(t / rows / 2.0 - ly.abs());
+            if into < mortar {
+                return mix(scale(base, 1.25), [0.62, 0.60, 0.56], 0.55);
+            }
+            let id = hash(
+                (brick as i32).rem_euclid(per_row as i32),
+                (row as i32).rem_euclid(rows as i32),
+                121,
+            );
+            let tint = 0.78 + 0.4 * id;
+            // Worn edges, lighter on the top one (the light from above).
+            let near = smoothstep(mortar, mortar + 0.025, into);
+            let edge = if ly < 0.0 { 1.1 } else { 0.86 };
+            let k = tint * (edge + (1.0 - edge) * near) * (1.0 + 0.16 * grain(160, 122));
+            scale(base, k)
+        }
         Paving::PackedSand => {
             // Ripples across the road, about every 0.44 m (18 a tile), wavy.
             let warp = fbm(u, v, 3, 3, 3, 51) - 0.5;
@@ -845,7 +878,8 @@ mod tests {
     #[test]
     fn each_biome_has_its_road_made_by_the_game() {
         let biomes = crate::track::biome::biomes();
-        assert_eq!(biomes.len(), 10);
+        // Issue #168: an eleventh, the hill town, with its bricks.
+        assert_eq!(biomes.len(), 11);
         let mut seen: Vec<Paving> = Vec::new();
         for biome in biomes {
             let road = biome.road;

@@ -1,0 +1,382 @@
+// "Bourg Bouillotte": a little hill town at the blue hour, its windows lit (issue #168, the 13th
+// circuit, the first of the fourth cup), after the guide « Conception des circuits »
+// (docs/GAME_DESIGN.md § 16). Original layout, about 1590 m a lap, turning right, from 7 to 33 m
+// up: the start straight on the market square, 10 m up; a hairpin to the right down into the
+// lower town and a hairpin to the left round the washhouse, 7 m up; the climb north up the
+// rampart's street (31 %, in anti-gravity) to the top of the town; the risky jump's corner on
+// the top, 33 m up (a tight corner to the right, its inside a drop down to the gardens, that a
+// ramp crosses), its wide landing, south; then the lacets down through the town, four hairpins
+// (left, right, left, right): the belfry's terrace and its drop of 4 m, the bakers' street;
+// the bulge round a giant belfry, whose hidden road runs straight behind a stack of the market's
+// crates; the last corner, that the grass bridge crosses behind a panel that breaks under a boost;
+// a bump on the way back to the line. Six hairpins of 180° (a Normal bot drifts them), the
+// bulge's S (left 75°, right 150°, left 75°), four tight corners of 90°: no long soft curve, one
+// long straight. The pieces of the shortcuts (the jump's corner and its landing; the last
+// hairpin, the bulge, the last corner and their paths) are the Coteau Citrouille's (the Corniche
+// Cannelle's, issues #107, #156: their gains and their hiding were tuned), with other covers; the
+// rest is new.
+//
+// Drawn as a plan of straights and arcs, its points every 8 m along it (the parameters below
+// follow them).
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn right. The grid sits on the straight behind point 0.
+(
+    name: "Bourg Bouillotte",
+    // Dressing (issue #11): the hill town at the blue hour (`assets/data/biomes.ron`), the same
+    // every time (seed), and pieces placed by hand: checkered flags at the start line, a giant
+    // belfry that hides the hidden road, a giant tower by the jump's corner.
+    biome: "Bourg",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "cool-city",
+    decor_seed: 168,
+    // Issue #195: the town's hill (`assets/data/biomes.ron`), and it hugs the road (`embank`, rise
+    // over run: about 31°, as on the circuits of issue #211): the road, 7 to 33 m above the
+    // valley, is carried by the hill up to its walls, instead of skirts down to the valley. The
+    // voids stay (the jump's corner, the bulge, the last corner: 6 m under the road at least).
+    terrain: (height: 34.0, scale: 140.0, floor: 0.25, rock: (0.52, 0.46, 0.42), embank: 0.6),
+    props: [
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
+        (model: "castle-kit/tower-slant-roof", at: 166.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
+        (model: "castle-kit/tower-square-roof", at: 61.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        (pos: (0.00, 10.00, 0.00), width: 15.0, shoulder: 3.0),
+        // 0-8: the start straight on the market square, 10 m up, heading north: the one long
+        // straight (the slipstream, the items). The grid sits behind point 0.
+        (pos: (0.00, 10.00, -7.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -15.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -22.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -30.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -37.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -45.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -52.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, -60.00), width: 15.0, shoulder: 3.0),
+        // the first hairpin, to the right (radius 22 m), down into the lower town.
+        (pos: (1.33, 9.94, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (5.15, 9.89, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (11.00, 9.83, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (18.18, 9.78, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (25.82, 9.72, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (33.00, 9.67, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (38.85, 9.61, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (42.67, 9.56, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 9.50, -60.00), width: 13.0, shoulder: 2.0),
+        // south, down to the washhouse square by the river, 7 m up (the bison paces across
+        // its left side).
+        (pos: (44.00, 9.17, -52.00), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 8.83, -44.00), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 8.50, -36.00), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 8.17, -28.00), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 7.83, -20.00), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 7.50, -12.00), width: 13.0, shoulder: 2.0),
+        // a hairpin to the left, round the washhouse.
+        (pos: (45.33, 7.44, -4.48), width: 13.0, shoulder: 2.0),
+        (pos: (49.15, 7.39, 2.14), width: 13.0, shoulder: 2.0),
+        (pos: (55.00, 7.33, 7.05), width: 13.0, shoulder: 2.0),
+        (pos: (62.18, 7.28, 9.67), width: 13.0, shoulder: 2.0),
+        (pos: (69.82, 7.22, 9.67), width: 13.0, shoulder: 2.0),
+        (pos: (77.00, 7.17, 7.05), width: 13.0, shoulder: 2.0),
+        (pos: (82.85, 7.11, 2.14), width: 13.0, shoulder: 2.0),
+        (pos: (86.67, 7.06, -4.48), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 7.00, -12.00), width: 13.0, shoulder: 2.0),
+        // north, the climb to the upper town: a trick ramp at its foot, then steep (31 %), in
+        // anti-gravity, up the rampart's street.
+        (pos: (88.00, 7.42, -20.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 8.67, -28.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 10.75, -36.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 13.25, -44.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 15.75, -52.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 18.25, -60.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 20.75, -68.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 23.25, -76.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 25.75, -84.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 27.83, -92.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 29.08, -100.00), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 29.50, -108.00), width: 13.0, shoulder: 2.0),
+        // a tight corner to the right (radius 18 m), east, onto the top of the town.
+        (pos: (89.37, 30.00, -114.89), width: 13.0, shoulder: 2.0),
+        (pos: (93.27, 30.50, -120.73), width: 13.0, shoulder: 2.0),
+        (pos: (99.11, 31.00, -124.63), width: 13.0, shoulder: 2.0),
+        (pos: (106.00, 31.50, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (115.00, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        // the risky jump's corner (the Coteau Citrouille's piece): east along the top, 33 m up,
+        // then a tight corner to the right (90°): its inside is a drop down to the gardens, the
+        // jump cuts across it; the wide landing, south; a tight corner to the right, west.
+        (pos: (123.00, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (131.00, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (139.00, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (147.03, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (155.04, 33.00, -126.00), width: 13.0, shoulder: 2.0),
+        (pos: (163.06, 33.00, -126.01), width: 13.0, shoulder: 2.0),
+        (pos: (171.09, 33.00, -126.01), width: 13.0, shoulder: 2.0),
+        (pos: (179.11, 33.00, -126.02), width: 13.0, shoulder: 2.0),
+        (pos: (187.13, 33.00, -126.02), width: 13.0, shoulder: 2.0),
+        (pos: (195.15, 33.00, -126.02), width: 13.0, shoulder: 2.0),
+        (pos: (203.13, 33.00, -125.46), width: 13.0, shoulder: 2.0),
+        (pos: (210.21, 33.00, -121.85), width: 13.0, shoulder: 2.0),
+        (pos: (215.05, 33.00, -115.53), width: 13.0, shoulder: 2.0),
+        (pos: (216.69, 32.99, -107.75), width: 20.0, shoulder: 2.0),
+        (pos: (216.69, 32.82, -99.72), width: 20.0, shoulder: 2.0),
+        (pos: (216.70, 32.64, -91.70), width: 20.0, shoulder: 2.0),
+        (pos: (216.70, 32.46, -83.69), width: 20.0, shoulder: 2.0),
+        (pos: (216.71, 32.28, -75.66), width: 20.0, shoulder: 2.0),
+        (pos: (216.71, 32.10, -67.64), width: 20.0, shoulder: 2.0),
+        (pos: (216.71, 31.80, -59.64), width: 13.0, shoulder: 2.0),
+        (pos: (216.71, 31.00, -51.64), width: 13.0, shoulder: 2.0),
+        (pos: (215.34, 30.51, -44.75), width: 13.0, shoulder: 2.0),
+        (pos: (211.44, 30.03, -38.91), width: 13.0, shoulder: 2.0),
+        (pos: (205.60, 29.55, -35.01), width: 13.0, shoulder: 2.0),
+        (pos: (198.71, 29.30, -33.64), width: 13.0, shoulder: 2.0),
+        // west, and the lacets down through the town: a hairpin to the left...
+        (pos: (189.35, 29.19, -33.64), width: 13.0, shoulder: 2.0),
+        (pos: (180.00, 29.09, -33.64), width: 13.0, shoulder: 2.0),
+        (pos: (172.48, 29.00, -32.31), width: 13.0, shoulder: 2.0),
+        (pos: (165.86, 28.81, -28.49), width: 13.0, shoulder: 2.0),
+        (pos: (160.95, 28.63, -22.64), width: 13.0, shoulder: 2.0),
+        (pos: (158.33, 28.44, -15.46), width: 13.0, shoulder: 2.0),
+        (pos: (158.33, 28.25, -7.82), width: 13.0, shoulder: 2.0),
+        (pos: (160.95, 28.06, -0.64), width: 13.0, shoulder: 2.0),
+        (pos: (165.86, 27.88, 5.21), width: 13.0, shoulder: 2.0),
+        (pos: (172.48, 27.69, 9.03), width: 13.0, shoulder: 2.0),
+        (pos: (180.00, 27.50, 10.36), width: 13.0, shoulder: 2.0),
+        // ...east along the belfry's terrace, down a drop of 4 m (35 m straight below it, 86 m
+        // to the next hairpin)...
+        (pos: (188.00, 27.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (196.00, 27.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (204.00, 27.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (212.00, 27.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (220.00, 23.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (228.00, 23.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (236.00, 23.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (244.00, 23.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (252.00, 23.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (260.00, 23.25, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (268.00, 23.00, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (276.00, 22.75, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (284.00, 22.50, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (292.00, 22.25, 10.36), width: 13.0, shoulder: 2.0),
+        (pos: (300.00, 22.00, 10.36), width: 13.0, shoulder: 2.0),
+        // ...a hairpin to the right...
+        (pos: (307.52, 21.83, 11.69), width: 13.0, shoulder: 2.0),
+        (pos: (314.14, 21.67, 15.51), width: 13.0, shoulder: 2.0),
+        (pos: (319.05, 21.50, 21.36), width: 13.0, shoulder: 2.0),
+        (pos: (321.67, 21.33, 28.54), width: 13.0, shoulder: 2.0),
+        (pos: (321.67, 21.17, 36.18), width: 13.0, shoulder: 2.0),
+        (pos: (319.05, 21.00, 43.36), width: 13.0, shoulder: 2.0),
+        (pos: (314.14, 20.83, 49.21), width: 13.0, shoulder: 2.0),
+        (pos: (307.52, 20.67, 53.03), width: 13.0, shoulder: 2.0),
+        (pos: (300.00, 20.50, 54.36), width: 13.0, shoulder: 2.0),
+        // ...west down the bakers' street (a trick ramp at its start)...
+        (pos: (291.79, 20.00, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (283.58, 19.50, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (275.38, 19.00, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (267.17, 18.50, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (258.96, 18.00, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (250.75, 17.50, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (242.54, 17.00, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (234.33, 16.50, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (226.13, 16.00, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (217.92, 15.50, 54.36), width: 13.0, shoulder: 2.0),
+        (pos: (209.71, 15.00, 54.36), width: 13.0, shoulder: 2.0),
+        // ...a hairpin to the left, east, down to the lower town.
+        (pos: (202.19, 14.84, 55.69), width: 13.0, shoulder: 2.0),
+        (pos: (195.57, 14.69, 59.51), width: 13.0, shoulder: 2.0),
+        (pos: (190.66, 14.53, 65.36), width: 13.0, shoulder: 2.0),
+        (pos: (188.04, 14.38, 72.54), width: 13.0, shoulder: 2.0),
+        (pos: (188.04, 14.22, 80.18), width: 13.0, shoulder: 2.0),
+        (pos: (190.66, 14.07, 87.36), width: 13.0, shoulder: 2.0),
+        (pos: (195.57, 13.91, 93.21), width: 13.0, shoulder: 2.0),
+        (pos: (202.19, 13.76, 97.03), width: 13.0, shoulder: 2.0),
+        (pos: (209.71, 13.60, 98.36), width: 13.0, shoulder: 2.0),
+        // east (crates on its left, a stone swings over its right side).
+        (pos: (217.21, 13.47, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (224.71, 13.35, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (232.21, 13.22, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (239.71, 13.10, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (247.21, 12.97, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (254.71, 12.84, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (262.21, 12.72, 98.36), width: 13.0, shoulder: 2.0),
+        (pos: (269.71, 12.59, 98.36), width: 13.0, shoulder: 2.0),
+        // the last hairpin, to the right, west (the Coteau Citrouille's points from here to the
+        // line: its last hairpin, the bulge, the last corner and the start straight).
+        (pos: (277.23, 12.27, 99.69), width: 13.0, shoulder: 2.0),
+        (pos: (283.85, 11.96, 103.51), width: 13.0, shoulder: 2.0),
+        (pos: (288.76, 11.65, 109.36), width: 13.0, shoulder: 2.0),
+        (pos: (291.38, 11.33, 116.54), width: 13.0, shoulder: 2.0),
+        (pos: (291.38, 11.03, 124.18), width: 13.0, shoulder: 2.0),
+        (pos: (288.76, 10.72, 131.36), width: 13.0, shoulder: 2.0),
+        (pos: (283.85, 10.40, 137.21), width: 13.0, shoulder: 2.0),
+        (pos: (277.23, 10.09, 141.03), width: 13.0, shoulder: 2.0),
+        (pos: (269.71, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        // west, the approach of the bulge (a bump).
+        (pos: (261.68, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (253.64, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (245.61, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (237.58, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (229.54, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (221.51, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (213.47, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (205.44, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (197.41, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (189.37, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        (pos: (181.34, 10.00, 142.36), width: 13.0, shoulder: 2.0),
+        // the bulge and the last corner (the Coteau Citrouille's piece): the bulge (left 75°,
+        // right 150°, left 75°) round a giant belfry; the hidden road goes straight behind it,
+        // behind a stack of crates; the last corner, to the right (90°), its inside
+        // a drop that the grass bridge crosses, closed by a panel; north.
+        (pos: (173.40, 10.00, 143.34), width: 13.0, shoulder: 2.0),
+        (pos: (166.07, 10.00, 146.52), width: 13.0, shoulder: 2.0),
+        (pos: (159.93, 10.00, 151.64), width: 13.0, shoulder: 2.0),
+        (pos: (155.49, 10.00, 158.29), width: 13.0, shoulder: 2.0),
+        (pos: (152.82, 10.00, 165.84), width: 13.0, shoulder: 2.0),
+        (pos: (148.93, 10.00, 172.83), width: 13.0, shoulder: 2.0),
+        (pos: (143.23, 10.00, 178.43), width: 13.0, shoulder: 2.0),
+        (pos: (136.18, 10.00, 182.19), width: 13.0, shoulder: 2.0),
+        (pos: (128.35, 10.00, 183.81), width: 13.0, shoulder: 2.0),
+        (pos: (120.39, 10.00, 183.15), width: 13.0, shoulder: 2.0),
+        (pos: (112.93, 10.00, 180.27), width: 13.0, shoulder: 2.0),
+        (pos: (106.60, 10.00, 175.39), width: 13.0, shoulder: 2.0),
+        (pos: (101.89, 10.00, 168.93), width: 13.0, shoulder: 2.0),
+        (pos: (99.10, 10.00, 161.43), width: 13.0, shoulder: 2.0),
+        (pos: (95.50, 10.00, 154.29), width: 13.0, shoulder: 2.0),
+        (pos: (90.02, 10.00, 148.47), width: 13.0, shoulder: 2.0),
+        (pos: (83.12, 10.00, 144.43), width: 13.0, shoulder: 2.0),
+        (pos: (75.36, 10.00, 142.50), width: 13.0, shoulder: 2.0),
+        (pos: (67.35, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (59.33, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (51.30, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (43.28, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (35.26, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (27.24, 10.00, 142.36), width: 15.0, shoulder: 3.0),
+        (pos: (19.22, 10.00, 142.34), width: 15.0, shoulder: 3.0),
+        (pos: (11.48, 10.00, 140.45), width: 15.0, shoulder: 3.0),
+        (pos: (5.09, 10.00, 135.68), width: 15.0, shoulder: 3.0),
+        (pos: (1.07, 10.00, 128.81), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 120.90), width: 15.0, shoulder: 3.0),
+        // north, back to the start line (a bump).
+        (pos: (0.00, 10.00, 112.88), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 104.86), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 96.84), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 88.82), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 80.80), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 72.78), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 64.69), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 56.61), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 48.52), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 40.43), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 32.35), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 24.26), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 10.00, 16.17), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 10.00, 8.09), width: 15.0, shoulder: 3.0),
+    ],
+    // Issue #107: the sides without wall: the inside of the jump's corner, along the bulge (the
+    // hidden road) and inside the last corner (the grass bridge), each over a drop of 6 m and
+    // more. Everywhere else, walls: the hairpins, the climb, the lacets.
+    open_edges: [
+        (from: 55.826, to: 66.457, side: Right),
+        (from: 158.000, to: 176.351, side: Right),
+        (from: 176.173, to: 189.900, side: Right),
+    ],
+    // Issue #215: the climb north up the rampart's street (31 %) in a level anti-gravity zone: a
+    // kart neither slows down nor speeds up there. From past its trick ramp to where it eases
+    // off, before the tight corner.
+    anti_gravity: [
+        (from: 34.0, to: 43.5),
+    ],
+    // Issue #184 (GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver), where
+    // nothing turns for 60 m and more after them: out of the last hairpin (77 m on to the bulge,
+    // a gentle S), and on the way back to the line, past where the grass bridge comes back.
+    // Issue #168: the first one long (36 m, the Échappée Pissenlit's lesson, GD § 16 #150): lower,
+    // the same trick. 22 m long (the Coteau Citrouille's), it threw Hard bots still in the pack
+    // out of the hairpin, and some went over the bulge's walls (once in free driving on the CI);
+    // elsewhere (later on the approach, down the bakers' street, on the belfry's terrace) it was
+    // worse: the karts landed too close to the next turn or to the drop.
+    bumps: [
+        (at: 147.5, height: 2.2, length: 36.0),
+        (at: 190.5, height: 2.2, length: 22.0),
+    ],
+    // Issue #184: a drop of 4 m off the belfry's terrace, 34 m after the hairpin before it: 35 m
+    // straight below it, 86 m on to the next hairpin (more than 2 s: the bots trick off it).
+    drops: [
+        (at: 89.5, height: 4.0),
+    ],
+    shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
+        // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it
+        // falls.
+        (from: 56.450, to: 66.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(174.69, 33.00, -124.51), (189.70, 33.00, -122.52), (194.64, 33.00, -115.00), (211.70, 32.58, -89.01), (211.70, 32.58, -80.01)]),
+        // Issue #193: grass, like every shortcut: it pays only with a boost.
+        // The hidden road: narrow (5 m), straight behind the giant belfry while the road goes round
+        // it, behind a stack of the market's crates 18 m in, where it leaves the road's edge (they
+        // burst as one drives through them, a little slower, and come back). Issue #168: a
+        // fountain's curtain of water first (the Waterfall cover): with it, a Hard bot went over
+        // the bulge's left wall in free driving, twice in 64 races (none with the crates).
+        (from: 158.000, to: 175.603, kind: Grass, width: 5.0,
+         points: [(172.00, 10.00, 138.36), (121.27, 10.00, 138.36), (70.53, 10.00, 138.36)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker
+        // with one (the mini-turbo of the bulge's last turn, a piment); closed by a panel 26 m in,
+        // where the drop separates it from the road: it breaks with a boost, a kart without one
+        // bounces off.
+        (from: 176.921, to: 189.828, kind: Grass, width: 5.0,
+         points: [(59.96, 10.00, 135.36), (53.49, 10.00, 134.51), (47.46, 10.00, 132.01), (42.48, 10.00, 129.14), (37.50, 10.00, 126.26), (32.52, 10.00, 123.39), (27.54, 10.00, 120.51), (22.54, 10.00, 117.01), (18.23, 10.00, 112.70), (14.73, 10.00, 107.70), (12.15, 10.00, 102.17), (10.57, 10.00, 96.28), (10.04, 10.00, 90.20)],
+         cover: Some((kind: Panel, at: 26.0))),
+    ],
+    // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
+    // the next turn does not want: a rock at the right edge of the start straight (the karts keep
+    // left for the first hairpin, to the right); a log rolling across the left side of the bakers'
+    // street (a hairpin to the left after it); a stone swinging over the right side of the way
+    // east to the last hairpin (to the right). Issue #168: nothing on the climb, no crates just
+    // before the bulge: with a stone on the climb and the crates 2 m before the bulge, Hard bots
+    // went over a wall in free driving (on the climb, at the bulge's entrance), 3 races in 64;
+    // none since.
+    obstacles: [
+        (kind: Rock, at: 7.0, offset: 0.95, size: 1.1, yaw: 20.0),
+        (kind: RollingLog, at: 116.000, offset: -0.5, sweep: 0.32, period: 5.0),
+        (kind: SwingingStone, at: 133.000, offset: 0.5, sweep: 0.35, period: 3.6),
+    ],
+    // Issue #144: the bison paces across the left side of the way down to the washhouse (the karts
+    // keep right for the hairpin to the left after it).
+    npcs: [
+        (kind: Bison, at: 20.000, offset: -0.55, sweep: 0.3, period: 6.5),
+    ],
+    // Issue #144: balloons just after the start line (the pack bursts them at GO), a hay bale
+    // below the drop, crates on the left of the way east to the last hairpin.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 93.500, offsets: [0.5]),
+        (kind: Crate, at: 130.500, offsets: [-0.6, -0.25]),
+    ],
+    // Trick ramps (issue #13): at the foot of the climb, out of the washhouse's hairpin, and at
+    // the start of the bakers' street, out of a hairpin (100 m before the next one).
+    trick_ramps: [
+        (at: 33.000, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 109.800, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): out of the first hairpin, and out of the last hairpin. None before
+    // the grass bridge: it pays only with a boost of one's own.
+    boost_pads: [
+        (at: 17.500, offset: 0.3),
+        (at: 146.000, offset: 0.0),
+    ],
+    item_boxes: [
+        (at: 4.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 48.500, offsets: [-0.5, 0.0, 0.5]),
+        (at: 112.000, offsets: [-0.4, 0.0, 0.4]),
+        (at: 154.670, offsets: [0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on
+    // the grid.
+    croquettes: [
+        (from: 3.4, count: 5, spacing: 3.0, offset: 0.42),
+        (from: 18.500, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 86.500, count: 4, spacing: 3.0, offset: -0.4),
+        (from: 113.500, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 175.853, count: 4, spacing: 3.0, offset: -0.4),
+    ],
+)

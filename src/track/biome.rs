@@ -96,6 +96,8 @@ pub enum Paving {
     GroomedSnow,
     /// Earth strewn with fallen leaves (the `accent`).
     Leaves,
+    /// Issue #168: bricks across the road in running bond, their mortar light (a town's street).
+    Bricks,
 }
 
 impl Paving {
@@ -108,6 +110,7 @@ impl Paving {
         matches!(
             self,
             Paving::Cobbles
+                | Paving::Bricks
                 | Paving::Planks
                 | Paving::Sugar
                 | Paving::Licorice
@@ -115,7 +118,7 @@ impl Paving {
         )
     }
 
-    pub const ALL: [Paving; 12] = [
+    pub const ALL: [Paving; 13] = [
         Paving::Asphalt,
         Paving::Dirt,
         Paving::Cobbles,
@@ -128,6 +131,7 @@ impl Paving {
         Paving::Licorice,
         Paving::GroomedSnow,
         Paving::Leaves,
+        Paving::Bricks,
     ];
 }
 
@@ -473,7 +477,7 @@ mod tests {
     /// pastry land, the snow and the beach; issue #20: a fifth, the lagoon; issue #107: a sixth,
     /// the canyon; issue #110: an eighth and a ninth, the undergrowth of giant mushrooms and the
     /// cliffs at sunset; issue #111: a tenth and an eleventh, the pumpkin hillside at dusk and the
-    /// kingdom.
+    /// kingdom; issue #168: a twelfth, the hill town at the blue hour.
     #[test]
     fn the_biomes_file_is_valid_and_has_the_ten_ambiances() {
         let biomes = parse_biomes(BIOMES_RON).unwrap();
@@ -490,7 +494,8 @@ mod tests {
                 "Sous-bois",
                 "Falaises",
                 "Citrouilles",
-                "Royaume"
+                "Royaume",
+                "Bourg"
             ]
         );
         assert_eq!(biomes, super::biomes());

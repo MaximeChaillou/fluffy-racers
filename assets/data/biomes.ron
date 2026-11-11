@@ -18,7 +18,7 @@
 // - `road` (issue #187, required): how its road is dressed, **purely what it looks like** (the
 //   grip, the speed, the off-road, the sounds and the bots are the same on every road): its
 //   `paving` (Asphalt, Dirt, Cobbles, Flagstones, Planks, PackedSand, CrackedEarth, ForestPath,
-//   Sugar, Licorice, GroomedSnow, Leaves), its `border` in place of the curbs (Stripes, Logs,
+//   Sugar, Licorice, GroomedSnow, Leaves, Bricks), its `border` in place of the curbs (Stripes, Logs,
 //   Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
 //   moss, the leaves). The palette's `asphalt` is the paving's mean color (its texture is drawn
 //   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
@@ -805,6 +805,67 @@
             // Wheat: small, no shadows.
             (models: ["nature-kit/crops_wheatStageA", "nature-kit/crops_wheatStageB"],
              count: 150, height: (0.6, 1.1), radius: 0.5, distance: (0.2, 14.0), shadows: false),
+        ],
+    ),
+    (
+        // Issue #168: a little hill town at the blue hour, on its fair day (Bourg Bouillotte):
+        // grandstands and tents along its streets (Racing Kit), tall pines and standing stones
+        // (Nature Kit); its towers and its belfry are pieces placed by the circuit. A blue sky,
+        // blue-violet hills, the lamps' gold on the border. Issue #168: Kenney's Fantasy Town Kit
+        // (houses, roofs, lamps) could not be downloaded (kenney.nl answered 403): the town is
+        // dressed with the models already there that no other biome uses (see STATUS.md).
+        name: "Bourg",
+        music: "cool-city",
+        palette: (
+            sky: (0.42, 0.48, 0.78),
+            ambient: (0.86, 0.88, 1.0),
+            ambient_brightness: 660.0,
+            ground: (0.40, 0.57, 0.42),
+            asphalt: (0.38, 0.16, 0.20),
+            curbs: ((0.98, 0.78, 0.36), (0.28, 0.30, 0.52)),
+            shoulder: (0.37, 0.53, 0.40),
+            sand: (0.84, 0.76, 0.60),
+            walls: ((0.94, 0.86, 0.72), (0.62, 0.30, 0.26)),
+            wall_top: (0.97, 0.94, 0.88),
+            skirt: (0.58, 0.50, 0.46),
+        ),
+        // Issue #187: the bricks of the town's streets, a border of the lamps' gold and slate.
+        road: (paving: Bricks, border: Stripes),
+        // Issue #195: its terrain. Round green hills, grey stone on their steep sides.
+        terrain: (height: 36.0, scale: 140.0, floor: 0.25, rock: (0.52, 0.46, 0.42)),
+        far: (
+            fog: (210.0, 1250.0),
+            layers: [
+                // Blue-violet hills all around, and higher mountains behind, their tops lighter.
+                Range(distance: 165.0, depth: 150.0, height: (34.0, 70.0), spacing: 44.0,
+                      color: (0.36, 0.40, 0.62), top: ((0.70, 0.72, 0.92), 56.0)),
+                Range(distance: 430.0, depth: 260.0, height: (110.0, 220.0), spacing: 62.0,
+                      color: (0.40, 0.42, 0.70), top: ((0.86, 0.86, 1.0), 175.0)),
+                // Round wooded knolls in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (22.0, 44.0),
+                      radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.30, 0.46, 0.40)),
+                Clouds(count: 22, distance: (0.0, 520.0), altitude: (100.0, 180.0),
+                       size: (50.0, 110.0), color: (0.86, 0.80, 0.96)),
+                // Forests of tall pines at mid-distance.
+                Pieces(models: ["nature-kit/tree_pineTallC_detailed"],
+                       count: 150, height: (14.0, 26.0), radius: 6.0, distance: (50.0, 210.0)),
+            ],
+        ),
+        rows: [
+            // Covered grandstands along the outside, for the fair's race.
+            (models: ["racing-kit/grandStandCovered"], spacing: 70.0, offset: 24.0, height: 4.0,
+             radius: 3.0, gap: 1.0, side: Outside),
+        ],
+        scatter: [
+            // Grandstands with awnings and the fair's tents, both sides, some close to the road.
+            (models: ["racing-kit/grandStandAwning", "racing-kit/tentClosed"],
+             count: 18, height: (3.0, 4.5), radius: 3.0, distance: (3.0, 30.0)),
+            // Tall pines.
+            (models: ["nature-kit/tree_pineTallC_detailed"],
+             count: 70, height: (8.0, 15.0), radius: 2.4, distance: (2.0, 36.0)),
+            // Standing stones.
+            (models: ["nature-kit/stone_tallF", "nature-kit/stone_tallI"],
+             count: 40, height: (1.2, 3.0), radius: 1.2, distance: (0.5, 24.0)),
         ],
     ),
 ]

@@ -102,6 +102,14 @@
          seconds: 137.142857, bpm: 140.0, volume: 0.89, faster: "trance-adventure-fast"),
         (id: "trance-adventure-fast", file: "music/mintodog/trance_adventure_fast_bpm155.ogg",
          seconds: 123.870975, bpm: 155.0, volume: 0.90),
+        // Bourg Bouillotte (issue #168, a hill town at the blue hour): « Cool City », « music for
+        // city theme »; it has no « Climax »: its version of the last lap is the same music made
+        // faster for the game, 124 to 140 bpm at the same pitch (`ffmpeg -af atempo`, cut to a
+        // whole number of bars; -11.2 and -11.3 LUFS).
+        (id: "cool-city", file: "music/mintodog/cool_city_bpm124.ogg",
+         seconds: 108.387098, bpm: 124.0, volume: 0.82, faster: "cool-city-fast"),
+        (id: "cool-city-fast", file: "music/mintodog/cool_city_fast_bpm140.ogg",
+         seconds: 96.0, bpm: 140.0, volume: 0.83),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

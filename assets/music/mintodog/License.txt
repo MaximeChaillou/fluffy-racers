@@ -33,6 +33,13 @@ http://creativecommons.org/publicdomain/zero/1.0/
 - trance_adventure_fast_bpm155.ogg: the same piece made faster for Fluffy Racers (its last
   section), from 140 to 155 bpm at the same pitch (ffmpeg atempo), cut to a whole number of bars,
   4 ms fades at its ends (the loop's seam); CC0 like the original.
+- cool_city_bpm124.ogg (CC0 on its page, checked on 2026-11-11; not of the racing collection,
+  from the same author): https://opengameart.org/content/cool-city
+  The OGG file of that page as it is (256 kbps), its tags removed (not re-encoded).
+- cool_city_fast_bpm140.ogg: the same piece made faster for Fluffy Racers (its last lap), from
+  124 to 140 bpm at the same pitch (ffmpeg atempo), cut to a whole number of bars (56), 4 ms
+  fades at its ends (the loop's seam), encoded with ffmpeg's own Vorbis encoder; CC0 like the
+  original.
 - racing_game_title_bpm140.ogg: https://opengameart.org/content/racing-game-title
 - racing_game_menu_bpm165.ogg: https://opengameart.org/content/racing-game-menu
 - racing_game_result_best_bpm140.ogg: https://opengameart.org/content/racing-game-result
