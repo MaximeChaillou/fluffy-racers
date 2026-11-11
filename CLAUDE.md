@@ -10,8 +10,9 @@ Tu travailles **sans surveillance**, en général lancé par une routine planifi
 - **`dev`** est la branche par défaut. Ton travail y arrive automatiquement, et c'est elle qui est déployée sur GitHub Pages pour que Max teste.
 - **`main`** est la version stable. Seul Max y fusionne `dev`, quand il a joué.
 - **Toi, tu pousses uniquement des branches `claude/issue-<n>-<slug>`.** Ne pousse jamais sur `dev` ni sur `main`.
+- **La CI ne lance aucun test** (#237, décision de Max du 2026-11-11 : « fais tous tes tests en local, rien sur la CI »). Sur ta branche, elle passe tout de suite.
 - Quand la CI passe sur ta branche, `.github/workflows/automerge.yml` ouvre la PR vers `dev` (si elle n'existe pas), la fusionne en squash, supprime la branche et redéploie. Si la CI échoue, il ouvre une issue avec le label `ci-failure`.
-- **La CI est le seul garde-fou avant `dev`.** Tes tests doivent donc vraiment vérifier le comportement.
+- **Tes tests locaux sont le seul garde-fou avant `dev`.** La suite complète (étape 4) doit passer chez toi avant chaque push, et tes tests doivent vraiment vérifier le comportement.
 
 ### Déroulé d'une session
 1. **État des lieux.** Lance `git fetch origin --prune`, lis `STATUS.md` et les issues ouvertes avec le label `ci-failure`.
@@ -20,7 +21,7 @@ Tu travailles **sans surveillance**, en général lancé par une routine planifi
    - Sinon, reprends-la : rebase sur `origin/dev`, corrige, revérifie, repousse.
 2. **Choisir l'issue** (si le prompt n'en impose pas une) : l'issue ouverte au plus petit numéro dans le plus petit milestone (`milestone-1`, puis 2, puis 3), sans label `needs-max` ni `ci-failure`.
 3. **Créer la branche** `claude/issue-<n>-<slug>` depuis `origin/dev`.
-4. **Vérifier en local.** Avant chaque push, tout doit passer. Ne pousse jamais une branche qui échoue chez toi.
+4. **Vérifier en local.** Avant chaque push, tout doit passer : c'est la seule vérification, puisque la CI ne teste plus rien. Lance `cargo test` en debug (comme ci-dessous), pas en `--release`, car certains tests attendent un build de debug. Ne pousse jamais une branche qui échoue chez toi.
    ```
    cargo fmt
    cargo clippy --all-targets -- -D warnings
@@ -107,7 +108,7 @@ Environnement cloud : `scripts/cloud-setup.sh` installe la toolchain, les libs s
 
 - Low-poly, une seule lumière directionnelle avec ombres, peu de matériaux.
 - Pas d'allocation par frame dans les systèmes chauds. Réutilise les buffers.
-- Surveille la taille du `.wasm` (affichée par la CI) et note-la dans `STATUS.md` quand elle change nettement.
+- Surveille la taille du `.wasm` (affichée par le déploiement de `dev`) et note-la dans `STATUS.md` quand elle change nettement.
 
 ## Assets
 
@@ -126,6 +127,6 @@ Tu ne peux pas jouer, donc :
 
 - Ne pousse jamais sur `dev` ni sur `main`, et ne force-push jamais.
 - **Ne modifie pas `.github/workflows/`** (CI, fusion automatique, déploiement) ni la configuration de lint, sauf si une issue créée par Max le demande explicitement.
-- Ne supprime ni ne désactive de tests, et n'affaiblis pas les vérifications, pour faire passer la CI.
+- Ne supprime ni ne désactive de tests, et n'affaiblis pas les vérifications, pour les faire passer.
 - Ne change pas la version de Bevy ni la stack ci-dessus.
 - Pas d'asset sous licence non libre, pas de contenu de marques existantes.

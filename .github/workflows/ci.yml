@@ -19,27 +19,14 @@ env:
 
 jobs:
   check:
-    name: fmt, clippy, tests, wasm
-    # Not on dev (#237): a claude/** branch only reaches dev after this job passed on it,
-    # so dev only builds and deploys.
+    name: tests run locally
+    # #237, Max (2026-11-11): « fais tous tes tests en local, rien sur la CI ».
+    # fmt, clippy, cargo test and the wasm check run on the machine before each push
+    # (CLAUDE.md, step 4). This job only marks the push so automerge.yml merges the branch.
     if: github.ref != 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: System dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - run: cargo check --target wasm32-unknown-unknown
+      - run: echo "Tests run locally before the push (CLAUDE.md, step 4; #237)."
 
   deploy:
     name: Build web + deploy to GitHub Pages
