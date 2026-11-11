@@ -1080,8 +1080,8 @@ pub(crate) mod tests {
     /// (`BotSkill::min_drift_angle`: the guide's drifts per lap). Issue #108: the same on Prairie
     /// Pompon redrawn after the guide; issue #109: on the Col des Moufles redrawn; issue #148: on
     /// the Anneau Guimauve and the Crique Câline redrawn; issue #150: on the Lagon Duvet redrawn;
-    /// issue #168: on the Bourg Bouillotte; issue #112: on the Manège Mousseline and the Marais
-    /// Mitaine.
+    /// issue #168: on the Bourg Bouillotte; issue #112: on the Manège Mousseline, the Marais
+    /// Mitaine and the Odyssée Ouatée.
     #[test]
     fn the_lanes_keep_away_from_a_drop_and_the_reference_circuit_has_turns_to_drift() {
         let t = BotTuning::default();
@@ -1095,6 +1095,7 @@ pub(crate) mod tests {
             include_str!("../../assets/tracks/bourg.track.ron"),
             include_str!("../../assets/tracks/manege.track.ron"),
             include_str!("../../assets/tracks/marais.track.ron"),
+            include_str!("../../assets/tracks/odyssee.track.ron"),
         ];
         for data in circuits.into_iter().flat_map(|text| {
             let data = TrackData::from_ron(text).unwrap();

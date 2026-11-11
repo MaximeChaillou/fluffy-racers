@@ -18,7 +18,7 @@
 // - `road` (issue #187, required): how its road is dressed, **purely what it looks like** (the
 //   grip, the speed, the off-road, the sounds and the bots are the same on every road): its
 //   `paving` (Asphalt, Dirt, Cobbles, Flagstones, Planks, PackedSand, CrackedEarth, ForestPath,
-//   Sugar, Licorice, GroomedSnow, Leaves, Bricks, Tiles, Hexagons), its `border` in place of the curbs
+//   Sugar, Licorice, GroomedSnow, Leaves, Bricks, Tiles, Hexagons, Plates), its `border` in place of the curbs
 //   (Stripes, Logs, Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
 //   moss, the leaves). The palette's `asphalt` is the paving's mean color (its texture is drawn
 //   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
@@ -1041,6 +1041,83 @@
             // Water lilies on the wet ground.
             (models: ["nature-kit/lily_large", "nature-kit/lily_small"],
              count: 60, height: (0.1, 0.2), radius: 0.8, distance: (0.2, 14.0), shadows: false),
+        ],
+    ),
+    (
+        // Issue #112: a hushed moon (Odyssée Ouatée, the final of the fourth cup). Kenney's Space
+        // Kit (CC0): the base's hangars and domes, satellite dishes, beacons, a rover and parked
+        // ships, steel frames, and green crystals on their rocks; and the Nature Kit's pale grey
+        // stones (its models not in the game yet, from the same mirror). An indigo sky, a pale
+        // beige-grey dust (a bluer grey hid the gift boxes), the runways of riveted metal plates
+        // with a border of hazard stripes; far off, low grey crater rims, blue-grey mountains,
+        // mesas, more domes and crystals.
+        name: "Lune",
+        music: "space-adventure",
+        palette: (
+            sky: (0.30, 0.29, 0.50),
+            ambient: (0.86, 0.88, 1.0),
+            ambient_brightness: 680.0,
+            ground: (0.74, 0.72, 0.68),
+            asphalt: (0.32, 0.35, 0.42),
+            curbs: ((0.95, 0.76, 0.20), (0.22, 0.22, 0.26)),
+            shoulder: (0.56, 0.52, 0.50),
+            sand: (0.82, 0.80, 0.76),
+            walls: ((0.80, 0.82, 0.86), (0.64, 0.68, 0.74)),
+            wall_top: (0.95, 0.62, 0.22),
+            skirt: (0.46, 0.46, 0.52),
+        ),
+        // Issue #112: riveted metal plates, dark seams; a border of hazard stripes.
+        road: (paving: Plates, border: Stripes, accent: (0.16, 0.17, 0.20)),
+        // Issue #195: its terrain. Rounded grey hills, darker on their steep sides.
+        terrain: (height: 30.0, scale: 150.0, ridges: 0.2, floor: 0.3, rock: (0.50, 0.50, 0.55)),
+        far: (
+            // A clear view, the fog only far off (no air on the moon): from one end of its long
+            // race, the far corner of its ground is some 1 400 m away.
+            fog: (700.0, 1600.0),
+            layers: [
+                // Low grey crater rims all around, and blue-grey mountains behind them.
+                Range(distance: 165.0, depth: 150.0, height: (26.0, 56.0), spacing: 44.0,
+                      color: (0.58, 0.58, 0.64), top: ((0.70, 0.70, 0.76), 46.0)),
+                Range(distance: 430.0, depth: 260.0, height: (100.0, 200.0), spacing: 62.0,
+                      color: (0.46, 0.46, 0.60), top: ((0.84, 0.84, 0.92), 170.0)),
+                // Flat crater rims in front of the hills, like mesas.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (14.0, 30.0),
+                      radius: (30.0, 60.0), flat: 0.7, sides: 10, color: (0.60, 0.60, 0.66)),
+                // Domes and dishes at mid-distance, and giant crystals and stones.
+                Pieces(models: ["space-kit/hangar_largeA", "space-kit/hangar_roundA",
+                                "space-kit/satelliteDish_large"],
+                       count: 18, height: (8.0, 16.0), radius: 7.0, distance: (55.0, 200.0)),
+                Pieces(models: ["space-kit/rock_crystalsLargeA", "space-kit/rock_crystalsLargeB",
+                                "nature-kit/stone_tallH", "nature-kit/stone_tallJ"],
+                       count: 110, height: (12.0, 24.0), radius: 6.0, distance: (50.0, 210.0)),
+            ],
+        ),
+        rows: [
+            // Beacons along the outside of the runways, facing the road.
+            (models: ["space-kit/machine_wireless"],
+             spacing: 52.0, offset: 20.0, height: 3.0, radius: 1.2, gap: 1.2, side: Outside),
+        ],
+        scatter: [
+            // Giant crystals and tall stones, far apart: they give the scale.
+            (models: ["space-kit/rock_crystalsLargeA", "space-kit/rock_crystalsLargeB",
+                      "nature-kit/stone_tallH", "nature-kit/stone_tallJ"],
+             count: 16, height: (10.0, 18.0), radius: 4.5, distance: (6.0, 40.0)),
+            // The base: hangars, glass domes, dishes and steel frames, both sides.
+            (models: ["space-kit/hangar_largeB", "space-kit/hangar_roundGlass",
+                      "space-kit/satelliteDish", "space-kit/satelliteDish_detailed",
+                      "space-kit/structure"],
+             count: 18, height: (4.0, 8.0), radius: 4.0, distance: (3.0, 32.0)),
+            // A rover and ships parked on the dust.
+            (models: ["space-kit/rover", "space-kit/craft_cargoA", "space-kit/craft_speederA"],
+             count: 14, height: (1.6, 3.5), radius: 2.4, distance: (1.0, 22.0)),
+            // Big grey stones and crystals on their rocks.
+            (models: ["nature-kit/stone_largeD", "nature-kit/stone_largeE",
+                      "nature-kit/stone_largeF", "space-kit/rock_crystals"],
+             count: 40, height: (1.5, 4.0), radius: 1.6, distance: (1.0, 30.0)),
+            // Small stones: no shadows.
+            (models: ["nature-kit/stone_smallA", "nature-kit/stone_smallTopA",
+                      "nature-kit/stone_smallFlatB"],
+             count: 70, height: (0.3, 0.8), radius: 0.7, distance: (0.3, 12.0), shadows: false),
         ],
     ),
 ]

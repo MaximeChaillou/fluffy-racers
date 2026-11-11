@@ -461,6 +461,56 @@ fn paving_texel(paving: Paving, inks: &Inks, u: f32, v: f32) -> [f32; 3] {
             let mossy = smoothstep(0.62, 0.72, patch + 0.15 * (1.0 - near_edge));
             mix(stone, moss, 0.7 * mossy)
         }
+        Paving::Plates => {
+            // Issue #112: riveted metal deck plates 2 m across and 4 m along (4 a tile across, 2
+            // rows a tile along: an even number, so that the staggered rows repeat seamlessly),
+            // every other row shifted by half a plate; each plate its own shade, a fine diamond
+            // tread, a rivet near each corner, the `accent` in the seams.
+            let (n, m) = (4.0f32, 2.0f32);
+            let row = (v * m).floor();
+            let shift = if (row as i32).rem_euclid(2) == 1 {
+                0.5
+            } else {
+                0.0
+            };
+            let col = (u * n + shift).floor();
+            let (w, h) = (t / n, t / m);
+            let lx = ((u * n + shift).rem_euclid(1.0) - 0.5) * w;
+            let ly = ((v * m).rem_euclid(1.0) - 0.5) * h;
+            let seam = 0.035;
+            let into = (w / 2.0 - lx.abs()).min(h / 2.0 - ly.abs());
+            if into < seam {
+                return scale(inks.accent, 0.9 + 0.2 * grain(96, 151));
+            }
+            let id = hash(
+                (col as i32).rem_euclid(n as i32),
+                (row as i32).rem_euclid(m as i32),
+                152,
+            );
+            let tint = 0.9 + 0.2 * id;
+            // The tread: small lozenges every 0.2 m (40 a tile), lit on one side.
+            let (p, q) = (
+                ((x + y) / 0.2).rem_euclid(1.0) - 0.5,
+                ((x - y) / 0.2).rem_euclid(1.0) - 0.5,
+            );
+            let lozenge = p.abs() < 0.12 && q.abs() < 0.32;
+            let tread = if lozenge {
+                1.0 + 0.06 * p.signum()
+            } else {
+                1.0
+            };
+            // The rivets: 0.15 m in from each corner, 0.05 m across.
+            let (rx, ry) = (w / 2.0 - lx.abs() - 0.15, h / 2.0 - ly.abs() - 0.15);
+            if rx * rx + ry * ry < 0.05 * 0.05 {
+                return scale(base, 1.35 * tint);
+            }
+            let near = smoothstep(seam, seam + 0.06, into);
+            let k = tint
+                * tread
+                * (0.86 + 0.14 * near)
+                * (1.0 + 0.12 * blotch(5, 153) + 0.1 * grain(160, 154));
+            scale(base, k)
+        }
         Paving::PackedSand => {
             // Ripples across the road, about every 0.44 m (18 a tile), wavy.
             let warp = fbm(u, v, 3, 3, 3, 51) - 0.5;
@@ -964,8 +1014,9 @@ mod tests {
     fn each_biome_has_its_road_made_by_the_game() {
         let biomes = crate::track::biome::biomes();
         // Issue #168: an eleventh, the hill town, with its bricks; issue #112: a twelfth, the fair,
-        // with its tiles, and a thirteenth, the marsh, with its hexagons.
-        assert_eq!(biomes.len(), 13);
+        // with its tiles, a thirteenth, the marsh, with its hexagons, and a fourteenth, the moon,
+        // with its metal plates.
+        assert_eq!(biomes.len(), 14);
         let mut seen: Vec<Paving> = Vec::new();
         for biome in biomes {
             let road = biome.road;
