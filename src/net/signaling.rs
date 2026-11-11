@@ -1,5 +1,5 @@
 //! The signaling server, seen from the game (issue #49): what goes through it, for the console and
-//! the lobby. `matchbox_socket` 0.14 only reports the peers whose connection is open; the
+//! the lobby. `matchbox_socket` 0.15 only reports the peers whose connection is open; the
 //! signaling server tells more, and earlier: a newcomer announced ([`SignalNote::Announced`]: we
 //! make the offer), the offers and answers with their ICE candidates, a peer that left. Without
 //! it, a peer whose direct connection never opens would stay invisible.
@@ -328,7 +328,7 @@ fn from_json(text: &str) -> Result<PeerEvent, SignalingError> {
 #[cfg(not(target_arch = "wasm32"))]
 mod transport {
     use async_tungstenite::WebSocketStream;
-    use async_tungstenite::async_std::{ConnectStream, connect_async};
+    use async_tungstenite::smol::{ConnectStream, connect_async};
     use async_tungstenite::tungstenite::Message;
     use futures_util::StreamExt;
     use matchbox_socket::async_trait::async_trait;

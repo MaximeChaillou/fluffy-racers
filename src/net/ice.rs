@@ -5,7 +5,7 @@
 //! reach it: « host » (its own address on the local network; Chrome and Safari hide it behind a
 //! random `….local` name, resolved by mDNS), « srflx » (its public address, as a **STUN** server
 //! sees it) and « relay » (an address on a **TURN** relay, which forwards everything when no
-//! direct path exists). `matchbox_socket` 0.14 waits until the browser has gathered all its
+//! direct path exists). `matchbox_socket` 0.15 waits until the browser has gathered all its
 //! candidates before sending its offer or its answer.
 //!
 //! - **STUN** ([`StunChoice`], `?stun=` / `--stun`): by default, none when the signaling server is
