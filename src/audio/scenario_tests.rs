@@ -1138,10 +1138,10 @@ fn the_volumes_of_the_options_and_the_mix() {
         .spawn((SoundEffect::UiConfirm, Cue::front(None)));
     app.update();
     assert_eq!(count::<With<Voice>>(&mut app), 1);
-    run(
-        &mut app,
-        (SoundEffect::UiConfirm.length() * 60.0) as usize + 6,
-    );
+    // (Its length: the clip it plays, ElevenLabs' by default since #235.)
+    let seconds = pick(SoundEffect::UiConfirm, &SoundChoices::default()).seconds;
+    assert!(seconds > SoundEffect::UiConfirm.length(), "{seconds}");
+    run(&mut app, (seconds * 60.0) as usize + 6);
     assert_eq!(count::<With<Voice>>(&mut app), 0);
     // Too far: not played.
     let range = app.world().resource::<SoundTuning>().range;
@@ -1178,6 +1178,11 @@ fn every_synthesized_sound_renders_bounded() {
 /// CC0 licence next to it (`License.txt`: Kenney's packs, or the page of each file on
 /// OpenGameArt) and its line in `assets/CREDITS.md` (Kenney's pack, or the OpenGameArt page,
 /// and « CC0 »); its length is the one the mixer counts (decoded here); no other file is there.
+/// Issue #235: the folder of the sounds generated with ElevenLabs (not CC0: Max's decision), and
+/// the mention its line in `assets/CREDITS.md` and its `License.txt` carry (free plan).
+const ELEVENLABS: &str = "elevenlabs";
+const ELEVENLABS_MENTION: &str = "Sound effects generated with ElevenLabs (elevenlabs.io)";
+
 #[test]
 fn every_sound_file_is_there_with_its_licence_and_its_credits() {
     let credits = std::fs::read_to_string(format!("{ASSETS}/CREDITS.md")).unwrap();
@@ -1214,6 +1219,11 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
             .find(|line| line.contains(&format!("`audio/{pack}/")))
             .unwrap_or_else(|| panic!("no line for audio/{pack}/ in assets/CREDITS.md"));
         assert!(line.contains(file), "{file} not in: {line}");
+        if pack == ELEVENLABS {
+            // Issue #235: generated with ElevenLabs (Max's decision, not CC0): its mention.
+            assert!(line.contains(ELEVENLABS_MENTION), "{line}");
+            continue;
+        }
         assert!(line.contains("CC0"), "{line}");
         assert!(
             (line.contains("Kenney") && line.contains(&format!("https://kenney.nl/assets/{pack}")))
@@ -1225,13 +1235,17 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
     for pack in &packs {
         let licence = std::fs::read_to_string(format!("{ASSETS}/audio/{pack}/License.txt"))
             .unwrap_or_else(|_| panic!("assets/audio/{pack}/License.txt"));
+        wanted.insert(format!("audio/{pack}/License.txt"));
+        if *pack == ELEVENLABS {
+            assert!(licence.contains(ELEVENLABS_MENTION), "{pack}");
+            continue;
+        }
         assert!(
             licence.contains("CC0")
                 && (licence.contains("Kenney")
                     || licence.contains("https://opengameart.org/content/")),
             "{pack}"
         );
-        wanted.insert(format!("audio/{pack}/License.txt"));
     }
     let mut present = BTreeSet::new();
     let mut folders = vec![format!("{ASSETS}/audio")];
@@ -1254,6 +1268,86 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
     // Nothing of Mario Kart or of any brand: Kenney's packs, CC0 files of OpenGameArt (and our
     // syntheses).
     assert!(packs.len() >= 5, "{packs:?}");
+}
+
+/// Issue #235: the sound by default of every slot (but the footsteps) is a file generated with
+/// ElevenLabs, and each one is ready to play: it decodes (OGG Vorbis, mono, 44.1 kHz), it is
+/// heard (its level matched to the others', within a few dB), a one-shot starts and ends on
+/// silence (no click: its fades), and a loop is a real loop: as loud at its end as at its start
+/// (no fade out), and once made seamless by the game (`seamless_loop`, what the mixer plays) it
+/// starts again without a step, its seam no bigger than the jumps inside it.
+#[test]
+fn the_elevenlabs_sounds_are_the_defaults_and_play_cleanly() {
+    let decode = |path: &str| -> (Vec<f32>, u16, u32) {
+        let bytes = std::fs::read(format!("{ASSETS}/{path}")).unwrap_or_else(|_| panic!("{path}"));
+        let decoder = bevy::audio::AudioSource {
+            bytes: bytes.into(),
+        }
+        .decoder();
+        let (channels, rate) = (decoder.channels().get(), decoder.sample_rate().get());
+        (decoder.collect(), channels, rate)
+    };
+    let rms_db = |x: &[f32]| {
+        let peak = x.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        let threshold = peak * 10f32.powf(-45.0 / 20.0);
+        let first = x.iter().position(|s| s.abs() > threshold).unwrap();
+        let last = x.iter().rposition(|s| s.abs() > threshold).unwrap();
+        let active = &x[first..=last];
+        let rms = (active.iter().map(|s| s * s).sum::<f32>() / active.len() as f32).sqrt();
+        20.0 * rms.log10()
+    };
+    let defaults = SoundChoices::default();
+    let mut checked = 0;
+    for slot in Slot::ALL {
+        let candidate = defaults.candidate(slot);
+        if slot == Slot::Footsteps {
+            assert_ne!(candidate.id, "elevenlabs");
+            continue;
+        }
+        assert_eq!(candidate.id, "elevenlabs", "{slot:?}");
+        let files: Vec<(&str, f32)> = candidate
+            .files()
+            .iter()
+            .copied()
+            .chain(candidate.recording())
+            .collect();
+        assert!(!files.is_empty(), "{slot:?}");
+        for (path, _) in files {
+            assert!(path.starts_with("audio/elevenlabs/"), "{path}");
+            let (x, channels, rate) = decode(path);
+            assert_eq!((channels, rate), (1, 44_100), "{path}");
+            assert!(x.iter().all(|s| s.is_finite()), "{path}");
+            let peak = x.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+            // (A pure beep at the common level peaks low: its RMS is close to its peak.)
+            assert!(peak > 0.2 && peak <= 1.0, "{path}: peak {peak}");
+            let level = rms_db(&x);
+            assert!((-34.0..=-12.0).contains(&level), "{path}: {level} dB");
+            if slot.looping().is_none() {
+                assert!(x[0].abs() < 0.02, "{path} starts at 0: {}", x[0]);
+                assert!(x[x.len() - 1].abs() < 0.02, "{path} ends at 0");
+            } else {
+                let quarter = x.len() / 4;
+                let (head, tail) = (rms_db(&x[..quarter]), rms_db(&x[x.len() - quarter..]));
+                assert!((head - tail).abs() < 6.0, "{path}: {head} dB, {tail} dB");
+                let looped = super::dsp::seamless_loop(
+                    &x,
+                    1,
+                    rate,
+                    0.0,
+                    super::design::LOOP_SEAM,
+                    super::design::RECORDED_RMS,
+                );
+                let mut jumps: Vec<f32> = looped.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+                jumps.sort_by(f32::total_cmp);
+                let big = jumps[jumps.len() * 999 / 1000];
+                let seam = (looped[0] - looped[looped.len() - 1]).abs();
+                assert!(seam <= big, "{path}: seam {seam}, jumps up to {big}");
+            }
+            checked += 1;
+        }
+    }
+    // 51 one-shots, 36 cries and 4 loops (the footsteps keep Kenney's).
+    assert_eq!(checked, 51 + 36 + 4, "{checked}");
 }
 
 /// Issue #103, changed by issue #135: behind the home screen, its background race makes no sound
@@ -1509,7 +1603,8 @@ fn a_choice_in_the_panel_changes_the_sound_in_a_race() {
         .choose(Slot::Squeal, 3);
     run(&mut app, 3);
     assert_eq!(front_loop(&mut app, LoopKind::Squeal).source, Some(3));
-    // A short sound: its new clip (qubodup's crash, 0.6 s, instead of Kenney's 0.341 s).
+    // A short sound: its new clip (Kenney's, 0.341 s, #103's: instead of ElevenLabs', 0.6 s, by
+    // default since #235).
     let voice_length = |app: &mut App| {
         app.world_mut()
             .spawn((SoundEffect::KartBump, Cue::front(Some(kart))));
@@ -1532,16 +1627,16 @@ fn a_choice_in_the_panel_changes_the_sound_in_a_race() {
         voice
     };
     let before = voice_length(&mut app);
-    assert!((before - (0.341 + 0.05)).abs() < 1e-3, "{before}");
+    let bump = Slot::KartBump.candidates()[0].files()[0];
+    assert_eq!(bump.0, "audio/elevenlabs/kart_bump.ogg");
+    assert!((before - f64::from(bump.1 + 0.05)).abs() < 1e-3, "{before}");
     app.world_mut()
         .resource_mut::<SoundChoices>()
         .choose(Slot::KartBump, 1);
     // (Not the same sound of the same kart twice in 80 ms.)
     run(&mut app, 6);
     let after = voice_length(&mut app);
-    let crash = Slot::KartBump.candidates()[1].files()[0];
-    assert_eq!(crash.0, "audio/qubodup/crash.ogg");
-    assert!((after - f64::from(crash.1 + 0.05)).abs() < 1e-3, "{after}");
+    assert!((after - (0.341 + 0.05)).abs() < 1e-3, "{after}");
 }
 
 /// Issue #135: « ▶ Écouter » plays a sound at once, even out of a race (here: paused, on the
