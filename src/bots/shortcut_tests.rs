@@ -26,7 +26,7 @@ use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice,
 /// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn; issue #119: the
 /// Échappée Pissenlit, the first long race; issue #110: the Forêt Frimousse and the Falaises
 /// Flanelle; issue #111: the Coteau Citrouille and the Périple Polochon; issue #148: the Anneau
-/// Guimauve and the Crique Câline redrawn), and where the tests
+/// Guimauve and the Crique Câline redrawn; issue #168: the Bourg Bouillotte), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +38,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 11] = [
+const CIRCUITS: [Circuit; 12] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -144,6 +144,16 @@ const CIRCUITS: [Circuit; 11] = [
         jump_approach: 60.0,
         grass_approach: 20.0,
         road_approach: 40.0,
+    },
+    // Issue #168, the Bourg Bouillotte (the Coteau Citrouille's pieces, other covers): the jump
+    // from out of the tight corner onto the top of the town, the grass bridge from out of the
+    // bulge, the hidden road from out of the last hairpin.
+    Circuit {
+        path: "tracks/bourg.track.ron",
+        name: "Bourg Bouillotte",
+        jump_approach: 50.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
     },
 ];
 
@@ -985,7 +995,7 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
     // Issue #110: and the new covers on the new circuits (a waterfall in the Forêt Frimousse, a
     // stack of crates in the Falaises Flanelle); issue #111: the Coteau Citrouille and the Périple
     // Polochon; issue #148: the Anneau Guimauve and the Crique Câline redrawn; issue #150: the
-    // Lagon Duvet redrawn.
+    // Lagon Duvet redrawn; issue #168: the Bourg Bouillotte.
     for (circuit, kind) in [
         ("Corniche Cannelle", CoverKind::Panel),
         ("Corniche Cannelle", CoverKind::Foliage),
@@ -1003,6 +1013,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Crique Câline", CoverKind::Foliage),
         ("Lagon Duvet", CoverKind::Foliage),
         ("Lagon Duvet", CoverKind::Panel),
+        ("Bourg Bouillotte", CoverKind::Crates),
+        ("Bourg Bouillotte", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),
