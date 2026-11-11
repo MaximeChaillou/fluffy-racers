@@ -13,7 +13,7 @@
 //! Since issue #63, it only lets the links of the star open: a host's with each client, a
 //! client's with its host (`signaling::SignalFilter`).
 //!
-//! Two traps of `matchbox_socket` 0.14, avoided here:
+//! Two traps of `matchbox_socket` (seen in 0.14, still guarded against in 0.15), avoided here:
 //! - its message loop **panics** when asked to send to a peer whose data channels are not open
 //!   yet: only peers it reported connected get packets;
 //! - a packet can arrive before the peer is reported connected: it waits ([`EARLY_PACKETS`] at
@@ -23,7 +23,7 @@ use std::sync::{Arc, PoisonError};
 
 use bevy::tasks::{IoTaskPool, Task, futures::check_ready};
 use matchbox_socket::{
-    ChannelConfig, PeerId, PeerState, RtcIceServerConfig, SignallerBuilder, WebRtcSocket,
+    ChannelConfig, Packet, PeerId, PeerState, RtcIceServerConfig, SignallerBuilder, WebRtcSocket,
     WebRtcSocketBuilder,
 };
 
@@ -42,7 +42,8 @@ pub enum SocketEvent {
     Connected(PeerKey),
     Disconnected(PeerKey),
     /// A packet from a connected peer, on a channel.
-    Packet(PeerKey, Channel, Box<[u8]>),
+    /// matchbox's `Packet` (0.15: `bytes::Bytes`): what the socket received, never copied.
+    Packet(PeerKey, Channel, Packet),
     /// The message loop stopped: the signaling server could not be reached, or dropped us.
     Closed(Result<(), String>),
     /// Something went through the signaling server (a peer announced, an offer...).
@@ -59,7 +60,7 @@ pub struct NetSocket {
     me: Option<PeerKey>,
     /// Peers reported connected, and their ids (to send to them).
     connected: Vec<(PeerKey, PeerId)>,
-    early: Vec<(PeerId, Channel, Box<[u8]>)>,
+    early: Vec<(PeerId, Channel, Packet)>,
     /// Reused for every packet written.
     buffer: Vec<u8>,
     /// Written by the message loop's signaling, read by [`NetSocket::poll`].
@@ -229,7 +230,7 @@ impl NetSocket {
             return;
         };
         message.encode(&mut self.buffer);
-        let packet: Box<[u8]> = self.buffer.as_slice().into();
+        let packet = Packet::copy_from_slice(&self.buffer);
         if let Ok(channel) = self.socket.get_channel_mut(message.channel().index()) {
             // An error only means the loop already stopped: `poll` reports it.
             let _ = channel.try_send(packet, id);
@@ -298,7 +299,7 @@ pub mod memory {
 
     use matchbox_socket::async_trait::async_trait;
     use matchbox_socket::{
-        PeerEvent, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
+        Packet, PeerEvent, PeerRequest, PeerSignal, SignalingError, Signaller, SignallerBuilder,
     };
 
     use super::super::ice::Candidates;
@@ -311,7 +312,7 @@ pub mod memory {
         key: PeerKey,
         filter: SignalFilter,
         /// What waits for it: (polls left, from, channel, bytes).
-        inbox: VecDeque<(u32, PeerKey, Channel, Box<[u8]>)>,
+        inbox: VecDeque<(u32, PeerKey, Channel, Packet)>,
         /// Notes of the signaling for it (the star's), given at its next poll.
         notes: Vec<SignalNote>,
     }
@@ -567,7 +568,7 @@ pub mod memory {
                     return;
                 }
             }
-            let bytes: Box<[u8]> = message.to_bytes().into();
+            let bytes = Packet::from(message.to_bytes());
             let me = self.me;
             match state.traffic.iter_mut().find(|(k, _)| *k == me) {
                 Some((_, traffic)) => {

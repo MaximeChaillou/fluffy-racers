@@ -173,6 +173,10 @@ fluffy-racers-server --help
   --signal ws://…      une mise en relation à part (matchbox_server), sans la sienne
 ```
 
+Avec `--signal`, prends un `matchbox_server` de la même version que le jeu : 0.15 depuis #250
+(`cargo install matchbox_server --version 0.15.0`). Les messages de la mise en relation sont les
+mêmes qu'en 0.14, mais le jeu ne se teste qu'avec sa propre version.
+
 ## Dépannage
 
 - **« Impossible de joindre le serveur de mise en relation »** : le port TCP 3536 (ou 443 avec

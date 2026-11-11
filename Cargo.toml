@@ -25,8 +25,8 @@ bevy_egui = { version = "0.43", default-features = false, features = [
 ] }
 # Network (issue #7): WebRTC peer-to-peer, full mesh, used directly (`bevy_matchbox` does not
 # support Bevy 0.20). Planned in the stack (CLAUDE.md). Natively it brings webrtc-rs (and rustls,
-# tokio, async-std); in the browser only a few small crates over the browser's own WebRTC.
-matchbox_socket = "0.14"
+# smol); in the browser only a few small crates over the browser's own WebRTC.
+matchbox_socket = "0.15"
 # Issue #49: our own signaller around matchbox's (`net/signaling.rs`), to see what goes through the
 # signaling server (peers announced, offers and their ICE candidates). The same crates, versions
 # and features as matchbox_socket's own signaller: nothing more is compiled.
@@ -40,13 +40,13 @@ getrandom = "0.4"
 # Issue #225: the dedicated server embeds its signaling (`net/signal_server.rs`): the same server
 # as `matchbox_server` (its crate, the same version as matchbox_socket's protocol), so nothing has
 # to run beside it. Native only: never in the wasm build. It adds axum, hyper and tower-http to
-# the native build (tokio is already there, for matchbox_socket's WebRTC).
-matchbox_signaling = "0.14"
+# the native build, and tokio (matchbox_socket 0.15 runs its WebRTC on smol, not tokio).
+matchbox_signaling = "0.15"
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
 # Issue #49: matchbox_socket's WebSocket natively (see `serde_json` above).
-async-tungstenite = { version = "0.32", default-features = false, features = [
-    "async-std-runtime",
-    "async-tls",
+async-tungstenite = { version = "0.35", default-features = false, features = [
+    "smol-runtime",
+    "futures-rustls-webpki-roots",
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

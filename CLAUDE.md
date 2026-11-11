@@ -70,10 +70,10 @@ Tu travailles **sans surveillance**, en général lancé par une routine planifi
 | Langage | Rust stable ≥ 1.97.1, édition 2024 | `rust-toolchain.toml` |
 | Moteur | **Bevy 0.20** (0.20.1 depuis #249) | Aucune autre version que la 0.20. Vérifie l'API 0.20 (docs.rs/bevy/0.20.1) plutôt que de te fier à ta mémoire : beaucoup d'API ont changé entre les versions. |
 | Physique | **bevy_rapier3d 0.37** | Seule lib physique compatible Bevy 0.20 au 12/10/2026. |
-| Réseau | **matchbox_socket 0.14** (WebRTC) + **notre propre netcode** | Indépendant de Bevy. Voir `docs/ARCHITECTURE.md`. |
+| Réseau | **matchbox_socket 0.15** (WebRTC) + **notre propre netcode** | Indépendant de Bevy. Voir `docs/ARCHITECTURE.md`. |
 | Build web | **trunk** | `index.html` à la racine. |
 | Rendu web | WebGL2 (défaut de Bevy) | Compatibilité maximale. WebGPU sera évalué plus tard. |
-| Serveurs | **Serveur dédié optionnel** (#225) | Décision de Max du 2026-11-01 : « Je voudrais pouvoir lancer un serveur dédié sur une machine à part simplement, car je veux absolument que les perfs soient bonnes. » C'est le jeu sans fenêtre (`fluffy-racers-server`), hôte de l'étoile sans kart ni place, avec sa propre signalisation (`matchbox_signaling` 0.14). Sans serveur configuré, le navigateur du créateur reste l'hôte. Voir `docs/SERVEUR.md`. |
+| Serveurs | **Serveur dédié optionnel** (#225) | Décision de Max du 2026-11-01 : « Je voudrais pouvoir lancer un serveur dédié sur une machine à part simplement, car je veux absolument que les perfs soient bonnes. » C'est le jeu sans fenêtre (`fluffy-racers-server`), hôte de l'étoile sans kart ni place, avec sa propre signalisation (`matchbox_signaling` 0.15). Sans serveur configuré, le navigateur du créateur reste l'hôte. Voir `docs/SERVEUR.md`. |
 
 **À ne pas ajouter** tant qu'ils ne supportent pas Bevy 0.20 : `avian3d`, `lightyear`, `bevy_ggrs`, `bevy_matchbox`. Si l'un d'eux passe en 0.20 et te semble utile, propose-le dans `STATUS.md` sans l'ajouter.
 
