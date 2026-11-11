@@ -1,0 +1,19 @@
+	Watercraft Kit
+
+	Created/distributed by Kenney (www.kenney.nl)
+	Page: https://kenney.nl/assets/watercraft-kit
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
+
+	You can use this content for personal, educational, and commercial purposes.
+
+	Support by crediting 'Kenney' or 'www.kenney.nl' (this is not a requirement)
+
+			------------------------------
+
+	Fluffy Racers (issue #112): kenney.nl refuses automated downloads (403); these files
+	(the models as they are, and Textures/colormap.png) were taken from the mirror of Kenney's
+	CC0 packs at https://github.com/shorepine/kenney (3d/watercraft/), on 2026-11-11.
