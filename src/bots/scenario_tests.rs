@@ -2487,8 +2487,9 @@ fn run_on_circuit_as(path: &str, mirror: bool, seed: u64, difficulty: BotDifficu
 /// its figures per section; issue #110, the Forêt Frimousse and the Falaises Flanelle; issue #111,
 /// the Coteau Citrouille and the Périple Polochon, the second long race; issue #148, the Anneau
 /// Guimauve and the Crique Câline redrawn; issue #150, the Lagon Duvet redrawn; issue #168, the
-/// Bourg Bouillotte). Their races check the guide's figures too ([`guide_checks`]).
-pub(crate) const GUIDE_CIRCUITS: [&str; 12] = [
+/// Bourg Bouillotte; issue #112, the Manège Mousseline). Their races check the guide's figures too
+/// ([`guide_checks`]).
+pub(crate) const GUIDE_CIRCUITS: [&str; 13] = [
     "Prairie Pompon",
     "Anneau Guimauve",
     "Crique Câline",
@@ -2501,6 +2502,7 @@ pub(crate) const GUIDE_CIRCUITS: [&str; 12] = [
     "Coteau Citrouille",
     "Périple Polochon",
     "Bourg Bouillotte",
+    "Manège Mousseline",
 ];
 
 /// Issue #180 (GD § 16, rule 3, Max: « des bosses régulières », « des décrochages »): every circuit

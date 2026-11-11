@@ -376,6 +376,33 @@ fn paving_texel(paving: Paving, inks: &Inks, u: f32, v: f32) -> [f32; 3] {
             let k = tint * (edge + (1.0 - edge) * near) * (1.0 + 0.16 * grain(160, 122));
             scale(base, k)
         }
+        Paving::Tiles => {
+            // Issue #112: square tiles 2 m a side (4 a tile: an even number, so that the checker
+            // repeats seamlessly), checkered in two shades (the second one toward the `accent`),
+            // their joints light; each tile its own shade, worn a little.
+            let per = 4.0;
+            let (cu, cv) = ((u * per).floor(), (v * per).floor());
+            let side = t / per;
+            let lx = ((u * per).rem_euclid(1.0) - 0.5) * side;
+            let ly = ((v * per).rem_euclid(1.0) - 0.5) * side;
+            let joint = 0.03;
+            let into = (side / 2.0 - lx.abs()).min(side / 2.0 - ly.abs());
+            if into < joint {
+                return mix(scale(base, 1.3), [0.92, 0.90, 0.88], 0.5);
+            }
+            let (i, j) = ((cu as i32).rem_euclid(4), (cv as i32).rem_euclid(4));
+            let odd = (i + j).rem_euclid(2) == 1;
+            let shade = if odd {
+                mix(base, inks.accent, 0.45)
+            } else {
+                scale(base, 0.92)
+            };
+            let tint = 0.94 + 0.12 * hash(i, j, 131);
+            let near = smoothstep(joint, joint + 0.03, into);
+            let k =
+                tint * (0.9 + 0.1 * near) * (1.0 + 0.1 * blotch(6, 132) + 0.12 * grain(160, 133));
+            scale(shade, k)
+        }
         Paving::PackedSand => {
             // Ripples across the road, about every 0.44 m (18 a tile), wavy.
             let warp = fbm(u, v, 3, 3, 3, 51) - 0.5;
@@ -878,8 +905,9 @@ mod tests {
     #[test]
     fn each_biome_has_its_road_made_by_the_game() {
         let biomes = crate::track::biome::biomes();
-        // Issue #168: an eleventh, the hill town, with its bricks.
-        assert_eq!(biomes.len(), 11);
+        // Issue #168: an eleventh, the hill town, with its bricks; issue #112: a twelfth, the fair,
+        // with its tiles.
+        assert_eq!(biomes.len(), 12);
         let mut seen: Vec<Paving> = Vec::new();
         for biome in biomes {
             let road = biome.road;

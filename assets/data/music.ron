@@ -110,6 +110,14 @@
          seconds: 108.387098, bpm: 124.0, volume: 0.82, faster: "cool-city-fast"),
         (id: "cool-city-fast", file: "music/mintodog/cool_city_fast_bpm140.ogg",
          seconds: 96.0, bpm: 140.0, volume: 0.83),
+        // Manège Mousseline (issue #112, a fair on its hill): « Amusement park Stage », 8-bit music
+        // for an action game's stage (« park, positive, loopable »); it has no « Climax »: its
+        // version of the last lap is the same music made faster for the game, 150 to 165 bpm at
+        // the same pitch (`ffmpeg -af atempo`, cut to a whole number of bars; -10.2 LUFS both).
+        (id: "amusement-park-stage", file: "music/mintodog/amusement_park_stage_bpm150.ogg",
+         seconds: 64.0, bpm: 150.0, volume: 0.73, faster: "amusement-park-stage-fast"),
+        (id: "amusement-park-stage-fast", file: "music/mintodog/amusement_park_stage_fast_bpm165.ogg",
+         seconds: 58.18195, bpm: 165.0, volume: 0.73),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",
