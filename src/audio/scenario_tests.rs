@@ -1182,6 +1182,10 @@ fn every_synthesized_sound_renders_bounded() {
 /// the mention its line in `assets/CREDITS.md` and its `License.txt` carry (free plan).
 const ELEVENLABS: &str = "elevenlabs";
 const ELEVENLABS_MENTION: &str = "Sound effects generated with ElevenLabs (elevenlabs.io)";
+/// Issue #247: the folder of the sounds of SuperTuxKart (free licences, Max's decision), and the
+/// source its line in `assets/CREDITS.md` and its `License.txt` name (the official assets).
+const SUPERTUXKART: &str = "supertuxkart";
+const SUPERTUXKART_SOURCE: &str = "https://svn.code.sf.net/p/supertuxkart/code/stk-assets/sfx/";
 
 #[test]
 fn every_sound_file_is_there_with_its_licence_and_its_credits() {
@@ -1224,6 +1228,14 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
             assert!(line.contains(ELEVENLABS_MENTION), "{line}");
             continue;
         }
+        if pack == SUPERTUXKART {
+            // Issue #247: SuperTuxKart's (Max's decision): where they come from.
+            assert!(
+                line.contains("SuperTuxKart") && line.contains(SUPERTUXKART_SOURCE),
+                "{line}"
+            );
+            continue;
+        }
         assert!(line.contains("CC0"), "{line}");
         assert!(
             (line.contains("Kenney") && line.contains(&format!("https://kenney.nl/assets/{pack}")))
@@ -1238,6 +1250,13 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
         wanted.insert(format!("audio/{pack}/License.txt"));
         if *pack == ELEVENLABS {
             assert!(licence.contains(ELEVENLABS_MENTION), "{pack}");
+            continue;
+        }
+        if *pack == SUPERTUXKART {
+            assert!(
+                licence.contains("SuperTuxKart") && licence.contains(SUPERTUXKART_SOURCE),
+                "{pack}"
+            );
             continue;
         }
         assert!(
@@ -1276,6 +1295,7 @@ fn every_sound_file_is_there_with_its_licence_and_its_credits() {
 /// silence (no click: its fades), and a loop is a real loop: as loud at its end as at its start
 /// (no fade out), and once made seamless by the game (`seamless_loop`, what the mixer plays) it
 /// starts again without a step, its seam no bigger than the jumps inside it.
+/// Issue #247: the engine by default is SuperTuxKart's small engine, held to the same checks.
 #[test]
 fn the_elevenlabs_sounds_are_the_defaults_and_play_cleanly() {
     let decode = |path: &str| -> (Vec<f32>, u16, u32) {
@@ -1304,7 +1324,12 @@ fn the_elevenlabs_sounds_are_the_defaults_and_play_cleanly() {
             assert_ne!(candidate.id, "elevenlabs");
             continue;
         }
-        assert_eq!(candidate.id, "elevenlabs", "{slot:?}");
+        let (id, pack) = if slot == Slot::Engine {
+            ("supertuxkart", "audio/supertuxkart/")
+        } else {
+            ("elevenlabs", "audio/elevenlabs/")
+        };
+        assert_eq!(candidate.id, id, "{slot:?}");
         let files: Vec<(&str, f32)> = candidate
             .files()
             .iter()
@@ -1313,7 +1338,7 @@ fn the_elevenlabs_sounds_are_the_defaults_and_play_cleanly() {
             .collect();
         assert!(!files.is_empty(), "{slot:?}");
         for (path, _) in files {
-            assert!(path.starts_with("audio/elevenlabs/"), "{path}");
+            assert!(path.starts_with(pack), "{path}");
             let (x, channels, rate) = decode(path);
             assert_eq!((channels, rate), (1, 44_100), "{path}");
             assert!(x.iter().all(|s| s.is_finite()), "{path}");
@@ -1348,6 +1373,90 @@ fn the_elevenlabs_sounds_are_the_defaults_and_play_cleanly() {
     }
     // 51 one-shots, 36 cries and 4 loops (the footsteps keep Kenney's).
     assert_eq!(checked, 51 + 36 + 4, "{checked}");
+}
+
+/// Issue #247: every loop of SuperTuxKart (the engine by default, the big engine, the skid) is a
+/// real loop: mono, 44.1 kHz, heard at the common level, as loud at its end as at its start, and
+/// once made seamless by the game (`seamless_loop`, what the mixer plays) it starts again without
+/// a click: its seam no bigger than the jumps inside it. Played at every pitch the engine takes,
+/// its seam stays below them too (the mixer only changes the playback speed).
+#[test]
+fn the_supertuxkart_loops_start_again_without_a_click() {
+    let mut checked = 0;
+    for slot in [Slot::Engine, Slot::Squeal] {
+        for candidate in slot.candidates() {
+            let Some((path, _)) = candidate.recording() else {
+                continue;
+            };
+            if !path.starts_with("audio/supertuxkart/") {
+                continue;
+            }
+            let bytes =
+                std::fs::read(format!("{ASSETS}/{path}")).unwrap_or_else(|_| panic!("{path}"));
+            let decoder = bevy::audio::AudioSource {
+                bytes: bytes.into(),
+            }
+            .decoder();
+            let (channels, rate) = (decoder.channels().get(), decoder.sample_rate().get());
+            assert_eq!((channels, rate), (1, 44_100), "{path}");
+            let x: Vec<f32> = decoder.collect();
+            let rms = |x: &[f32]| {
+                20.0 * ((x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt()).log10()
+            };
+            let level = rms(&x);
+            assert!((-20.0..=-12.0).contains(&level), "{path}: {level} dB");
+            let quarter = x.len() / 4;
+            let (head, tail) = (rms(&x[..quarter]), rms(&x[x.len() - quarter..]));
+            assert!((head - tail).abs() < 3.0, "{path}: {head} dB, {tail} dB");
+            let looped = super::dsp::seamless_loop(
+                &x,
+                1,
+                rate,
+                0.0,
+                super::design::LOOP_SEAM,
+                super::design::RECORDED_RMS,
+            );
+            assert!(looped.len() > x.len() / 2, "{path}");
+            let mut jumps: Vec<f32> = looped.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+            jumps.sort_by(f32::total_cmp);
+            let typical = jumps[jumps.len() / 2];
+            let big = jumps[jumps.len() * 999 / 1000];
+            let seam = (looped[0] - looped[looped.len() - 1]).abs();
+            assert!(seam <= big, "{path}: seam {seam}, jumps up to {big}");
+            // Resampled at the engine's lowest and highest pitch (what the playback speed does),
+            // the loop's two ends still meet: its seam no bigger than its own jumps.
+            let tuning = SoundTuning::default();
+            for speed in [tuning.engine_idle_pitch, tuning.engine_top_pitch] {
+                let n = (looped.len() as f32 / speed) as usize;
+                let at = |i: usize| {
+                    let t = (i as f32 * speed) % looped.len() as f32;
+                    let j = t as usize;
+                    let f = t - j as f32;
+                    let a = looped[j];
+                    let b = looped[(j + 1) % looped.len()];
+                    a + (b - a) * f
+                };
+                let mut steps: Vec<f32> = (0..n).map(|i| (at(i + 1) - at(i)).abs()).collect();
+                let wrap = (0..n + 2)
+                    .filter(|i| {
+                        let t0 = (*i as f32 * speed) as usize / looped.len();
+                        let t1 = ((*i + 1) as f32 * speed) as usize / looped.len();
+                        t0 != t1
+                    })
+                    .map(|i| (at(i + 1) - at(i)).abs())
+                    .fold(0.0f32, f32::max);
+                steps.sort_by(f32::total_cmp);
+                let big = steps[steps.len() * 999 / 1000];
+                assert!(
+                    wrap <= big,
+                    "{path} at {speed}: seam {wrap}, jumps up to {big}"
+                );
+            }
+            assert!(typical > 0.0, "{path}: not silent");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 3, "the small and the big engine, the skid");
 }
 
 /// Issue #103, changed by issue #135: behind the home screen, its background race makes no sound

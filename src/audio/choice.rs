@@ -21,6 +21,10 @@
 //! ElevenLabs (`assets/audio/elevenlabs/`, Max's decision: not CC0, credited in
 //! `assets/CREDITS.md`), so it is the sound by default; #103's comes next, still chosen in the
 //! panel. The cries are a file per animal and mood (`EL_CRIES`, in the order `variant` gives).
+//!
+//! **Issue #247**: the engine by default is SuperTuxKart's small engine
+//! (`assets/audio/supertuxkart/`, free licences, Max's decision), ElevenLabs' right after it; its
+//! big engine, its skid and its crash are offered too.
 
 use bevy::prelude::*;
 
@@ -233,6 +237,13 @@ const QUBODUP_CRASH: (&str, f32) = ("audio/qubodup/crash.ogg", 0.600);
 const ROCHA_SPIN: (&str, f32) = ("audio/rocha57/car_spinning.ogg", 0.690);
 const SKETCHMAN_WIND: (&str, f32) = ("audio/sketchman3/wind_woosh_loop.ogg", 5.959);
 const BART_SQUEAK: (&str, f32) = ("audio/bart/squeak2.ogg", 0.501);
+// Issue #247: sounds of SuperTuxKart (free licences, Max's decision of 2026-11-11: « Récupère les
+// sons de tuxkart ou supertuxkart qui sont libres »), `assets/audio/supertuxkart/`: its small
+// engine is the engine by default.
+const STK_ENGINE_SMALL: (&str, f32) = ("audio/supertuxkart/engine_small.ogg", 4.000);
+const STK_ENGINE_LARGE: (&str, f32) = ("audio/supertuxkart/engine_large.ogg", 2.922);
+const STK_SKID: (&str, f32) = ("audio/supertuxkart/skid.ogg", 3.000);
+const STK_CRASH: (&str, f32) = ("audio/supertuxkart/crash.ogg", 0.390);
 // Issue #235: the sounds generated with ElevenLabs (elevenlabs.io, Max's decision of
 // 2026-11-11), the first candidate of every slot (but the footsteps): `assets/audio/elevenlabs/`.
 const EL_BEE_BUZZ: (&str, f32) = ("audio/elevenlabs/bee_buzz.ogg", 1.500);
@@ -1390,6 +1401,7 @@ impl Slot {
                             "Kenney : impactWood_light_002",
                             &IMPACT_WOOD_LIGHT_002,
                         ),
+                        file("stk-crash", "SuperTuxKart : choc (crash)", &STK_CRASH),
                     ]
                 }
             }
@@ -1731,12 +1743,26 @@ impl Slot {
 
 /// The engines (issue #135): the one by default first. Their pitch follows the revs (the playback
 /// speed, times their own); a recording's level is matched to the others' when it is made into a
-/// loop.
+/// loop. Issue #247: SuperTuxKart's small engine by default (Max: « toujours aussi nulle »,
+/// ElevenLabs' one), played at its own speed: from `engine_idle_pitch` to `engine_top_pitch`,
+/// about SuperTuxKart's own range (0.6 at rest to 1.27 at top speed in its `kart.cpp`).
 const ENGINES: &[Candidate] = &[
+    recording(
+        "supertuxkart",
+        "SuperTuxKart : petit moteur (boucle, par défaut)",
+        STK_ENGINE_SMALL,
+        0.0,
+    ),
     recording(
         "elevenlabs",
         "ElevenLabs : petit moteur de kart (boucle)",
         EL_ENGINE,
+        0.0,
+    ),
+    recording(
+        "supertuxkart-large",
+        "SuperTuxKart : gros moteur (boucle)",
+        STK_ENGINE_LARGE,
         0.0,
     ),
     recording(
@@ -1808,6 +1834,12 @@ const SQUEALS: &[Candidate] = &[
         "synth-103",
         "Crissement de #103 (l'ancien)",
         LoopTimbre::Squeal,
+    ),
+    recording(
+        "supertuxkart",
+        "SuperTuxKart : pneus qui crissent (boucle)",
+        STK_SKID,
+        0.0,
     ),
 ];
 
@@ -2164,12 +2196,20 @@ mod tests {
         assert!(cry.speed > 1.1);
         // The croquettes keep their blips.
         assert_eq!(pick(SoundEffect::CroquettePop, &choices).clip, Picked::Blip);
-        // The loops by default: ElevenLabs' recordings, made into seamless loops by the game.
+        // The loops by default: recordings made into seamless loops by the game, ElevenLabs'
+        // but the engine: SuperTuxKart's since issue #247 (ElevenLabs' still chosen, next).
         let defaults = SoundChoices::default();
         for slot in [Slot::Engine, Slot::Squeal, Slot::Wind, Slot::Rumble] {
             let (path, _) = defaults.candidate(slot).recording().unwrap();
-            assert!(path.starts_with("audio/elevenlabs/"), "{slot:?}");
+            let pack = if slot == Slot::Engine {
+                "audio/supertuxkart/"
+            } else {
+                "audio/elevenlabs/"
+            };
+            assert!(path.starts_with(pack), "{slot:?}: {path}");
         }
+        assert_eq!(defaults.candidate(Slot::Engine).id, "supertuxkart");
+        assert_eq!(Slot::Engine.candidates()[1].id, "elevenlabs");
     }
 
     /// Issue #135: the choices are kept as a text Max can copy: only what changed, by ids, which
@@ -2183,7 +2223,7 @@ mod tests {
             (SoundChoices::default(), vec![])
         );
         let mut choices = SoundChoices::default();
-        choices.choose(Slot::Engine, 3);
+        choices.choose(Slot::Engine, 5);
         choices.choose(Slot::Squeal, 3);
         choices.choose(Slot::Honk, 1);
         let text = choices.export();

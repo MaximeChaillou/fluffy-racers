@@ -1,0 +1,26 @@
+Sound effects from SuperTuxKart (https://supertuxkart.net), free licences.
+
+Source: the official SuperTuxKart assets, stk-assets/sfx, SVN revision 18627:
+https://svn.code.sf.net/p/supertuxkart/code/stk-assets/sfx/
+Authors and licences as written in stk-assets/sfx/licenses.txt (Debian copyright format):
+
+- engine_small.ogg: Copyright 2012 Iwan "qubodup" Gabovitch. CC-BY-SA 3.0, GPL3, GPL2.
+  From https://opengameart.org/content/car-engine-loop-96khz-4s
+- engine_large.ogg: Copyright 2009 Mike Koenig, 2007 "Stephan", 2011 Marianne "Auria" Gagnon,
+  2010 "SpeedJunkie" ("SnapJunkie"). CC-BY-SA 3.0. Mixing and mash-up by Marianne Gagnon of
+  "Compressor Motor" (Stephan, pdsounds.org), "Transfer Truck Idle and Drive" (Mike Koenig,
+  soundbible.com/704) and "Car Accelerating" (SpeedJunkie, soundbible.com/1456).
+- skid.ogg: Copyright 2009 Tom "audible-edge" Haigh, 2012 Iwan "qubodup" Gabovitch. CC-BY 3.0.
+  From https://opengameart.org/content/car-tire-squeal-skid-loop
+- crash.ogg: Copyright 2017 The Audio Monkey (https://theaudiomonkey.co.uk/). CC-BY-SA 4.0.
+  From https://forum.freegamedev.net/viewtopic.php?f=18&t=7425
+
+Licences: https://creativecommons.org/licenses/by-sa/3.0/, https://creativecommons.org/licenses/by/3.0/,
+https://creativecommons.org/licenses/by-sa/4.0/. CC-BY-SA: these processed files are shared
+under the same licence as their original.
+
+Used in Fluffy Racers at Max's request (issue #247, 2026-11-11: « Récupère les sons de tuxkart
+ou supertuxkart qui sont libres »). Processed for the game (modified): decoded, mixed to mono,
+resampled to 44.1 kHz (skid.ogg was 96 kHz), DC removed, levels matched (RMS about -16 dBFS,
+peak at most -1 dBFS), short fades on crash.ogg, encoded as OGG Vorbis. The loops (engines,
+skid) are not cut: the game crossfades their seam itself (src/audio/dsp.rs, seamless_loop).
