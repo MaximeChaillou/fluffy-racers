@@ -7,7 +7,8 @@
 //! button (mango, a little bigger). It replaces the egui window of #17.
 //!
 //! **Room for more lines**: the volumes (issue #103: general, effects, music) are lines of
-//! `OptionRow` like the others; the panel takes six of them in a 720 px high window
+//! `OptionRow` like the others (issue #234: the images per second, a seventh); the panel follows
+//! its lines and takes seven of them, and room for one more, in a 720 px high window
 //! (`options_tests`).
 //!
 //! Its state and its keys are `options::OptionsMenu`'s (headless, tested); here: its tree, the

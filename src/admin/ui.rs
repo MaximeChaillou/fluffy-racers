@@ -560,6 +560,7 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
         ui.label("En ligne : l'hôte choisit le circuit et lance les courses depuis le salon.");
         ui.small("Ni « Relancer », ni pause, ni ralenti en ligne.");
         items_row(ui, world, state);
+        frame_rate_row(ui, world);
         return;
     }
     let choice = world.resource::<TrackChoice>().clone();
@@ -677,10 +678,38 @@ fn test_section(ui: &mut egui::Ui, world: &mut World, state: &mut PanelState) {
 
     // Issue #155: giving an item is a test tool too, on one line.
     items_row(ui, world, state);
+    frame_rate_row(ui, world);
 
     if let Some(request) = request {
         world.write_message(request);
     }
+}
+
+/// Issue #234: the cap of the images per second (`pacing::FramePacing::cap`), the same as the
+/// options' « Images/seconde » line (it is the player's option: kept in the browser), with the
+/// images drawn per second (the FPS of the debug overlay, F3).
+fn frame_rate_row(ui: &mut egui::Ui, world: &mut World) {
+    use crate::options::PlayerOptions;
+    use crate::pacing::FrameCap;
+    let Some(current) = world.get_resource::<PlayerOptions>().map(|o| o.frame_cap) else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.label("Images par seconde")
+            .on_hover_text("Le jeu calcule 60 fois par seconde : 60 suffit (Options, O).");
+        for cap in FrameCap::ALL {
+            if ui.selectable_label(current == cap, cap.label()).clicked() && cap != current {
+                world.resource_mut::<PlayerOptions>().frame_cap = cap;
+            }
+        }
+        let fps = world
+            .get_resource::<bevy::diagnostic::DiagnosticsStore>()
+            .and_then(|store| store.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS))
+            .and_then(|fps| fps.smoothed());
+        if let Some(fps) = fps {
+            ui.label(format!("{fps:.0} i/s"));
+        }
+    });
 }
 
 /// Issue #18: any item, ready in the player's hand (`items::GiveItem`), to try it at once (the
