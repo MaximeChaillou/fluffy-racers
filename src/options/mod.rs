@@ -38,6 +38,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::kart::KeyboardLayout;
+use crate::pacing::{FrameCap, FramePacing};
 
 /// Opens and closes the options menu: « O » for options, a letter at the same place and with the
 /// same name in AZERTY and QWERTY, free in the game's controls (GD § 13), no Fn on a Mac.
@@ -65,6 +66,9 @@ pub struct PlayerOptions {
     pub effects_volume: u8,
     /// ...and of the music (#104).
     pub music_volume: u8,
+    /// Issue #234: how many images per second at most (60 by default), applied to
+    /// `pacing::FramePacing::cap`.
+    pub frame_cap: FrameCap,
 }
 
 /// Issue #103: the volumes by default (%).
@@ -102,6 +106,7 @@ impl Default for PlayerOptions {
             master_volume: DEFAULT_VOLUME,
             effects_volume: DEFAULT_VOLUME,
             music_volume: DEFAULT_VOLUME,
+            frame_cap: FrameCap::default(),
         }
     }
 }
@@ -127,6 +132,7 @@ impl PlayerOptions {
             OptionRow::MasterVolume => volume_label(self.master_volume),
             OptionRow::EffectsVolume => volume_label(self.effects_volume),
             OptionRow::MusicVolume => volume_label(self.music_volume),
+            OptionRow::FrameRate => self.frame_cap.label(),
             // Issue #231: a text field, written by the screen.
             OptionRow::Server => "",
         }
@@ -138,7 +144,10 @@ impl PlayerOptions {
             OptionRow::MasterVolume => Some(&mut self.master_volume),
             OptionRow::EffectsVolume => Some(&mut self.effects_volume),
             OptionRow::MusicVolume => Some(&mut self.music_volume),
-            OptionRow::Keyboard | OptionRow::NameTags | OptionRow::Server => None,
+            OptionRow::Keyboard
+            | OptionRow::NameTags
+            | OptionRow::FrameRate
+            | OptionRow::Server => None,
         }
     }
 
@@ -158,6 +167,12 @@ impl PlayerOptions {
                     let next = i32::from(*volume) + step * i32::from(VOLUME_STEP);
                     *volume = next.clamp(0, 100) as u8;
                 }
+            }
+            // Issue #234: 60, 30, « Sans limite », around.
+            OptionRow::FrameRate => {
+                let all = FrameCap::ALL;
+                let at = all.iter().position(|c| *c == self.frame_cap).unwrap_or(0) as i32;
+                self.frame_cap = all[(at + step).rem_euclid(all.len() as i32) as usize];
             }
             // Issue #231: not an option of these (`OptionsMenu::typing`).
             OptionRow::Server => {}
@@ -181,17 +196,20 @@ pub enum OptionRow {
     MasterVolume,
     EffectsVolume,
     MusicVolume,
+    /// Issue #234: the images per second.
+    FrameRate,
     /// Issue #231: the dedicated server's address (a text field).
     Server,
 }
 
 impl OptionRow {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         OptionRow::Keyboard,
         OptionRow::NameTags,
         OptionRow::MasterVolume,
         OptionRow::EffectsVolume,
         OptionRow::MusicVolume,
+        OptionRow::FrameRate,
         OptionRow::Server,
     ];
 
@@ -203,6 +221,7 @@ impl OptionRow {
             OptionRow::MasterVolume => "Volume général",
             OptionRow::EffectsVolume => "Effets sonores",
             OptionRow::MusicVolume => "Musique",
+            OptionRow::FrameRate => "Images/seconde",
             OptionRow::Server => "Serveur",
         }
     }
@@ -216,6 +235,8 @@ impl OptionRow {
             OptionRow::MasterVolume => "Le volume de tout le jeu.",
             OptionRow::EffectsVolume => "Moteurs, objets, coups et cris des animaux.",
             OptionRow::MusicVolume => "La musique des circuits.",
+            // Issue #234: the simulation runs at 60 per second; fewer heats less.
+            OptionRow::FrameRate => "60 suffit : le jeu calcule 60 fois par seconde.",
             // Issue #231: the screen writes what the address does instead, once there is one.
             OptionRow::Server => "Vide : ton navigateur héberge la partie.",
         }
@@ -376,9 +397,19 @@ fn apply_options_actions(
     }
 }
 
-/// The options apply at once: the keyboard layout of the keyboard input.
-fn apply_player_options(options: Res<PlayerOptions>, mut layout: ResMut<KeyboardLayout>) {
+/// The options apply at once: the keyboard layout of the keyboard input; issue #234: the cap
+/// of the images per second.
+fn apply_player_options(
+    options: Res<PlayerOptions>,
+    mut layout: ResMut<KeyboardLayout>,
+    pacing: Option<ResMut<FramePacing>>,
+) {
     layout.set_if_neq(options.keyboard);
+    if let Some(mut pacing) = pacing
+        && pacing.cap != options.frame_cap
+    {
+        pacing.cap = options.frame_cap;
+    }
 }
 
 /// The controls (GD § 13) with the letters of `layout`: (action, keys), for the menu.
@@ -437,6 +468,7 @@ mod tests {
                         master_volume: volume,
                         effects_volume: 100 - volume,
                         music_volume: volume / 2,
+                        ..PlayerOptions::default()
                     };
                     let text = options.to_ron();
                     assert_eq!(PlayerOptions::from_ron(&text), Ok(options), "{text}");
@@ -526,6 +558,7 @@ mod tests {
                 master_volume: 80,
                 effects_volume: 80,
                 music_volume: 80,
+                frame_cap: FrameCap::Sixty,
             })
         );
         for bad in [
@@ -562,7 +595,8 @@ mod tests {
         assert_eq!(options.changed(row, -1), off);
         assert_eq!(options.changed(row, 2), options);
         assert_eq!(options.changed(row, 0), options);
-        // Issue #103: the volumes after them; issue #231: then the server.
+        // Issue #103: the volumes after them; issue #234: the images per second; issue #231:
+        // then the server.
         assert_eq!(
             OptionRow::ALL,
             [
@@ -571,9 +605,52 @@ mod tests {
                 OptionRow::MasterVolume,
                 OptionRow::EffectsVolume,
                 OptionRow::MusicVolume,
+                OptionRow::FrameRate,
                 OptionRow::Server,
             ]
         );
+    }
+
+    /// Issue #234: the images per second, 60 by default, then 30, « Sans limite » and back;
+    /// kept in the browser; a text from before keeps 60; the option is the limiter's cap.
+    #[test]
+    fn the_frame_rate_line_goes_around_its_caps() {
+        let options = PlayerOptions::default();
+        let row = OptionRow::FrameRate;
+        assert_eq!(options.frame_cap, FrameCap::Sixty);
+        assert_eq!(options.value(row), "60");
+        let thirty = options.changed(row, 1);
+        assert_eq!(thirty.value(row), "30");
+        assert_eq!(thirty.changed(row, 1).value(row), "Sans limite");
+        assert_eq!(thirty.changed(row, 2), options);
+        assert_eq!(options.changed(row, -1).frame_cap, FrameCap::Unlimited);
+        assert_eq!(options.changed(row, 0), options);
+        for other in OptionRow::ALL.into_iter().filter(|r| *r != row) {
+            assert_eq!(thirty.value(other), options.value(other), "{other:?}");
+        }
+        assert!(row.label().chars().count() <= 16 && row.help().chars().count() < 48);
+        for cap in FrameCap::ALL {
+            let kept = PlayerOptions {
+                frame_cap: cap,
+                ..options
+            };
+            assert_eq!(PlayerOptions::from_ron(&kept.to_ron()), Ok(kept));
+        }
+        assert!(
+            PlayerOptions {
+                frame_cap: FrameCap::Unlimited,
+                ..options
+            }
+            .to_ron()
+            .contains("frame_cap: Unlimited")
+        );
+        assert_eq!(
+            PlayerOptions::from_ron("(keyboard: Qwerty, master_volume: 50)")
+                .unwrap()
+                .frame_cap,
+            FrameCap::Sixty
+        );
+        assert!(PlayerOptions::from_ron("(frame_cap: Cent)").is_err());
     }
 
     #[test]

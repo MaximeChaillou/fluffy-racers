@@ -96,6 +96,9 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     assert_eq!(menu(&app).row(), OptionRow::EffectsVolume);
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
+    // Issue #234: the images per second, then the server.
+    tap(&mut app, KeyCode::ArrowDown);
+    assert_eq!(menu(&app).row(), OptionRow::FrameRate);
     tap(&mut app, KeyCode::ArrowDown);
     assert_eq!(menu(&app).row(), OptionRow::Server);
     tap(&mut app, KeyCode::ArrowDown);
@@ -119,6 +122,8 @@ fn o_opens_the_options_and_the_keyboard_changes_at_once() {
     assert_eq!(options(&app), before);
     // The screen ends the typing (Entrée in the field); then up goes on.
     app.world_mut().resource_mut::<OptionsMenu>().typing = false;
+    tap(&mut app, KeyCode::ArrowUp);
+    assert_eq!(menu(&app).row(), OptionRow::FrameRate);
     tap(&mut app, KeyCode::ArrowUp);
     assert_eq!(menu(&app).row(), OptionRow::MusicVolume);
     for _ in 0..3 {
@@ -222,4 +227,37 @@ fn the_menu_opens_over_the_selection_screen_and_takes_its_keys() {
     assert_ne!(screen(&app).choice, choice);
     tap(&mut app, KeyCode::Escape);
     assert!(!screen(&app).open && !paused(&app));
+}
+
+/// Issue #234: the « Images/seconde » line changes the limiter's cap at once (the whole game,
+/// headless: the tuning is there, the gate only comes with a renderer).
+#[test]
+fn the_frame_rate_line_changes_the_cap_at_once() {
+    use crate::pacing::{FrameCap, FramePacing};
+    let mut app = app_on(TrackChoice::TestGround);
+    app.update();
+    assert_eq!(app.world().resource::<FramePacing>().cap, FrameCap::Sixty);
+    assert!(
+        !app.world().contains_resource::<crate::pacing::FrameGate>(),
+        "no gate without a renderer"
+    );
+    tap(&mut app, OPTIONS_KEY);
+    let row = OptionRow::ALL
+        .iter()
+        .position(|r| *r == OptionRow::FrameRate)
+        .unwrap();
+    app.world_mut().write_message(OptionsAction::Focus(row));
+    app.update();
+    assert_eq!(menu(&app).row(), OptionRow::FrameRate);
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(options(&app).frame_cap, FrameCap::Thirty);
+    assert_eq!(app.world().resource::<FramePacing>().cap, FrameCap::Thirty);
+    tap(&mut app, KeyCode::ArrowRight);
+    assert_eq!(
+        app.world().resource::<FramePacing>().cap,
+        FrameCap::Unlimited
+    );
+    tap(&mut app, KeyCode::ArrowLeft);
+    tap(&mut app, KeyCode::ArrowLeft);
+    assert_eq!(app.world().resource::<FramePacing>().cap, FrameCap::Sixty);
 }

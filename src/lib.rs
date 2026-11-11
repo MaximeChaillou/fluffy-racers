@@ -16,6 +16,7 @@ pub mod models;
 pub mod modes;
 pub mod net;
 pub mod options;
+pub mod pacing;
 pub mod race;
 pub mod salon;
 pub mod track;
@@ -125,6 +126,8 @@ impl Plugin for GamePlugin {
                     NetPlugin,
                     KartSyncPlugin,
                     ModesPlugin,
+                    // Issue #234: the images per second (the gate only with a renderer).
+                    pacing::FramePacingPlugin,
                 ),
             ))
             .add_systems(Startup, spawn_light)

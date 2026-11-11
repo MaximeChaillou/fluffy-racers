@@ -140,7 +140,10 @@ fn the_options_change_and_keep_their_value() {
         count::<With<ControlLine>>(&mut app),
         crate::options::controls(KeyboardLayout::Azerty).len()
     );
-    assert_eq!(values(&mut app), ["AZERTY", "Oui", VOLUME, VOLUME, VOLUME]);
+    assert_eq!(
+        values(&mut app),
+        ["AZERTY", "Oui", VOLUME, VOLUME, VOLUME, "60"]
+    );
     assert_eq!(
         texts_of::<OptionsHelp>(&mut app),
         [OptionRow::Keyboard.help()]
@@ -161,7 +164,10 @@ fn the_options_change_and_keep_their_value() {
         *app.world().resource::<KeyboardLayout>(),
         KeyboardLayout::Qwerty
     );
-    assert_eq!(values(&mut app), ["QWERTY", "Oui", VOLUME, VOLUME, VOLUME]);
+    assert_eq!(
+        values(&mut app),
+        ["QWERTY", "Oui", VOLUME, VOLUME, VOLUME, "60"]
+    );
     assert_eq!(count::<With<OptionsRoot>>(&mut app), 1);
     let commands = commands_shown(&mut app);
     assert!(
@@ -180,7 +186,10 @@ fn the_options_change_and_keep_their_value() {
         [OptionRow::NameTags.help()]
     );
     act(&mut app, OptionsAction::Change(OptionRow::NameTags, -1));
-    assert_eq!(values(&mut app), ["QWERTY", "Non", VOLUME, VOLUME, VOLUME]);
+    assert_eq!(
+        values(&mut app),
+        ["QWERTY", "Non", VOLUME, VOLUME, VOLUME, "60"]
+    );
     for wanted in ["Oui", "Non"] {
         act(&mut app, OptionsAction::Change(OptionRow::NameTags, 1));
         assert_eq!(values(&mut app)[1], wanted);
@@ -205,7 +214,10 @@ fn the_options_change_and_keep_their_value() {
     tap(&mut app, crate::options::OPTIONS_KEY);
     app.update();
     assert_eq!(options(&app), changed);
-    assert_eq!(values(&mut app), ["QWERTY", "Non", VOLUME, VOLUME, VOLUME]);
+    assert_eq!(
+        values(&mut app),
+        ["QWERTY", "Non", VOLUME, VOLUME, VOLUME, "60"]
+    );
     // And through the text kept in the browser.
     assert_eq!(PlayerOptions::from_ron(&changed.to_ron()), Ok(changed));
     tap(&mut app, KeyCode::Escape);
@@ -279,8 +291,8 @@ fn the_options_come_back_to_the_screen_that_opened_them() {
     assert!(paused(&app));
 }
 
-/// Issue #100: room for the volumes of the sounds and of the music (#103, #104): six lines of
-/// options, the help, « Retour », the title and the keys fit in a 720 px high window, and so do
+/// Issue #100: room for the volumes of the sounds and of the music (#103, #104): every line of
+/// options (issue #234: seven), the help, « Retour », the title and the keys fit in a 720 px high window, and so do
 /// the commands (six of them on two lines) on the right.
 #[test]
 fn the_options_screen_has_room_for_more_lines() {
@@ -298,10 +310,19 @@ fn the_options_screen_has_room_for_more_lines() {
         + 4.0
         + (commands + 6.0) * line(size::CONTROL_TEXT)
         + commands * size::CONTROL_GAP;
-    let panel = left(6.0).max(right) + 2.0 * size::PANEL_PADDING;
-    let screen = line(size::PILOT_TITLE) + panel + 2.0 * line(size::HINT) + 3.0 * 10.0;
-    assert!(screen + 16.0 <= style::REFERENCE_HEIGHT, "{screen}");
-    assert!(OptionRow::ALL.len() <= 6);
+    // Issue #234: every line there is (seven with the images per second), and the panel still
+    // fits with one more after them. The panel has no fixed height: it follows its lines.
+    let lines = OptionRow::ALL.len() as f32;
+    assert!(lines >= 7.0, "issue #234: the images per second");
+    for lines in [lines, lines + 1.0] {
+        let panel = left(lines).max(right) + 2.0 * size::PANEL_PADDING;
+        let screen = line(size::PILOT_TITLE) + panel + 2.0 * line(size::HINT) + 3.0 * 10.0;
+        assert!(
+            screen + 16.0 <= style::REFERENCE_HEIGHT,
+            "{lines} lines: {screen}"
+        );
+    }
+    assert!(OptionRow::ALL.len() <= 8);
 }
 
 /// Issue #231: the game with the options screen and what Bevy's text field needs headless.
