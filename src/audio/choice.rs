@@ -15,13 +15,18 @@
 //!   speed of the recording, times its own).
 //!
 //! The files of the candidates are only loaded when they are chosen or listened to (those of the
-//! sounds by default are loaded with the game, `catalog::FILES`).
+//! sounds by default are loaded with the game).
+//!
+//! **Issue #235**: the first candidate of every slot (but the footsteps) is a sound generated with
+//! ElevenLabs (`assets/audio/elevenlabs/`, Max's decision: not CC0, credited in
+//! `assets/CREDITS.md`), so it is the sound by default; #103's comes next, still chosen in the
+//! panel. The cries are a file per animal and mood (`EL_CRIES`, in the order `variant` gives).
 
 use bevy::prelude::*;
 
 use crate::kart::MiniTurbo;
 
-use super::catalog::{Clip, SoundEffect};
+use super::catalog::{Animal, Clip, Mood, SoundEffect};
 use super::dsp::{LoopKind, LoopTimbre, Noise, Synth, Tone, Wave};
 
 /// Where a candidate's sound comes from.
@@ -228,6 +233,101 @@ const QUBODUP_CRASH: (&str, f32) = ("audio/qubodup/crash.ogg", 0.600);
 const ROCHA_SPIN: (&str, f32) = ("audio/rocha57/car_spinning.ogg", 0.690);
 const SKETCHMAN_WIND: (&str, f32) = ("audio/sketchman3/wind_woosh_loop.ogg", 5.959);
 const BART_SQUEAK: (&str, f32) = ("audio/bart/squeak2.ogg", 0.501);
+// Issue #235: the sounds generated with ElevenLabs (elevenlabs.io, Max's decision of
+// 2026-11-11), the first candidate of every slot (but the footsteps): `assets/audio/elevenlabs/`.
+const EL_BEE_BUZZ: (&str, f32) = ("audio/elevenlabs/bee_buzz.ogg", 1.500);
+const EL_BOOMERANG_THROW: (&str, f32) = ("audio/elevenlabs/boomerang_throw.ogg", 0.883);
+const EL_BOOST_PAD: (&str, f32) = ("audio/elevenlabs/boost_pad.ogg", 0.801);
+const EL_BOX_BREAK: (&str, f32) = ("audio/elevenlabs/box_break.ogg", 0.613);
+const EL_COUNTDOWN_BEEP: (&str, f32) = ("audio/elevenlabs/countdown_beep.ogg", 0.319);
+const EL_COUNTDOWN_GO: (&str, f32) = ("audio/elevenlabs/countdown_go.ogg", 0.800);
+const EL_CREAM_SQUIRT: (&str, f32) = ("audio/elevenlabs/cream_squirt.ogg", 0.834);
+const EL_CREAMED: (&str, f32) = ("audio/elevenlabs/creamed.ogg", 0.502);
+const EL_DEFLATE: (&str, f32) = ("audio/elevenlabs/deflate.ogg", 0.941);
+const EL_DRIFT_TIER: (&str, f32) = ("audio/elevenlabs/drift_tier.ogg", 1.000);
+const EL_ENGINE: (&str, f32) = ("audio/elevenlabs/engine.ogg", 3.000);
+const EL_EXPLOSION: (&str, f32) = ("audio/elevenlabs/explosion.ogg", 1.000);
+const EL_FALL: (&str, f32) = ("audio/elevenlabs/fall.ogg", 1.000);
+const EL_FOOT_JUMP: (&str, f32) = ("audio/elevenlabs/foot_jump.ogg", 0.500);
+const EL_FUSEE: (&str, f32) = ("audio/elevenlabs/fusee.ogg", 1.548);
+const EL_GHOST: (&str, f32) = ("audio/elevenlabs/ghost.ogg", 1.000);
+const EL_GLIDER_OPEN: (&str, f32) = ("audio/elevenlabs/glider_open.ogg", 0.753);
+const EL_GRAB: (&str, f32) = ("audio/elevenlabs/grab.ogg", 0.800);
+const EL_HONK: (&str, f32) = ("audio/elevenlabs/honk.ogg", 0.480);
+const EL_ITEM_BLOCKED: (&str, f32) = ("audio/elevenlabs/item_blocked.ogg", 1.000);
+const EL_KART_BUMP: (&str, f32) = ("audio/elevenlabs/kart_bump.ogg", 0.611);
+const EL_LANDING: (&str, f32) = ("audio/elevenlabs/landing.ogg", 0.806);
+const EL_MINI_TURBO: (&str, f32) = ("audio/elevenlabs/mini_turbo.ogg", 0.561);
+const EL_PAW_POF: (&str, f32) = ("audio/elevenlabs/paw_pof.ogg", 0.800);
+const EL_PAW_SWING: (&str, f32) = ("audio/elevenlabs/paw_swing.ogg", 0.510);
+const EL_PELICAN: (&str, f32) = ("audio/elevenlabs/pelican.ogg", 1.469);
+const EL_PELOTE_BOUNCE: (&str, f32) = ("audio/elevenlabs/pelote_bounce.ogg", 0.800);
+const EL_PILLOW_FALL: (&str, f32) = ("audio/elevenlabs/pillow_fall.ogg", 0.580);
+const EL_PILLOW_LAUNCH: (&str, f32) = ("audio/elevenlabs/pillow_launch.ogg", 0.594);
+const EL_PIMENT: (&str, f32) = ("audio/elevenlabs/piment.ogg", 0.414);
+const EL_PINATA_BURST: (&str, f32) = ("audio/elevenlabs/pinata_burst.ogg", 1.500);
+const EL_ROCKET_START: (&str, f32) = ("audio/elevenlabs/rocket_start.ogg", 0.914);
+const EL_ROULETTE_STOP: (&str, f32) = ("audio/elevenlabs/roulette_stop.ogg", 1.200);
+const EL_ROULETTE_TICK: (&str, f32) = ("audio/elevenlabs/roulette_tick.ogg", 0.064);
+const EL_RUMBLE: (&str, f32) = ("audio/elevenlabs/rumble.ogg", 3.000);
+const EL_SLIPSTREAM: (&str, f32) = ("audio/elevenlabs/slipstream.ogg", 0.830);
+const EL_SPIN_BOOST: (&str, f32) = ("audio/elevenlabs/spin_boost.ogg", 1.200);
+const EL_SPIN_OUT: (&str, f32) = ("audio/elevenlabs/spin_out.ogg", 0.854);
+const EL_SPLASH: (&str, f32) = ("audio/elevenlabs/splash.ogg", 0.809);
+const EL_SPLOTCH: (&str, f32) = ("audio/elevenlabs/splotch.ogg", 0.654);
+const EL_SQUEAL: (&str, f32) = ("audio/elevenlabs/squeal.ogg", 3.000);
+const EL_STALL: (&str, f32) = ("audio/elevenlabs/stall.ogg", 0.899);
+const EL_STEAL: (&str, f32) = ("audio/elevenlabs/steal.ogg", 0.900);
+const EL_SUPER_CALIN: (&str, f32) = ("audio/elevenlabs/super_calin.ogg", 1.000);
+const EL_TETHER_BOING: (&str, f32) = ("audio/elevenlabs/tether_boing.ogg", 1.200);
+const EL_THROW: (&str, f32) = ("audio/elevenlabs/throw.ogg", 0.455);
+const EL_TRICK: (&str, f32) = ("audio/elevenlabs/trick.ogg", 1.200);
+const EL_TRICK_BOOST: (&str, f32) = ("audio/elevenlabs/trick_boost.ogg", 1.400);
+const EL_TUMBLE: (&str, f32) = ("audio/elevenlabs/tumble.ogg", 0.831);
+const EL_UI_BACK: (&str, f32) = ("audio/elevenlabs/ui_back.ogg", 0.400);
+const EL_UI_CHANGE: (&str, f32) = ("audio/elevenlabs/ui_change.ogg", 0.319);
+const EL_UI_CONFIRM: (&str, f32) = ("audio/elevenlabs/ui_confirm.ogg", 0.458);
+const EL_UI_HOVER: (&str, f32) = ("audio/elevenlabs/ui_hover.ogg", 0.269);
+const EL_WALL_HIT: (&str, f32) = ("audio/elevenlabs/wall_hit.ogg", 1.000);
+const EL_WIND: (&str, f32) = ("audio/elevenlabs/wind.ogg", 3.000);
+const EL_CRIES: [(&str, f32); 36] = [
+    ("audio/elevenlabs/cry_chick_hurt.ogg", 0.917),
+    ("audio/elevenlabs/cry_chick_happy.ogg", 0.711),
+    ("audio/elevenlabs/cry_chick_effort.ogg", 0.480),
+    ("audio/elevenlabs/cry_chick_win.ogg", 1.968),
+    ("audio/elevenlabs/cry_penguin_hurt.ogg", 1.000),
+    ("audio/elevenlabs/cry_penguin_happy.ogg", 0.777),
+    ("audio/elevenlabs/cry_penguin_effort.ogg", 0.353),
+    ("audio/elevenlabs/cry_penguin_win.ogg", 1.924),
+    ("audio/elevenlabs/cry_parrot_hurt.ogg", 1.000),
+    ("audio/elevenlabs/cry_parrot_happy.ogg", 1.000),
+    ("audio/elevenlabs/cry_parrot_effort.ogg", 0.431),
+    ("audio/elevenlabs/cry_parrot_win.ogg", 1.883),
+    ("audio/elevenlabs/cry_cat_hurt.ogg", 1.000),
+    ("audio/elevenlabs/cry_cat_happy.ogg", 0.848),
+    ("audio/elevenlabs/cry_cat_effort.ogg", 0.480),
+    ("audio/elevenlabs/cry_cat_win.ogg", 2.000),
+    ("audio/elevenlabs/cry_bunny_hurt.ogg", 0.779),
+    ("audio/elevenlabs/cry_bunny_happy.ogg", 0.896),
+    ("audio/elevenlabs/cry_bunny_effort.ogg", 0.388),
+    ("audio/elevenlabs/cry_bunny_win.ogg", 1.793),
+    ("audio/elevenlabs/cry_fox_hurt.ogg", 0.907),
+    ("audio/elevenlabs/cry_fox_happy.ogg", 1.000),
+    ("audio/elevenlabs/cry_fox_effort.ogg", 0.480),
+    ("audio/elevenlabs/cry_fox_win.ogg", 1.852),
+    ("audio/elevenlabs/cry_pig_hurt.ogg", 0.824),
+    ("audio/elevenlabs/cry_pig_happy.ogg", 0.839),
+    ("audio/elevenlabs/cry_pig_effort.ogg", 0.411),
+    ("audio/elevenlabs/cry_pig_win.ogg", 1.790),
+    ("audio/elevenlabs/cry_cow_hurt.ogg", 0.952),
+    ("audio/elevenlabs/cry_cow_happy.ogg", 0.940),
+    ("audio/elevenlabs/cry_cow_effort.ogg", 0.480),
+    ("audio/elevenlabs/cry_cow_win.ogg", 1.879),
+    ("audio/elevenlabs/cry_elephant_hurt.ogg", 1.000),
+    ("audio/elevenlabs/cry_elephant_happy.ogg", 1.000),
+    ("audio/elevenlabs/cry_elephant_effort.ogg", 0.480),
+    ("audio/elevenlabs/cry_elephant_win.ogg", 2.000),
+];
 
 /// The mini-turbo's « fwoosh », darker (#135): lower, its band narrower.
 const SOFT_FWOOSH: Noise = Noise {
@@ -712,6 +812,11 @@ impl Slot {
             S::DriftTier => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : carillon magique qui monte",
+                            &EL_DRIFT_TIER,
+                        ),
                         original("synth", "Carillon synthétisé (#103)"),
                         file("glass", "Kenney : verre (Interface Sounds)", &GLASS_003),
                         file(
@@ -725,6 +830,11 @@ impl Slot {
             S::MiniTurbo => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : « fwoosh » de turbo",
+                            &EL_MINI_TURBO,
+                        ),
                         original("synth", "« Fwoosh » synthétisé (#103)"),
                         synth(
                             "synth-dark",
@@ -742,6 +852,7 @@ impl Slot {
             S::Piment => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : flamme qui s'allume", &EL_PIMENT),
                         original("synth", "Feu synthétisé (#103)"),
                         file(
                             "laser",
@@ -754,6 +865,7 @@ impl Slot {
             S::BoostPad => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : décharge et élan", &EL_BOOST_PAD),
                         original("phaser-up-2", "Kenney : phaserUp2 (#103)"),
                         file("phaser-up-1", "Kenney : phaserUp1", &PHASER_UP_1),
                         file("phaser-up-4", "Kenney : phaserUp4", &PHASER_UP_4),
@@ -763,6 +875,11 @@ impl Slot {
             S::RocketStart => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : moteur qui s'emballe et part",
+                            &EL_ROCKET_START,
+                        ),
                         original("high-up", "Kenney : highUp (#103)"),
                         file(
                             "three-tones",
@@ -775,6 +892,7 @@ impl Slot {
             S::TrickBoost => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : rebond et élan", &EL_TRICK_BOOST),
                         original("power-up-2", "Kenney : powerUp2 (#103)"),
                         file("power-up-4", "Kenney : powerUp4", &POWER_UP_4),
                     ]
@@ -783,6 +901,11 @@ impl Slot {
             S::Slipstream => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : souffle d'aspiration",
+                            &EL_SLIPSTREAM,
+                        ),
                         original("synth", "Souffle synthétisé (#103)"),
                         file(
                             "force-field",
@@ -795,6 +918,11 @@ impl Slot {
             S::SpinBoost => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : ressort et tourbillon",
+                            &EL_SPIN_BOOST,
+                        ),
                         original("phaser-up-6", "Kenney : phaserUp6 (#103)"),
                         file("phaser-up-5", "Kenney : phaserUp5", &PHASER_UP_5),
                     ]
@@ -803,6 +931,7 @@ impl Slot {
             S::Trick => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : salto dans l'air", &EL_TRICK),
                         original("cloth-1", "Kenney : tissu, cloth1 (#103)"),
                         file("cloth-3", "Kenney : tissu, cloth3", &CLOTH_3),
                     ]
@@ -811,6 +940,7 @@ impl Slot {
             S::CountdownBeep => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : bip", &EL_COUNTDOWN_BEEP),
                         original("synth", "Bip synthétisé (#103)"),
                         file("glass", "Kenney : verre (Interface Sounds)", &GLASS_002),
                         file("bong", "Kenney : bong (Interface Sounds)", &BONG_001),
@@ -820,6 +950,11 @@ impl Slot {
             S::CountdownGo => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : bip aigu du départ",
+                            &EL_COUNTDOWN_GO,
+                        ),
                         original("synth", "« GO » synthétisé (#103)"),
                         file(
                             "confirmation",
@@ -832,6 +967,11 @@ impl Slot {
             S::Stall => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : petit moteur qui tousse et cale",
+                            &EL_STALL,
+                        ),
                         original("synth", "Toux synthétisée (#103)"),
                         file(
                             "low-down",
@@ -845,6 +985,11 @@ impl Slot {
             S::BoxBreak => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : carton qui éclate, paillettes",
+                            &EL_BOX_BREAK,
+                        ),
                         original("drop-4", "Kenney : drop_004 (#103)"),
                         file("drop-2", "Kenney : drop_002", &DROP_002),
                     ]
@@ -853,6 +998,7 @@ impl Slot {
             S::RouletteTick => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : cliquet", &EL_ROULETTE_TICK),
                         original("tick-2", "Kenney : tick_002 (#103)"),
                         file("tick-4", "Kenney : tick_004", &TICK_004),
                     ]
@@ -861,6 +1007,7 @@ impl Slot {
             S::RouletteStop => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : clochette", &EL_ROULETTE_STOP),
                         original("glass-1", "Kenney : glass_001 (#103)"),
                         file("glass-2", "Kenney : glass_002", &GLASS_002),
                         file("bong", "Kenney : bong_001", &BONG_001),
@@ -870,6 +1017,7 @@ impl Slot {
             S::Throw => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : lancer", &EL_THROW),
                         original("synth", "Élan synthétisé (#103)"),
                         file("knife", "Kenney : lame tirée (RPG Audio)", &DRAW_KNIFE_3),
                         file("cloth", "Kenney : tissu, cloth3", &CLOTH_3),
@@ -879,6 +1027,11 @@ impl Slot {
             S::Splotch => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : « splotch » mouillé",
+                            &EL_SPLOTCH,
+                        ),
                         original("synth", "« Splotch » synthétisé (#137)"),
                         file("mud-11", "Rubberduck : boue, mud_11", &RUBBERDUCK_MUD_11),
                         file("mud-18", "Rubberduck : boue, mud_18", &RUBBERDUCK_MUD_18),
@@ -889,6 +1042,11 @@ impl Slot {
             S::PeloteBounce => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : pelote qui rebondit",
+                            &EL_PELOTE_BOUNCE,
+                        ),
                         original("soft-medium-3", "Kenney : impactSoft_medium_003 (#103)"),
                         file(
                             "soft-medium-4",
@@ -906,6 +1064,7 @@ impl Slot {
             S::BeeBuzz => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : abeille qui passe", &EL_BEE_BUZZ),
                         original("synth", "Bourdon synthétisé (#103)"),
                         synth(
                             "synth-low",
@@ -919,6 +1078,11 @@ impl Slot {
             S::Explosion => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : petite bombe de dessin animé",
+                            &EL_EXPLOSION,
+                        ),
                         original("crunch-0", "Kenney : explosionCrunch_000 (#103)"),
                         file(
                             "crunch-2",
@@ -932,6 +1096,11 @@ impl Slot {
             S::CreamSquirt => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : bombe de chantilly",
+                            &EL_CREAM_SQUIRT,
+                        ),
                         original("synth", "Giclée synthétisée (#103)"),
                         file("slime-09", "Rubberduck : slime_09", &RUBBERDUCK_SLIME_09),
                     ]
@@ -940,6 +1109,7 @@ impl Slot {
             S::Creamed => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : tarte à la crème", &EL_CREAMED),
                         original("slime-0", "Kenney : slime_000 (#103)"),
                         file("slime-15", "Rubberduck : slime_15", &RUBBERDUCK_SLIME_15),
                     ]
@@ -948,6 +1118,7 @@ impl Slot {
             S::SuperCalin => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : câlin magique", &EL_SUPER_CALIN),
                         original("power-up-7", "Kenney : powerUp7 (#103)"),
                         file("power-up-9", "Kenney : powerUp9", &POWER_UP_9),
                     ]
@@ -956,6 +1127,11 @@ impl Slot {
             S::Fusee => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : fusée de feu d'artifice",
+                            &EL_FUSEE,
+                        ),
                         original("synth", "Fusée synthétisée (#103)"),
                         file("phaser-up-7", "Kenney : phaserUp7", &PHASER_UP_7),
                     ]
@@ -964,6 +1140,11 @@ impl Slot {
             S::Deflate => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : ballon qui se dégonfle",
+                            &EL_DEFLATE,
+                        ),
                         original("synth", "« Pfff » synthétisé (#103)"),
                         file("phaser-down-2", "Kenney : phaserDown2", &PHASER_DOWN_2),
                         file("high-down", "Kenney : highDown", &HIGH_DOWN),
@@ -973,6 +1154,11 @@ impl Slot {
             S::PillowLaunch => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : oreiller catapulté",
+                            &EL_PILLOW_LAUNCH,
+                        ),
                         original("synth", "Élan synthétisé (#103)"),
                         file("cloth-3", "Kenney : tissu, cloth3", &CLOTH_3),
                     ]
@@ -981,6 +1167,11 @@ impl Slot {
             S::PillowFall => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : oreiller qui tombe",
+                            &EL_PILLOW_FALL,
+                        ),
                         original("soft-heavy-2", "Kenney : impactSoft_heavy_002 (#103)"),
                         file(
                             "soft-heavy-4",
@@ -998,6 +1189,7 @@ impl Slot {
             S::Honk => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : klaxon de vélo", &EL_HONK),
                         original("synth", "Coin-coin synthétisé (#103)"),
                         file("squeak", "bart : jouet qui couine", &BART_SQUEAK),
                         file(
@@ -1011,6 +1203,11 @@ impl Slot {
             S::Ghost => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : « pouf » qui disparaît",
+                            &EL_GHOST,
+                        ),
                         original("force-field-1", "Kenney : forceField_001 (#103)"),
                         file("force-field-0", "Kenney : forceField_000", &FORCE_FIELD_000),
                     ]
@@ -1019,6 +1216,7 @@ impl Slot {
             S::Steal => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : vol en douce", &EL_STEAL),
                         original("phase-jump-3", "Kenney : phaseJump3 (#103)"),
                         file("phase-jump-1", "Kenney : phaseJump1", &PHASE_JUMP_1),
                         file("phase-jump-5", "Kenney : phaseJump5", &PHASE_JUMP_5),
@@ -1028,6 +1226,11 @@ impl Slot {
             S::PinataBurst => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : piñata qui éclate",
+                            &EL_PINATA_BURST,
+                        ),
                         original("plank-2", "Kenney : impactPlank_medium_002 (#103)"),
                         file(
                             "plank-0",
@@ -1041,6 +1244,11 @@ impl Slot {
             S::BoomerangThrow => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : boomerang qui tourne",
+                            &EL_BOOMERANG_THROW,
+                        ),
                         original("synth", "Tourbillon synthétisé (#103)"),
                         file("knife", "Kenney : lame tirée (RPG Audio)", &DRAW_KNIFE_3),
                     ]
@@ -1049,6 +1257,11 @@ impl Slot {
             S::ItemBlocked => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : objets qui se cassent",
+                            &EL_ITEM_BLOCKED,
+                        ),
                         original("glass-light-2", "Kenney : impactGlass_light_002 (#103)"),
                         file(
                             "glass-light-0",
@@ -1066,6 +1279,7 @@ impl Slot {
             S::SpinOut => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : tête-à-queue", &EL_SPIN_OUT),
                         original("synth", "« Wiii » synthétisé (#103)"),
                         file(
                             "toy-car",
@@ -1079,6 +1293,7 @@ impl Slot {
             S::Tumble => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : culbute", &EL_TUMBLE),
                         original("soft-heavy-2", "Kenney : impactSoft_heavy_002 (#103)"),
                         file(
                             "soft-heavy-3",
@@ -1096,6 +1311,11 @@ impl Slot {
             S::PawSwing => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : patte qui fouette l'air",
+                            &EL_PAW_SWING,
+                        ),
                         original("synth", "« Fouit » synthétisé (#103)"),
                         file("cloth-3", "Kenney : tissu, cloth3", &CLOTH_3),
                     ]
@@ -1104,6 +1324,7 @@ impl Slot {
             S::PawPof => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : « pof » de patte", &EL_PAW_POF),
                         original("punch-medium-1", "Kenney : impactPunch_medium_001 (#103)"),
                         file(
                             "punch-heavy-1",
@@ -1121,6 +1342,7 @@ impl Slot {
             S::Grab => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : attrape", &EL_GRAB),
                         original("cloth-2", "Kenney : tissu, cloth2 (#103)"),
                         file("cloth-3", "Kenney : tissu, cloth3", &CLOTH_3),
                         file(
@@ -1134,6 +1356,11 @@ impl Slot {
             S::TetherBoing => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : élastique qui claque",
+                            &EL_TETHER_BOING,
+                        ),
                         original("synth", "« Boing » synthétisé (#103)"),
                         file(
                             "spring-01",
@@ -1151,6 +1378,11 @@ impl Slot {
             S::KartBump => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : deux karts qui se cognent",
+                            &EL_KART_BUMP,
+                        ),
                         original("wood-medium-1", "Kenney : impactWood_medium_001 (#103)"),
                         file("crash", "qubodup : choc pour jeu de course", &QUBODUP_CRASH),
                         file(
@@ -1164,6 +1396,7 @@ impl Slot {
             S::WallHit => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : muret rembourré", &EL_WALL_HIT),
                         original("soft-heavy-0", "Kenney : impactSoft_heavy_000 (#103)"),
                         file(
                             "wood-heavy-1",
@@ -1181,6 +1414,7 @@ impl Slot {
             S::Fall => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : sifflet qui descend", &EL_FALL),
                         original("synth", "Sifflet synthétisé (#103)"),
                         file("phaser-down-1", "Kenney : phaserDown1", &PHASER_DOWN_1),
                         file("high-down", "Kenney : highDown", &HIGH_DOWN),
@@ -1190,6 +1424,11 @@ impl Slot {
             S::Pelican => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : grandes ailes qui battent",
+                            &EL_PELICAN,
+                        ),
                         original("synth", "Cri synthétisé (#103)"),
                         original("synth-low", "Cri synthétisé, plus grave").speed(0.8),
                         original("synth-high", "Cri synthétisé, plus aigu").speed(1.25),
@@ -1199,6 +1438,7 @@ impl Slot {
             S::Landing => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : atterrissage", &EL_LANDING),
                         original("soft-medium-1", "Kenney : impactSoft_medium_001 (#103)"),
                         file(
                             "soft-medium-2",
@@ -1216,6 +1456,11 @@ impl Slot {
             S::GliderOpen => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : toile qui s'ouvre",
+                            &EL_GLIDER_OPEN,
+                        ),
                         original("cloth-4", "Kenney : tissu, cloth4 (#103)"),
                         file("cloth-3", "Kenney : tissu, cloth3", &CLOTH_3),
                     ]
@@ -1224,6 +1469,12 @@ impl Slot {
             S::Wind => {
                 const {
                     &[
+                        recording(
+                            "elevenlabs",
+                            "ElevenLabs : vent du planeur (boucle)",
+                            EL_WIND,
+                            0.0,
+                        ),
                         looped("synth", "Vent synthétisé (#103)", LoopTimbre::Wind),
                         recording("woosh", "SketchMan3 : vent (boucle)", SKETCHMAN_WIND, 0.0),
                     ]
@@ -1232,6 +1483,7 @@ impl Slot {
             S::Splash => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : plouf", &EL_SPLASH),
                         original("synth", "Gerbe synthétisée (#103)"),
                         file(
                             "splash-04",
@@ -1249,6 +1501,12 @@ impl Slot {
             S::Rumble => {
                 const {
                     &[
+                        recording(
+                            "elevenlabs",
+                            "ElevenLabs : roulement hors-piste (boucle)",
+                            EL_RUMBLE,
+                            0.0,
+                        ),
                         looped("synth", "Grondement synthétisé (#103)", LoopTimbre::Rumble),
                         recording(
                             "rolling",
@@ -1262,6 +1520,11 @@ impl Slot {
             S::Cries => {
                 const {
                     &[
+                        Candidate::new(
+                            "elevenlabs",
+                            "ElevenLabs : un cri par animal et par humeur",
+                            Source::Files(&EL_CRIES),
+                        ),
                         original("voices", "Voix synthétisées (#103)"),
                         original("higher", "Voix synthétisées, plus aiguës").speed(1.2),
                         original("lower", "Voix synthétisées, plus graves").speed(0.85),
@@ -1271,6 +1534,11 @@ impl Slot {
             S::UiHover => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : petit « tic » de bois",
+                            &EL_UI_HOVER,
+                        ),
                         original("rollover-2", "Kenney : rollover2 (#103)"),
                         file("rollover-4", "Kenney : rollover4", &ROLLOVER_4),
                     ]
@@ -1279,6 +1547,7 @@ impl Slot {
             S::UiChange => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : clic", &EL_UI_CHANGE),
                         original("pluck-1", "Kenney : pluck_001 (#103)"),
                         file("pluck-2", "Kenney : pluck_002", &PLUCK_002),
                     ]
@@ -1287,6 +1556,11 @@ impl Slot {
             S::UiConfirm => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : deux notes qui montent",
+                            &EL_UI_CONFIRM,
+                        ),
                         original("confirmation-1", "Kenney : confirmation_001 (#103)"),
                         file(
                             "confirmation-2",
@@ -1300,6 +1574,11 @@ impl Slot {
             S::UiBack => {
                 const {
                     &[
+                        file(
+                            "elevenlabs",
+                            "ElevenLabs : deux notes qui descendent",
+                            &EL_UI_BACK,
+                        ),
                         original("back-2", "Kenney : back_002 (#103)"),
                         file("back-1", "Kenney : back_001", &BACK_001),
                         file("back-4", "Kenney : back_004", &BACK_004),
@@ -1326,6 +1605,7 @@ impl Slot {
             S::FootJump => {
                 const {
                     &[
+                        file("elevenlabs", "ElevenLabs : petit saut", &EL_FOOT_JUMP),
                         original("synth", "Saut synthétisé (#103)"),
                         file("phase-jump-2", "Kenney : phaseJump2", &PHASE_JUMP_2),
                         file("pep", "Kenney : pepSound2", &PEP_SOUND_2),
@@ -1454,6 +1734,12 @@ impl Slot {
 /// loop.
 const ENGINES: &[Candidate] = &[
     recording(
+        "elevenlabs",
+        "ElevenLabs : petit moteur de kart (boucle)",
+        EL_ENGINE,
+        0.0,
+    ),
+    recording(
         "ziph-07-soft",
         "Ziph : petit moteur de dessin animé, adouci",
         ZIPH_MOTOR_07,
@@ -1500,6 +1786,12 @@ const ENGINES: &[Candidate] = &[
 
 /// The drift's squeals (issue #135): the one by default first.
 const SQUEALS: &[Candidate] = &[
+    recording(
+        "elevenlabs",
+        "ElevenLabs : pneus qui crissent (boucle)",
+        EL_SQUEAL,
+        0.0,
+    ),
     looped(
         "synth-soft",
         "Crissement doux, synthétisé (#135)",
@@ -1519,11 +1811,17 @@ const SQUEALS: &[Candidate] = &[
     ),
 ];
 
-/// The variant of a one-shot in its slot: a drift tier, a footstep (0 otherwise).
+/// The variant of a one-shot in its slot: a drift tier, a footstep, a cry (an animal's four
+/// moods in a row, the animals in `Animal::ALL`'s order: `EL_CRIES`), 0 otherwise.
 fn variant(sound: SoundEffect) -> usize {
     match sound {
         SoundEffect::DriftTier(tier) | SoundEffect::MiniTurbo(tier) => tier.index(),
         SoundEffect::Footstep(step) => usize::from(step),
+        SoundEffect::Cry(animal, mood) => {
+            let animal = Animal::ALL.iter().position(|a| *a == animal).unwrap_or(0);
+            let mood = Mood::ALL.iter().position(|m| *m == mood).unwrap_or(0);
+            animal * Mood::ALL.len() + mood
+        }
         _ => 0,
     }
 }
@@ -1780,19 +2078,52 @@ mod tests {
         }
     }
 
-    /// Issue #135: by default every sound is #103's (but the engine and the squeal, which change);
-    /// another candidate changes the clip, keeps each variant's own (the footsteps), and the drift's
-    /// chimes still climb.
+    /// Issue #235 (was #135's): by default every sound is ElevenLabs' (but the footsteps, still
+    /// #103's); the sound of #103 is the next candidate, still chosen in the panel; another
+    /// candidate changes the clip, keeps each variant's own (the footsteps, each animal's cry),
+    /// and the drift's chimes still climb.
     #[test]
     fn a_choice_changes_what_a_sound_plays() {
         let mut choices = SoundChoices::default();
+        let mut previous = SoundChoices::default();
         for sound in SoundEffect::from_files().chain(SoundEffect::synthesized()) {
-            let pick = pick(sound, &choices);
-            assert_eq!(pick, original_pick(sound, 1.0, 1.0), "{sound:?}");
+            let slot = Slot::of(sound).unwrap();
+            let picked = pick(sound, &choices);
+            if slot == Slot::Footsteps {
+                assert_eq!(picked, original_pick(sound, 1.0, 1.0), "{sound:?}");
+                continue;
+            }
+            let Picked::File(path) = picked.clip else {
+                panic!("{sound:?}: {picked:?}");
+            };
+            assert!(path.starts_with("audio/elevenlabs/"), "{sound:?}: {path}");
+            assert_eq!(choices.candidate(slot).id, "elevenlabs");
+            // #103's sound is still there, right after it.
+            previous.choose(slot, 1);
+            if slot.candidates()[1].source == Source::Original {
+                assert_eq!(
+                    pick(sound, &previous),
+                    original_pick(sound, 1.0, 1.0),
+                    "{sound:?}"
+                );
+            }
         }
+        // Each animal its own cry for each mood: 36 files, all different.
+        let mut cries = HashSet::new();
+        for animal in Animal::ALL {
+            for mood in Mood::ALL {
+                let Picked::File(path) = pick(SoundEffect::Cry(animal, mood), &choices).clip else {
+                    panic!("{animal:?} {mood:?}");
+                };
+                let name = format!("{animal:?}_{mood:?}").to_lowercase();
+                assert!(path.ends_with(&format!("cry_{name}.ogg")), "{path}");
+                assert!(cries.insert(path));
+            }
+        }
+        assert_eq!(cries.len(), 36);
         // Another file.
-        assert!(choices.choose(Slot::KartBump, 1));
-        assert!(!choices.choose(Slot::KartBump, 1), "already");
+        assert!(choices.choose(Slot::KartBump, 2));
+        assert!(!choices.choose(Slot::KartBump, 2), "already");
         assert!(!choices.choose(Slot::KartBump, 99), "no such candidate");
         let bump = pick(SoundEffect::KartBump, &choices);
         assert_eq!(bump.clip, Picked::File("audio/qubodup/crash.ogg"));
@@ -1809,20 +2140,22 @@ mod tests {
                 .map(|(path, _)| Picked::File(path))
                 .collect::<Vec<_>>()
         );
-        // The chimes climb with a file too.
-        choices.choose(Slot::DriftTier, 1);
-        let speeds: Vec<f32> = MiniTurbo::ALL
-            .iter()
-            .map(|tier| pick(SoundEffect::DriftTier(*tier), &choices).speed)
-            .collect();
-        assert!(speeds[0] < speeds[1] && speeds[1] < speeds[2], "{speeds:?}");
+        // The chimes climb with a file: ElevenLabs' (by default) and another.
+        for index in [0, 2] {
+            choices.choose(Slot::DriftTier, index);
+            let speeds: Vec<f32> = MiniTurbo::ALL
+                .iter()
+                .map(|tier| pick(SoundEffect::DriftTier(*tier), &choices).speed)
+                .collect();
+            assert!(speeds[0] < speeds[1] && speeds[1] < speeds[2], "{speeds:?}");
+        }
         // Another synthesis, for every tier.
-        choices.choose(Slot::MiniTurbo, 1);
+        choices.choose(Slot::MiniTurbo, 2);
         let fwoosh = pick(SoundEffect::MiniTurbo(MiniTurbo::Orange), &choices);
-        assert_eq!(fwoosh.clip, Picked::Synth(Slot::MiniTurbo, 1));
+        assert_eq!(fwoosh.clip, Picked::Synth(Slot::MiniTurbo, 2));
         assert!((fwoosh.seconds - SOFT_FWOOSH.duration).abs() < 1e-6);
         // The same voices, higher: the cries keep each animal's.
-        choices.choose(Slot::Cries, 1);
+        choices.choose(Slot::Cries, 2);
         let cry = pick(SoundEffect::Cry(Animal::Cow, Mood::Hurt), &choices);
         assert_eq!(
             cry.clip,
@@ -1831,16 +2164,12 @@ mod tests {
         assert!(cry.speed > 1.1);
         // The croquettes keep their blips.
         assert_eq!(pick(SoundEffect::CroquettePop, &choices).clip, Picked::Blip);
-        // The engine and the squeal by default: not #103's syntheses any more.
+        // The loops by default: ElevenLabs' recordings, made into seamless loops by the game.
         let defaults = SoundChoices::default();
-        assert_ne!(
-            defaults.candidate(Slot::Engine).source,
-            Source::Loop(LoopTimbre::Engine)
-        );
-        assert_ne!(
-            defaults.candidate(Slot::Squeal).source,
-            Source::Loop(LoopTimbre::Squeal)
-        );
+        for slot in [Slot::Engine, Slot::Squeal, Slot::Wind, Slot::Rumble] {
+            let (path, _) = defaults.candidate(slot).recording().unwrap();
+            assert!(path.starts_with("audio/elevenlabs/"), "{slot:?}");
+        }
     }
 
     /// Issue #135: the choices are kept as a text Max can copy: only what changed, by ids, which
@@ -1854,7 +2183,7 @@ mod tests {
             (SoundChoices::default(), vec![])
         );
         let mut choices = SoundChoices::default();
-        choices.choose(Slot::Engine, 2);
+        choices.choose(Slot::Engine, 3);
         choices.choose(Slot::Squeal, 3);
         choices.choose(Slot::Honk, 1);
         let text = choices.export();
@@ -1869,7 +2198,7 @@ mod tests {
         assert!(ignored.is_empty());
         let (partial, ignored) =
             SoundChoices::import("honk = \"squeak\"\nnope = \"x\"\nengine = \"nope\"\ngarbage");
-        assert_eq!(partial.index(Slot::Honk), 1);
+        assert_eq!(partial.index(Slot::Honk), 2);
         assert_eq!(partial.index(Slot::Engine), 0);
         assert_eq!(ignored.len(), 3, "{ignored:?}");
     }

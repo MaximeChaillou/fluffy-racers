@@ -307,9 +307,9 @@ fn create_bank(
 }
 
 /// A recorded loop is crossfaded over this long where it starts again (s)...
-const LOOP_SEAM: f32 = 0.04;
+pub(super) const LOOP_SEAM: f32 = 0.04;
 /// ...and brought to this level (RMS), about the syntheses' (each candidate has its gain).
-const RECORDED_RMS: f32 = 0.3;
+pub(super) const RECORDED_RMS: f32 = 0.3;
 
 /// Issue #135: the candidates chosen get their clips, once each (files loaded, syntheses rendered,
 /// loops built; a recorded loop decoded when its file is there). Nothing to do most frames.

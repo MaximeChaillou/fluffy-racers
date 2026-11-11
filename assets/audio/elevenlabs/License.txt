@@ -1,0 +1,14 @@
+Sound effects generated with ElevenLabs (elevenlabs.io).
+
+These sounds are NOT CC0. They were generated for Fluffy Racers on 2026-11-10/11 with the
+ElevenLabs text-to-sound model (eleven_text_to_sound_v2), on Max's ElevenLabs account
+(free plan), at his request (issue #235: « Je veux que tu fasses les bruitages avec elevenlabs »).
+On the free plan, ElevenLabs asks for this attribution and allows non-commercial use only:
+check ElevenLabs' terms (https://elevenlabs.io/terms-of-use) before any commercial use, or
+regenerate them on a paid plan.
+
+Processed for the game: MP3 decoded, mixed to mono, 44.1 kHz, silence trimmed at both ends of
+the one-shots, long ones cut with a fade out, short fades in and out, levels matched (RMS of the
+sound about -16 dBFS, peak at most -1 dBFS), encoded as OGG Vorbis (quality about 3). The loops
+(engine, squeal, wind, rumble: generated as loops) are only levelled: the game crossfades their
+seam itself (src/audio/dsp.rs, seamless_loop).
