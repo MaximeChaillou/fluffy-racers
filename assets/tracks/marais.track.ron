@@ -1,0 +1,387 @@
+// "Marais Mitaine": a marsh in the misty morning, its causeways between the reeds and the
+// boathouses (issue #112, the 15th circuit, the third of the fourth cup), after the guide
+// « Conception des circuits » (docs/GAME_DESIGN.md § 16). Original layout, about 1650 m a lap,
+// turning left, from -2 to 14 m up: the start straight on the main causeway, 14 m up; the S of
+// the boathouses, two hairpins of 180° back to back (left, right); north to the risky jump's corner (a tight corner to
+// the left, its inside a drop, that a ramp crosses), its wide landing, west, and the glide ramp:
+// the glide down over the marsh, 11 m; a hairpin to the left, and the ford, east, through the
+// water; then the lacets back up through the marsh, three hairpins (right, left, right) and their
+// legs, gentle (8 % at most): a trick ramp, a bump, the drop of 4 m off the last leg (36 m after
+// its hairpin, 35 m straight below it), the bison; two tight corners to the
+// left (south, then east); the bulge round a giant willow, whose hidden road runs straight behind
+// a stack of crates; the last corner, that the grass bridge crosses behind a curtain of reeds. Six hairpins of 180° (a Normal bot drifts them), the
+// bulge's S (right 75°, left 150°, right 75°), four tight corners of 90°: no long soft curve, one
+// long straight. No anti-gravity: the glider and the water instead.
+//
+// The pieces: the jump's corner, its landing and the
+// glide, and the bulge, the last corner and their paths, are the Falaises Flanelle's (the
+// Corniche Cannelle's, mirrored: their gains and their hiding were tuned), lower, with other
+// covers; the rest is new (the S, the ford and the lacets). Drawn as a plan of straights and arcs
+// (hairpins of 22 m, tight corners of 18 m), its points every 8 m along it (the parameters below
+// follow them). The generator is not in the repository.
+//
+// Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
+// -Z), then turn left. The grid sits on the straight behind point 0.
+(
+    name: "Marais Mitaine",
+    // Dressing (issue #11): the marsh in the misty morning (`assets/data/biomes.ron`, Kenney's
+    // Watercraft Kit and the Nature Kit), the same every time (seed), and pieces placed by hand:
+    // checkered flags at the start line; boathouses along the main causeway; a sailing boat run
+    // aground by the jump's corner; a giant willow in the bulge.
+    biome: "Marais",
+    // Issue #104: its music (`assets/data/music.ron`).
+    music: "fairy-adventure",
+    decor_seed: 115,
+    // Issue #195: the marsh's low banks (`assets/data/biomes.ron`), and they hug the road
+    // (`embank`, rise over run: about 31°): the causeways, up to 14 m above the marsh, are carried
+    // by the banks up to their walls. The voids stay (the jump's corner, the glide's drop, the
+    // bulge, the last corner); the ford keeps its ground.
+    terrain: (height: 20.0, scale: 140.0, floor: 0.3, rock: (0.46, 0.40, 0.30), embank: 0.6),
+    props: [
+        (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
+        // Boathouses along the main causeway, on the start straight.
+        (model: "watercraft-kit/boat-house-a", at: 2.5, side: Right, height: 5.0, radius: 3.0, gap: 0.5),
+        (model: "watercraft-kit/boat-house-b", at: 6.0, side: Right, height: 5.0, radius: 3.0, gap: 0.5),
+        (model: "watercraft-kit/boat-house-c", at: 2.0, side: Left, height: 5.0, radius: 3.0, gap: 0.5),
+        // A sailing boat run aground by the jump's corner, over the marsh.
+        (model: "watercraft-kit/boat-sail-a", at: 35.204, side: Right, height: 16.0, radius: 6.0, gap: 2.0),
+        // A giant willow in the bulge.
+        (model: "nature-kit/tree_detailed_dark", at: 174.216, side: Left, height: 22.0, radius: 3.8, gap: 8.0),
+    ],
+    checkpoint_spacing: 25.0,
+    points: [
+        (pos: (0.00, 14.00, 0.00), width: 15.0, shoulder: 3.0),
+        // 0-6: the start straight on the main causeway, 14 m up, heading north: the one long
+        // straight (the slipstream, the items). The grid sits behind point 0.
+        (pos: (0.00, 14.00, -7.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -15.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -22.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -30.00), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -37.50), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 14.00, -45.00), width: 15.0, shoulder: 3.0),
+        // the S of the boathouses: a hairpin to the left (radius 22 m, 180°), south, and at once a
+        // hairpin to the right (180°), north.
+        (pos: (-1.67, 14.00, -53.42), width: 13.0, shoulder: 2.0),
+        (pos: (-6.44, 14.00, -60.56), width: 13.0, shoulder: 2.0),
+        (pos: (-13.58, 14.00, -65.33), width: 13.0, shoulder: 2.0),
+        (pos: (-22.00, 14.00, -67.00), width: 13.0, shoulder: 2.0),
+        (pos: (-30.42, 14.00, -65.33), width: 13.0, shoulder: 2.0),
+        (pos: (-37.56, 14.00, -60.56), width: 13.0, shoulder: 2.0),
+        (pos: (-42.33, 14.00, -53.42), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.00, -45.00), width: 13.0, shoulder: 2.0),
+        (pos: (-45.67, 14.00, -36.58), width: 13.0, shoulder: 2.0),
+        (pos: (-50.44, 14.00, -29.44), width: 13.0, shoulder: 2.0),
+        (pos: (-57.58, 14.00, -24.67), width: 13.0, shoulder: 2.0),
+        (pos: (-66.00, 14.00, -23.00), width: 13.0, shoulder: 2.0),
+        (pos: (-74.42, 14.00, -24.67), width: 13.0, shoulder: 2.0),
+        (pos: (-81.56, 14.00, -29.44), width: 13.0, shoulder: 2.0),
+        (pos: (-86.33, 14.00, -36.58), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -45.00), width: 13.0, shoulder: 2.0),
+        // north, to the risky jump's corner.
+        (pos: (-88.00, 14.00, -53.37), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -61.73), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -70.09), width: 13.0, shoulder: 2.0),
+        // the risky jump's corner and the glide (the Falaises Flanelle's piece, 5 m lower): north,
+        // then a tight corner to the left (90°), its inside a drop that the jump cuts across; the
+        // wide landing, west, the glide ramp; the glide down over the marsh (no road: the gap), 11
+        // m; the landing, wide.
+        (pos: (-88.00, 14.00, -78.46), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -86.48), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 14.00, -94.50), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -102.52), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -110.54), width: 13.0, shoulder: 2.0),
+        (pos: (-87.98, 14.00, -118.56), width: 13.0, shoulder: 2.0),
+        (pos: (-87.98, 14.00, -126.59), width: 13.0, shoulder: 2.0),
+        (pos: (-87.99, 14.00, -134.60), width: 13.0, shoulder: 2.0),
+        (pos: (-88.55, 14.00, -142.58), width: 13.0, shoulder: 2.0),
+        (pos: (-92.15, 14.00, -149.67), width: 13.0, shoulder: 2.0),
+        (pos: (-98.48, 14.00, -154.50), width: 13.0, shoulder: 2.0),
+        (pos: (-106.26, 13.99, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-114.28, 13.82, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-122.30, 13.64, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-130.32, 13.46, -156.15), width: 20.0, shoulder: 2.0),
+        (pos: (-138.34, 13.28, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-146.36, 13.10, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-154.39, 12.48, -156.16), width: 20.0, shoulder: 2.0),
+        (pos: (-162.41, 11.27, -156.17), width: 20.0, shoulder: 2.0),
+        (pos: (-170.42, 10.05, -156.17), width: 20.0, shoulder: 2.0),
+        (pos: (-178.45, 8.84, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-186.47, 7.62, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-194.49, 6.41, -156.18), width: 20.0, shoulder: 2.0),
+        (pos: (-202.52, 5.19, -156.19), width: 20.0, shoulder: 2.0),
+        (pos: (-210.54, 3.98, -156.19), width: 20.0, shoulder: 2.0),
+        (pos: (-218.55, 2.97, -156.19), width: 18.0, shoulder: 2.0),
+        (pos: (-226.58, 2.81, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-234.60, 2.65, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-242.62, 2.49, -156.21), width: 18.0, shoulder: 2.0),
+        (pos: (-250.65, 2.33, -156.21), width: 18.0, shoulder: 2.0),
+        (pos: (-258.66, 2.17, -156.20), width: 18.0, shoulder: 2.0),
+        (pos: (-266.68, 2.01, -156.21), width: 18.0, shoulder: 2.0),
+        // a hairpin to the left (radius 22 m), east.
+        (pos: (-275.10, 2.01, -154.54), width: 13.0, shoulder: 2.0),
+        (pos: (-282.24, 2.01, -149.77), width: 13.0, shoulder: 2.0),
+        (pos: (-287.01, 2.01, -142.63), width: 13.0, shoulder: 2.0),
+        (pos: (-288.68, 2.00, -134.21), width: 13.0, shoulder: 2.0),
+        (pos: (-287.01, 2.00, -125.79), width: 13.0, shoulder: 2.0),
+        (pos: (-282.24, 2.00, -118.65), width: 13.0, shoulder: 2.0),
+        (pos: (-275.10, 2.00, -113.88), width: 13.0, shoulder: 2.0),
+        (pos: (-266.68, 2.00, -112.21), width: 13.0, shoulder: 2.0),
+        // east, the ford: the road dips under the water of the marsh (-2 m), and out of it.
+        (pos: (-258.47, 1.98, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-250.27, 1.55, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-242.06, 0.75, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-233.86, -0.22, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-225.65, -1.14, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-217.44, -1.80, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-209.24, -2.00, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-201.03, -2.00, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-192.82, -2.00, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-184.62, -1.62, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-176.41, -0.82, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-168.21, -0.13, -112.21), width: 13.0, shoulder: 2.0),
+        (pos: (-160.00, 0.00, -112.21), width: 13.0, shoulder: 2.0),
+        // the lacets back up through the marsh: a hairpin to the right, west...
+        (pos: (-151.58, 0.06, -110.54), width: 13.0, shoulder: 2.0),
+        (pos: (-144.44, 0.12, -105.77), width: 13.0, shoulder: 2.0),
+        (pos: (-139.67, 0.19, -98.63), width: 13.0, shoulder: 2.0),
+        (pos: (-138.00, 0.25, -90.21), width: 13.0, shoulder: 2.0),
+        (pos: (-139.67, 0.31, -81.79), width: 13.0, shoulder: 2.0),
+        (pos: (-144.44, 0.38, -74.65), width: 13.0, shoulder: 2.0),
+        (pos: (-151.58, 0.44, -69.88), width: 13.0, shoulder: 2.0),
+        (pos: (-160.00, 0.50, -68.21), width: 13.0, shoulder: 2.0),
+        // ...west, climbing (5 %; a trick ramp at its start, the bison on its left side)...
+        (pos: (-168.18, 0.62, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-176.36, 0.94, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-184.55, 1.41, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-192.73, 2.00, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-200.91, 2.66, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-209.09, 3.34, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-217.27, 4.00, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-225.45, 4.59, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-233.64, 5.06, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-241.82, 5.38, -68.21), width: 13.0, shoulder: 2.0),
+        (pos: (-250.00, 5.50, -68.21), width: 13.0, shoulder: 2.0),
+        // ...a hairpin to the left, east...
+        (pos: (-258.42, 5.56, -66.54), width: 13.0, shoulder: 2.0),
+        (pos: (-265.56, 5.62, -61.77), width: 13.0, shoulder: 2.0),
+        (pos: (-270.33, 5.69, -54.63), width: 13.0, shoulder: 2.0),
+        (pos: (-272.00, 5.75, -46.21), width: 13.0, shoulder: 2.0),
+        (pos: (-270.33, 5.81, -37.79), width: 13.0, shoulder: 2.0),
+        (pos: (-265.56, 5.88, -30.65), width: 13.0, shoulder: 2.0),
+        (pos: (-258.42, 5.94, -25.88), width: 13.0, shoulder: 2.0),
+        (pos: (-250.00, 6.00, -24.21), width: 13.0, shoulder: 2.0),
+        // ...east, climbing (6 %; a bump 20 m out of the hairpin)...
+        (pos: (-241.79, 6.09, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-233.57, 6.36, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-225.36, 6.77, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-217.14, 7.29, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-208.93, 7.90, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-200.71, 8.56, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-192.50, 9.25, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-184.29, 9.94, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-176.07, 10.60, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-167.86, 11.21, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-159.64, 11.73, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-151.43, 12.14, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-143.21, 12.41, -24.21), width: 13.0, shoulder: 2.0),
+        (pos: (-135.00, 12.50, -24.21), width: 13.0, shoulder: 2.0),
+        // ...a hairpin to the right, west...
+        (pos: (-126.58, 12.56, -22.54), width: 13.0, shoulder: 2.0),
+        (pos: (-119.44, 12.62, -17.77), width: 13.0, shoulder: 2.0),
+        (pos: (-114.67, 12.69, -10.63), width: 13.0, shoulder: 2.0),
+        (pos: (-113.00, 12.75, -2.21), width: 13.0, shoulder: 2.0),
+        (pos: (-114.67, 12.81, 6.21), width: 13.0, shoulder: 2.0),
+        (pos: (-119.44, 12.88, 13.35), width: 13.0, shoulder: 2.0),
+        (pos: (-126.58, 12.94, 18.12), width: 13.0, shoulder: 2.0),
+        (pos: (-135.00, 13.00, 19.79), width: 13.0, shoulder: 2.0),
+        // ...west, the drop of 4 m (36 m after the hairpin, 35 m straight below it, 84 m to the
+        // tight corners), then climbing gently (a log rolls across its left side).
+        (pos: (-143.00, 13.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-151.00, 13.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-159.00, 13.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-167.00, 13.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-175.00, 9.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-183.00, 9.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-191.00, 9.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-199.00, 9.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-207.00, 9.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-215.00, 9.15, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-223.00, 9.52, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-231.00, 10.00, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-239.00, 10.48, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-247.00, 10.85, 19.79), width: 13.0, shoulder: 2.0),
+        (pos: (-255.00, 11.00, 19.79), width: 13.0, shoulder: 2.0),
+        // a tight corner to the left (radius 18 m), south...
+        (pos: (-261.89, 11.15, 21.16), width: 13.0, shoulder: 2.0),
+        (pos: (-267.73, 11.30, 25.06), width: 13.0, shoulder: 2.0),
+        (pos: (-271.63, 11.45, 30.90), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 11.60, 37.79), width: 13.0, shoulder: 2.0),
+        // ...south, 46 m...
+        (pos: (-273.00, 11.73, 45.43), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 12.07, 53.07), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 12.50, 60.71), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 12.93, 68.35), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 13.27, 75.99), width: 13.0, shoulder: 2.0),
+        (pos: (-273.00, 13.40, 83.63), width: 13.0, shoulder: 2.0),
+        // ...and a tight corner to the left, east.
+        (pos: (-271.63, 13.55, 90.52), width: 13.0, shoulder: 2.0),
+        (pos: (-267.73, 13.70, 96.36), width: 13.0, shoulder: 2.0),
+        (pos: (-261.89, 13.85, 100.26), width: 13.0, shoulder: 2.0),
+        (pos: (-255.00, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        // east, the approach of the bulge (a long bump, its boost pad on it).
+        (pos: (-246.82, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-238.63, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-230.45, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-222.26, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-214.08, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-205.89, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-197.71, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-189.52, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        // the bulge and the last corner (the Falaises Flanelle's piece, 22 m lower): the bulge
+        // (right 75°, left 150°, right 75°) round a giant willow: the hidden road goes straight
+        // behind it, through a stack of crates; the last corner, to the left (90°), its inside a
+        // drop that the grass bridge crosses behind a curtain of reeds; north, the start straight.
+        (pos: (-181.34, 14.00, 101.63), width: 13.0, shoulder: 2.0),
+        (pos: (-173.40, 14.00, 102.61), width: 13.0, shoulder: 2.0),
+        (pos: (-166.07, 14.00, 105.79), width: 13.0, shoulder: 2.0),
+        (pos: (-159.93, 14.00, 110.91), width: 13.0, shoulder: 2.0),
+        (pos: (-155.49, 14.00, 117.56), width: 13.0, shoulder: 2.0),
+        (pos: (-152.82, 14.00, 125.11), width: 13.0, shoulder: 2.0),
+        (pos: (-148.93, 14.00, 132.10), width: 13.0, shoulder: 2.0),
+        (pos: (-143.23, 14.00, 137.70), width: 13.0, shoulder: 2.0),
+        (pos: (-136.18, 14.00, 141.46), width: 13.0, shoulder: 2.0),
+        (pos: (-128.35, 14.00, 143.08), width: 13.0, shoulder: 2.0),
+        (pos: (-120.39, 14.00, 142.42), width: 13.0, shoulder: 2.0),
+        (pos: (-112.93, 14.00, 139.54), width: 13.0, shoulder: 2.0),
+        (pos: (-106.60, 14.00, 134.66), width: 13.0, shoulder: 2.0),
+        (pos: (-101.89, 14.00, 128.20), width: 13.0, shoulder: 2.0),
+        (pos: (-99.10, 14.00, 120.70), width: 13.0, shoulder: 2.0),
+        (pos: (-95.50, 14.00, 113.56), width: 13.0, shoulder: 2.0),
+        (pos: (-90.02, 14.00, 107.74), width: 13.0, shoulder: 2.0),
+        (pos: (-83.12, 14.00, 103.70), width: 13.0, shoulder: 2.0),
+        (pos: (-75.36, 14.00, 101.77), width: 13.0, shoulder: 2.0),
+        (pos: (-67.35, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-59.33, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-51.30, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-43.28, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-35.26, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-27.24, 14.00, 101.63), width: 15.0, shoulder: 3.0),
+        (pos: (-19.22, 14.00, 101.61), width: 15.0, shoulder: 3.0),
+        (pos: (-11.48, 14.00, 99.72), width: 15.0, shoulder: 3.0),
+        (pos: (-5.09, 14.00, 94.95), width: 15.0, shoulder: 3.0),
+        (pos: (-1.07, 14.00, 88.08), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 80.17), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 72.15), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 64.13), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 56.11), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 48.09), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 40.07), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 32.05), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 24.02), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 16.00), width: 15.0, shoulder: 3.0),
+        (pos: (-0.00, 14.00, 7.98), width: 15.0, shoulder: 3.0),
+    ],
+    // Issue #20: the glide down over the marsh (the Falaises Flanelle's): the glide ramp across the
+    // wide landing, its top at the start of the gap; the gap, no road: 11 m down to the landing.
+    glide_ramps: [
+        (at: 41.579, offset: 0.0, width: 24.0, length: 8.0, angle: 12.0),
+    ],
+    gaps: [
+        (from: 42.576, to: 50.804),
+    ],
+    // Issue #20: the ford, east of the glide's foot: the road dips under the water (-2 m) and
+    // comes out of it before the hairpin.
+    lakes: [
+        (center: (-202.0, -112.2), size: (79.0, 34.0), level: -0.4, floor: -6.0),
+    ],
+    // Issue #107: the sides without wall: the inside of the jump's corner, along the bulge (the
+    // hidden road) and inside the last corner (the grass bridge), each over a drop. Everywhere
+    // else, walls: the S, the lacets, the ford.
+    open_edges: [
+        (from: 29.826, to: 40.457, side: Left),
+        (from: 166.000, to: 184.351, side: Left),
+        (from: 184.173, to: 197.900, side: Left),
+    ],
+    // Issue #184 (GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver), where
+    // nothing turns for 60 m and more after them: on the second leg of the lacets, 20 m out of its
+    // hairpin (65 m on to the next one), and out of the last tight corner (a long one, 40 m: the
+    // Falaises Flanelle's, its boost pad on it; then the bulge, a gentle S). None on the way back
+    // to the line: the grid is there.
+    bumps: [
+        (at: 107.4, height: 2.2, length: 30.0),
+        (at: 157.4, height: 2.2, length: 40.0),
+    ],
+    // Issue #184: a drop of 4 m off the last leg of the lacets, 36 m after the hairpin before it:
+    // 35 m straight below it, 84 m on to the tight corners (more than 2 s: the bots trick off it).
+    drops: [
+        (at: 131.5, height: 4.0),
+    ],
+    shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
+        // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it
+        // falls.
+        (from: 30.450, to: 40.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(-89.49, 14.00, -114.14), (-91.48, 14.00, -129.15), (-99.01, 14.00, -134.09), (-124.99, 13.58, -151.15), (-133.99, 13.58, -151.15)]),
+        // Issue #193: grass, like every shortcut: it pays only with a boost.
+        // The hidden road: narrow (5 m), straight behind the giant willow while the road goes
+        // round it, behind a stack of crates 18 m in, where it leaves the road's edge (they burst
+        // as one drives through them, a little slower, and come back).
+        (from: 166.000, to: 183.603, kind: Grass, width: 5.0,
+         points: [(-172.00, 14.00, 97.63), (-121.27, 14.00, 97.63), (-70.53, 14.00, 97.63)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker
+        // with one (the mini-turbo of the bulge's last turn, a piment); behind a curtain of tall
+        // reeds 26 m in, that one drives through without slowing down.
+        (from: 184.921, to: 197.828, kind: Grass, width: 5.0,
+         points: [(-59.96, 14.00, 94.63), (-53.49, 14.00, 93.78), (-47.46, 14.00, 91.28), (-42.48, 14.00, 88.41), (-37.50, 14.00, 85.53), (-32.52, 14.00, 82.66), (-27.54, 14.00, 79.78), (-22.54, 14.00, 76.28), (-18.23, 14.00, 71.97), (-14.73, 14.00, 66.97), (-12.15, 14.00, 61.44), (-10.57, 14.00, 55.55), (-10.04, 14.00, 49.47)],
+         cover: Some((kind: Foliage, at: 26.0))),
+    ],
+    // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
+    // the next turn does not want: a rock at the left edge of the start straight (the karts keep
+    // right for the first hairpin, to the left); the bison paces across the left side of the first
+    // leg of the lacets (a hairpin to the left after it); a log rolls across the left side of the
+    // last leg, well past the foot of the drop (a tight corner to the left after it).
+    obstacles: [
+        (kind: Rock, at: 5.5, offset: -0.95, size: 1.1, yaw: 20.0),
+        (kind: RollingLog, at: 139.000, offset: -0.50, sweep: 0.32, period: 5.0),
+    ],
+    npcs: [
+        (kind: Bison, at: 93.000, offset: -0.55, sweep: 0.3, period: 6.5),
+    ],
+    // Issue #144: balloons just after the start line (the pack bursts them at GO), a hay bale
+    // below the drop, crates at the end of the second leg.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 135.500, offsets: [0.5]),
+        (kind: Crate, at: 117.000, offsets: [0.60, 0.25]),
+    ],
+    // Trick ramps (issue #13): out of the first hairpin of the lacets, on its leg (80 m before
+    // the next hairpin). None before the water.
+    trick_ramps: [
+        (at: 87.300, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+    ],
+    // Boost pads (issue #13): out of the last hairpin of the lacets, toward the drop, and on the
+    // bump out of the last tight corner. None before the grass bridge: it pays only with a boost
+    // of one's own.
+    boost_pads: [
+        (at: 128.000, offset: 0.0),
+        (at: 158.435, offset: 0.0),
+    ],
+    item_boxes: [
+        (at: 4.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 27.832, offsets: [-0.5, 0.0, 0.5]),
+        (at: 115.000, offsets: [-0.4, 0.0, 0.4]),
+        (at: 162.670, offsets: [-0.7], double: true),
+    ],
+    // Croquettes (issue #14): lines along the straights, off the middle of the road, never on
+    // the grid; one along the glide (for the divers).
+    croquettes: [
+        (from: 3.4, count: 5, spacing: 3.0, offset: -0.42),
+        (from: 43.324, count: 6, spacing: 5.0, offset: 0.0),
+        (from: 89.500, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 136.500, count: 4, spacing: 3.0, offset: 0.4),
+        (from: 183.853, count: 4, spacing: 3.0, offset: 0.4),
+    ],
+)

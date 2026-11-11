@@ -48,6 +48,13 @@ http://creativecommons.org/publicdomain/zero/1.0/
   lap), from 150 to 165 bpm at the same pitch (ffmpeg atempo), cut to a whole number of bars
   (40), 4 ms fades at its ends (the loop's seam), encoded with ffmpeg's own Vorbis encoder; CC0
   like the original.
+- fairy_adventure_bpm140.ogg ("Fairy Adventure", the Marais Mitaine, issue #112):
+  https://opengameart.org/content/fairy-adventure (CC0, by the same author, outside the
+  collection). The OGG file of that page as it is (256 kbps), its tags removed (not re-encoded).
+- fairy_adventure_fast_bpm155.ogg: the same piece made faster for Fluffy Racers (its last lap),
+  from 140 to 155 bpm at the same pitch (ffmpeg atempo), cut to a whole number of bars (84), 4 ms
+  fades at its ends (the loop's seam), encoded with ffmpeg's own Vorbis encoder; CC0 like the
+  original.
 - racing_game_title_bpm140.ogg: https://opengameart.org/content/racing-game-title
 - racing_game_menu_bpm165.ogg: https://opengameart.org/content/racing-game-menu
 - racing_game_result_best_bpm140.ogg: https://opengameart.org/content/racing-game-result

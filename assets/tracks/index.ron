@@ -17,7 +17,9 @@
 // the « Coupe Pantoufle » (not offered until it has its four circuits). Issue #112: the Manège
 // Mousseline (a fair on its hill: the climb along its big coaster, the jump on its top, the
 // lacets down through the stalls, the hidden road behind a curtain of tall grass), the second
-// circuit of the fourth cup.
+// circuit of the fourth cup; then the Marais Mitaine (a marsh in the misty morning: the jump and
+// the glide over the marsh, the ford, the lacets back up, the hidden road behind a stack of
+// crates), the third.
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -40,6 +42,7 @@
         (name: "Périple Polochon", file: "periple.track.ron", long: true),
         (name: "Bourg Bouillotte", file: "bourg.track.ron"),
         (name: "Manège Mousseline", file: "manege.track.ron"),
+        (name: "Marais Mitaine", file: "marais.track.ron"),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),

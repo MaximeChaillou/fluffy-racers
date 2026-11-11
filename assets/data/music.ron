@@ -118,6 +118,14 @@
          seconds: 64.0, bpm: 150.0, volume: 0.73, faster: "amusement-park-stage-fast"),
         (id: "amusement-park-stage-fast", file: "music/mintodog/amusement_park_stage_fast_bpm165.ogg",
          seconds: 58.18195, bpm: 165.0, volume: 0.73),
+        // Marais Mitaine (issue #112, a marsh in the misty morning): « Fairy Adventure »
+        // (« fantasy field music »); it has no « Climax »: its version of the last lap is the same
+        // music made faster for the game, 140 to 155 bpm at the same pitch (`ffmpeg -af atempo`,
+        // cut to a whole number of bars; -11.2 and -11.3 LUFS).
+        (id: "fairy-adventure", file: "music/mintodog/fairy_adventure_bpm140.ogg",
+         seconds: 144.0, bpm: 140.0, volume: 0.82, faster: "fairy-adventure-fast"),
+        (id: "fairy-adventure-fast", file: "music/mintodog/fairy_adventure_fast_bpm155.ogg",
+         seconds: 130.065125, bpm: 155.0, volume: 0.83),
 
         // The screens.
         (id: "racing-game-title", file: "music/mintodog/racing_game_title_bpm140.ogg",

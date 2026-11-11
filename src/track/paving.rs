@@ -403,6 +403,64 @@ fn paving_texel(paving: Paving, inks: &Inks, u: f32, v: f32) -> [f32; 3] {
                 tint * (0.9 + 0.1 * near) * (1.0 + 0.1 * blotch(6, 132) + 0.12 * grain(160, 133));
             scale(shade, k)
         }
+        Paving::Hexagons => {
+            // Issue #112: hexagonal stone pavers about 0.9 m across (9 a tile across, 10 rows a
+            // tile along: an even number, so that the staggered rows repeat seamlessly), each its
+            // own shade, worn at its edges, moss in the joints (the `accent`), a few mossy patches.
+            let (n, m) = (9.0f32, 10.0f32);
+            let (w, h) = (t / n, t / m);
+            let r0 = (y / h).floor() as i32;
+            let center = |c: i32, r: i32| {
+                let shift = if r.rem_euclid(2) == 1 { 0.5 } else { 0.0 };
+                ((c as f32 + 0.5 + shift) * w, (r as f32 + 0.5) * h)
+            };
+            let mut near: [(f32, f32, f32, i32, i32); 9] = [(0.0, 0.0, 0.0, 0, 0); 9];
+            let mut k = 0;
+            for r in r0 - 1..=r0 + 1 {
+                let shift = if r.rem_euclid(2) == 1 { 0.5 } else { 0.0 };
+                let c0 = (x / w - shift).floor() as i32;
+                for c in c0 - 1..=c0 + 1 {
+                    let (cx, cy) = center(c, r);
+                    let d2 = (x - cx).powi(2) + (y - cy).powi(2);
+                    near[k] = (d2, cx, cy, c, r);
+                    k += 1;
+                }
+            }
+            let first = near
+                .iter()
+                .copied()
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .unwrap_or_default();
+            // The distance to the stone's edge: to the nearest bisector with another center.
+            let edge = near
+                .iter()
+                .filter(|o| (o.3, o.4) != (first.3, first.4))
+                .map(|o| {
+                    let span = ((o.1 - first.1).powi(2) + (o.2 - first.2).powi(2)).sqrt();
+                    (o.0 - first.0) / (2.0 * span)
+                })
+                .fold(f32::MAX, f32::min);
+            let joint = 0.035;
+            let moss = mix(inks.accent, scale(base, 0.7), 0.25);
+            if edge < joint {
+                return scale(moss, 0.85 + 0.3 * grain(96, 141));
+            }
+            let id = hash(
+                first.3.rem_euclid(n as i32),
+                first.4.rem_euclid(m as i32),
+                142,
+            );
+            let tint = 0.8 + 0.36 * id;
+            let near_edge = smoothstep(joint, joint + 0.05, edge);
+            let k = tint
+                * (0.8 + 0.2 * near_edge)
+                * (1.0 + 0.14 * blotch(5, 143) + 0.16 * grain(160, 144));
+            let stone = scale(base, k);
+            // Mossy patches here and there, more toward the joints.
+            let patch = fbm(u, v, 12, 12, 3, 145);
+            let mossy = smoothstep(0.62, 0.72, patch + 0.15 * (1.0 - near_edge));
+            mix(stone, moss, 0.7 * mossy)
+        }
         Paving::PackedSand => {
             // Ripples across the road, about every 0.44 m (18 a tile), wavy.
             let warp = fbm(u, v, 3, 3, 3, 51) - 0.5;
@@ -906,8 +964,8 @@ mod tests {
     fn each_biome_has_its_road_made_by_the_game() {
         let biomes = crate::track::biome::biomes();
         // Issue #168: an eleventh, the hill town, with its bricks; issue #112: a twelfth, the fair,
-        // with its tiles.
-        assert_eq!(biomes.len(), 12);
+        // with its tiles, and a thirteenth, the marsh, with its hexagons.
+        assert_eq!(biomes.len(), 13);
         let mut seen: Vec<Paving> = Vec::new();
         for biome in biomes {
             let road = biome.road;

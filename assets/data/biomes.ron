@@ -18,7 +18,7 @@
 // - `road` (issue #187, required): how its road is dressed, **purely what it looks like** (the
 //   grip, the speed, the off-road, the sounds and the bots are the same on every road): its
 //   `paving` (Asphalt, Dirt, Cobbles, Flagstones, Planks, PackedSand, CrackedEarth, ForestPath,
-//   Sugar, Licorice, GroomedSnow, Leaves, Bricks, Tiles), its `border` in place of the curbs
+//   Sugar, Licorice, GroomedSnow, Leaves, Bricks, Tiles, Hexagons), its `border` in place of the curbs
 //   (Stripes, Logs, Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
 //   moss, the leaves). The palette's `asphalt` is the paving's mean color (its texture is drawn
 //   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
@@ -962,6 +962,85 @@
              count: 40, height: (0.6, 1.0), radius: 0.7, distance: (0.3, 12.0), shadows: false),
             (models: ["coaster-kit/flowers"],
              count: 60, height: (0.25, 0.4), radius: 0.6, distance: (0.2, 12.0), shadows: false),
+        ],
+    ),
+    (
+        // Issue #112: a marsh in the misty morning (Marais Mitaine). Kenney's Watercraft Kit
+        // (CC0): boathouses on stilts along the causeways, rowing and fishing boats pulled up on
+        // the banks, a sailing boat run aground, buoys; and the Nature Kit's dark trees (flat
+        // crowned, tall and thin), rushes, flat stones, old stumps, water lilies (its models not
+        // in the game yet, from the same mirror). A peach sky of dawn, a mossy
+        // ground, the causeway of slate hexagons with moss in their joints, a border of stones;
+        // far off, low green hills, blue mountains in the mist, more boathouses and big trees.
+        name: "Marais",
+        music: "fairy-adventure",
+        palette: (
+            sky: (0.94, 0.84, 0.76),
+            ambient: (1.0, 0.94, 0.88),
+            ambient_brightness: 700.0,
+            ground: (0.40, 0.52, 0.30),
+            asphalt: (0.26, 0.27, 0.30),
+            curbs: ((0.80, 0.78, 0.72), (0.52, 0.50, 0.46)),
+            shoulder: (0.46, 0.54, 0.30),
+            sand: (0.50, 0.46, 0.42),
+            walls: ((0.62, 0.46, 0.30), (0.50, 0.36, 0.22)),
+            wall_top: (0.86, 0.80, 0.70),
+            skirt: (0.42, 0.36, 0.28),
+        ),
+        // Issue #112: hexagonal slate pavers, moss in their joints; a border of stones.
+        road: (paving: Hexagons, border: Stones, accent: (0.18, 0.26, 0.20)),
+        // Issue #195: its terrain. Low soft banks, muddy earth on their steep sides.
+        terrain: (height: 20.0, scale: 140.0, floor: 0.3, rock: (0.46, 0.40, 0.30)),
+        far: (
+            fog: (200.0, 1200.0),
+            layers: [
+                // Low green hills all around, and blue mountains in the mist behind them.
+                Range(distance: 165.0, depth: 150.0, height: (26.0, 56.0), spacing: 44.0,
+                      color: (0.40, 0.56, 0.36), top: ((0.52, 0.66, 0.44), 46.0)),
+                Range(distance: 430.0, depth: 260.0, height: (100.0, 200.0), spacing: 62.0,
+                      color: (0.56, 0.62, 0.74), top: ((0.92, 0.92, 0.96), 170.0)),
+                // Round wooded knolls in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (18.0, 36.0),
+                      radius: (30.0, 55.0), flat: 0.4, sides: 8, color: (0.34, 0.48, 0.28)),
+                Clouds(count: 24, distance: (0.0, 520.0), altitude: (110.0, 190.0),
+                       size: (50.0, 110.0), color: (1.0, 0.97, 0.94)),
+                // Boathouses at mid-distance, and big dark trees.
+                Pieces(models: ["watercraft-kit/boat-house-a", "watercraft-kit/boat-house-b",
+                                "watercraft-kit/boat-house-c"],
+                       count: 18, height: (8.0, 14.0), radius: 7.0, distance: (55.0, 200.0)),
+                Pieces(models: ["nature-kit/tree_plateau_dark", "nature-kit/tree_tall_dark"],
+                       count: 120, height: (14.0, 24.0), radius: 6.0, distance: (50.0, 210.0)),
+            ],
+        ),
+        rows: [
+            // Boathouses on stilts along the outside of the causeways, facing the road.
+            (models: ["watercraft-kit/boat-house-a", "watercraft-kit/boat-house-b",
+                      "watercraft-kit/boat-house-c"],
+             spacing: 46.0, offset: 19.0, height: 5.0, radius: 3.0, gap: 1.5, side: Outside),
+        ],
+        scatter: [
+            // Big dark trees with flat crowns, and tall thin ones, far apart: they give the scale.
+            (models: ["nature-kit/tree_plateau_dark", "nature-kit/tree_thin_dark"],
+             count: 14, height: (13.0, 19.0), radius: 4.5, distance: (6.0, 40.0)),
+            // Smaller dark trees, both sides.
+            (models: ["nature-kit/tree_simple_dark", "nature-kit/tree_small_dark",
+                      "nature-kit/tree_tall_dark"],
+             count: 50, height: (6.0, 10.0), radius: 2.4, distance: (2.0, 32.0)),
+            // Boats pulled up on the banks, a sailing boat run aground.
+            (models: ["watercraft-kit/boat-row-small", "watercraft-kit/boat-row-large",
+                      "watercraft-kit/boat-fishing-small", "watercraft-kit/boat-sail-a"],
+             count: 14, height: (1.6, 4.0), radius: 2.4, distance: (1.0, 22.0)),
+            // Buoys and old square stumps, close to the road.
+            (models: ["watercraft-kit/buoy", "watercraft-kit/buoy-flag",
+                      "nature-kit/stump_squareDetailed"],
+             count: 18, height: (1.0, 2.2), radius: 0.9, distance: (0.5, 14.0)),
+            // Rushes (tall, like young bamboo) and flat stones: small, no shadows.
+            (models: ["nature-kit/crops_bambooStageA", "nature-kit/crops_bambooStageB",
+                      "nature-kit/rock_smallFlatA"],
+             count: 70, height: (0.6, 1.6), radius: 0.7, distance: (0.3, 12.0), shadows: false),
+            // Water lilies on the wet ground.
+            (models: ["nature-kit/lily_large", "nature-kit/lily_small"],
+             count: 60, height: (0.1, 0.2), radius: 0.8, distance: (0.2, 14.0), shadows: false),
         ],
     ),
 ]
