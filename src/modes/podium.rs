@@ -15,7 +15,7 @@ use bevy_rapier3d::prelude::Velocity;
 
 use crate::camera::FixedView;
 use crate::interpolation::{InterpolatedFrom, PhysicsPose};
-use crate::kart::{Boost, Kart, KartState, Remote};
+use crate::kart::{Boost, Kart, KartEnvironment, KartState, Remote};
 use crate::level::LevelScoped;
 use crate::race::{
     GrandPrix, GrandPrixStage, OnPodium, Parked, Race, RaceGrid, RacePhase, Racer, Tow,
@@ -89,6 +89,7 @@ pub(super) fn set_up_podium(
             &mut Boost,
             &mut PhysicsPose,
             &mut Tow,
+            Option<&mut KartEnvironment>,
         ),
         With<Kart>,
     >,
@@ -157,8 +158,17 @@ pub(super) fn set_up_podium(
             None => hide(&mut commands, entity),
         }
     }
-    for (entity, racer, mut transform, mut velocity, mut state, mut boost, mut pose, mut tow) in
-        &mut karts
+    for (
+        entity,
+        racer,
+        mut transform,
+        mut velocity,
+        mut state,
+        mut boost,
+        mut pose,
+        mut tow,
+        environment,
+    ) in &mut karts
     {
         let spot = match place_of(racer) {
             Some(place) => {
@@ -176,6 +186,13 @@ pub(super) fn set_up_podium(
         *velocity = Velocity::zero();
         *state = KartState::Grounded;
         *boost = Boost::default();
+        // Issue #228: back under the world's gravity. The karts drive on after the finish: one
+        // still in an anti-gravity zone (the Col's first climb) kept its gravity along the
+        // zone's road on its step, and tipped over (on a level step, it only leaves the zone
+        // once its wheels touch it).
+        if let Some(mut environment) = environment {
+            *environment = KartEnvironment::default();
+        }
         pose.snap(spot);
         tow.reset(spot.translation);
     }
