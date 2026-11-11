@@ -24,8 +24,10 @@
 (
     name: "Bourg Bouillotte",
     // Dressing (issue #11): the hill town at the blue hour (`assets/data/biomes.ron`), the same
-    // every time (seed), and pieces placed by hand: checkered flags at the start line, a giant
-    // belfry that hides the hidden road, a giant tower by the jump's corner.
+    // every time (seed), and pieces placed by hand (issue #245, Kenney's Fantasy Town Kit):
+    // checkered flags at the start line; the market square along the start straight, its
+    // fountain, its stalls and a cart; the water mill on the washhouse square; a giant windmill
+    // by the jump's corner; a giant belfry that hides the hidden road.
     biome: "Bourg",
     // Issue #104: its music (`assets/data/music.ron`).
     music: "cool-city",
@@ -37,8 +39,18 @@
     terrain: (height: 34.0, scale: 140.0, floor: 0.25, rock: (0.52, 0.46, 0.42), embank: 0.6),
     props: [
         (model: "racing-kit/flagCheckers", at: 0.0, side: Both, height: 4.0, radius: 0.9, gap: 1.8),
-        (model: "castle-kit/tower-slant-roof", at: 166.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
-        (model: "castle-kit/tower-square-roof", at: 61.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
+        // Issue #245: the market square, on the start straight.
+        (model: "fantasy-town-kit/fountain-round-detail", at: 4.5, side: Left, height: 2.0, radius: 4.4, gap: 1.5),
+        (model: "fantasy-town-kit/stall-red", at: 2.5, side: Left, height: 3.6, radius: 2.2, gap: 0.5),
+        (model: "fantasy-town-kit/stall-green", at: 6.5, side: Left, height: 3.6, radius: 2.2, gap: 0.5),
+        (model: "fantasy-town-kit/stall-green", at: 2.0, side: Right, height: 3.6, radius: 2.2, gap: 0.5),
+        (model: "fantasy-town-kit/cart", at: 4.0, side: Right, height: 2.6, radius: 1.9, gap: 1.0, yaw: 90.0),
+        // The water mill on the washhouse square, by the river.
+        (model: "fantasy-town-kit/watermill-house", at: 19.5, side: Right, height: 8.0, radius: 6.5, gap: 2.0),
+        // A giant windmill by the jump's corner, over the gardens.
+        (model: "fantasy-town-kit/windmill-tower", at: 61.204, side: Left, height: 14.0, radius: 6.0, gap: 2.0),
+        // The giant belfry in the bulge.
+        (model: "fantasy-town-kit/belfry", at: 166.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
     ],
     checkpoint_spacing: 25.0,
     points: [

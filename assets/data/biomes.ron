@@ -808,12 +808,13 @@
         ],
     ),
     (
-        // Issue #168: a little hill town at the blue hour, on its fair day (Bourg Bouillotte):
-        // grandstands and tents along its streets (Racing Kit), tall pines and standing stones
-        // (Nature Kit); its towers and its belfry are pieces placed by the circuit. A blue sky,
-        // blue-violet hills, the lamps' gold on the border. Issue #168: Kenney's Fantasy Town Kit
-        // (houses, roofs, lamps) could not be downloaded (kenney.nl answered 403): the town is
-        // dressed with the models already there that no other biome uses (see STATUS.md).
+        // Issue #168: a little hill town at the blue hour (Bourg Bouillotte). Issue #245: dressed
+        // with Kenney's Fantasy Town Kit (CC0): its houses (assembled from the kit's walls, roofs
+        // and chimneys: `assets/models/fantasy-town-kit/`), its gardens behind hedges, its
+        // market's stalls and carts, its lanterns along the streets; tall pines (Nature Kit). The
+        // fountain, the water mill, the belfry and the windmill are pieces placed by the circuit.
+        // A blue sky, blue-violet hills, the lamps' gold on the border; far off, the houses and
+        // the windmills of the other villages on the hills.
         name: "Bourg",
         music: "cool-city",
         palette: (
@@ -846,26 +847,42 @@
                       radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.30, 0.46, 0.40)),
                 Clouds(count: 22, distance: (0.0, 520.0), altitude: (100.0, 180.0),
                        size: (50.0, 110.0), color: (0.86, 0.80, 0.96)),
-                // Forests of tall pines at mid-distance.
+                // Issue #245: the other villages on the hills, their windmills, and forests of
+                // tall pines at mid-distance.
+                Pieces(models: ["fantasy-town-kit/house-timber", "fantasy-town-kit/house-tall",
+                                "fantasy-town-kit/house-long"],
+                       count: 26, height: (8.0, 13.0), radius: 6.0, distance: (45.0, 170.0)),
+                Pieces(models: ["fantasy-town-kit/windmill-tower"],
+                       count: 4, height: (15.0, 19.0), radius: 7.0, distance: (70.0, 200.0)),
                 Pieces(models: ["nature-kit/tree_pineTallC_detailed"],
-                       count: 150, height: (14.0, 26.0), radius: 6.0, distance: (50.0, 210.0)),
+                       count: 110, height: (14.0, 26.0), radius: 6.0, distance: (50.0, 210.0)),
             ],
         ),
         rows: [
-            // Covered grandstands along the outside, for the fair's race.
-            (models: ["racing-kit/grandStandCovered"], spacing: 70.0, offset: 24.0, height: 4.0,
-             radius: 3.0, gap: 1.0, side: Outside),
+            // Issue #245: the town's houses along the outside of its streets, their doors and
+            // shop windows toward the road (a row's model, turned to face the track).
+            (models: ["fantasy-town-kit/house-timber", "fantasy-town-kit/house-long",
+                      "fantasy-town-kit/house-tall"],
+             spacing: 36.0, offset: 22.0, height: 10.0, radius: 5.5, gap: 2.5, side: Outside),
+            // Its lanterns, on both sides.
+            (models: ["fantasy-town-kit/lantern"], spacing: 32.0, offset: 10.0, height: 3.4,
+             radius: 0.5, gap: 0.3, shadows: false),
         ],
         scatter: [
-            // Grandstands with awnings and the fair's tents, both sides, some close to the road.
-            (models: ["racing-kit/grandStandAwning", "racing-kit/tentClosed"],
-             count: 18, height: (3.0, 4.5), radius: 3.0, distance: (3.0, 30.0)),
+            // More houses, both sides, further back.
+            (models: ["fantasy-town-kit/house-timber", "fantasy-town-kit/house-tall",
+                      "fantasy-town-kit/house-long"],
+             count: 26, height: (8.0, 12.0), radius: 5.5, distance: (8.0, 40.0)),
+            // Gardens behind their hedges.
+            (models: ["fantasy-town-kit/garden"],
+             count: 22, height: (3.5, 5.0), radius: 2.0, distance: (1.0, 30.0)),
+            // The market's stalls and carts, close to the road.
+            (models: ["fantasy-town-kit/stall-red", "fantasy-town-kit/stall-green",
+                      "fantasy-town-kit/cart"],
+             count: 26, height: (2.4, 3.2), radius: 1.9, distance: (0.5, 12.0)),
             // Tall pines.
             (models: ["nature-kit/tree_pineTallC_detailed"],
-             count: 70, height: (8.0, 15.0), radius: 2.4, distance: (2.0, 36.0)),
-            // Standing stones.
-            (models: ["nature-kit/stone_tallF", "nature-kit/stone_tallI"],
-             count: 40, height: (1.2, 3.0), radius: 1.2, distance: (0.5, 24.0)),
+             count: 45, height: (8.0, 15.0), radius: 2.4, distance: (4.0, 40.0)),
         ],
     ),
 ]
