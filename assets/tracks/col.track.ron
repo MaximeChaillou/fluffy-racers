@@ -381,11 +381,19 @@
          points: [(-133.61, 88.00, -53.15), (-136.39, 88.00, -41.21), (-142.55, 88.00, -36.12), (-170.53, 88.00, -12.98)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: straight behind the bank of snow while the road bulges around it.
-        (from: 90.728, to: 106.468, kind: Grass, width: 10.0,
-         points: [(-208.92, 84.00, 44.73), (-207.94, 84.00, 59.18), (-207.36, 84.00, 73.64), (-207.15, 84.00, 88.11), (-207.33, 84.00, 102.59), (-207.89, 84.00, 117.07), (-208.85, 84.00, 131.56)]),
+        // Issue #162 (GD § 16, rule 7): narrow (5 m; 10 m before), into the mouth of a cave in a
+        // rock 24 m in, well clear of the road's edge (one drives into it without slowing down;
+        // from outside, one does not see the way through): it goes straight on in the axis of the
+        // karts that come off the jump's landing, while the road turns away from it.
+        (from: 90.728, to: 106.468, kind: Grass, width: 5.0,
+         points: [(-208.92, 84.00, 44.73), (-207.94, 84.00, 59.18), (-207.36, 84.00, 73.64), (-207.15, 84.00, 88.11), (-207.33, 84.00, 102.59), (-207.89, 84.00, 117.07), (-208.85, 84.00, 131.56)],
+         cover: Some((kind: Cave, at: 24.0))),
         // The snow path, across the tight corner at the foot: slow without a boost, quicker with
-        // one (the mini-turbo of the switchback before it).
-        (from: 155.889, to: 167.326, kind: Grass, width: 8.0,
+        // one (the mini-turbo of the switchback before it). Issue #162: narrow (5 m; 8 m before),
+        // behind a stack of crates 20 m in, past the shoulder (they burst as one drives through
+        // them, a little slower, and come back; the way behind bends away from the road).
+        (from: 155.889, to: 167.326, kind: Grass, width: 5.0,
+         cover: Some((kind: Crates, at: 20.0)),
          points: [(-114.58, 0.00, 93.97), (-114.03, 0.00, 100.17), (-112.53, 0.00, 106.22), (-110.11, 0.00, 111.95), (-106.83, 0.00, 117.25), (-102.77, 0.00, 121.97), (-98.02, 0.00, 126.00), (-92.71, 0.00, 129.24), (-86.96, 0.00, 131.63), (-80.90, 0.00, 133.09), (-74.20, 0.00, 133.59)]),
     ],
     // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side

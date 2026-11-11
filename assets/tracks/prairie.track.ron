@@ -320,10 +320,19 @@
         // The hidden road: straight behind the hedge while the road bulges around it. Issue #171:
         // level with the road (6.50 m; 6.48 to 6.49 before: its last 12 m lay as high as the
         // road's shoulder it comes back over, and the wheels found the grass as often as it).
-        (from: 87.728, to: 103.468, kind: Grass, width: 10.0,
-         points: [(173.92, 6.50, -30.21), (172.96, 6.50, -15.76), (172.39, 6.50, -1.30), (172.20, 6.50, 13.17), (172.40, 6.50, 27.65), (172.98, 6.50, 42.13), (173.96, 6.50, 56.62)]),
-        // The grass path, across the last corner: slow without a boost, quicker with one.
-        (from: 143.915, to: 155.326, kind: Grass, width: 8.0,
+        // Issue #162 (GD § 16, rule 7): narrow (5 m; 10 m before), behind a stack of hay bales 25 m
+        // in, clear of the road's edge (they burst as one drives through them, a little
+        // slower, and come back): it goes straight on in the axis of the karts that come off the
+        // jump's landing, while the road turns away from it.
+        (from: 87.728, to: 103.468, kind: Grass, width: 5.0,
+         points: [(173.92, 6.50, -30.21), (172.96, 6.50, -15.76), (172.39, 6.50, -1.30), (172.20, 6.50, 13.17), (172.40, 6.50, 27.65), (172.98, 6.50, 42.13), (173.96, 6.50, 56.62)],
+         cover: Some((kind: HayBales, at: 25.0))),
+        // The grass path, across the last corner: slow without a boost, quicker with one. Issue
+        // #162: narrow (5 m; 8 m before), behind a curtain of tall grass 14 m in, past the
+        // shoulder (one drives through it, it hides the way behind, which bends away from the
+        // road).
+        (from: 143.915, to: 155.326, kind: Grass, width: 5.0,
+         cover: Some((kind: Foliage, at: 14.0)),
          points: [(95.64, 0.00, 39.02), (95.09, 0.00, 45.22), (93.59, 0.00, 51.27), (91.17, 0.00, 57.00), (87.89, 0.00, 62.30), (83.83, 0.00, 67.02), (79.08, 0.00, 71.05), (73.77, 0.00, 74.29), (68.02, 0.00, 76.68), (61.96, 0.00, 78.14), (54.28, 0.00, 78.64)]),
     ],
     // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side

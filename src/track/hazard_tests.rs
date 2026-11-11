@@ -748,10 +748,34 @@ fn a_panel_back_with_a_kart_in_it_lets_it_out_first() {
 #[test]
 fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
     use super::data::CoverKind;
+    a_stack_bursts_slows_a_little_and_comes_back(
+        "tracks/falaises.track.ron",
+        CoverKind::Crates,
+        |tuning| tuning.crate_slowdown,
+    );
+}
+
+/// Issue #162: Prairie Pompon's hidden road (and its mirror) behind a stack of hay bales: the
+/// same as the stack of crates, with a hay bale's slowdown (8 %).
+#[test]
+fn a_stack_of_hay_bales_bursts_slows_a_little_and_comes_back() {
+    use super::data::CoverKind;
+    a_stack_bursts_slows_a_little_and_comes_back(
+        "tracks/prairie.track.ron",
+        CoverKind::HayBales,
+        |tuning| tuning.hay_slowdown,
+    );
+}
+
+fn a_stack_bursts_slows_a_little_and_comes_back(
+    file: &str,
+    cover: super::data::CoverKind,
+    slowdown: fn(&crate::race::HazardTuning) -> f32,
+) {
     for mirrored in [false, true] {
-        let (mut app, kart) = game_on("tracks/falaises.track.ron", mirrored, 0);
+        let (mut app, kart) = game_on(file, mirrored, 0);
         let tuning = app.world().resource::<RaceTuning>().hazards.clone();
-        let kind = HazardKind::Cover(CoverKind::Crates);
+        let kind = HazardKind::Cover(cover);
         let (entity, hazard) = hazard_of(&mut app, kind);
         assert!(kind.bursts() && kind.breaks() && !kind.in_the_way() && !kind.closes());
         assert!(app.world().get::<Collider>(entity).is_none());
@@ -760,8 +784,8 @@ fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
             .resource::<TrackLayout>()
             .shortcuts
             .iter()
-            .find(|s| s.cover.is_some_and(|c| c.kind == CoverKind::Crates))
-            .expect("a shortcut behind a stack of crates")
+            .find(|s| s.cover.is_some_and(|c| c.kind == cover))
+            .expect("a shortcut behind a stack")
             .clone();
         assert!(
             hazard
@@ -782,11 +806,11 @@ fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
                 break;
             }
         }
-        let (before, after) = burst.expect("the stack of crates never burst");
+        let (before, after) = burst.expect("the stack never burst");
         assert!(!app.world().get::<KartState>(kart).unwrap().is_hit());
         let lost = 1.0 - after / before;
         assert!(
-            (lost - tuning.crate_slowdown).abs() <= 0.02,
+            (lost - slowdown(&tuning)).abs() <= 0.02,
             "mirror {mirrored}: {lost} of its speed lost ({before} → {after})"
         );
         // Through it and on along the path, while it is gone; then it comes back (issue #193:
@@ -812,5 +836,54 @@ fn a_stack_of_crates_bursts_slows_a_little_and_comes_back() {
                 );
             }
         }
+    }
+}
+
+/// Issue #162 acceptance (« une grotte dont l'entrée est derrière un rocher »): the Col des
+/// Moufles' hidden road (and its mirror) runs into the mouth of a cave: it is only seen (no
+/// collider, nothing to burst or break, not in the bots' way), and a kart that drives the path
+/// goes into it and on through it without slowing down.
+#[test]
+fn a_kart_drives_into_a_cave_without_slowing_down() {
+    use super::data::CoverKind;
+    for mirrored in [false, true] {
+        let (mut app, kart) = game_on("tracks/col.track.ron", mirrored, 0);
+        let kind = HazardKind::Cover(CoverKind::Cave);
+        let (entity, hazard) = hazard_of(&mut app, kind);
+        assert!(!kind.bursts() && !kind.breaks() && !kind.closes() && !kind.in_the_way());
+        assert_eq!(kind.burst_kind(), None);
+        assert!(app.world().get::<Collider>(entity).is_none());
+        assert!(app.world().get::<Breakable>(entity).is_none());
+        let path = app
+            .world()
+            .resource::<TrackLayout>()
+            .shortcuts
+            .iter()
+            .find(|s| s.cover.is_some_and(|c| c.kind == CoverKind::Cave))
+            .expect("a shortcut into a cave")
+            .clone();
+        let at = path.cover.unwrap().at;
+        assert!(hazard.road.position.distance(path.at(at).position) < 1e-3);
+        // Slow enough for the grass not to brake it: only the cave could.
+        on_the_path(&mut app, kart, &path, 6.0, 8.0);
+        let speed = |app: &App| app.world().get::<Velocity>(kart).unwrap().linear.length();
+        let mut through = false;
+        for tick in 0..120 {
+            along_the_path(&mut app, kart, &path);
+            let before = speed(&app);
+            app.update();
+            assert!(
+                speed(&app) >= before * 0.97,
+                "mirror {mirrored}, tick {tick}: {before} → {}",
+                speed(&app)
+            );
+            let position = app.world().get::<Transform>(kart).unwrap().translation;
+            if path.locate(position).along > at + 3.0 {
+                through = true;
+                break;
+            }
+        }
+        assert!(through, "mirror {mirrored}: never through the cave");
+        assert!(!app.world().get::<KartState>(kart).unwrap().is_hit());
     }
 }

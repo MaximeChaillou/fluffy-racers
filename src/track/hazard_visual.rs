@@ -77,7 +77,7 @@ impl HazardAssets {
 }
 
 /// Every kind of hazard, for its model.
-pub const ALL_KINDS: [HazardKind; 13] = [
+pub const ALL_KINDS: [HazardKind; 15] = [
     HazardKind::Obstacle(ObstacleKind::Rock),
     HazardKind::Obstacle(ObstacleKind::Trunk),
     HazardKind::Obstacle(ObstacleKind::Pillar),
@@ -91,6 +91,8 @@ pub const ALL_KINDS: [HazardKind; 13] = [
     HazardKind::Cover(CoverKind::Foliage),
     HazardKind::Cover(CoverKind::Waterfall),
     HazardKind::Cover(CoverKind::Crates),
+    HazardKind::Cover(CoverKind::HayBales),
+    HazardKind::Cover(CoverKind::Cave),
 ];
 
 fn create_hazard_assets(
@@ -273,6 +275,8 @@ pub fn model(kind: HazardKind) -> MeshData {
         HazardKind::Cover(CoverKind::Foliage) => foliage(&mut mesh),
         HazardKind::Cover(CoverKind::Waterfall) => waterfall(&mut mesh),
         HazardKind::Cover(CoverKind::Crates) => crates(&mut mesh),
+        HazardKind::Cover(CoverKind::HayBales) => hay_bales(&mut mesh),
+        HazardKind::Cover(CoverKind::Cave) => cave(&mut mesh),
     }
     mesh
 }
@@ -481,6 +485,104 @@ fn crates(mesh: &mut MeshData) {
             }
         }
     }
+}
+
+/// Issue #162: a stack of hay bales on its foot, across the path: two deep, three high in its
+/// middle and two at its sides, a little askew, their twine bands darker (it hides what is
+/// behind it; it bursts as a kart drives through it).
+fn hay_bales(mesh: &mut MeshData) {
+    let half = Shape::cover_box(CoverKind::HayBales);
+    let (straw, light, band) = (
+        srgb(0.95, 0.80, 0.38),
+        srgb(0.99, 0.88, 0.52),
+        srgb(0.70, 0.52, 0.22),
+    );
+    let columns = 5;
+    let long = 2.0 * half.x / columns as f32;
+    let deep = half.z;
+    let high = 2.0 * half.y / 3.0;
+    for column in 0..columns {
+        let layers = if column == 0 || column == columns - 1 {
+            2
+        } else {
+            3
+        };
+        for row in 0..2 {
+            for layer in 0..layers {
+                let k = (column * 7 + row * 3 + layer * 5) as f32;
+                let at = Vec3::new(
+                    -half.x + long * (column as f32 + 0.5) + 0.08 * k.sin(),
+                    high * (layer as f32 + 0.5),
+                    (row as f32 - 0.5) * deep + 0.06 * k.cos(),
+                );
+                let color = if (column + row + layer) % 3 == 0 {
+                    light
+                } else {
+                    straw
+                };
+                rounded_box(
+                    mesh,
+                    Mat4::from_translation(at) * Mat4::from_rotation_y(0.1 * (k * 1.3).sin()),
+                    Vec3::new(long / 2.0 - 0.04, high / 2.0 - 0.03, deep / 2.0 - 0.03),
+                    0.25,
+                    0.25,
+                    Detail::new(8, 4),
+                    move |p| {
+                        // Two twine bands across it.
+                        let twine = (p.x.abs() - long * 0.22).abs() < 0.06;
+                        if twine { band } else { color }
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// Issue #162: the mouth of a cave on its foot, the path running into it: two big rocks at its
+/// sides, a lintel of rock across them with snow on its top, and the dark inside of the cave
+/// filling the mouth (it hides what is behind it; one drives into it).
+fn cave(mesh: &mut MeshData) {
+    let half = Shape::cover_box(CoverKind::Cave);
+    let (rock, light, snow, dark) = (
+        srgb(0.44, 0.45, 0.50),
+        srgb(0.58, 0.59, 0.64),
+        srgb(0.95, 0.97, 1.0),
+        srgb(0.06, 0.06, 0.09),
+    );
+    let height = 2.0 * half.y;
+    // The two rocks, higher than the mouth.
+    for side in [-1.0f32, 1.0] {
+        rounded_box(
+            mesh,
+            Mat4::from_translation(Vec3::new(side * (half.x - 0.8), height / 2.0 + 0.4, 0.0))
+                * Mat4::from_rotation_z(side * 0.06),
+            Vec3::new(1.0, height / 2.0 + 0.4, half.z + 0.4),
+            0.6,
+            0.6,
+            Detail::new(10, 6),
+            move |p| if p.y > 0.4 { light } else { rock },
+        );
+    }
+    // The lintel, snow on its top.
+    rounded_box(
+        mesh,
+        Mat4::from_translation(Vec3::new(0.0, height + 0.7, 0.0)),
+        Vec3::new(half.x + 0.2, 0.8, half.z + 0.5),
+        0.6,
+        0.5,
+        Detail::new(12, 6),
+        move |p| if p.y > 0.5 { snow } else { rock },
+    );
+    // The dark inside, filling the mouth.
+    rounded_box(
+        mesh,
+        Mat4::from_translation(Vec3::new(0.0, height / 2.0, 0.2)),
+        Vec3::new(half.x - 1.6, height / 2.0, half.z - 0.3),
+        0.1,
+        0.1,
+        Detail::new(6, 3),
+        solid(dark),
+    );
 }
 
 /// The bison without its legs (they move): a round woolly body, a dark mane on its hump, its
