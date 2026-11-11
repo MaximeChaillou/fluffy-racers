@@ -5,7 +5,6 @@ on:
     # dev = default branch (latest playable build), main = stable branch merged by Max.
     # claude/** = branches pushed by Claude Code; automerge.yml merges them into dev when this passes.
     branches: [main, dev, 'claude/**']
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -21,6 +20,9 @@ env:
 jobs:
   check:
     name: fmt, clippy, tests, wasm
+    # Not on dev (#237): a claude/** branch only reaches dev after this job passed on it,
+    # so dev only builds and deploys.
+    if: github.ref != 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -42,8 +44,8 @@ jobs:
   deploy:
     name: Build web + deploy to GitHub Pages
     # Deploys the default branch (dev): the latest build, to play-test Claude's work.
-    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
-    needs: check
+    # No `needs: check` (#237): the tests already passed on the branch merged into dev.
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
