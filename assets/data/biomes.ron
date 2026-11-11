@@ -18,8 +18,8 @@
 // - `road` (issue #187, required): how its road is dressed, **purely what it looks like** (the
 //   grip, the speed, the off-road, the sounds and the bots are the same on every road): its
 //   `paving` (Asphalt, Dirt, Cobbles, Flagstones, Planks, PackedSand, CrackedEarth, ForestPath,
-//   Sugar, Licorice, GroomedSnow, Leaves, Bricks), its `border` in place of the curbs (Stripes, Logs,
-//   Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
+//   Sugar, Licorice, GroomedSnow, Leaves, Bricks, Tiles), its `border` in place of the curbs
+//   (Stripes, Logs, Stones, Candies), and the paving's `accent` (its second color: the sugar's stripes, the
 //   moss, the leaves). The palette's `asphalt` is the paving's mean color (its texture is drawn
 //   around it, `src/track/paving.rs`), its `curbs` the border's two colors. A circuit may have its
 //   own (`road` in its file, its `asphalt` and `curbs` too). Readability first: the road's color
@@ -883,6 +883,85 @@
             // Tall pines.
             (models: ["nature-kit/tree_pineTallC_detailed"],
              count: 45, height: (8.0, 15.0), radius: 2.4, distance: (4.0, 40.0)),
+        ],
+    ),
+    (
+        // Issue #112: a fair on its hill, a sunny afternoon (Manège Mousseline). Kenney's Coaster
+        // Kit (CC0): its trees, its stalls of food, drinks and information along the alleys, its
+        // benches, bins and flower beds, the giant loopings of its coasters (steel, wood, the
+        // little mouse) towering over the lawns; and giant treats of the Food Kit (frappés, sodas,
+        // fries, hot dogs, ice creams) dotted about, as big as the stalls. A pale aqua sky, a
+        // bright lawn, the road of teal tiles, a red and white border (a circus tent's); far
+        // off, green hills, more loopings and blue mountains.
+        name: "Foire",
+        music: "amusement-park-stage",
+        palette: (
+            sky: (0.60, 0.88, 0.93),
+            ambient: (0.96, 0.96, 1.0),
+            ambient_brightness: 720.0,
+            ground: (0.52, 0.78, 0.36),
+            asphalt: (0.28, 0.58, 0.58),
+            curbs: ((0.92, 0.24, 0.30), (0.99, 0.96, 0.92)),
+            shoulder: (0.47, 0.72, 0.33),
+            sand: (0.94, 0.84, 0.62),
+            walls: ((0.99, 0.84, 0.32), (0.94, 0.44, 0.52)),
+            wall_top: (0.99, 0.98, 0.95),
+            skirt: (0.64, 0.52, 0.46),
+        ),
+        // Issue #112: square tiles of the fair's alleys, two shades of teal, their joints light
+        // (lilac first: the gift boxes and the giant pillow melted into it); a red and white
+        // border.
+        road: (paving: Tiles, border: Stripes, accent: (0.40, 0.70, 0.68)),
+        // Issue #195: its terrain. Soft lawn hills, sandy earth on their steep sides.
+        terrain: (height: 32.0, scale: 150.0, floor: 0.25, rock: (0.62, 0.52, 0.46)),
+        far: (
+            fog: (220.0, 1300.0),
+            layers: [
+                // Green hills all around, and blue mountains behind them, their tops lighter.
+                Range(distance: 165.0, depth: 150.0, height: (34.0, 70.0), spacing: 44.0,
+                      color: (0.46, 0.70, 0.36), top: ((0.62, 0.80, 0.46), 58.0)),
+                Range(distance: 430.0, depth: 260.0, height: (110.0, 220.0), spacing: 62.0,
+                      color: (0.48, 0.58, 0.74), top: ((0.90, 0.94, 0.99), 180.0)),
+                // Round knolls in front of the hills.
+                Peaks(count: 16, distance: (40.0, 150.0), height: (22.0, 44.0),
+                      radius: (30.0, 55.0), flat: 0.35, sides: 8, color: (0.40, 0.64, 0.32)),
+                Clouds(count: 24, distance: (0.0, 520.0), altitude: (110.0, 190.0),
+                       size: (50.0, 110.0), color: (1.0, 1.0, 1.0)),
+                // The other coasters of the fair: giant loopings at mid-distance, and tall trees.
+                Pieces(models: ["coaster-kit/coaster-steel-looping", "coaster-kit/coaster-wood-looping",
+                                "coaster-kit/coaster-mouse-looping"],
+                       count: 18, height: (18.0, 30.0), radius: 9.0, distance: (55.0, 200.0)),
+                Pieces(models: ["coaster-kit/tree-large", "coaster-kit/tree"],
+                       count: 120, height: (14.0, 24.0), radius: 6.0, distance: (50.0, 210.0)),
+            ],
+        ),
+        rows: [
+            // The stalls along the outside of the alleys, facing the road.
+            (models: ["coaster-kit/stall-food", "coaster-kit/stall-drinks",
+                      "coaster-kit/stall-information"],
+             spacing: 34.0, offset: 17.0, height: 3.6, radius: 2.2, gap: 1.5, side: Outside),
+        ],
+        scatter: [
+            // Big trees, far apart: they give the scale.
+            (models: ["coaster-kit/tree-large"],
+             count: 14, height: (13.0, 19.0), radius: 4.5, distance: (6.0, 40.0)),
+            // Round trees, both sides.
+            (models: ["coaster-kit/tree", "coaster-kit/tree-large"],
+             count: 60, height: (6.0, 10.0), radius: 2.4, distance: (2.0, 32.0)),
+            // Loopings of the little coasters, on the lawns.
+            (models: ["coaster-kit/coaster-mouse-looping", "coaster-kit/coaster-steel-looping"],
+             count: 6, height: (9.0, 13.0), radius: 5.5, distance: (10.0, 40.0)),
+            // Giant treats: frappés, sodas, fries, hot dogs.
+            (models: ["food-kit/frappe", "food-kit/soda", "food-kit/fries", "food-kit/hot-dog"],
+             count: 16, height: (3.5, 6.0), radius: 2.2, distance: (2.0, 26.0)),
+            // Stalls, close to the road.
+            (models: ["coaster-kit/stall-food", "coaster-kit/stall-drinks"],
+             count: 18, height: (3.0, 3.8), radius: 1.9, distance: (0.5, 14.0)),
+            // Benches, bins, flower beds and ice creams: small, no shadows.
+            (models: ["coaster-kit/bench", "coaster-kit/trash", "food-kit/ice-cream-cup"],
+             count: 40, height: (0.6, 1.0), radius: 0.7, distance: (0.3, 12.0), shadows: false),
+            (models: ["coaster-kit/flowers"],
+             count: 60, height: (0.25, 0.4), radius: 0.6, distance: (0.2, 12.0), shadows: false),
         ],
     ),
 ]

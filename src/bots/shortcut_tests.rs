@@ -26,7 +26,8 @@ use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice,
 /// #108: Prairie Pompon redrawn; issue #109: the Col des Moufles redrawn; issue #119: the
 /// Échappée Pissenlit, the first long race; issue #110: the Forêt Frimousse and the Falaises
 /// Flanelle; issue #111: the Coteau Citrouille and the Périple Polochon; issue #148: the Anneau
-/// Guimauve and the Crique Câline redrawn; issue #168: the Bourg Bouillotte), and where the tests
+/// Guimauve and the Crique Câline redrawn; issue #168: the Bourg Bouillotte; issue #112: the
+/// Manège Mousseline), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +39,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 12] = [
+const CIRCUITS: [Circuit; 13] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -151,6 +152,16 @@ const CIRCUITS: [Circuit; 12] = [
     Circuit {
         path: "tracks/bourg.track.ron",
         name: "Bourg Bouillotte",
+        jump_approach: 50.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #112, the Manège Mousseline (the Bourg Bouillotte's pieces mirrored, other covers): the
+    // jump from out of the climb onto the top of the fair, the grass bridge from out of the bulge,
+    // the hidden road from out of the last hairpin.
+    Circuit {
+        path: "tracks/manege.track.ron",
+        name: "Manège Mousseline",
         jump_approach: 50.0,
         grass_approach: 20.0,
         road_approach: 60.0,
@@ -1015,6 +1026,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Lagon Duvet", CoverKind::Panel),
         ("Bourg Bouillotte", CoverKind::Crates),
         ("Bourg Bouillotte", CoverKind::Panel),
+        ("Manège Mousseline", CoverKind::Foliage),
+        ("Manège Mousseline", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),

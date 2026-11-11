@@ -14,7 +14,10 @@
 // ford, the finish under its castle), the final of the third cup, now offered. Issue #168: the
 // Bourg Bouillotte (a hill town at the blue hour: the jump on its top, the lacets down through it,
 // the hidden road behind the market's crates), the first circuit of the fourth cup,
-// the « Coupe Pantoufle » (not offered until it has its four circuits).
+// the « Coupe Pantoufle » (not offered until it has its four circuits). Issue #112: the Manège
+// Mousseline (a fair on its hill: the climb along its big coaster, the jump on its top, the
+// lacets down through the stalls, the hidden road behind a curtain of tall grass), the second
+// circuit of the fourth cup.
 //
 // Issue #99: the cups of the championship (« Jouer solo »): four circuits each, in the order of
 // `circuits` (the first cup races the first four, the second one the next four...), each with
@@ -36,6 +39,7 @@
         (name: "Coteau Citrouille", file: "coteau.track.ron"),
         (name: "Périple Polochon", file: "periple.track.ron", long: true),
         (name: "Bourg Bouillotte", file: "bourg.track.ron"),
+        (name: "Manège Mousseline", file: "manege.track.ron"),
     ],
     cups: [
         (name: "Coupe Doudou", icon: Trophy),
