@@ -951,10 +951,11 @@ const CAP_SECONDS: u32 = 70;
 /// being redrawn too (1.3 km). Issue #148: the Lagon Duvet (770 m a lap), the Crique Câline
 /// being redrawn too (1.55 km). Issue #150: the Ruban Réglisse (940 m a lap, the shortest
 /// circuit left), the Lagon Duvet being redrawn too (1.86 km); the pack comes back past the
-/// player within [`CAP_SECONDS`] there (70 s, 40 s before).
+/// player within [`CAP_SECONDS`] there (70 s, 40 s before). Issue #151: the Forêt Frimousse
+/// (1.35 km a lap, the shortest circuit left), the Ruban Réglisse being redrawn too (2.08 km).
 #[test]
 fn the_cap_holds_with_twelve_karts() {
-    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/ruban.track.ron".into()), 11);
+    let (mut app, kart) = started_on(TrackChoice::Circuit("tracks/foret.track.ron".into()), 11);
     {
         let mut tuning = app.world_mut().resource_mut::<SoundTuning>();
         tuning.max_sounds = 6;

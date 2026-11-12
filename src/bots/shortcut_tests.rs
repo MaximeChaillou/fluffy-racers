@@ -27,7 +27,8 @@ use crate::track::{GRID_HEIGHT, MirrorMode, Shortcut, ShortcutKind, TrackChoice,
 /// Échappée Pissenlit, the first long race; issue #110: the Forêt Frimousse and the Falaises
 /// Flanelle; issue #111: the Coteau Citrouille and the Périple Polochon; issue #148: the Anneau
 /// Guimauve and the Crique Câline redrawn; issue #168: the Bourg Bouillotte; issue #112: the
-/// Manège Mousseline, the Marais Mitaine and the Odyssée Ouatée), and where the tests
+/// Manège Mousseline, the Marais Mitaine and the Odyssée Ouatée; issue #151: the Ruban Réglisse
+/// redrawn), and where the tests
 /// start their bot before each shortcut (m before its start along the centerline: on the road, at
 /// speed, after the turn before it).
 #[derive(Clone, Copy, Debug)]
@@ -39,7 +40,7 @@ struct Circuit {
     road_approach: f32,
 }
 
-const CIRCUITS: [Circuit; 15] = [
+const CIRCUITS: [Circuit; 16] = [
     Circuit {
         path: "tracks/corniche.track.ron",
         name: "Corniche Cannelle",
@@ -182,6 +183,16 @@ const CIRCUITS: [Circuit; 15] = [
     Circuit {
         path: "tracks/odyssee.track.ron",
         name: "Odyssée Ouatée",
+        jump_approach: 50.0,
+        grass_approach: 20.0,
+        road_approach: 60.0,
+    },
+    // Issue #151, the Ruban Réglisse redrawn (the Bourg Bouillotte's pieces, its covers): the jump
+    // from out of the S, the grass bridge from out of the bulge, the hidden road from out of the
+    // hairpins of the cake.
+    Circuit {
+        path: "tracks/ruban.track.ron",
+        name: "Ruban Réglisse",
         jump_approach: 50.0,
         grass_approach: 20.0,
         road_approach: 60.0,
@@ -1057,6 +1068,8 @@ fn the_covered_shortcuts_cannot_be_seen_from_the_racing_line() {
         ("Prairie Pompon", CoverKind::Foliage),
         ("Col des Moufles", CoverKind::Cave),
         ("Col des Moufles", CoverKind::Crates),
+        ("Ruban Réglisse", CoverKind::Crates),
+        ("Ruban Réglisse", CoverKind::Panel),
     ] {
         assert!(
             kinds.contains(&(circuit.to_string(), kind)),
