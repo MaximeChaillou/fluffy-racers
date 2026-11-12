@@ -1,21 +1,31 @@
-// "Ruban Réglisse": a licorice ribbon through the pastry land (issue #78), the anti-gravity's
-// circuit. Original layout, about 1.3 km a lap, turning right. Along the north side, on an
-// embankment, the ribbon twists up into a wall (issue #78): the karts roll onto it, drive on its
-// face (90°, their gravity along the road's normal, their wheels flat), and roll back down before
-// the north-east turn. Down the east side, still up on the embankment, a hook: a long left turn
-// banked like a wall (issue #96: the ribbon twists into it up to 90°, its face toward the inside
-// of the turn, the karts go round on it without steering), then a long hairpin to the right that
-// climbs onto the south side (issue #94: a turn long enough for the bots to drift). Along the
-// south side, 10 m up, the ribbon rolls the other way, over onto its back: the karts drive under
-// it, upside down (180°, a ceiling), then it rolls back up before the south-west turn, which
-// comes down onto the start straight.
+// "Ruban Réglisse": a liquorice ribbon through the pastry land (issue #78, the anti-gravity's
+// circuit), redrawn after the guide « Conception des circuits » (issue #151, docs/GAME_DESIGN.md
+// § 16; Max, 2026-10-20: « on ne coupe rien », its three zones keep their length). Original
+// layout, about 2080 m a lap, turning right, from 12 to 22 m up: the start straight,
+// north; the S of the toffee (two hairpins of 180° back to back, right then left, climbing); the
+// risky jump's corner on the top, 22 m up (a tight corner to the right, its inside a drop that a
+// ramp crosses), its wide landing, east; a drop of 5 m and a bump down to the embankment; the
+// wall (issue #78), the north-east turn, the banked turn (issue #96), the hairpin of issue #94
+// and the ceiling (issue #94), as they were; out of the ceiling, the hairpins of the cake (left,
+// then right, back to back); the bulge round a giant lollipop, whose hidden road runs straight
+// behind a stack of crates; the last corner, that the grass bridge crosses behind a panel that
+// breaks under a boost; a bump on the way back to the line. Five hairpins of 180° (a Normal bot
+// drifts them), the bulge's S, two tight corners of 90°: no long soft curve but in the zones,
+// one long straight. The pieces of the shortcuts (the jump's corner and its landing; the
+// bulge, the last corner, their paths and the start straight) are the Bourg Bouillotte's (the
+// Coteau Citrouille's, the Corniche Cannelle's, issues #107, #156: their gains and their hiding
+// were tuned), with their covers; the three zones and their turns are the old Ruban's; the rest
+// is new. Drawn as a plan of straights and arcs, its points every 8 m along it (25 m in the
+// zones, as before; the parameters below follow them). The generator is not in the repository.
 //
 // Format: see src/track/data.rs. Point 0 is the start line; karts drive toward point 1 (north,
 // -Z), then turn right. The grid sits on the straight behind point 0.
 (
     name: "Ruban Réglisse",
     // Dressing (issue #11): the pastry land (`assets/data/biomes.ron`), the same every time
-    // (seed), and a giant cake in the infield.
+    // (seed), and pieces placed by hand: gingerbread men at the start line; a giant cupcake by
+    // the jump's corner; the giant cake in the infield, under the ribbon; a giant lollipop in
+    // the bulge.
     biome: "Guimauve",
     // Issue #187: its own road, of shiny liquorice (its ribbon), sweets along it; the anti-gravity
     // zones keep their blue and white curbs and stripes.
@@ -24,121 +34,312 @@
     // Issue #104: its music (`assets/data/music.ron`).
     music: "fever-stadium",
     decor_seed: 78,
+    // Issue #195: the pastry land's terrain (its biome's, `assets/data/biomes.ron`), as before:
+    // the ribbon, 12 to 22 m above the pink fields, stands on its skirts (around the zones that
+    // bank, a terrain that hugs the road stays flat anyway, and most of the ribbon is there).
     props: [
-        (model: "food-kit/cake-birthday", at: 19.5, side: Right, height: 5.0, radius: 6.5, gap: 18.0),
+        (model: "holiday-kit/gingerbread-man", at: 0.0, side: Both, height: 3.5, radius: 1.2, gap: 1.8),
+        // A giant cupcake by the jump's corner, over the drop.
+        (model: "food-kit/cupcake", at: 36.204, side: Left, height: 12.0, radius: 6.0, gap: 2.0),
+        // The giant cake of the old Ruban, in the infield.
+        (model: "food-kit/cake-birthday", at: 71.500, side: Right, height: 5.0, radius: 6.5, gap: 18.0),
+        // A giant lollipop in the bulge.
+        (model: "food-kit/lollypop", at: 134.216, side: Right, height: 24.0, radius: 3.8, gap: 8.0),
     ],
     checkpoint_spacing: 25.0,
     points: [
-        // 0-1: the start straight, heading north.
-        (pos: (0.0, 0.0, 15.0)),
-        (pos: (0.0, 0.0, -10.0)),
-        // 2-4: the north-west turn, to the right (radius 35 m), heading east, climbing onto the
-        // embankment of the north side, 9 m up.
-        (pos: (0.0, 0.5, -40.0)),
-        (pos: (10.25, 3.0, -64.75)),
-        (pos: (35.0, 7.0, -75.0)),
-        // 5-15: the anti-gravity wall, on the embankment. The ribbon narrows and twists to the
-        // right in one flowing roll up to 90° (its left edge up, its right edge down, just above
-        // the ground), runs on as a wall for 50 m, then rolls back down. The anti-gravity zone
-        // runs from point 5 to point 15, where the road is flat.
-        (pos: (60.0, 9.0, -75.0), width: 12.0, shoulder: 1.0),
-        (pos: (85.0, 9.0, -75.0), width: 12.0, bank: 15.0, shoulder: 1.0),
-        (pos: (110.0, 9.0, -75.0), width: 12.0, bank: 45.0, shoulder: 1.0),
-        (pos: (135.0, 9.0, -75.0), width: 12.0, bank: 75.0, shoulder: 1.0),
-        (pos: (160.0, 9.0, -75.0), width: 12.0, bank: 90.0, shoulder: 1.0),
-        (pos: (185.0, 9.0, -75.0), width: 12.0, bank: 90.0, shoulder: 1.0),
-        (pos: (210.0, 9.0, -75.0), width: 12.0, bank: 90.0, shoulder: 1.0),
-        (pos: (235.0, 9.0, -75.0), width: 12.0, bank: 75.0, shoulder: 1.0),
-        (pos: (260.0, 9.0, -75.0), width: 12.0, bank: 45.0, shoulder: 1.0),
-        (pos: (285.0, 9.0, -75.0), width: 12.0, bank: 15.0, shoulder: 1.0),
-        (pos: (310.0, 9.0, -75.0), width: 12.0, shoulder: 1.0),
-        // 16-17: the north-east turn, to the right, heading south, still on the embankment (issue
-        // #96: the east side stays 9 m up).
-        (pos: (335.0, 9.0, -75.0)),
-        (pos: (359.75, 9.0, -64.75)),
-        // 18-26: the banked turn (issue #96), 9 m up. Down the east straight, the ribbon twists to
-        // the left (its left edge down, its right edge up) in one flowing roll into a long left
-        // turn (radius 60 m), banked like a wall around it (90° at its middle, its face toward the
-        // inside of the turn: the karts are pressed onto it and go round without steering), then
-        // rolls back up along the straight toward the hairpin. The anti-gravity zone runs from
-        // point 18 to point 26, where the road is flat.
-        (pos: (370.0, 9.0, -40.0), width: 12.0, shoulder: 1.0),
-        (pos: (370.0, 9.0, -15.0), width: 12.0, bank: -30.0, shoulder: 1.0),
-        (pos: (370.0, 9.0, 10.0), width: 12.0, bank: -60.0, shoulder: 1.0),
-        (pos: (374.57, 9.0, 32.96), width: 12.0, bank: -80.0, shoulder: 1.0),
-        (pos: (387.57, 9.0, 52.43), width: 12.0, bank: -90.0, shoulder: 1.0),
-        (pos: (407.04, 9.0, 65.43), width: 12.0, bank: -80.0, shoulder: 1.0),
-        (pos: (430.0, 9.0, 70.0), width: 12.0, bank: -60.0, shoulder: 1.0),
-        (pos: (455.0, 9.0, 70.0), width: 12.0, bank: -30.0, shoulder: 1.0),
-        (pos: (480.0, 9.0, 70.0), width: 12.0, shoulder: 1.0),
-        // 27-31: the hairpin, to the right (180°, radius 25 m), heading west, climbing a little
-        // onto the south side, 10 m up (issue #94: a turn long enough for the bots to drift).
-        (pos: (502.68, 9.3, 77.32), bank: 8.0),
-        (pos: (510.0, 9.6, 95.0), bank: 10.0),
-        (pos: (502.68, 9.8, 112.68), bank: 8.0),
-        (pos: (485.0, 10.0, 120.0)),
-        (pos: (460.0, 10.0, 120.0)),
-        // 32-47: the upside-down ribbon (issue #94), 10 m up. It twists to the left in one
-        // flowing roll (its right edge up, its left edge down) past the wall (90°) onto its back
-        // (180°: the karts drive under it), runs on as a ceiling, then rolls back up. The
-        // anti-gravity zone runs from point 32 to point 47, where the road is flat. Its walls
-        // hang from it; nothing hangs from it down to the ground.
-        (pos: (435.0, 10.0, 120.0), width: 12.0, shoulder: 1.0),
-        (pos: (410.0, 10.0, 120.0), width: 12.0, bank: -15.0, shoulder: 1.0),
-        (pos: (385.0, 10.0, 120.0), width: 12.0, bank: -45.0, shoulder: 1.0),
-        (pos: (360.0, 10.0, 120.0), width: 12.0, bank: -75.0, shoulder: 1.0),
-        (pos: (335.0, 10.0, 120.0), width: 12.0, bank: -105.0, shoulder: 1.0),
-        (pos: (310.0, 10.0, 120.0), width: 12.0, bank: -135.0, shoulder: 1.0),
-        (pos: (285.0, 10.0, 120.0), width: 12.0, bank: -165.0, shoulder: 1.0),
-        (pos: (260.0, 10.0, 120.0), width: 12.0, bank: -180.0, shoulder: 1.0),
-        (pos: (235.0, 10.0, 120.0), width: 12.0, bank: -180.0, shoulder: 1.0),
-        (pos: (210.0, 10.0, 120.0), width: 12.0, bank: -165.0, shoulder: 1.0),
-        (pos: (185.0, 10.0, 120.0), width: 12.0, bank: -135.0, shoulder: 1.0),
-        (pos: (160.0, 10.0, 120.0), width: 12.0, bank: -105.0, shoulder: 1.0),
-        (pos: (135.0, 10.0, 120.0), width: 12.0, bank: -75.0, shoulder: 1.0),
-        (pos: (110.0, 10.0, 120.0), width: 12.0, bank: -45.0, shoulder: 1.0),
-        (pos: (85.0, 10.0, 120.0), width: 12.0, bank: -15.0, shoulder: 1.0),
-        (pos: (60.0, 10.0, 120.0), width: 12.0, shoulder: 1.0),
-        // 48-51: the south-west turn, to the right (radius 35 m), heading north, down from the
-        // south side.
-        (pos: (35.0, 8.5, 120.0)),
-        (pos: (10.25, 5.0, 109.75)),
-        (pos: (0.0, 2.0, 85.0)),
-        (pos: (0.0, 0.4, 64.0)),
-        // 52-53: back onto the start straight (the grid sits behind point 0, from point 52 on).
-        (pos: (0.0, 0.0, 45.0)),
-        (pos: (0.0, 0.0, 30.0)),
+        (pos: (0.00, 12.00, 0.00), width: 15.0, shoulder: 3.0),
+        // 1-7: the start straight, north, the one long straight (the slipstream, the items), climbing
+        // a meter. The grid sits behind point 0.
+        (pos: (0.00, 12.00, -7.74), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, -15.48), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.10, -23.22), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.35, -30.97), width: 13.0, shoulder: 2.0),
+        (pos: (0.00, 12.65, -38.71), width: 13.0, shoulder: 2.0),
+        (pos: (0.00, 12.90, -46.45), width: 13.0, shoulder: 2.0),
+        (pos: (0.00, 13.00, -54.19), width: 13.0, shoulder: 2.0),
+        // the S of the toffee: two hairpins of 180° back to back (radius 22 m), climbing (5 %): to the
+        // right...
+        (pos: (1.67, 13.44, -62.61), width: 13.0, shoulder: 2.0),
+        (pos: (6.44, 13.88, -69.75), width: 13.0, shoulder: 2.0),
+        (pos: (13.58, 14.31, -74.52), width: 13.0, shoulder: 2.0),
+        (pos: (22.00, 14.75, -76.19), width: 13.0, shoulder: 2.0),
+        (pos: (30.42, 15.19, -74.52), width: 13.0, shoulder: 2.0),
+        (pos: (37.56, 15.62, -69.75), width: 13.0, shoulder: 2.0),
+        (pos: (42.33, 16.06, -62.61), width: 13.0, shoulder: 2.0),
+        (pos: (44.00, 16.50, -54.19), width: 13.0, shoulder: 2.0),
+        // ...and at once to the left; north.
+        (pos: (45.67, 16.94, -45.77), width: 13.0, shoulder: 2.0),
+        (pos: (50.44, 17.38, -38.63), width: 13.0, shoulder: 2.0),
+        (pos: (57.58, 17.81, -33.86), width: 13.0, shoulder: 2.0),
+        (pos: (66.00, 18.25, -32.19), width: 13.0, shoulder: 2.0),
+        (pos: (74.42, 18.69, -33.86), width: 13.0, shoulder: 2.0),
+        (pos: (81.56, 19.12, -38.63), width: 13.0, shoulder: 2.0),
+        (pos: (86.33, 19.56, -45.77), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 20.00, -54.19), width: 13.0, shoulder: 2.0),
+        // the risky jump's corner (the Bourg Bouillotte's piece, turned to the north): north, up to
+        // the top, 22 m up, then a tight corner to the right (90°): its inside is a drop, the jump
+        // cuts across it; the wide landing, east, down 2 m, and a drop of 5 m at its end (10 m past
+        // the jump's end, 35 m straight below it).
+        (pos: (88.00, 20.11, -63.19), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 20.40, -71.19), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 20.79, -79.19), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 21.21, -87.19), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 21.60, -95.22), width: 13.0, shoulder: 2.0),
+        (pos: (88.00, 21.89, -103.23), width: 13.0, shoulder: 2.0),
+        (pos: (87.99, 22.00, -111.25), width: 13.0, shoulder: 2.0),
+        (pos: (87.99, 22.00, -119.28), width: 13.0, shoulder: 2.0),
+        (pos: (87.98, 22.00, -127.30), width: 13.0, shoulder: 2.0),
+        (pos: (87.98, 22.00, -135.32), width: 13.0, shoulder: 2.0),
+        (pos: (87.98, 22.00, -143.34), width: 13.0, shoulder: 2.0),
+        (pos: (88.54, 22.00, -151.32), width: 13.0, shoulder: 2.0),
+        (pos: (92.15, 22.00, -158.40), width: 13.0, shoulder: 2.0),
+        (pos: (98.47, 22.00, -163.24), width: 13.0, shoulder: 2.0),
+        (pos: (106.25, 21.99, -164.88), width: 20.0, shoulder: 2.0),
+        (pos: (114.28, 21.82, -164.88), width: 20.0, shoulder: 2.0),
+        (pos: (122.30, 21.64, -164.89), width: 20.0, shoulder: 2.0),
+        (pos: (130.31, 21.46, -164.89), width: 20.0, shoulder: 2.0),
+        (pos: (138.34, 21.28, -164.90), width: 20.0, shoulder: 2.0),
+        (pos: (146.36, 16.28, -164.90), width: 20.0, shoulder: 2.0),
+        (pos: (154.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (162.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        // east, the way onto the wall: a bump, then down to the embankment, 12 m up (the old Ruban's
+        // points from here to the end of the ceiling: its three zones as they were).
+        (pos: (170.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (178.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (186.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (194.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (202.36, 16.28, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (210.36, 16.07, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (218.36, 15.53, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (226.36, 14.77, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (234.36, 13.93, -164.90), width: 13.0, shoulder: 2.0),
+        (pos: (244.36, 12.92, -164.90), width: 12.5, shoulder: 1.5),
+        (pos: (256.36, 12.12, -164.90), width: 12.5, shoulder: 1.5),
+        // the anti-gravity wall (issue #78), on the embankment. The ribbon narrows and twists to the
+        // right in one flowing roll up to 90° (its left edge up, its right edge down), runs on as a
+        // wall for 50 m, then rolls back down. The zone runs from here to the flat point 10 points on.
+        (pos: (278.36, 12.00, -164.90), width: 12.0, shoulder: 1.0),
+        (pos: (303.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 15.0),
+        (pos: (328.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 45.0),
+        (pos: (353.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 75.0),
+        (pos: (378.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 90.0),
+        (pos: (403.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 90.0),
+        (pos: (428.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 90.0),
+        (pos: (453.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 75.0),
+        (pos: (478.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 45.0),
+        (pos: (503.36, 12.00, -164.90), width: 12.0, shoulder: 1.0, bank: 15.0),
+        (pos: (528.36, 12.00, -164.90), width: 12.0, shoulder: 1.0),
+        // the north-east turn, to the right, heading south.
+        (pos: (553.36, 12.00, -164.90)),
+        (pos: (578.11, 12.00, -154.65)),
+        // the banked turn (issue #96): down the east straight, the ribbon twists to the left in one
+        // flowing roll into a long left turn (radius 60 m), banked like a wall around it, then rolls
+        // back up along the straight toward the hairpin. The zone runs from here 8 points on.
+        (pos: (588.36, 12.00, -129.90), width: 12.0, shoulder: 1.0),
+        (pos: (588.36, 12.00, -104.90), width: 12.0, shoulder: 1.0, bank: -30.0),
+        (pos: (588.36, 12.00, -79.90), width: 12.0, shoulder: 1.0, bank: -60.0),
+        (pos: (592.93, 12.00, -56.94), width: 12.0, shoulder: 1.0, bank: -80.0),
+        (pos: (605.93, 12.00, -37.47), width: 12.0, shoulder: 1.0, bank: -90.0),
+        (pos: (625.40, 12.00, -24.47), width: 12.0, shoulder: 1.0, bank: -80.0),
+        (pos: (648.36, 12.00, -19.90), width: 12.0, shoulder: 1.0, bank: -60.0),
+        (pos: (673.36, 12.00, -19.90), width: 12.0, shoulder: 1.0, bank: -30.0),
+        (pos: (698.36, 12.00, -19.90), width: 12.0, shoulder: 1.0),
+        // the hairpin of issue #94, to the right (180°, radius 25 m), heading west.
+        (pos: (721.04, 12.00, -12.58), bank: 8.0),
+        (pos: (728.36, 12.00, 5.10), bank: 10.0),
+        (pos: (721.04, 12.00, 22.78), bank: 8.0),
+        (pos: (703.36, 12.00, 30.10)),
+        (pos: (678.36, 12.00, 30.10)),
+        // the upside-down ribbon (issue #94): it twists to the left past the wall (90°) onto its back
+        // (180°: the karts drive under it), runs on as a ceiling, then rolls back up. The zone runs
+        // from here 15 points on.
+        (pos: (653.36, 12.00, 30.10), width: 12.0, shoulder: 1.0),
+        (pos: (628.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -15.0),
+        (pos: (603.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -45.0),
+        (pos: (578.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -75.0),
+        (pos: (553.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -105.0),
+        (pos: (528.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -135.0),
+        (pos: (503.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -165.0),
+        (pos: (478.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -180.0),
+        (pos: (453.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -180.0),
+        (pos: (428.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -165.0),
+        (pos: (403.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -135.0),
+        (pos: (378.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -105.0),
+        (pos: (353.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -75.0),
+        (pos: (328.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -45.0),
+        (pos: (303.36, 12.00, 30.10), width: 12.0, shoulder: 1.0, bank: -15.0),
+        (pos: (278.36, 12.00, 30.10), width: 12.0, shoulder: 1.0),
+        // west, out of the ceiling, 40 m.
+        (pos: (262.36, 12.00, 30.10)),
+        (pos: (249.36, 12.00, 30.10), width: 13.0, shoulder: 2.0),
+        (pos: (238.36, 12.00, 30.10), width: 13.0, shoulder: 2.0),
+        // the hairpins of the cake: to the left (radius 22 m), south then east...
+        (pos: (229.94, 12.00, 31.77), width: 13.0, shoulder: 2.0),
+        (pos: (222.80, 12.00, 36.54), width: 13.0, shoulder: 2.0),
+        (pos: (218.03, 12.00, 43.68), width: 13.0, shoulder: 2.0),
+        (pos: (216.36, 12.00, 52.10), width: 13.0, shoulder: 2.0),
+        (pos: (218.03, 12.00, 60.52), width: 13.0, shoulder: 2.0),
+        (pos: (222.80, 12.00, 67.66), width: 13.0, shoulder: 2.0),
+        (pos: (229.94, 12.00, 72.43), width: 13.0, shoulder: 2.0),
+        (pos: (238.36, 12.00, 74.10), width: 13.0, shoulder: 2.0),
+        // ...and at once to the right, west.
+        (pos: (246.78, 12.00, 75.77), width: 13.0, shoulder: 2.0),
+        (pos: (253.92, 12.00, 80.54), width: 13.0, shoulder: 2.0),
+        (pos: (258.69, 12.00, 87.68), width: 13.0, shoulder: 2.0),
+        (pos: (260.36, 12.00, 96.10), width: 13.0, shoulder: 2.0),
+        (pos: (258.69, 12.00, 104.52), width: 13.0, shoulder: 2.0),
+        (pos: (253.92, 12.00, 111.66), width: 13.0, shoulder: 2.0),
+        (pos: (246.78, 12.00, 116.43), width: 13.0, shoulder: 2.0),
+        (pos: (238.36, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        // west, the approach of the bulge.
+        (pos: (230.21, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (222.07, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (213.92, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (205.78, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (197.63, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (189.49, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        // the bulge and the last corner (the Bourg Bouillotte's piece, as it is): the bulge (left 75°,
+        // right 150°, left 75°) round a giant lollipop: the hidden road goes straight behind it,
+        // behind a stack of crates; the last corner, to the right (90°), its inside a drop that the
+        // grass bridge crosses, closed by a panel; north, back to the line (a bump).
+        (pos: (181.34, 12.00, 118.10), width: 13.0, shoulder: 2.0),
+        (pos: (173.40, 12.00, 119.08), width: 13.0, shoulder: 2.0),
+        (pos: (166.07, 12.00, 122.26), width: 13.0, shoulder: 2.0),
+        (pos: (159.93, 12.00, 127.38), width: 13.0, shoulder: 2.0),
+        (pos: (155.49, 12.00, 134.03), width: 13.0, shoulder: 2.0),
+        (pos: (152.82, 12.00, 141.58), width: 13.0, shoulder: 2.0),
+        (pos: (148.93, 12.00, 148.57), width: 13.0, shoulder: 2.0),
+        (pos: (143.23, 12.00, 154.17), width: 13.0, shoulder: 2.0),
+        (pos: (136.18, 12.00, 157.93), width: 13.0, shoulder: 2.0),
+        (pos: (128.35, 12.00, 159.55), width: 13.0, shoulder: 2.0),
+        (pos: (120.39, 12.00, 158.89), width: 13.0, shoulder: 2.0),
+        (pos: (112.93, 12.00, 156.01), width: 13.0, shoulder: 2.0),
+        (pos: (106.60, 12.00, 151.13), width: 13.0, shoulder: 2.0),
+        (pos: (101.89, 12.00, 144.67), width: 13.0, shoulder: 2.0),
+        (pos: (99.10, 12.00, 137.17), width: 13.0, shoulder: 2.0),
+        (pos: (95.50, 12.00, 130.03), width: 13.0, shoulder: 2.0),
+        (pos: (90.02, 12.00, 124.21), width: 13.0, shoulder: 2.0),
+        (pos: (83.12, 12.00, 120.17), width: 13.0, shoulder: 2.0),
+        (pos: (75.36, 12.00, 118.24), width: 13.0, shoulder: 2.0),
+        (pos: (67.35, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (59.33, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (51.30, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (43.28, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (35.26, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (27.24, 12.00, 118.10), width: 15.0, shoulder: 3.0),
+        (pos: (19.22, 12.00, 118.08), width: 15.0, shoulder: 3.0),
+        (pos: (11.48, 12.00, 116.19), width: 15.0, shoulder: 3.0),
+        (pos: (5.09, 12.00, 111.42), width: 15.0, shoulder: 3.0),
+        (pos: (1.07, 12.00, 104.55), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 96.64), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 88.62), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 80.60), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 72.58), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 64.56), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 56.54), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 48.52), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 40.43), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 32.35), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 24.26), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 16.17), width: 15.0, shoulder: 3.0),
+        (pos: (0.00, 12.00, 8.09), width: 15.0, shoulder: 3.0),
+    ],
+    // Issue #107: the sides without wall: the inside of the jump's corner, along the bulge (the
+    // hidden road) and inside the last corner (the grass bridge), each over a drop of 6 m and
+    // more. Everywhere else, walls.
+    open_edges: [
+        (from: 30.826, to: 41.457, side: Right),
+        (from: 126.000, to: 144.351, side: Right),
+        (from: 144.173, to: 157.900, side: Right),
     ],
     // Issue #78: the wall, from flat to flat; issue #94: the ceiling, from flat to flat; issue
     // #96: the banked turn, from flat to flat (the third zone, after the other two in this list:
-    // their tests know them by their place in it).
+    // their tests know them by their place in it). Issue #151: the old Ruban's, as they were.
     anti_gravity: [
-        (from: 5.0, to: 15.0),
-        (from: 32.0, to: 47.0),
-        (from: 18.0, to: 26.0),
+        (from: 57.000, to: 67.000),
+        (from: 84.000, to: 99.000),
+        (from: 70.000, to: 78.000),
+    ],
+    // Issue #180 (GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver), where
+    // nothing turns for 60 m and more after them: on the way onto the wall, past the drop's foot
+    // (the wall's zone is straight, 62 m from the bump's end: 40 m from the bump's end, karts that
+    // landed off their line went over the walls where the ribbon narrows into the zone); on the
+    // way back to the line, past where the grass bridge comes back, and 40 m behind the line at
+    // least (the grid). None out of the S (the bots let go of their drift before taking off: a
+    // bump 3 m out of it cost a quarter of an orange mini-turbo a lap).
+    bumps: [
+        (at: 47.200, height: 2.2, length: 36.0),
+        (at: 157.900, height: 2.2, length: 24.5),
+    ],
+    // Issue #180: a drop of 5 m on the wide landing of the jump's corner, 10 m past the jump's
+    // end: 35 m straight below it, then the bump and the wall (more than 2 s to a turn: the bots
+    // trick off it).
+    drops: [
+        (at: 42.700, height: 5.0),
+    ],
+    shortcuts: [
+        // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
+        // The risky jump: lined up on the road, onto a ramp aimed across the drop inside the tight
+        // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it
+        // falls.
+        (from: 31.450, to: 41.457, kind: Jump, width: 8.0, ramp_width: 6.0,
+         ramp_length: 8.0, ramp_angle: 12.0,
+         points: [(89.49, 22.00, -122.88), (91.48, 22.00, -137.89), (99.00, 22.00, -142.83), (124.99, 21.58, -159.89), (133.99, 21.58, -159.89)]),
+        // Issue #193: grass, like every shortcut: it pays only with a boost.
+        // The hidden road: narrow (5 m), straight behind the giant lollipop while the road goes
+        // round it, behind a stack of crates 18 m in, where it leaves the road's edge (they burst
+        // as one drives through them, a little slower, and come back).
+        (from: 126.000, to: 143.603, kind: Grass, width: 5.0,
+         points: [(172.00, 12.00, 114.10), (121.27, 12.00, 114.10), (70.53, 12.00, 114.10)],
+         cover: Some((kind: Crates, at: 18.0))),
+        // The grass bridge, across the last corner: narrow (5 m), slow without a boost, quicker
+        // with one (the mini-turbo of the bulge's last turn, a piment); closed by a panel 26 m in,
+        // where the drop separates it from the road: it breaks with a boost, a kart without one
+        // bounces off.
+        (from: 144.921, to: 157.828, kind: Grass, width: 5.0,
+         points: [(59.96, 12.00, 111.10), (53.49, 12.00, 110.25), (47.46, 12.00, 107.75), (42.48, 12.00, 104.88), (37.50, 12.00, 102.00), (32.52, 12.00, 99.13), (27.54, 12.00, 96.25), (22.54, 12.00, 92.75), (18.23, 12.00, 88.44), (14.73, 12.00, 83.44), (12.15, 12.00, 77.91), (10.57, 12.00, 72.02), (10.04, 12.00, 65.94)],
+         cover: Some((kind: Panel, at: 26.0))),
+    ],
+    // Issue #144 (GD « Conception des circuits », rule 8): a rock at the right edge of the start
+    // straight (the karts keep left for the first hairpin, to the right). Nothing in the zones
+    // (the file refuses it), nothing on the way onto the wall (a rock and a pillar at its edges got
+    // Hard bots stuck in the pack, 10 races in 96), nothing before the hairpins nor the bulge.
+    obstacles: [
+        (kind: Rock, at: 5.0, offset: 0.95, size: 1.1, yaw: 20.0),
+    ],
+    // Issue #144: balloons just after the start line (the pack bursts them at GO), a hay bale
+    // below the drop, crates on the way onto the wall.
+    breakables: [
+        (kind: Balloon, at: 1.5, offsets: [-0.55, 0.0, 0.55]),
+        (kind: HayBale, at: 43.600, offsets: [0.5]),
+        (kind: Crate, at: 55.600, offsets: [-0.3, 0.3]),
     ],
     // Boost pads: two on the wall itself and two on the ceiling (the anti-gravity's own, cyan
     // blue). None in the banked turn (issue #96): boosted round it at 50 m/s (the fastest speed
-    // class of issue #19), a kart on an outer lane flew off the end of its twist.
+    // class of issue #19), a kart on an outer lane flew off the end of its twist. None before the
+    // shortcuts: they pay only with a boost of one's own.
     boost_pads: [
-        (at: 9.3, offset: -0.35),
-        (at: 9.7, offset: 0.35),
-        (at: 39.3, offset: 0.35),
-        (at: 39.7, offset: -0.35),
+        (at: 61.300, offset: -0.35),
+        (at: 61.700, offset: 0.35),
+        (at: 91.300, offset: 0.35),
+        (at: 91.700, offset: -0.35),
     ],
     item_boxes: [
-        (at: 1.3, offsets: [-0.6, -0.2, 0.2, 0.6]),
-        (at: 4.3, offsets: [-0.5, 0.0, 0.5]),
-        (at: 25.5, offsets: [-0.4, 0.4]),
-        (at: 30.5, offsets: [0.0], double: true),
+        (at: 3.5, offsets: [-0.6, -0.2, 0.2, 0.6]),
+        (at: 56.200, offsets: [-0.5, 0.0, 0.5]),
+        (at: 77.500, offsets: [-0.4, 0.4]),
+        (at: 82.500, offsets: [0.0], double: true),
+        (at: 122.500, offsets: [0.7], double: true),
     ],
     // Croquettes: a line along the wall, low on its face, one low on the face of the banked turn
-    // and one along the ceiling; lines along the straights, never on the grid.
+    // and one along the ceiling (the old Ruban's); lines along the straights, never on the grid.
     croquettes: [
-        (from: 0.5, count: 4, spacing: 3.0, offset: -0.45),
-        (from: 8.7, count: 6, spacing: 4.0, offset: 0.45),
-        (from: 21.3, count: 6, spacing: 4.0, offset: -0.45),
-        (from: 24.3, count: 5, spacing: 3.0, offset: -0.4),
-        (from: 39.1, count: 5, spacing: 4.0, offset: 0.0),
+        (from: 1.2, count: 4, spacing: 3.0, offset: -0.42),
+        (from: 60.700, count: 6, spacing: 4.0, offset: 0.45),
+        (from: 73.300, count: 6, spacing: 4.0, offset: -0.45),
+        (from: 76.300, count: 5, spacing: 3.0, offset: -0.4),
+        (from: 91.100, count: 5, spacing: 4.0, offset: 0.0),
+        (from: 143.853, count: 4, spacing: 3.0, offset: -0.4),
     ],
 )

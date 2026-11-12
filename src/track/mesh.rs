@@ -1951,6 +1951,21 @@ mod tests {
         );
     }
 
+    /// Issue #151: the Ruban Réglisse redrawn, its three zones as they were (52 points further
+    /// along), without what it gained around them: its bumps and its drop (the road of their trick
+    /// ramps and the drop's face are meshes of their own: issue #180's tests), its shortcuts and
+    /// its sides without wall (their grass, their skirts: issue #107's tests). The zones' meshes,
+    /// and the rest of the road as on any circuit.
+    fn ribbon_without_relief() -> TrackData {
+        let mut data =
+            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        data.bumps.clear();
+        data.drops.clear();
+        data.shortcuts.clear();
+        data.open_edges.clear();
+        data
+    }
+
     /// Issue #78: on the Ruban Réglisse, the road and the shoulders of its anti-gravity zones are
     /// meshes of their own (the colliders that put a kart in anti-gravity), exactly the quads of
     /// the zones: with the rest of the road, the whole ribbon, closed, as on any circuit; its curbs
@@ -1966,8 +1981,7 @@ mod tests {
         );
         assert!(empty.anti_gravity_road.positions.is_empty());
         assert!(empty.anti_gravity_offroad.positions.is_empty());
-        let data =
-            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        let data = ribbon_without_relief();
         let center = CenterLine::of(&data);
         let zones: Vec<AntiGravityZone> = data
             .anti_gravity
@@ -2029,7 +2043,7 @@ mod tests {
             near_an_end(*p, 1.5)
         }));
         // On the wall itself, the road faces the side; on the ceiling (issue #94), down.
-        let wall = center.at(center.param_to_distance(9.5));
+        let wall = center.at(center.param_to_distance(9.5 + 52.0));
         assert!(wall.up.y.abs() < 0.01);
         assert!(
             meshes
@@ -2038,7 +2052,7 @@ mod tests {
                 .iter()
                 .any(|n| n[1].abs() < 0.01)
         );
-        let ceiling = center.at(center.param_to_distance(39.5));
+        let ceiling = center.at(center.param_to_distance(39.5 + 52.0));
         assert!(ceiling.up.y < -0.999);
         assert!(
             meshes
@@ -2106,8 +2120,7 @@ mod tests {
             meshes.decor.triangle_count(),
             2 * 2 * center.samples().len()
         );
-        let data =
-            TrackData::from_ron(include_str!("../../assets/tracks/ruban.track.ron")).unwrap();
+        let data = ribbon_without_relief();
         for data in [data.clone(), data.mirrored()] {
             let center = CenterLine::of(&data);
             let zones: Vec<AntiGravityZone> = data

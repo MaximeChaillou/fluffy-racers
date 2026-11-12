@@ -20,6 +20,10 @@ use crate::track::{AntiGravityZone, MirrorMode, TrackChoice, TrackLayout};
 
 const RIBBON: &str = "tracks/ruban.track.ron";
 
+/// Issue #151: the Ruban Réglisse redrawn keeps its three zones as they were, 52 points further
+/// along its centerline: the spline parameters of the scenarios are the old ones plus this.
+const RIBBON_SHIFT: f32 = 52.0;
+
 /// The player's kart of the runs. Issue #118: the game has a single speed (no more speed classes);
 /// the runs that went through issue #19's classes go from the default kart to the fastest one the
 /// game has in anti-gravity, boosted or not (`Driving`).
@@ -1032,7 +1036,7 @@ fn a_bump_in_anti_gravity_boosts_both_karts() {
             .environment
             .clone();
         // Where the road is banked 75°, rising to the wall (and before its pads).
-        let wall = ribbon.layout.center.param_to_distance(8.0);
+        let wall = ribbon.layout.center.param_to_distance(8.0 + RIBBON_SHIFT);
         let (mine, theirs, bumped) = rear_end(&mut ribbon, wall, 1.0);
         assert!(
             bumped,
@@ -1071,7 +1075,7 @@ fn a_bump_under_the_ceiling_boosts_both_karts() {
             .environment
             .spin_boost_strength;
         // Upside down, past its pads (their boost is another).
-        let ceiling = ribbon.layout.center.param_to_distance(40.4);
+        let ceiling = ribbon.layout.center.param_to_distance(40.4 + RIBBON_SHIFT);
         assert!(ribbon.layout.center.at(ceiling).up.y < -0.98);
         let (mine, theirs, bumped) = rear_end(&mut ribbon, ceiling, 1.0);
         assert!(bumped, "mirror {mirrored}: bumped under the ceiling");
@@ -1141,14 +1145,14 @@ fn pads_boost(which: usize, mine: impl Fn(&Transform) -> bool, what: &str) {
 /// never falling off; a pelure dropped behind lies on the wall, just above it.
 #[test]
 fn items_roll_and_lie_on_the_wall() {
-    items_roll_and_lie_on(WALL, 9.4, |up| up.y.abs() < 0.01);
+    items_roll_and_lie_on(WALL, 9.4 + RIBBON_SHIFT, |up| up.y.abs() < 0.01);
 }
 
 /// Issue #94: the same under the ceiling (180°): the pelote rolls along it, upside down, the
 /// pelure lies on it; neither falls to the ground.
 #[test]
 fn items_roll_and_lie_under_the_ceiling() {
-    items_roll_and_lie_on(CEILING, 39.4, |up| up.y < -0.999);
+    items_roll_and_lie_on(CEILING, 39.4 + RIBBON_SHIFT, |up| up.y < -0.999);
 }
 
 /// A pelote thrown ahead and a pelure dropped behind at the spline parameter `at` of the zone
@@ -1306,7 +1310,7 @@ fn throw_at(ribbon: &mut Ribbon, at: f32, item: crate::items::ItemKind, count: u
 #[test]
 fn a_bomb_lobbed_ahead_lands_on_the_wall_and_on_the_ceiling() {
     use crate::items::{Blast, ItemKind, ItemObject};
-    for (which, at) in [(WALL, 9.4), (CEILING, 39.2)] {
+    for (which, at) in [(WALL, 9.4), (CEILING, 39.2)].map(|(z, at)| (z, at + RIBBON_SHIFT)) {
         let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let mut blasts = ribbon
@@ -1359,7 +1363,7 @@ fn a_bomb_lobbed_ahead_lands_on_the_wall_and_on_the_ceiling() {
 #[test]
 fn a_boomerang_flies_along_the_wall_and_the_ceiling_and_comes_back() {
     use crate::items::{ItemKind, ItemObject, Motion};
-    for (which, at) in [(WALL, 9.0), (CEILING, 38.6)] {
+    for (which, at) in [(WALL, 9.0), (CEILING, 38.6)].map(|(z, at)| (z, at + RIBBON_SHIFT)) {
         let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let boomerang = throw_at(&mut ribbon, at, ItemKind::Boomerang, 3);
@@ -1409,7 +1413,7 @@ fn a_boomerang_flies_along_the_wall_and_the_ceiling_and_comes_back() {
 #[test]
 fn the_pillow_drops_on_the_leader_on_the_wall_and_under_the_ceiling() {
     use crate::items::{ItemKind, ItemObject, Motion, PillowFlight};
-    for (which, at) in [(WALL, 10.0), (CEILING, 39.5)] {
+    for (which, at) in [(WALL, 10.0), (CEILING, 39.5)].map(|(z, at)| (z, at + RIBBON_SHIFT)) {
         let mut ribbon = Ribbon::at(Pace::Default, false, 1, which);
         let center = ribbon.layout.center.clone();
         let leader = ribbon.others[0];
@@ -1475,7 +1479,7 @@ fn lost_croquettes_land_on_the_wall_and_on_the_ceiling() {
     use crate::croquettes::{
         CroquetteTuning, Croquettes, LooseCroquette, LoseCroquettes, LossCause,
     };
-    for (which, at) in [(WALL, 9.8), (CEILING, 39.5)] {
+    for (which, at) in [(WALL, 9.8), (CEILING, 39.5)].map(|(z, at)| (z, at + RIBBON_SHIFT)) {
         let mut ribbon = Ribbon::at(Pace::Default, false, 0, which);
         let center = ribbon.layout.center.clone();
         let kart = ribbon.kart;

@@ -1025,10 +1025,19 @@ mod tests {
                     "{:.0} m: {curvature}",
                     s.distance
                 );
-                // Banked 80° and more.
-                if s.up.y.abs() < 10f32.to_radians().sin() {
+                // Banked 80° and more. Issue #151: its radius measured 2 m in from where the bank
+                // reaches 80° (and leaves it), which is on a point of the spline: there, a sample's
+                // turn mixes the curvature of the segment before the point (a Catmull-Rom spline
+                // is not curved alike on both sides of a point), and whether a sample falls just
+                // there depends on where the samples fall along the lap (the redrawn Ruban's
+                // samples, its zones unchanged, gave 42 to 49 m there, the arc itself 53 to 64).
+                let banked_at =
+                    |k: usize| center.samples()[k % n].up.y.abs() < 10f32.to_radians().sin();
+                if banked_at(i) {
                     banked += 1;
-                    tightest = tightest.min(center.turn_radius(i));
+                    if banked_at(i + n - 2) && banked_at(i + 2) {
+                        tightest = tightest.min(center.turn_radius(i));
+                    }
                 }
             }
             assert!(banked >= 40, "{banked} m banked 80° and more");
@@ -1045,7 +1054,8 @@ mod tests {
                 .expect("over the banked turn");
             assert!((bend.rate - 1.0 / 60.0).abs() < 0.003, "{bend:?}");
             // (Between the points whose spline segments only see level points.)
-            let level = [(7.0, 14.0), (33.0, 46.0)];
+            // (Issue #151: the old Ruban's parameters, 52 points further along the redrawn one.)
+            let level = [(7.0, 14.0), (33.0, 46.0)].map(|(a, b)| (a + 52.0, b + 52.0));
             for (straight, (from, to)) in layout.anti_gravity[..2].iter().zip(level) {
                 let (from, to) = (center.param_to_distance(from), center.param_to_distance(to));
                 for k in 0..=50 {

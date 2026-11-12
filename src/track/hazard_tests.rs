@@ -22,17 +22,32 @@ use crate::race::{Course, Race, RaceGrid, RaceProgress, RaceTuning, Tow};
 use crate::tests::{game_app_unloaded, player, single_threaded, wait_for_the_player};
 
 const CORNICHE: &str = "tracks/corniche.track.ron";
-/// Issue #108: a circuit without any hazard (issue #109: the Crique Câline, the Col des Moufles
-/// has some now; issue #148: the Lagon Duvet, the Crique Câline redrawn has some; issue #150: the
-/// Ruban Réglisse, the Lagon Duvet redrawn has some).
-const PLAIN_CIRCUIT: &str = "tracks/ruban.track.ron";
-
 /// The game on the circuit file `path` (its mirror image or not), race seed `seed`, the player's
 /// kart alone, its race started (the test drives it).
 fn game_on(path: &str, mirrored: bool, seed: u64) -> (App, Entity) {
     let mut app = game_app_unloaded(TrackChoice::Circuit(path.into()), 0);
     app.world_mut().resource_mut::<RaceGrid>().seed = seed;
     app.insert_resource(MirrorMode(mirrored));
+    started(app)
+}
+
+/// Issue #108: the game on a circuit without any hazard (issue #109: the Crique Câline, the Col
+/// des Moufles has some now; issue #148: the Lagon Duvet, the Crique Câline redrawn has some;
+/// issue #150: the Ruban Réglisse, the Lagon Duvet redrawn has some; issue #151: the circuit of
+/// the unit tests, handed over directly, the Ruban Réglisse redrawn has some, and so has every
+/// circuit of the game now), as [`game_on`].
+fn game_on_a_plain_circuit() -> (App, Entity) {
+    let mut app = game_app_unloaded(TrackChoice::default(), 0);
+    let handle = app
+        .world_mut()
+        .resource_mut::<Assets<TrackData>>()
+        .add(crate::track::test_circuit());
+    app.insert_resource(TrackHandle(handle));
+    started(app)
+}
+
+/// `app` once its track is built, its race started (the test drives the player's kart).
+fn started(mut app: App) -> (App, Entity) {
     single_threaded(&mut app);
     wait_for_the_player(&mut app);
     let kart = player(&mut app);
@@ -119,7 +134,7 @@ fn under_it_next_tick(app: &App, hazard: &Hazard, lift: f32) -> Transform {
 /// the three of #144.
 #[test]
 fn only_a_circuit_with_hazards_has_them_in_its_world() {
-    let (mut plain, _) = game_on(PLAIN_CIRCUIT, false, 0);
+    let (mut plain, _) = game_on_a_plain_circuit();
     let world = plain.world_mut();
     assert_eq!(world.query::<&HazardBody>().iter(world).count(), 0);
     assert_eq!(world.query::<&Breakable>().iter(world).count(), 0);
