@@ -495,8 +495,10 @@ pub const PILLAR_WIDTH: f32 = 2.4;
 
 /// Issue #219: how far under the road the curtain under a wall reaches ([`TrackMeshes::curtains`],
 /// m): well under the embankment at the foot of the walls (`terrain::EMBANK_LIP` under the road),
-/// with room for a kart's wheels to sink in it.
-pub const CURTAIN_DEPTH: f32 = 2.0;
+/// with room for a kart's wheels to sink in it. Issue #255: 4 m (2 before): where the embankment
+/// does not reach the walls (on the Coteau Citrouille, by the ravine of its bridge, 2.5 to 3 m
+/// under the road), a kart rolling down it toward the road slipped under a 2 m curtain.
+pub const CURTAIN_DEPTH: f32 = 4.0;
 
 /// Issue #219 (GD § 16, rule 3): a part of the road on a bridge passes over another part of it
 /// this far above the top of its walls at least (m, road to wall top): the deck's underside
