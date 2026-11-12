@@ -254,9 +254,14 @@
     // nothing turns for 70 m and more after them: on the start straight, past the start line and
     // its balloons (78 m on to the first hairpin), and out of the hairpin that climbs out of the
     // stream (46 m on to the bulge, a gentle S), a long one.
+    // Issue #267: both longer (36 m, 22 before; 40 m, 30 before), so they throw karts less high.
+    // The start one launched a kart boosted by its rocket start, or nudged sideways by the pack,
+    // over the left wall of the straight (a 1.5 s flight, 4 m/s sideways); the stream one launched
+    // a kart boosted by its mini-turbo out of the hairpin far enough to land, bounce and still be in
+    // the air through the bulge's first turn, then off its open edge.
     bumps: [
-        (at: 1.0, height: 2.2, length: 22.0),
-        (at: 124.4, height: 2.2, length: 30.0),
+        (at: 1.0, height: 2.2, length: 36.0),
+        (at: 124.4, height: 2.2, length: 40.0),
     ],
     // Issue #221 (#184): a drop of 4 m onto the crest, out of the S: 35 m straight below it, and
     // 76 m on to the risky jump's corner.
