@@ -6,9 +6,10 @@
 // out of it **on a bridge over the road that came up to it**, 14 m under it (the road passes
 // over itself, GD § 16, rule 3); east along the top, 44 m up, down a drop; the lacets of the top
 // (a hairpin to the right, a hairpin to the left) up to the crest, 48 m up (20 m before #219);
-// the risky jump's corner (a tight corner to the right, its inside a drop, that a ramp crosses);
-// down the hillside: a tight corner, the serpentine (a hairpin to the left, a hairpin to the
-// right; its two legs steep, in anti-gravity) down to the field, a bump; the bulge round a giant
+// down a drop; the risky jump's corner (a tight corner to the right, its inside a drop, that a
+// ramp crosses); down the hillside: a tight corner, the serpentine (a hairpin to the left, a
+// hairpin to the right; its two legs steep, in anti-gravity) down to the field, a bump; the
+// bulge round a giant
 // crooked pine, whose hidden road runs straight behind a stack of crates; the last corner, that
 // the grass bridge crosses behind a curtain of tall grass; a bump on the way back to the line.
 // Six hairpins of 180° (a Normal bot drifts them), the loop of 270° (a tight corner of 90° to the
@@ -162,34 +163,37 @@
         (pos: (186.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
         (pos: (194.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
         (pos: (202.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
-        // the risky jump's corner (the Corniche Cannelle's piece): east, then a tight corner to the
-        // right (90°): its inside is a drop of 20 m, the jump cuts across it; the wide landing, south.
-        (pos: (210.00, 47.79, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (218.03, 47.79, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (226.04, 47.79, -38.00), width: 13.0, shoulder: 2.0),
-        (pos: (234.06, 47.79, -38.01), width: 13.0, shoulder: 2.0),
-        (pos: (242.09, 47.79, -38.01), width: 13.0, shoulder: 2.0),
-        (pos: (250.11, 47.79, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (258.13, 47.79, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (266.15, 47.79, -38.02), width: 13.0, shoulder: 2.0),
-        (pos: (274.13, 47.79, -37.46), width: 13.0, shoulder: 2.0),
-        (pos: (281.21, 47.79, -33.85), width: 13.0, shoulder: 2.0),
-        (pos: (286.05, 47.79, -27.53), width: 13.0, shoulder: 2.0),
-        (pos: (287.69, 47.78, -19.75), width: 20.0, shoulder: 2.0),
-        (pos: (287.69, 47.61, -11.72), width: 20.0, shoulder: 2.0),
-        (pos: (287.70, 47.43, -3.70), width: 20.0, shoulder: 2.0),
-        (pos: (287.70, 47.25, 4.31), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 47.07, 12.34), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 46.89, 20.36), width: 20.0, shoulder: 2.0),
-        (pos: (287.71, 46.59, 28.36), width: 13.0, shoulder: 2.0),
-        // south, down from the crest; a tight corner to the right, west.
-        (pos: (287.71, 45.79, 36.36), width: 13.0, shoulder: 2.0),
-        (pos: (286.34, 45.30, 43.25), width: 13.0, shoulder: 2.0),
-        (pos: (282.44, 44.82, 49.09), width: 13.0, shoulder: 2.0),
-        (pos: (276.60, 44.34, 52.99), width: 13.0, shoulder: 2.0),
-        (pos: (269.71, 44.09, 54.36), width: 13.0, shoulder: 2.0),
-        // west, down the hillside: the second trick ramp at its start; issue #219: then steep (32 %),
-        // in anti-gravity.
+        // Issue #228: down a drop of 4 m, 20 m out of the hairpin (the road came down these 4 m
+        // gently from the crest to the serpentine before: it is level after the drop now). The
+        // risky jump's corner (the Corniche Cannelle's piece): east, then a tight corner to the
+        // right (90°): its inside is a drop of 16 m, the jump cuts across it; the wide landing, south.
+        (pos: (210.00, 43.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (218.03, 43.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (226.04, 43.79, -38.00), width: 13.0, shoulder: 2.0),
+        (pos: (234.06, 43.79, -38.01), width: 13.0, shoulder: 2.0),
+        (pos: (242.09, 43.79, -38.01), width: 13.0, shoulder: 2.0),
+        (pos: (250.11, 43.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (258.13, 43.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (266.15, 43.79, -38.02), width: 13.0, shoulder: 2.0),
+        (pos: (274.13, 43.79, -37.46), width: 13.0, shoulder: 2.0),
+        (pos: (281.21, 43.79, -33.85), width: 13.0, shoulder: 2.0),
+        (pos: (286.05, 43.79, -27.53), width: 13.0, shoulder: 2.0),
+        (pos: (287.69, 43.78, -19.75), width: 20.0, shoulder: 2.0),
+        (pos: (287.69, 43.78, -11.72), width: 20.0, shoulder: 2.0),
+        (pos: (287.70, 43.78, -3.70), width: 20.0, shoulder: 2.0),
+        (pos: (287.70, 43.78, 4.31), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 43.78, 12.34), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 43.78, 20.36), width: 20.0, shoulder: 2.0),
+        (pos: (287.71, 43.78, 28.36), width: 13.0, shoulder: 2.0),
+        // south; a tight corner to the right, west.
+        (pos: (287.71, 43.78, 36.36), width: 13.0, shoulder: 2.0),
+        (pos: (286.34, 43.78, 43.25), width: 13.0, shoulder: 2.0),
+        (pos: (282.44, 43.78, 49.09), width: 13.0, shoulder: 2.0),
+        (pos: (276.60, 43.78, 52.99), width: 13.0, shoulder: 2.0),
+        (pos: (269.71, 43.78, 54.36), width: 13.0, shoulder: 2.0),
+        // west, down the hillside; issue #219: steep (32 %), in anti-gravity. Issue #255: no trick
+        // ramp at its start any more (it threw karts over the crest of the slope, 2 s in the air,
+        // beyond the walls of the hairpin after it).
         (pos: (262.21, 43.78, 54.36), width: 13.0, shoulder: 2.0),
         (pos: (254.71, 43.47, 54.36), width: 13.0, shoulder: 2.0),
         (pos: (247.21, 41.06, 54.36), width: 13.0, shoulder: 2.0),
@@ -312,16 +316,21 @@
     ],
     // Issue #219 (#184, GD § 16, rule 3): bumps, 2.2 m high (a kart and its tallest driver), where
     // nothing turns for 60 m and more after them: on the field, out of the serpentine's last
-    // hairpin (77 m on to the bulge, a gentle S), and on the way back to the line, past where the
-    // grass bridge comes back.
+    // hairpin (on to the bulge, a gentle S), and on the way back to the line, past where the
+    // grass bridge comes back. Issue #255: the field's bump 20 m past the hairpin and 36 m long
+    // (12 m and 22 m before): a bot still crossing the road out of the hairpin, boosted by the
+    // pad, flew off the short one for 2.5 s and over the wall of the bulge.
     bumps: [
-        (at: 159.5, height: 2.2, length: 22.0),
+        (at: 160.5, height: 2.2, length: 36.0),
         (at: 202.5, height: 2.2, length: 22.0),
     ],
     // Issue #219 (#184): a drop of 4 m on the top, past the bridge, 35 m straight below it and
-    // 76 m to the next hairpin (the lacets of the top climb the 4 m back).
+    // 76 m to the next hairpin (the lacets of the top climb the 4 m back): a Hard bot, at 2 s
+    // from the hairpin, seldom tricks off it. Issue #228: a second one past the crest, 20 m out of
+    // the lacets' last hairpin, 68 m before the jump's corner (90°: not a big turn for a bot).
     drops: [
         (at: 69.5, height: 4.0),
+        (at: 101.5, height: 4.0),
     ],
     shortcuts: [
         // Issue #193: its ramp is grass: without a boost, a kart slows down on it and falls short.
@@ -330,7 +339,7 @@
         // falls.
         (from: 106.450, to: 116.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
-         points: [(245.69, 47.79, -36.51), (260.70, 47.79, -34.52), (265.64, 47.79, -27.00), (282.70, 47.37, -1.01), (282.70, 47.37, 7.99)]),
+         points: [(245.69, 43.79, -36.51), (260.70, 43.79, -34.52), (265.64, 43.79, -27.00), (282.70, 43.78, -1.01), (282.70, 43.78, 7.99)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: narrow (5 m), straight behind the giant crooked pine while the road goes
         // round it, behind a stack of crates 18 m in, where it leaves the road's edge (they burst as
@@ -369,11 +378,12 @@
         (kind: HayBale, at: 129.000, offsets: [0.5]),
         (kind: Crate, at: 167.500, offsets: [-0.6, -0.25]),
     ],
-    // Trick ramps (issue #13): at the start of the climb out of the second hairpin, and at the
-    // start of the serpentine, out of a tight corner (60 m and more before the next turn).
+    // Trick ramps (issue #13): at the start of the climb out of the second hairpin (60 m and more
+    // before the next turn). Issue #255: 32 m past the hairpin (12 m before, at 33.5): a bot still
+    // crossing the road out of the hairpin took off sideways and landed beyond the wall of the
+    // steep climb. The serpentine's is gone (see there).
     trick_ramps: [
-        (at: 33.500, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
-        (at: 124.600, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
+        (at: 36.000, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
     ],
     // Boost pads (issue #13): out of the first hairpin, and out of the serpentine's last hairpin.
     // None before the grass bridge: it pays only with a boost of one's own.
