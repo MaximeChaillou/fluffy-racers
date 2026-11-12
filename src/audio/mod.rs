@@ -46,6 +46,8 @@ mod synth;
 mod tuning;
 
 #[cfg(test)]
+mod engine_tests;
+#[cfg(test)]
 mod music_tests;
 #[cfg(test)]
 mod scenario_tests;
@@ -56,20 +58,22 @@ pub use choice::{
 };
 pub use cues::{Cues, KartSnapshot, TickEvents, kart_cues};
 pub use design::{
-    Cue, KartSounds, LoopPreview, LoopVoice, MixerStats, Preview, PreviewSound, SoundBank,
-    SoundDesignPlugin, SoundDesignSystems, SoundOutput, Voice, mix, preview_note, sound_level,
+    Cue, KartSounds, LoopPreview, LoopVoice, MixerStats, PlacedLoop, Preview, PreviewSound,
+    SoundBank, SoundDesignPlugin, SoundDesignSystems, SoundOutput, Voice, mix, preview_note,
+    sound_level,
 };
 pub use dsp::{
-    ENGINE_HZ, LoopKind, LoopSound, LoopTimbre, Noise, SOFT_SQUEAL_HZ, SQUEAL_HZ, Synth,
-    SynthSound, Tone, Voice as CryVoice, Wave, render, seamless_loop,
+    ENGINE_HZ, LOOP_SPAN, LoopControl, LoopKind, LoopSound, LoopTimbre, Noise, SOFT_SQUEAL_HZ,
+    SQUEAL_HZ, Synth, SynthSound, Tone, Voice as CryVoice, Wave, render, seamless_loop,
 };
 pub use jukebox::{
     Jukebox, MusicOutput, MusicPlugin, MusicSystems, MusicVoice, circuit_music, play_the_music,
     watch_the_scene,
 };
 pub use mixer::{
-    Admission, RaceSounds, Revs, Stage, admit, engine_note, nearest, option_gain, priority,
-    race_sounds,
+    Admission, Placement, RaceSounds, Revs, Stage, admit, detune, distance_lowpass, doppler,
+    engine_max_pitch, engine_note, gear, nearest, option_gain, pan, pan_gains, placement, priority,
+    race_sounds, rolloff,
 };
 pub use music::{
     Catalog, Deck, Heard, MUSIC_RON, MusicScene, Piece, Program, Tier, catalog as music_catalog,

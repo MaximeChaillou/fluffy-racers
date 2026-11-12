@@ -64,6 +64,12 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # keyboard, the browser handles the keys again (Cmd+V pastes, Cmd+C copies).
 winit = { version = "0.30", default-features = false }
 
+[dev-dependencies]
+# Issue #270: the tests play the engine's loop through rodio's own player and mixer (what Bevy
+# plays it with: the same version, the features Bevy already enables, nothing more compiled) and
+# measure the pitch that comes out.
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
+
 # Issue #225: the dedicated server, without a window (`docs/SERVEUR.md`). No test harness of its
 # own (its logic is the library's, tested there): one big test binary less to link.
 [[bin]]

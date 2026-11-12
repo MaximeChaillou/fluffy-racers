@@ -19,11 +19,13 @@
 use std::f32::consts::{PI, TAU};
 use std::num::NonZero;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use bevy::audio::{ChannelCount, Decodable, SampleRate, Source};
 use bevy::prelude::*;
 
+use super::mixer::pan_gains;
 use super::synth::SAMPLE_RATE;
 
 const RATE: f32 = SAMPLE_RATE as f32;
@@ -507,12 +509,67 @@ impl From<LoopKind> for LoopTimbre {
 /// The soft squeal's tone at playback speed 1 (Hz): lower than #103's.
 pub const SOFT_SQUEAL_HZ: f32 = 620.0;
 
+/// Issue #270: a loop's decoder hands its sink a span of this many frames at a time. Rodio reads
+/// a source's rate (what the sink's playback speed changes) at the start of each span only: one
+/// endless span (#103 to #247) kept the pitch the loop started with, whatever the revs. About
+/// 23 ms: the pitch follows the revs, as smoothly as a file's packets.
+pub const LOOP_SPAN: usize = 1024;
+
+/// Issue #270: what the mixer changes on another kart's loop while it plays, beside its sink's
+/// speed and volume: its gains left and right (where it is heard) and its low-pass (Hz; 0: none,
+/// how dull it sounds far away). Shared with the loop's decoder: atomics, nothing locked on the
+/// audio thread (and nothing to lock in the browser).
+#[derive(Debug)]
+pub struct LoopControl {
+    left: AtomicU32,
+    right: AtomicU32,
+    lowpass: AtomicU32,
+}
+
+impl Default for LoopControl {
+    fn default() -> Self {
+        Self {
+            left: AtomicU32::new(1.0f32.to_bits()),
+            right: AtomicU32::new(1.0f32.to_bits()),
+            lowpass: AtomicU32::new(0.0f32.to_bits()),
+        }
+    }
+}
+
+impl LoopControl {
+    /// Heard at `pan` (-1: left, 1: right; `mixer::pan_gains`), through a low-pass at `lowpass` Hz
+    /// (0: none).
+    pub fn set(&self, pan: f32, lowpass: f32) {
+        let (left, right) = pan_gains(pan);
+        self.left.store(left.to_bits(), Ordering::Relaxed);
+        self.right.store(right.to_bits(), Ordering::Relaxed);
+        self.lowpass
+            .store(lowpass.max(0.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Its gains, left and right.
+    pub fn gains(&self) -> (f32, f32) {
+        (
+            f32::from_bits(self.left.load(Ordering::Relaxed)),
+            f32::from_bits(self.right.load(Ordering::Relaxed)),
+        )
+    }
+
+    /// Its low-pass (Hz; 0: none).
+    pub fn lowpass(&self) -> f32 {
+        f32::from_bits(self.lowpass.load(Ordering::Relaxed))
+    }
+}
+
 /// A continuous sound (never ends): the engine's wavetable is built once, with the asset; a
-/// recorded loop holds its samples (decoded once).
+/// recorded loop holds its samples (decoded once). Issue #270: with a [`LoopControl`]
+/// ([`LoopSound::placed`]), it plays in stereo, placed and filtered by the mixer (the others'
+/// loops); without one, in mono, in front (the player's, « ▶ Écouter »).
 #[derive(Asset, TypePath, Clone, Debug)]
 pub struct LoopSound {
     pub timbre: LoopTimbre,
     table: Arc<[f32]>,
+    control: Option<Arc<LoopControl>>,
 }
 
 impl LoopSound {
@@ -528,7 +585,11 @@ impl LoopSound {
             LoopTimbre::SoftEngine => engine_table(&SOFT_ENGINE_HARMONICS, 0.5).into(),
             _ => Arc::from(Vec::new()),
         };
-        Self { timbre, table }
+        Self {
+            timbre,
+            table,
+            control: None,
+        }
     }
 
     /// A recorded loop: `samples` (mono, at [`SAMPLE_RATE`], made seamless: [`seamless_loop`]).
@@ -536,7 +597,21 @@ impl LoopSound {
         Self {
             timbre: LoopTimbre::Recorded,
             table: samples.into(),
+            control: None,
         }
+    }
+
+    /// Issue #270: the same sound (its samples shared), in stereo, placed by its own
+    /// [`LoopControl`] (returned with it).
+    pub fn placed(&self) -> (Self, Arc<LoopControl>) {
+        let control = Arc::new(LoopControl::default());
+        (
+            Self {
+                control: Some(control.clone()),
+                ..self.clone()
+            },
+            control,
+        )
     }
 
     /// Its samples, for a recorded loop (empty for a synthesized one but the engines').
@@ -641,10 +716,19 @@ fn engine_table(harmonics: &[f32], beat: f32) -> Vec<f32> {
     table
 }
 
-/// Plays a [`LoopSound`]: one sample after the other, forever.
+/// Plays a [`LoopSound`]: one sample after the other, forever (issue #270: in spans of
+/// [`LOOP_SPAN`] frames; placed, in stereo).
 pub struct LoopDecoder {
     timbre: LoopTimbre,
     table: Arc<[f32]>,
+    control: Option<Arc<LoopControl>>,
+    /// Placed: the right channel's sample of the frame begun, its gains, its low-pass (Hz, and its
+    /// filter), read from the control every [`CONTROL_FRAMES`] frames.
+    right: Option<f32>,
+    gains: (f32, f32),
+    cutoff: f32,
+    dull: Svf,
+    frames: u32,
     phase: f32,
     rng: Rng,
     filter: Svf,
@@ -668,6 +752,12 @@ impl LoopDecoder {
         Self {
             timbre: sound.timbre,
             table: sound.table.clone(),
+            control: sound.control.clone(),
+            right: None,
+            gains: (1.0, 1.0),
+            cutoff: 0.0,
+            dull: Svf::new(16_000.0, std::f32::consts::FRAC_1_SQRT_2),
+            frames: 0,
             phase: 0.0,
             rng: Rng::new(0x100b_0001 ^ sound.timbre as u32),
             filter,
@@ -761,21 +851,62 @@ impl LoopDecoder {
     }
 }
 
+/// Issue #270: a placed loop reads its control this often (frames: under 6 ms).
+const CONTROL_FRAMES: u32 = 256;
+
+impl LoopDecoder {
+    /// A frame of a placed loop: its sample, low-passed, panned (the right one kept for next).
+    fn placed_frame(&mut self, control: &LoopControl) -> f32 {
+        if self.frames.is_multiple_of(CONTROL_FRAMES) {
+            self.gains = control.gains();
+            let cutoff = control.lowpass();
+            if (cutoff - self.cutoff).abs() > 0.01 * self.cutoff.max(1.0) {
+                if cutoff > 0.0 {
+                    self.dull.tune(cutoff, std::f32::consts::FRAC_1_SQRT_2);
+                }
+                self.cutoff = cutoff;
+            }
+        }
+        self.frames = self.frames.wrapping_add(1);
+        let raw = self.sample().clamp(-1.0, 1.0);
+        let (_, low) = self.dull.step(raw);
+        let sample = if self.cutoff > 0.0 { low } else { raw };
+        self.right = Some(sample * self.gains.1);
+        sample * self.gains.0
+    }
+}
+
 impl Iterator for LoopDecoder {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        Some(self.sample().clamp(-1.0, 1.0))
+        if let Some(right) = self.right.take() {
+            return Some(right);
+        }
+        // Taken out for the frame and put back: no count of the `Arc` touched per sample.
+        match self.control.take() {
+            Some(control) => {
+                let left = self.placed_frame(&control);
+                self.control = Some(control);
+                Some(left)
+            }
+            None => Some(self.sample().clamp(-1.0, 1.0)),
+        }
     }
 }
 
 impl Source for LoopDecoder {
     fn current_span_len(&self) -> Option<usize> {
-        None
+        // Issue #270: spans (see [`LOOP_SPAN`]), whole frames.
+        Some(LOOP_SPAN * usize::from(self.channels().get()) - usize::from(self.right.is_some()))
     }
 
     fn channels(&self) -> ChannelCount {
-        mono()
+        if self.control.is_some() {
+            NonZero::new(2).unwrap_or(NonZero::<u16>::MIN)
+        } else {
+            mono()
+        }
     }
 
     fn sample_rate(&self) -> SampleRate {

@@ -319,9 +319,17 @@ fn the_drift_chimes_at_each_tier_and_fires_its_mini_turbo() {
 }
 
 /// Issue #103 acceptance: the engine's pitch follows the revs (`mixer::engine_note`): it is the
-/// note of its kart, smoothed; a boost raises it.
+/// note of its kart, smoothed; a boost raises it. Issue #270 (Max: « il n'y a pas d'evolution
+/// avec la vitesse du kart ou des vitesses passées »): what is checked is what the player's engine
+/// **plays**: a real sink (rodio's player, as Bevy's) on its voice, its loop a 220 Hz tone, the
+/// device's output pulled frame after frame and its pitch measured. Accelerating, the sink's
+/// speed climbs in each gear and drops at each gear change, its volume grows from the calm idle,
+/// and the pitch that comes out is the sink's speed (#103 to #247: always the starting one).
 #[test]
 fn the_engine_pitch_follows_the_revs() {
+    use super::engine_tests::{OUT_RATE, TONE, device, frequency, pull, tone_loop};
+    use bevy::audio::{AudioSink, AudioSinkPlayback, Decodable};
+
     let mut app = sound_app(TrackChoice::TestGround, 0);
     let kart = player(&mut app);
     run(&mut app, 60);
@@ -331,14 +339,88 @@ fn the_engine_pitch_follows_the_revs() {
         (rest.pitch - tuning.engine_idle_pitch).abs() < 0.05,
         "{rest:?}"
     );
-    hold_keys(&mut app, &[KeyCode::ArrowUp]);
-    let mut last = rest.pitch;
-    for _ in 0..4 {
-        run(&mut app, 20);
-        let now = front_loop(&mut app, LoopKind::Engine);
-        assert!(now.pitch > last, "{now:?} after {last}");
-        last = now.pitch;
+    // The player's engine plays into a device of its own.
+    let (mixer, mut out) = device();
+    let engine = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &LoopVoice)>()
+            .iter(world)
+            .find(|(_, v)| v.kind == LoopKind::Engine && v.foreground)
+            .unwrap()
+            .0
+    };
+    let player_sink = rodio::Player::connect_new(&mixer);
+    player_sink.append(tone_loop().decoder());
+    app.world_mut()
+        .entity_mut(engine)
+        .insert(AudioSink::new(player_sink));
+    let frame = 1.0 / 60.0;
+    // Each frame: the game, then a frame of sound out (its pitch, its speed, its volume).
+    let mut step = |app: &mut App| {
+        app.update();
+        let (left, _) = pull(&mut out, frame);
+        let sink = app.world().get::<AudioSink>(engine).unwrap();
+        (left, sink.speed(), sink.volume().to_linear())
+    };
+    for _ in 0..30 {
+        step(&mut app);
     }
+    let idle = step(&mut app);
+    assert!(
+        (idle.1 - tuning.engine_idle_pitch).abs() < 0.05,
+        "the sink idles: {}",
+        idle.1
+    );
+    hold_keys(&mut app, &[KeyCode::ArrowUp]);
+    let mut speeds = Vec::new();
+    let mut volumes = Vec::new();
+    let mut sound = Vec::new();
+    for _ in 0..360 {
+        let (left, speed, volume) = step(&mut app);
+        speeds.push(speed);
+        volumes.push(volume);
+        sound.push(left);
+    }
+    // The gears: rises, and drops of more than half a gear's climb within a few frames.
+    let mut drops = 0;
+    let mut i = 0;
+    while i + 8 < speeds.len() {
+        let before = speeds[i];
+        let after = speeds[i + 8];
+        if after < before - 0.5 * tuning.engine_gear_pitch {
+            drops += 1;
+            i += 30;
+        } else {
+            i += 1;
+        }
+    }
+    assert!(drops >= 2, "the gears change: {speeds:?}");
+    let top = speeds.iter().copied().fold(0.0f32, f32::max);
+    assert!(top > 1.15, "it climbs: {speeds:?}");
+    // Louder under load than the idle (the gear changes dip it).
+    let loud = volumes.iter().copied().fold(0.0f32, f32::max);
+    assert!(loud > 1.5 * idle.2, "{} then {volumes:?}", idle.2);
+    // The pitch heard is the sink's: measured over 6 frames (0.1 s) at a few moments where the
+    // speed holds (within 2 %).
+    let mut measured = 0;
+    for end in (60..speeds.len()).step_by(20) {
+        let window = &speeds[end - 6..end];
+        let low = window.iter().copied().fold(f32::MAX, f32::min);
+        let high = window.iter().copied().fold(0.0f32, f32::max);
+        if high > low * 1.02 || volumes[end - 1] <= 0.0 {
+            continue;
+        }
+        let samples: Vec<f32> = sound[end - 6..end].concat();
+        let heard = frequency(&samples[(0.02 * OUT_RATE as f32) as usize..]);
+        let wanted = TONE * (low + high) / 2.0;
+        assert!(
+            (heard / wanted - 1.0).abs() < 0.04,
+            "frame {end}: {heard} Hz heard, {wanted} Hz played ({window:?})"
+        );
+        measured += 1;
+    }
+    assert!(measured >= 3, "{speeds:?}");
     // Steady on the ground (a second on its wheels, past the test ground's ramp): the note of
     // the kart's revs.
     let mut grounded = 0;
@@ -375,10 +457,10 @@ fn the_engine_pitch_follows_the_revs() {
     );
     let steady = front_loop(&mut app, LoopKind::Engine);
     assert!(
-        (steady.pitch - pitch).abs() < 0.03,
+        (steady.pitch - pitch).abs() < 0.06,
         "{steady:?} {pitch} at {speed} m/s"
     );
-    assert!(steady.pitch > 1.2, "{steady:?}");
+    assert!(steady.pitch > 1.1, "{steady:?}");
     // A boost (the debug key B): higher.
     tap(&mut app, crate::kart::DEBUG_BOOST_KEY);
     run(&mut app, 20);
@@ -1031,6 +1113,96 @@ fn the_cap_holds_with_twelve_karts() {
     );
 }
 
+/// Issue #270 (Max: « c'est même pas clair qu'on entend le bruit du moteur des bots »): the
+/// others' engines in a race of 12, the player waiting on the grid while the pack drives off.
+/// Every frame, each other engine heard is placed from where its kart is now: its side and its
+/// low-pass, as seen from the camera; at most `max_engines - 1` of them sound at once, never
+/// louder than its distance allows; the pack driving away is heard lower (the Doppler), then,
+/// out of range, not at all.
+#[test]
+fn the_others_engines_are_placed_around_the_camera() {
+    let (mut app, _) = started(11);
+    let tuning = app.world().resource::<SoundTuning>().clone();
+    let master = {
+        let options = app.world().resource::<PlayerOptions>();
+        option_gain(options.master_volume) * option_gain(options.effects_volume)
+    };
+    let candidate_gain = app
+        .world()
+        .resource::<SoundChoices>()
+        .candidate(Slot::Engine)
+        .gain;
+    let mut heard = 0usize;
+    let mut lower = 0usize;
+    let mut on_each_side = [false; 2];
+    for tick in 0..900 {
+        app.update();
+        let world = app.world_mut();
+        let (at, right) = world
+            .query_filtered::<&GlobalTransform, With<bevy::audio::SpatialListener>>()
+            .iter(world)
+            .next()
+            .map_or((Vec3::ZERO, Vec3::X), |t| (t.translation(), *t.right()));
+        let voices: Vec<LoopVoice> = world
+            .query::<&LoopVoice>()
+            .iter(world)
+            .filter(|v| v.kind == LoopKind::Engine && !v.foreground)
+            .copied()
+            .collect();
+        let sounding = voices.iter().filter(|v| v.volume > 0.0).count();
+        assert!(
+            sounding < tuning.max_engines as usize,
+            "tick {tick}: {sounding}"
+        );
+        for voice in voices.iter().filter(|v| v.volume > 0.0 && !v.leaving) {
+            let kart = voice.kart.unwrap();
+            let position = world.get::<Transform>(kart).unwrap().translation;
+            let distance = position.distance(at);
+            let side = pan(&tuning, at, right, position);
+            assert!(
+                (voice.pan - side).abs() < 1e-4,
+                "tick {tick}: {voice:?} {side}"
+            );
+            assert!(
+                (voice.lowpass - distance_lowpass(&tuning, distance)).abs() < 1.0,
+                "tick {tick}: {voice:?} at {distance} m"
+            );
+            if side.abs() > 0.05 {
+                on_each_side[usize::from(side > 0.0)] = true;
+            }
+            heard += 1;
+            if voice.doppler < 0.97 {
+                lower += 1;
+            }
+            // Never louder than its kart at its distance (the engine at its loudest), with the
+            // slack of the smoothing toward a closer place a frame ago.
+            let most = rolloff(&tuning, (distance - 3.0).max(0.0))
+                * tuning.other_engine_volume
+                * tuning.engine_volume
+                * master
+                * candidate_gain
+                * 1.0;
+            assert!(
+                voice.volume <= most + 1e-4,
+                "tick {tick}: {voice:?} at {distance} m"
+            );
+        }
+    }
+    assert!(heard > 200, "the pack is heard driving off: {heard}");
+    assert!(lower > 50, "lower as it goes away: {lower} of {heard}");
+    // (The grid puts the pack on one side of the player: both sides are checked in
+    // `mixer::tests` and through rodio in `engine_tests`.)
+    assert!(on_each_side.iter().any(|s| *s), "off to the side");
+    // Out of range: silent.
+    let world = app.world_mut();
+    let far = world
+        .query::<&LoopVoice>()
+        .iter(world)
+        .filter(|v| v.kind == LoopKind::Engine && !v.foreground)
+        .all(|v| v.volume < 0.05 * tuning.engine_volume);
+    assert!(far, "the pack far away");
+}
+
 /// Issue #103 acceptance (docs/UI_CHARTE.md): the screens: the focus moves (survol), a value
 /// changes, the screen closes (retour); a choice (validation).
 #[test]
@@ -1427,7 +1599,7 @@ fn the_supertuxkart_loops_start_again_without_a_click() {
             // Resampled at the engine's lowest and highest pitch (what the playback speed does),
             // the loop's two ends still meet: its seam no bigger than its own jumps.
             let tuning = SoundTuning::default();
-            for speed in [tuning.engine_idle_pitch, tuning.engine_top_pitch] {
+            for speed in [tuning.engine_idle_pitch, engine_max_pitch(&tuning)] {
                 let n = (looped.len() as f32 / speed) as usize;
                 let at = |i: usize| {
                     let t = (i as f32 * speed) % looped.len() as f32;
