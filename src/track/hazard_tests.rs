@@ -493,20 +493,41 @@ fn the_bots_lanes_keep_clear_of_what_is_in_the_way() {
 }
 
 /// Issue #144: a Normal bot laps the Corniche Cannelle (and its mirror) twice, alone, without
-/// being knocked over: its lanes keep clear of the bison, the log and the stone.
+/// being knocked over: its lanes keep clear of the bison, the log and the stone. Issue #164: the
+/// lap is longer (about 1930 m, 1360 before): 155 s for the two laps (110 before, the same share
+/// of the length).
 #[test]
 fn a_bot_laps_the_corniche_without_being_knocked_over() {
+    const SECONDS: usize = 155;
     for mirrored in [false, true] {
         let (mut app, kart) = game_on(CORNICHE, mirrored, 0);
         let tuning = app.world().resource::<BotTuning>().clone();
         app.world_mut()
             .entity_mut(kart)
             .insert(bot(BotDifficulty::Normal, 11, &tuning));
+        let knock_seconds = app.world().resource::<RaceTuning>().hazards.knock_seconds;
+        let KartState::Hit {
+            duration: knock_ticks,
+            ..
+        } = KartState::hit(HitReaction::Tumble, knock_seconds, 60.0)
+        else {
+            unreachable!()
+        };
         let mut knocks = 0;
         let mut was_hit = false;
-        for _ in 0..(110 * 60) {
+        for _ in 0..(SECONDS * 60) {
             app.update();
-            let hit = app.world().get::<KartState>(kart).unwrap().is_hit();
+            // Issue #164: knocked over by a hazard (its tumble, `hazards::knock`, for
+            // `knock_seconds`); not hit by an item of its own (the bot picks items from the
+            // boxes: on the longer lap, it ran over its own trap, and was tumbled on the climb).
+            let hit = matches!(
+                app.world().get::<KartState>(kart).unwrap(),
+                KartState::Hit {
+                    reaction: HitReaction::Tumble,
+                    duration,
+                    ..
+                } if *duration == knock_ticks
+            );
             if hit && !was_hit {
                 knocks += 1;
             }
@@ -525,7 +546,7 @@ fn a_bot_laps_the_corniche_without_being_knocked_over() {
             .unwrap()
             .lap_times
             .len();
-        assert!(laps >= 2, "mirrored {mirrored}: {laps} laps in 110 s");
+        assert!(laps >= 2, "mirrored {mirrored}: {laps} laps in {SECONDS} s");
         assert_eq!(
             knocks, 0,
             "mirrored {mirrored}: knocked over {knocks} times"

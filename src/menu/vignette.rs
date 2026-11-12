@@ -923,7 +923,10 @@ mod tests {
                 let name = format!("{} (mirror {mirror}, big {big})", entry.name);
                 assert_eq!(map.closed, !entry.long, "{name}");
                 let found = bridges(&map);
-                let expected = usize::from(entry.name == "Coteau Citrouille");
+                // Issue #164: the Corniche Cannelle's top road over its S, one bridge too.
+                let expected = usize::from(
+                    entry.name == "Coteau Citrouille" || entry.name == "Corniche Cannelle",
+                );
                 assert_eq!(found.len(), expected, "{name}: {found:?}");
                 // Issue #219: the road on top of each bridge, in the picture.
                 let tops: Vec<(f32, Vec<Vec2>)> = found
