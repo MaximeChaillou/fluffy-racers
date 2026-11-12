@@ -2351,8 +2351,12 @@ mod tests {
                 (p.z * 100.0).round() as i64,
             ]
         };
-        let file =
+        // Issue #164: without its bumps and its drop (the walls rise over them, `wall_lift`:
+        // issue #180's tests), its sides as they are.
+        let mut file =
             TrackData::from_ron(include_str!("../../assets/tracks/corniche.track.ron")).unwrap();
+        file.bumps.clear();
+        file.drops.clear();
         for data in [file.clone(), file.mirrored()] {
             let center = CenterLine::of(&data);
             let meshes = generate(&center, &data, &Palette::default());
