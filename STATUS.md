@@ -1476,6 +1476,7 @@ _Mis à jour par Claude à chaque PR._
 - Fusion automatique des branches `claude/**` dans `dev` quand la CI passe (`automerge.yml`).
 
 ## Décisions
+- 2026-11-12 (#272) : **le crissement du dérapage moins fort**. Retour de Max après #270 : « C'est bien mieux. Baisse un peu le son du dérapage et ca sera bon. » Nouveau réglage `SoundTuning::squeal_volume` = 0,5, la part de `drive_volume` donnée au crissement ; les carillons des paliers et les mini-turbos gardent `drive_volume`.
 - 2026-11-12 : **trois décisions de Max** (« 1. je suis ta recommandation. 2. C'est ok comme ça. 3. OK ») :
   - **Prairie Pompon reste basse** (#223 fermée) : lui donner du relief demanderait de redessiner sa butte, et ses tests sont les plus fragiles du jeu. Elle reste le premier circuit, le plus facile ; les 15 autres ont du relief ;
   - **le Ruban Réglisse reste tel quel** (#151) : 4,2 drifts par tour pour 4, le meilleur tour Difficile à 2,4 s de la limite de 70 s. On ne raccourcit aucune zone et on ne change pas la course de test ;
