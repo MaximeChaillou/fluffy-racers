@@ -1,16 +1,17 @@
 // "Crique Câline": a pirates' cove (issue #19), redrawn after the guide « Conception des circuits »
 // (issue #148, docs/GAME_DESIGN.md § 16). Original layout, about 1584 m a lap, turning left round
 // the cove: the start straight on the boardwalk of the beach, 6 m up; two hairpins (left, right)
-// and the climb of the cape (a bump on it), a tight corner to the left onto its top, 12 m up; the
-// risky jump's corner on the cape's edge (a tight corner to the left, its inside a drop, that a
-// ramp crosses); down the cape (a bump); the bulge on the cliff path (its hidden road straight
-// behind a waterfall, while the road goes round), the corner after it (its grass bridge behind a
-// curtain of dune grass); a drop of 4 m off the cliff path onto the beach; the ford across the
-// cove's inlet, under its water; three lacets in the dunes (left, right, left) and a tight corner
-// to the right onto the boardwalk. Six big turns (five hairpins and the bulge's S), four tight
-// corners of 90°: no long soft curve, one long straight. The pieces of the shortcuts (the jump's
-// corner and its landing; the bulge, its corner and their paths) are the Coteau Citrouille's (the
-// Corniche Cannelle's, issues #107, #156, #111) mirrored, with other covers; the rest is new.
+// and the climb of the cape (a bump on it), a tight corner to the left onto its top, 24 m up (issue
+// #223: 12 m before); the risky jump's corner on the cape's edge (a tight corner to the left, its
+// inside a drop, that a ramp crosses); down the cape (a bump); the bulge on the cliff path (its
+// hidden road straight behind a waterfall, while the road goes round), the corner after it (its
+// grass bridge behind a curtain of dune grass); a drop of 7 m off the cliff path, 14 m up, onto the
+// beach; the ford across the cove's inlet, under its water; three lacets in the dunes (left, right,
+// left) and a tight corner to the right onto the boardwalk. Six big turns (five hairpins and the
+// bulge's S), four tight corners of 90°: no long soft curve, one long straight. The pieces of the
+// shortcuts (the jump's corner and its landing; the bulge, its corner and their paths) are the
+// Coteau Citrouille's (the Corniche Cannelle's, issues #107, #156, #111) mirrored, with other
+// covers; the rest is new.
 //
 // Drawn as a plan of straights and arcs (hairpins of 22 m, tight corners of 18 m), its points every
 // 8 m along it (the parameters below follow them).
@@ -27,12 +28,18 @@
     music: "sunny-city",
     decor_seed: 7,
     // Issue #211: the beach's terrain (`assets/data/biomes.ron`), and it hugs the road: the cape,
-    // 12 m up, the cliff path and the boardwalk stand on sand and rock up to their walls, which
-    // fall away from them (`embank`, rise over run: about 31°), instead of the skirts down to the
-    // beach. The voids stay (the jump's corner, the drop's foot: 6 m under the road at least); the
-    // ford keeps its ground.
-    terrain: (height: 24.0, scale: 120.0, cliffs: 0.4, terrace: 7.0, floor: 0.15, rise: 35.0,
+    // 24 m up (issue #223), the cliff path and the boardwalk stand on sand and rock up to their
+    // walls, which fall away from them (`embank`, rise over run: about 31°), instead of the skirts
+    // down to the beach. The voids stay (the jump's corner, the drop's foot: 6 m under the road at
+    // least); the ford keeps its ground.
+    terrain: (height: 34.0, scale: 120.0, cliffs: 0.4, terrace: 7.0, floor: 0.15, rise: 35.0,
               rock: (0.64, 0.56, 0.44), steep: 0.8, embank: 0.6),
+    // Issue #223: the cape 24 m up (12 m before): from its climb, one saw over the beach's low
+    // headlands (28 m at their lowest); a second ring of them behind, higher, closes the horizon.
+    far_decor: [
+        Range(distance: 560.0, depth: 200.0, height: (50.0, 104.0), spacing: 64.0,
+              color: (0.66, 0.54, 0.40), top: ((0.36, 0.62, 0.32), 55.0)),
+    ],
     props: [
         (model: "pirate-kit/flag-pirate", at: 0.0, side: Both, height: 4.0, radius: 1.0, gap: 1.8),
         (model: "pirate-kit/tower-complete-small", at: 198.435, side: Right, height: 8.0, radius: 2.4, gap: 1.0),
@@ -55,139 +62,139 @@
         (pos: (0.00, 6.00, -52.50), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 6.00, -60.00), width: 15.0, shoulder: 3.0),
         // the first hairpin, to the left (radius 22 m).
-        (pos: (-1.33, 6.06, -67.52), width: 13.0, shoulder: 2.0),
-        (pos: (-5.15, 6.11, -74.14), width: 13.0, shoulder: 2.0),
-        (pos: (-11.00, 6.17, -79.05), width: 13.0, shoulder: 2.0),
-        (pos: (-18.18, 6.22, -81.67), width: 13.0, shoulder: 2.0),
-        (pos: (-25.82, 6.28, -81.67), width: 13.0, shoulder: 2.0),
-        (pos: (-33.00, 6.33, -79.05), width: 13.0, shoulder: 2.0),
-        (pos: (-38.85, 6.39, -74.14), width: 13.0, shoulder: 2.0),
-        (pos: (-42.67, 6.44, -67.52), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 6.50, -60.00), width: 13.0, shoulder: 2.0),
+        (pos: (-1.33, 6.17, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (-5.15, 6.33, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (-11.00, 6.50, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (-18.18, 6.67, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (-25.82, 6.83, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (-33.00, 7.00, -79.05), width: 13.0, shoulder: 2.0),
+        (pos: (-38.85, 7.17, -74.14), width: 13.0, shoulder: 2.0),
+        (pos: (-42.67, 7.33, -67.52), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 7.50, -60.00), width: 13.0, shoulder: 2.0),
         // south (a stone swings over its right side: the karts keep left for the hairpin to the
         // right).
-        (pos: (-44.00, 6.67, -52.22), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 6.83, -44.44), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.00, -36.67), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.17, -28.89), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.33, -21.11), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.50, -13.33), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.67, -5.56), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 7.83, 2.22), width: 13.0, shoulder: 2.0),
-        (pos: (-44.00, 8.00, 10.00), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 7.70, -52.22), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 9.36, -44.44), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 11.02, -36.67), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 12.68, -28.89), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 14.34, -21.11), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 16.00, -13.33), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 16.13, -5.56), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 16.27, 2.22), width: 13.0, shoulder: 2.0),
+        (pos: (-44.00, 16.40, 10.00), width: 13.0, shoulder: 2.0),
         // a hairpin to the right, at the foot of the cape.
-        (pos: (-45.33, 8.06, 17.52), width: 13.0, shoulder: 2.0),
-        (pos: (-49.15, 8.11, 24.14), width: 13.0, shoulder: 2.0),
-        (pos: (-55.00, 8.17, 29.05), width: 13.0, shoulder: 2.0),
-        (pos: (-62.18, 8.22, 31.67), width: 13.0, shoulder: 2.0),
-        (pos: (-69.82, 8.28, 31.67), width: 13.0, shoulder: 2.0),
-        (pos: (-77.00, 8.33, 29.05), width: 13.0, shoulder: 2.0),
-        (pos: (-82.85, 8.39, 24.14), width: 13.0, shoulder: 2.0),
-        (pos: (-86.67, 8.44, 17.52), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 8.50, 10.00), width: 13.0, shoulder: 2.0),
+        (pos: (-45.33, 16.58, 17.52), width: 13.0, shoulder: 2.0),
+        (pos: (-49.15, 16.76, 24.14), width: 13.0, shoulder: 2.0),
+        (pos: (-55.00, 16.93, 29.05), width: 13.0, shoulder: 2.0),
+        (pos: (-62.18, 17.11, 31.67), width: 13.0, shoulder: 2.0),
+        (pos: (-69.82, 17.29, 31.67), width: 13.0, shoulder: 2.0),
+        (pos: (-77.00, 17.47, 29.05), width: 13.0, shoulder: 2.0),
+        (pos: (-82.85, 17.64, 24.14), width: 13.0, shoulder: 2.0),
+        (pos: (-86.67, 17.82, 17.52), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 18.00, 10.00), width: 13.0, shoulder: 2.0),
         // north, the climb of the cape: issue #180, a bump.
-        (pos: (-88.00, 8.75, 1.67), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 9.00, -6.67), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 9.25, -15.00), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 9.50, -23.33), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 9.75, -31.67), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 10.00, -40.00), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 10.25, -48.33), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 10.50, -56.67), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 10.75, -65.00), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 11.00, -73.33), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 11.25, -81.67), width: 13.0, shoulder: 2.0),
-        (pos: (-88.00, 11.50, -90.00), width: 13.0, shoulder: 2.0),
-        // a tight corner to the left (90°), onto the top of the cape, 12 m up.
-        (pos: (-89.37, 11.56, -96.89), width: 13.0, shoulder: 2.0),
-        (pos: (-93.27, 11.62, -102.73), width: 13.0, shoulder: 2.0),
-        (pos: (-99.11, 11.69, -106.63), width: 13.0, shoulder: 2.0),
-        (pos: (-106.00, 11.75, -108.00), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 18.46, 1.67), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 18.92, -6.67), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 19.37, -15.00), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 19.83, -23.33), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 20.29, -31.67), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 20.75, -40.00), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 21.21, -48.33), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 21.67, -56.67), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 22.12, -65.00), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 22.58, -73.33), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 23.04, -81.67), width: 13.0, shoulder: 2.0),
+        (pos: (-88.00, 23.50, -90.00), width: 13.0, shoulder: 2.0),
+        // a tight corner to the left (90°), onto the top of the cape, 24 m up.
+        (pos: (-89.37, 23.56, -96.89), width: 13.0, shoulder: 2.0),
+        (pos: (-93.27, 23.62, -102.73), width: 13.0, shoulder: 2.0),
+        (pos: (-99.11, 23.69, -106.63), width: 13.0, shoulder: 2.0),
+        (pos: (-106.00, 23.75, -108.00), width: 13.0, shoulder: 2.0),
         // west, along the top.
-        (pos: (-116.00, 11.88, -108.00), width: 13.0, shoulder: 2.0),
-        (pos: (-126.00, 12.00, -108.00), width: 13.0, shoulder: 2.0),
+        (pos: (-116.00, 23.88, -108.00), width: 13.0, shoulder: 2.0),
+        (pos: (-126.00, 24.00, -108.00), width: 13.0, shoulder: 2.0),
         // the risky jump's corner (the Coteau Citrouille's piece, mirrored): west, then a tight
-        // corner to the left (90°): its inside is a drop of 12 m, the jump cuts across it; the wide
+        // corner to the left (90°): its inside is a drop of 24 m, the jump cuts across it; the wide
         // landing, south.
-        (pos: (-134.03, 12.00, -108.00), width: 13.0, shoulder: 2.0),
-        (pos: (-142.04, 12.00, -108.00), width: 13.0, shoulder: 2.0),
-        (pos: (-150.06, 12.00, -108.01), width: 13.0, shoulder: 2.0),
-        (pos: (-158.09, 12.00, -108.01), width: 13.0, shoulder: 2.0),
-        (pos: (-166.11, 12.00, -108.02), width: 13.0, shoulder: 2.0),
-        (pos: (-174.13, 12.00, -108.02), width: 13.0, shoulder: 2.0),
-        (pos: (-182.15, 12.00, -108.02), width: 13.0, shoulder: 2.0),
-        (pos: (-190.13, 12.00, -107.46), width: 13.0, shoulder: 2.0),
-        (pos: (-197.21, 12.00, -103.85), width: 13.0, shoulder: 2.0),
-        (pos: (-202.05, 12.00, -97.53), width: 13.0, shoulder: 2.0),
-        (pos: (-203.69, 11.99, -89.75), width: 20.0, shoulder: 2.0),
-        (pos: (-203.69, 11.82, -81.72), width: 20.0, shoulder: 2.0),
-        (pos: (-203.70, 11.64, -73.70), width: 20.0, shoulder: 2.0),
-        (pos: (-203.70, 11.46, -65.69), width: 20.0, shoulder: 2.0),
-        (pos: (-203.71, 11.28, -57.66), width: 20.0, shoulder: 2.0),
-        (pos: (-203.71, 11.10, -49.64), width: 20.0, shoulder: 2.0),
-        (pos: (-203.71, 10.80, -41.64), width: 13.0, shoulder: 2.0),
+        (pos: (-134.03, 24.00, -108.00), width: 13.0, shoulder: 2.0),
+        (pos: (-142.04, 24.00, -108.00), width: 13.0, shoulder: 2.0),
+        (pos: (-150.06, 24.00, -108.01), width: 13.0, shoulder: 2.0),
+        (pos: (-158.09, 24.00, -108.01), width: 13.0, shoulder: 2.0),
+        (pos: (-166.11, 24.00, -108.02), width: 13.0, shoulder: 2.0),
+        (pos: (-174.13, 24.00, -108.02), width: 13.0, shoulder: 2.0),
+        (pos: (-182.15, 24.00, -108.02), width: 13.0, shoulder: 2.0),
+        (pos: (-190.13, 24.00, -107.46), width: 13.0, shoulder: 2.0),
+        (pos: (-197.21, 24.00, -103.85), width: 13.0, shoulder: 2.0),
+        (pos: (-202.05, 24.00, -97.53), width: 13.0, shoulder: 2.0),
+        (pos: (-203.69, 23.99, -89.75), width: 20.0, shoulder: 2.0),
+        (pos: (-203.69, 23.82, -81.72), width: 20.0, shoulder: 2.0),
+        (pos: (-203.70, 23.64, -73.70), width: 20.0, shoulder: 2.0),
+        (pos: (-203.70, 23.46, -65.69), width: 20.0, shoulder: 2.0),
+        (pos: (-203.71, 23.28, -57.66), width: 20.0, shoulder: 2.0),
+        (pos: (-203.71, 23.10, -49.64), width: 20.0, shoulder: 2.0),
+        (pos: (-203.71, 22.80, -41.64), width: 13.0, shoulder: 2.0),
         // south, down the cape: issue #180, a bump.
-        (pos: (-203.71, 10.55, -33.64), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 10.29, -25.64), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 10.04, -17.64), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 9.78, -9.64), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 9.53, -1.64), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 9.27, 6.36), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 9.02, 14.36), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 8.76, 22.36), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 8.51, 30.36), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 8.25, 38.36), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 8.00, 46.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 22.00, -33.64), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 21.20, -25.64), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 20.40, -17.64), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 19.60, -9.64), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 18.80, -1.64), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 18.00, 6.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 17.20, 14.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 16.40, 22.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 15.60, 30.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 14.80, 38.36), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 14.00, 46.36), width: 13.0, shoulder: 2.0),
         // the bulge and its corner (the Coteau Citrouille's piece, mirrored): the bulge (right 75°,
-        // left 150°, right 75°) on the cliff path, 8 m up; the hidden road goes straight across it,
+        // left 150°, right 75°) on the cliff path, 14 m up; the hidden road goes straight across it,
         // behind a waterfall; the corner, to the left (90°), its inside a drop that the grass
         // bridge crosses behind a curtain of dune grass; east.
-        (pos: (-204.69, 8.00, 54.30), width: 13.0, shoulder: 2.0),
-        (pos: (-207.87, 8.00, 61.63), width: 13.0, shoulder: 2.0),
-        (pos: (-212.99, 8.00, 67.77), width: 13.0, shoulder: 2.0),
-        (pos: (-219.64, 8.00, 72.21), width: 13.0, shoulder: 2.0),
-        (pos: (-227.19, 8.00, 74.88), width: 13.0, shoulder: 2.0),
-        (pos: (-234.18, 8.00, 78.77), width: 13.0, shoulder: 2.0),
-        (pos: (-239.78, 8.00, 84.47), width: 13.0, shoulder: 2.0),
-        (pos: (-243.54, 8.00, 91.52), width: 13.0, shoulder: 2.0),
-        (pos: (-245.16, 8.00, 99.35), width: 13.0, shoulder: 2.0),
-        (pos: (-244.50, 8.00, 107.31), width: 13.0, shoulder: 2.0),
-        (pos: (-241.62, 8.00, 114.77), width: 13.0, shoulder: 2.0),
-        (pos: (-236.74, 8.00, 121.10), width: 13.0, shoulder: 2.0),
-        (pos: (-230.28, 8.00, 125.81), width: 13.0, shoulder: 2.0),
-        (pos: (-222.78, 8.00, 128.60), width: 13.0, shoulder: 2.0),
-        (pos: (-215.64, 8.00, 132.20), width: 13.0, shoulder: 2.0),
-        (pos: (-209.82, 8.00, 137.68), width: 13.0, shoulder: 2.0),
-        (pos: (-205.78, 8.00, 144.58), width: 13.0, shoulder: 2.0),
-        (pos: (-203.85, 8.00, 152.34), width: 13.0, shoulder: 2.0),
-        (pos: (-203.71, 8.00, 160.35), width: 15.0, shoulder: 3.0),
-        (pos: (-203.71, 8.00, 168.37), width: 15.0, shoulder: 3.0),
-        (pos: (-203.71, 8.00, 176.40), width: 15.0, shoulder: 3.0),
-        (pos: (-203.71, 8.00, 184.42), width: 15.0, shoulder: 3.0),
-        (pos: (-203.71, 8.00, 192.44), width: 15.0, shoulder: 3.0),
-        (pos: (-203.71, 8.00, 200.46), width: 15.0, shoulder: 3.0),
-        (pos: (-203.69, 8.00, 208.48), width: 15.0, shoulder: 3.0),
-        (pos: (-201.80, 8.00, 216.22), width: 15.0, shoulder: 3.0),
-        (pos: (-197.03, 8.00, 222.61), width: 15.0, shoulder: 3.0),
-        (pos: (-190.16, 8.00, 226.63), width: 15.0, shoulder: 3.0),
-        (pos: (-182.25, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-174.23, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-166.21, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-158.19, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-150.17, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-142.15, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        (pos: (-134.13, 8.00, 227.70), width: 15.0, shoulder: 3.0),
-        // issue #180: off the cliff path, a drop of 4 m onto the beach (the road level up to its
+        (pos: (-204.69, 14.00, 54.30), width: 13.0, shoulder: 2.0),
+        (pos: (-207.87, 14.00, 61.63), width: 13.0, shoulder: 2.0),
+        (pos: (-212.99, 14.00, 67.77), width: 13.0, shoulder: 2.0),
+        (pos: (-219.64, 14.00, 72.21), width: 13.0, shoulder: 2.0),
+        (pos: (-227.19, 14.00, 74.88), width: 13.0, shoulder: 2.0),
+        (pos: (-234.18, 14.00, 78.77), width: 13.0, shoulder: 2.0),
+        (pos: (-239.78, 14.00, 84.47), width: 13.0, shoulder: 2.0),
+        (pos: (-243.54, 14.00, 91.52), width: 13.0, shoulder: 2.0),
+        (pos: (-245.16, 14.00, 99.35), width: 13.0, shoulder: 2.0),
+        (pos: (-244.50, 14.00, 107.31), width: 13.0, shoulder: 2.0),
+        (pos: (-241.62, 14.00, 114.77), width: 13.0, shoulder: 2.0),
+        (pos: (-236.74, 14.00, 121.10), width: 13.0, shoulder: 2.0),
+        (pos: (-230.28, 14.00, 125.81), width: 13.0, shoulder: 2.0),
+        (pos: (-222.78, 14.00, 128.60), width: 13.0, shoulder: 2.0),
+        (pos: (-215.64, 14.00, 132.20), width: 13.0, shoulder: 2.0),
+        (pos: (-209.82, 14.00, 137.68), width: 13.0, shoulder: 2.0),
+        (pos: (-205.78, 14.00, 144.58), width: 13.0, shoulder: 2.0),
+        (pos: (-203.85, 14.00, 152.34), width: 13.0, shoulder: 2.0),
+        (pos: (-203.71, 14.00, 160.35), width: 15.0, shoulder: 3.0),
+        (pos: (-203.71, 14.00, 168.37), width: 15.0, shoulder: 3.0),
+        (pos: (-203.71, 14.00, 176.40), width: 15.0, shoulder: 3.0),
+        (pos: (-203.71, 14.00, 184.42), width: 15.0, shoulder: 3.0),
+        (pos: (-203.71, 14.00, 192.44), width: 15.0, shoulder: 3.0),
+        (pos: (-203.71, 14.00, 200.46), width: 15.0, shoulder: 3.0),
+        (pos: (-203.69, 14.00, 208.48), width: 15.0, shoulder: 3.0),
+        (pos: (-201.80, 14.00, 216.22), width: 15.0, shoulder: 3.0),
+        (pos: (-197.03, 14.00, 222.61), width: 15.0, shoulder: 3.0),
+        (pos: (-190.16, 14.00, 226.63), width: 15.0, shoulder: 3.0),
+        (pos: (-182.25, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-174.23, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-166.21, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-158.19, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-150.17, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-142.15, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        (pos: (-134.13, 14.00, 227.70), width: 15.0, shoulder: 3.0),
+        // issue #180: off the cliff path, a drop of 7 m onto the beach (the road level up to its
         // edge, between these two points), then on below.
-        (pos: (-126.13, 4.00, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-126.13, 7.00, 227.70), width: 13.0, shoulder: 2.0),
         // east, down to the cove.
-        (pos: (-118.36, 3.69, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-110.60, 3.38, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-102.83, 3.06, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-95.07, 2.75, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-87.30, 2.44, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-79.53, 2.12, 227.70), width: 13.0, shoulder: 2.0),
-        (pos: (-71.77, 1.81, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-118.36, 6.31, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-110.60, 5.63, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-102.83, 4.94, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-95.07, 4.25, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-87.30, 3.56, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-79.53, 2.87, 227.70), width: 13.0, shoulder: 2.0),
+        (pos: (-71.77, 2.19, 227.70), width: 13.0, shoulder: 2.0),
         (pos: (-64.00, 1.50, 227.70), width: 13.0, shoulder: 2.0),
         // the ford: the road dives under the water of the cove's inlet and climbs out of it.
         (pos: (-55.67, 0.89, 227.70), width: 13.0, shoulder: 2.0),
@@ -277,25 +284,36 @@
         (pos: (0.00, 6.00, 15.54), width: 15.0, shoulder: 3.0),
         (pos: (0.00, 6.00, 7.77), width: 15.0, shoulder: 3.0),
     ],
+    // Issue #223: the big climb in a level anti-gravity zone (#215): a kart neither slows down nor
+    // speeds up on it. The first southward leg climbs to the foot of the cape (21 %), ending 30 m
+    // before its hairpin. The way down the cape stays out of any zone, at 10 %: a zone there ended
+    // too close to the bulge (the bots did not line up with its hidden road any more), and a
+    // steeper way down sent karts flying over the bulge's open edge.
+    anti_gravity: [
+        (from: 18.0, to: 23.0),
+    ],
     // Issue #180 (GD § 16, rule 3): bumps, a real rise and fall of the road, 2.2 m high (a kart and
     // its driver), 30 m long: on the climb of the cape and on the way down it, after the jump's
     // landing. Not on the straights between two hairpins (one lands too late to prepare the drift).
+    // Issue #223: the one on the climb is a long one (36 m: the climb is steeper, a boosted kart
+    // flew too high off a short one); the one down the cape 1.3 point earlier, right after the
+    // landing.
     bumps: [
-        (at: 38.240, height: 2.2, length: 30.0),
-        (at: 70.500, height: 2.2, length: 30.0),
+        (at: 38.240, height: 2.2, length: 36.0),
+        (at: 69.200, height: 2.2, length: 30.0),
     ],
-    // Issue #180: a drop of 4 m off the cliff path onto the beach, right after the bulge's corner:
-    // the road stops at its edge and goes on below, in its line, down to the cove (a trick off the
-    // edge gives the boost). Not a fall: no pelican.
+    // Issue #180: a drop of 7 m (issue #223: 4 m before) off the cliff path onto the beach, right
+    // after the bulge's corner: the road stops at its edge and goes on below, in its line, down to
+    // the cove (a trick off the edge gives the boost). Not a fall: no pelican.
     drops: [
-        (at: 116.500, height: 4.0),
+        (at: 116.500, height: 7.0),
     ],
     // The cove's inlet (issue #20, the water): under the road of the ford.
     lakes: [
         (center: (-14.0, 240.7), size: (90.0, 70.0), level: -0.4, floor: -10.0),
     ],
-    // Issue #107: the sides without wall: the inside of the jump's corner (a drop of 12 m), along
-    // the bulge (the hidden road) and inside its corner (the grass bridge), over a drop of 8 m:
+    // Issue #107: the sides without wall: the inside of the jump's corner (a drop of 24 m), along
+    // the bulge (the hidden road) and inside its corner (the grass bridge), over a drop of 14 m:
     // where a path passes only (the lessons of Prairie Pompon). Everywhere else, walls.
     open_edges: [
         (from: 56.826, to: 67.457, side: Left),
@@ -308,18 +326,18 @@
         // corner, landing on the road after it. Fast enough, it saves the corner; too slow, it falls.
         (from: 57.450, to: 67.457, kind: Jump, width: 8.0, ramp_width: 6.0,
          ramp_length: 8.0, ramp_angle: 12.0,
-         points: [(-161.69, 12.00, -106.51), (-176.70, 12.00, -104.52), (-181.64, 12.00, -97.00), (-198.70, 11.58, -71.01), (-198.70, 11.58, -62.01)]),
+         points: [(-161.69, 24.00, -106.51), (-176.70, 24.00, -104.52), (-181.64, 24.00, -97.00), (-198.70, 23.58, -71.01), (-198.70, 23.58, -62.01)]),
         // Issue #193: grass, like every shortcut (a road before): it pays only with a boost.
         // The hidden road: narrow (5 m), straight across the bulge while the road goes round it,
         // behind a waterfall 18 m in, where it leaves the road's edge (one drives through it).
         (from: 82.000, to: 99.603, kind: Grass, width: 5.0,
-         points: [(-199.71, 8.00, 55.70), (-199.71, 8.00, 106.43), (-199.71, 8.00, 157.17)],
+         points: [(-199.71, 14.00, 55.70), (-199.71, 14.00, 106.43), (-199.71, 14.00, 157.17)],
          cover: Some((kind: Waterfall, at: 18.0))),
         // The grass bridge, across the bulge's corner: narrow (5 m), slow without a boost, quicker
         // with one (the mini-turbo of the bulge's last turn, a piment); behind a curtain of dune grass
         // 26 m in.
         (from: 100.921, to: 113.828, kind: Grass, width: 5.0,
-         points: [(-196.71, 8.00, 167.74), (-195.86, 8.00, 174.21), (-193.36, 8.00, 180.24), (-190.49, 8.00, 185.22), (-187.61, 8.00, 190.20), (-184.74, 8.00, 195.18), (-181.86, 8.00, 200.16), (-178.36, 8.00, 205.16), (-174.05, 8.00, 209.47), (-169.05, 8.00, 212.97), (-163.52, 8.00, 215.55), (-157.63, 8.00, 217.13), (-151.55, 8.00, 217.66)],
+         points: [(-196.71, 14.00, 167.74), (-195.86, 14.00, 174.21), (-193.36, 14.00, 180.24), (-190.49, 14.00, 185.22), (-187.61, 14.00, 190.20), (-184.74, 14.00, 195.18), (-181.86, 14.00, 200.16), (-178.36, 14.00, 205.16), (-174.05, 14.00, 209.47), (-169.05, 14.00, 212.97), (-163.52, 14.00, 215.55), (-157.63, 14.00, 217.13), (-151.55, 14.00, 217.66)],
          cover: Some((kind: Foliage, at: 26.0))),
     ],
     // Issue #144 (GD « Conception des circuits », rule 8): on one side of the road each, the side
@@ -343,11 +361,11 @@
         (kind: Crate, at: 78.750, offsets: [0.6, 0.25]),
         (kind: Crate, at: 139.000, offsets: [-0.3, 0.3]),
     ],
-    // Trick ramps (issue #13): at the start of the first lacet's leg, out of a hairpin (70 m before
-    // the next one, as in the Forêt Frimousse). None before the water.
-    trick_ramps: [
-        (at: 149.029, offset: 0.0, width: 7.0, length: 7.0, angle: 12.0),
-    ],
+    // Trick ramps (issue #13): none. Issue #223: the one at the start of the first lacet's leg (70
+    // m before the hairpin to the right) is gone: off it, the pack and Hard bots went over the
+    // outer wall of that hairpin (on dev already: 1 tow in free driving and 7 of the pack in 96
+    // Hard races). The bumps and the drop give the tricks.
+    trick_ramps: [],
     // Boost pads (issue #13): out of the first hairpin, and out of the second lacet. None before
     // the grass bridge: it pays only with a boost of one's own.
     boost_pads: [
