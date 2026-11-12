@@ -49,10 +49,10 @@ use bevy_rapier3d::prelude::Velocity;
 use super::catalog::{Animal, Clip, FILES, Mood, SoundEffect, base_volume};
 use super::choice::{Picked, Slot, SoundChoices, Source, pick};
 use super::cues::{KartSnapshot, TickEvents, kart_cues};
-use super::dsp::{LoopKind, LoopSound, SynthSound, seamless_loop};
+use super::dsp::{LoopControl, LoopKind, LoopSound, SynthSound, seamless_loop};
 use super::mixer::{
-    Admission, RaceSounds, Revs, Stage, admit, approach, engine_note, nearest, option_gain,
-    priority, race_sounds,
+    Admission, RaceSounds, Revs, Stage, admit, approach, detune, engine_note, nearest, option_gain,
+    placement, priority, race_sounds,
 };
 use super::stream::is_ogg;
 use super::tuning::SoundTuning;
@@ -130,6 +130,11 @@ pub struct Voice {
 /// it plays now; `pitch` and `volume`: what it plays (after the mix; `pitch` is the note of the
 /// revs, the sink plays it times its candidate's speed). Issue #135: `source`, the candidate of
 /// its slot it plays (`SoundChoices`), none before its sound is ready.
+///
+/// Issue #270: the others' are placed by the mixer itself (not Bevy's spatial audio): `pan`, the
+/// side it is heard on (-1: left, 1: right), `doppler`, the factor of its pitch while its kart
+/// comes closer or goes away, `lowpass`, how dull it is far away (Hz; 0: none); `leaving`: its
+/// kart is no longer among the closest, it fades out before it takes another one.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct LoopVoice {
     pub kind: LoopKind,
@@ -139,7 +144,16 @@ pub struct LoopVoice {
     pub pitch: f32,
     pub volume: f32,
     pub source: Option<u8>,
+    pub pan: f32,
+    pub doppler: f32,
+    pub lowpass: f32,
+    pub leaving: bool,
 }
+
+/// Issue #270: the control of another kart's loop playing (its side, its low-pass), shared with
+/// its decoder ([`LoopSound::placed`]).
+#[derive(Component, Clone, Debug)]
+pub struct PlacedLoop(pub std::sync::Arc<LoopControl>);
 
 /// The clips: the files (loaded) and the syntheses (rendered once), made when the game starts,
 /// with an audio output only. Issue #135: the candidates' files, syntheses and loops are added
@@ -1367,6 +1381,7 @@ type LoopKart = (
 struct Heard {
     kart: Entity,
     at: Vec3,
+    velocity: Vec3,
     player: bool,
     revs: Revs,
     tier: Option<f32>,
@@ -1402,25 +1417,24 @@ fn spawn_loop_voice(commands: &mut Commands, kind: LoopKind, foreground: bool, s
         pitch: 1.0,
         volume: 0.0,
         source: None,
+        pan: 0.0,
+        doppler: 1.0,
+        lowpass: 0.0,
+        leaving: false,
     };
     commands.spawn((voice, Transform::default()));
 }
 
-/// A loop's sound for `foreground` or not (paused, silent: [`drive_loops`] sets it each frame).
-fn loop_player(
-    handle: Handle<LoopSound>,
-    foreground: bool,
-    tuning: &SoundTuning,
-) -> (AudioPlayer<LoopSound>, PlaybackSettings) {
+/// A loop's sound (paused, silent: [`drive_loops`] sets it each frame). Issue #270: never Bevy's
+/// spatial audio (its distance law and its sides are not ours: rodio's `Spatial`, at the ears'
+/// gap of the listener, hears a kart on the right louder in the left ear); the others' are
+/// placed by the mixer ([`LoopSound::placed`]).
+fn loop_player(handle: Handle<LoopSound>) -> (AudioPlayer<LoopSound>, PlaybackSettings) {
     (
         AudioPlayer::<LoopSound>(handle),
         PlaybackSettings {
             mode: PlaybackMode::Once,
             volume: Volume::Linear(0.0),
-            spatial: !foreground,
-            spatial_scale: Some(SpatialScale::new(
-                1.0 / tuning.full_volume_distance.max(0.5),
-            )),
             paused: true,
             ..PlaybackSettings::ONCE
         },
@@ -1461,6 +1475,15 @@ fn loop_family(tuning: &SoundTuning, kind: LoopKind) -> f32 {
     .clamp(0.0, 2.0)
 }
 
+/// Issue #270: where the loops are heard from: the camera (its position, its right) and how it
+/// moves (the player's kart's velocity: the camera follows it).
+#[derive(Clone, Copy, Debug)]
+struct Ears {
+    at: Vec3,
+    right: Vec3,
+    velocity: Vec3,
+}
+
 /// Each frame: the loops follow their karts (see the module's documentation).
 #[allow(clippy::too_many_arguments)]
 fn drive_loops(
@@ -1468,7 +1491,7 @@ fn drive_loops(
     time: Res<Time<Real>>,
     (tuning, kart_tuning, options): (Res<SoundTuning>, Res<KartTuning>, Res<PlayerOptions>),
     (choices, stage, output): (Res<SoundChoices>, Res<RaceSounds>, Res<SoundOutput>),
-    bank: Option<Res<SoundBank>>,
+    (bank, mut sounds): (Option<Res<SoundBank>>, ResMut<Assets<LoopSound>>),
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     karts: Query<LoopKart, (Or<(With<Kart>, With<Remote>)>, Without<LoopVoice>)>,
     mut voices: Query<(
@@ -1476,13 +1499,16 @@ fn drive_loops(
         &mut LoopVoice,
         &mut Transform,
         Option<&mut AudioSink>,
-        Option<&mut SpatialAudioSink>,
+        Option<&PlacedLoop>,
     )>,
     mut scratch: Local<LoopScratch>,
 ) {
     let dt = time.delta_secs();
     let scratch = &mut *scratch;
-    let listener = listener_position(&listener);
+    let (at, right) = listener
+        .iter()
+        .next()
+        .map_or((Vec3::ZERO, Vec3::X), |t| (t.translation(), *t.right()));
     // The karts heard.
     scratch.heard.clear();
     for (
@@ -1525,6 +1551,7 @@ fn drive_loops(
         scratch.heard.push(Heard {
             kart,
             at: transform.translation,
+            velocity,
             player,
             revs: Revs {
                 speed,
@@ -1571,9 +1598,15 @@ fn drive_loops(
         }
     }
     let player = scratch.heard.iter().position(|h| h.player);
+    let ears = Ears {
+        at,
+        right,
+        velocity: player.map_or(Vec3::ZERO, |i| scratch.heard[i].velocity),
+    };
     // Whether the player's engine and squeal are heard (its squeal: while it drifts).
     let mut player_heard = [false; 2];
-    // Who each loop hears: the player first, then the closest (`mixer::nearest`).
+    // Who each loop hears: the player first, then the closest within `engine_range`
+    // (`mixer::nearest`).
     for kind in [LoopKind::Engine, LoopKind::Squeal] {
         scratch.positions.clear();
         scratch.drifting.clear();
@@ -1585,9 +1618,9 @@ fn drive_loops(
         }
         let max = wanted_voices(&tuning, kind) as usize;
         nearest(
-            listener,
+            at,
             &scratch.positions,
-            tuning.range,
+            tuning.engine_range,
             max,
             &mut scratch.picked,
         );
@@ -1598,26 +1631,34 @@ fn drive_loops(
                 scratch.wanted.push(heard.kart);
             }
         }
-        // The others' voices keep their kart while it is heard, the others take the rest.
         let front = scratch
             .picked
             .first()
             .is_some_and(|i| scratch.heard[scratch.drifting[*i]].player);
         player_heard[usize::from(kind == LoopKind::Squeal)] = front;
         let spatial = max.saturating_sub(usize::from(front));
+        // The others' voices keep their kart while it is heard; one no longer among the closest
+        // (or gone) fades out first (issue #270: no voice cut dead), then takes another one.
         for (_, mut voice, ..) in &mut voices {
             if voice.kind != kind || voice.foreground {
                 continue;
             }
             match voice.kart {
-                Some(kart) if usize::from(voice.slot) < spatial => {
-                    if let Some(i) = scratch.wanted.iter().position(|k| *k == kart) {
-                        scratch.wanted.swap_remove(i);
+                Some(kart) => {
+                    let kept = if usize::from(voice.slot) < spatial {
+                        scratch.wanted.iter().position(|k| *k == kart)
                     } else {
-                        voice.kart = None;
+                        None
+                    };
+                    match kept {
+                        Some(i) => {
+                            scratch.wanted.swap_remove(i);
+                            voice.leaving = false;
+                        }
+                        None => voice.leaving = true,
                     }
                 }
-                _ => voice.kart = None,
+                None => voice.leaving = false,
             }
         }
         for (_, mut voice, ..) in &mut voices {
@@ -1628,13 +1669,14 @@ fn drive_loops(
                 && let Some(kart) = scratch.wanted.pop()
             {
                 voice.kart = Some(kart);
-                // A new kart: it comes in from silence.
+                // A new kart: it comes in from silence, its own pitch and Doppler at once.
                 voice.volume = 0.0;
+                voice.pitch = 0.0;
             }
         }
     }
     let master = option_gain(options.master_volume) * option_gain(options.effects_volume);
-    for (entity, mut voice, mut transform, sink, spatial_sink) in &mut voices {
+    for (entity, mut voice, mut transform, sink, placed) in &mut voices {
         if voice.foreground {
             // The player's loops: its engine and its squeal when they are heard (within the
             // cap; the squeal while it drifts), its wind and its rumble.
@@ -1647,15 +1689,40 @@ fn drive_loops(
         }
         let heard = voice
             .kart
-            .and_then(|kart| scratch.heard.iter().find(|h| h.kart == kart));
-        let (pitch, volume) = match heard {
+            .and_then(|kart| scratch.heard.iter().find(|h| h.kart == kart))
+            .copied();
+        let (mut pitch, mut volume) = match heard {
             Some(heard) => {
-                let (pitch, volume) = loop_note(&tuning, voice.kind, heard);
+                let note = loop_note(&tuning, voice.kind, &heard);
                 transform.translation = heard.at;
-                (pitch, volume)
+                note
             }
-            None => (voice.pitch, 0.0),
+            None => (voice.pitch.max(0.1), 0.0),
         };
+        // Issue #270: the others' loops, placed: their own note, their distance, their side,
+        // their Doppler, duller far away.
+        let mut doppler_now = 1.0;
+        if !voice.foreground
+            && let Some(heard) = heard
+        {
+            let placed = placement(
+                &tuning,
+                (ears.at, ears.right, ears.velocity),
+                heard.at,
+                heard.velocity,
+            );
+            pitch *= detune(&tuning, heard.kart);
+            volume *= placed.gain;
+            if voice.kind == LoopKind::Engine {
+                volume *= tuning.other_engine_volume.clamp(0.0, 2.0);
+            }
+            doppler_now = placed.doppler;
+            voice.pan = placed.pan;
+            voice.lowpass = placed.lowpass;
+        }
+        if voice.leaving {
+            volume = 0.0;
+        }
         // Issue #135: the candidate chosen for its slot; another one: a quick fade out, then the
         // new sound (from silence).
         let slot = Slot::of_loop(voice.kind);
@@ -1674,34 +1741,58 @@ fn drive_loops(
             tuning.engine_response
         }
         .max(0.1);
-        voice.pitch = approach(voice.pitch, pitch, tuning.engine_response.max(0.1), dt);
+        let response = tuning.engine_pitch_response.max(0.1);
+        voice.pitch = if voice.pitch <= 0.0 {
+            pitch
+        } else {
+            approach(voice.pitch, pitch, response, dt)
+        };
+        voice.doppler = approach(
+            voice.doppler,
+            doppler_now,
+            tuning.engine_response.max(0.1),
+            dt,
+        );
         voice.volume = approach(voice.volume, target, rate, dt);
         if voice.volume < 1e-3 && target == 0.0 {
             voice.volume = 0.0;
+            if voice.leaving {
+                // Faded out: free for another kart.
+                voice.kart = None;
+                voice.leaving = false;
+                voice.doppler = 1.0;
+            }
         }
         if switching && voice.volume == 0.0 {
-            // Silent now: the new sound (with an output, once it is ready).
+            // Silent now: the new sound (with an output, once it is ready); the others' placed.
             match (output.0, bank.as_deref()) {
                 (false, _) => voice.source = Some(wanted),
                 (true, Some(bank)) => {
-                    if let Some(handle) = bank.loops.get(&(slot, wanted)) {
-                        commands
-                            .entity(entity)
-                            .remove::<(AudioSink, SpatialAudioSink)>()
-                            .insert(loop_player(handle.clone(), voice.foreground, &tuning));
-                        voice.source = Some(wanted);
+                    let sound = bank.loops.get(&(slot, wanted));
+                    if let Some(handle) = sound {
+                        let mut player = commands.entity(entity);
+                        player.remove::<(AudioSink, SpatialAudioSink, PlacedLoop)>();
+                        if voice.foreground {
+                            player.insert(loop_player(handle.clone()));
+                            voice.source = Some(wanted);
+                        } else if let Some((own, control)) =
+                            sounds.get(handle).map(LoopSound::placed)
+                        {
+                            player.insert((loop_player(sounds.add(own)), PlacedLoop(control)));
+                            voice.source = Some(wanted);
+                        }
                     }
                 }
                 (true, None) => {}
             }
             continue;
         }
-        let (pitch, volume) = ((voice.pitch * candidate.speed).max(0.1), voice.volume);
-        if let Some(mut sink) = sink {
-            apply(&mut *sink, pitch, volume);
+        let pitch = (voice.pitch * voice.doppler * candidate.speed).max(0.1);
+        if let Some(PlacedLoop(control)) = placed {
+            control.set(voice.pan, voice.lowpass);
         }
-        if let Some(mut sink) = spatial_sink {
-            apply(&mut *sink, pitch, volume);
+        if let Some(mut sink) = sink {
+            apply(&mut *sink, pitch, voice.volume);
         }
     }
 }
@@ -1824,9 +1915,7 @@ fn drive_previews(
                     .as_deref()
                     .and_then(|bank| bank.loops.get(&(slot, preview.source)))
             {
-                commands
-                    .entity(entity)
-                    .insert(loop_player(handle.clone(), true, &tuning));
+                commands.entity(entity).insert(loop_player(handle.clone()));
                 preview.started = Some(now);
             }
             continue;

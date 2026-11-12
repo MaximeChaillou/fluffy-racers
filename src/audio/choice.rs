@@ -1744,8 +1744,8 @@ impl Slot {
 /// The engines (issue #135): the one by default first. Their pitch follows the revs (the playback
 /// speed, times their own); a recording's level is matched to the others' when it is made into a
 /// loop. Issue #247: SuperTuxKart's small engine by default (Max: « toujours aussi nulle »,
-/// ElevenLabs' one), played at its own speed: from `engine_idle_pitch` to `engine_top_pitch`,
-/// about SuperTuxKart's own range (0.6 at rest to 1.27 at top speed in its `kart.cpp`).
+/// ElevenLabs' one), played at its own speed. Issue #270: its pitch from 0.6 at rest, through
+/// four gears, as SuperTuxKart's own `Kart::updateEngineSFX` (`mixer::engine_note`).
 const ENGINES: &[Candidate] = &[
     recording(
         "supertuxkart",

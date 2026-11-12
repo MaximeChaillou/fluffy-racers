@@ -10,7 +10,7 @@ use super::catalog::Family;
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
 pub struct SoundTuning {
-    /// The engines' volume (0 to 2, 1 as mixed).
+    /// The engines' volume (0 to 2; issue #270: 0.28, was 0.55: under the effects).
     pub engine_volume: f32,
     /// The drift (its squeal, its chimes, the mini-turbos) and the boosts.
     pub drive_volume: f32,
@@ -34,20 +34,62 @@ pub struct SoundTuning {
     /// At most this many short sounds at once (everything but the engines and the loops): a
     /// new one takes the place of the farthest, or is not played.
     pub max_sounds: u32,
-    /// At most this many engines heard at once: the player's, then the closest.
+    /// At most this many engines heard at once: the player's, then the closest (issue #270: 4,
+    /// was 5; a kart that is no longer among them fades out before its voice takes another one).
     pub max_engines: u32,
     /// At most this many drifts squealing at once: the player's, then the closest.
     pub max_squeals: u32,
-    /// The engine's pitch (playback speed of the hum) at rest...
+    /// Issue #270 (inspired by `Kart::updateEngineSFX` of SuperTuxKart): the engine's pitch
+    /// (playback speed of the loop) at rest...
     pub engine_idle_pitch: f32,
-    /// ...at top speed...
-    pub engine_top_pitch: f32,
-    /// ...plus this much with the accelerator down, and this much in a boost.
+    /// ...plus this much from rest to top speed (smoothly: the whole rise of the speed)...
+    pub engine_speed_pitch: f32,
+    /// ...in this many gears: within each one, the pitch climbs by `engine_gear_pitch` more, then
+    /// drops back by as much when the next one comes in (a sawtooth: « brrrBRRR brrrBRRR »)...
+    pub engine_gears: u32,
+    pub engine_gear_pitch: f32,
+    /// ...plus this much with the accelerator down (a standing kart revs 1.5 times this), and
+    /// this much in a boost (the rocket start, a mini-turbo, a pad, a piment).
     pub engine_throttle_pitch: f32,
     pub engine_boost_pitch: f32,
-    /// The engine's volume (0 to 1) at rest, and how much the load (accelerator, speed) adds.
+    /// The engine's volume (0 to 1): at rest without the accelerator (low and calm)...
     pub engine_idle_volume: f32,
+    /// ...plus this much with the accelerator down (present under load)...
     pub engine_load_volume: f32,
+    /// ...plus this much at top speed (the speed adds a little)...
+    pub engine_speed_volume: f32,
+    /// ...plus this much in a boost.
+    pub engine_boost_volume: f32,
+    /// A gear change dips the volume by this much (0 to 1), coming back over this part of the
+    /// gear (0 to 1): the clutch.
+    pub engine_shift_dip: f32,
+    pub engine_shift_width: f32,
+    /// Issue #270: each other kart's engine its own note (playback speed), by up to this much up
+    /// or down (fixed per kart): they do not all sound the same.
+    pub engine_detune: f32,
+    /// Issue #270: the others' engines in the mix, after `engine_volume` (0 to 2): at
+    /// `engine_ref_distance` of the camera, as loud as this times the player's.
+    pub other_engine_volume: f32,
+    /// Issue #270: how the others' loops (engines, squeals) fade with their distance to the
+    /// camera: whole up to `engine_ref_distance` (m), then `ref / (ref + rolloff × (d - ref))`
+    /// (OpenAL's inverse distance, as SuperTuxKart), down to nothing at `engine_range` (m; the
+    /// last quarter of it fades out smoothly).
+    pub engine_ref_distance: f32,
+    pub engine_rolloff: f32,
+    pub engine_range: f32,
+    /// Issue #270: how far to the side the others' loops go (0: in the middle, 1: in one ear
+    /// only), by where their kart is seen from the camera.
+    pub engine_pan: f32,
+    /// Issue #270: the farther a kart, the duller its loops: a low-pass at this frequency (Hz) at
+    /// `engine_range` (none at `engine_ref_distance`; 0: never).
+    pub engine_far_lowpass: f32,
+    /// Issue #270: the Doppler effect of the others' loops: the speed of sound (m/s; lower than
+    /// the real 343 m/s: a cartoon, heard at kart speeds), and its most up or down (0 to 0.5).
+    pub doppler_sound_speed: f32,
+    pub doppler_max: f32,
+    /// Issue #270: how fast the engine's pitch follows the revs (1/s): quick enough for a gear
+    /// change to drop at once (within a tenth of a second).
+    pub engine_pitch_response: f32,
     /// How fast the engine's pitch and volume follow the revs (1/s); the loops fade out at this
     /// rate out of a race too (issue #135).
     pub engine_response: f32,
@@ -65,7 +107,7 @@ pub struct SoundTuning {
 impl Default for SoundTuning {
     fn default() -> Self {
         Self {
-            engine_volume: 0.55,
+            engine_volume: 0.28,
             drive_volume: 0.8,
             item_volume: 0.9,
             hit_volume: 0.9,
@@ -76,14 +118,30 @@ impl Default for SoundTuning {
             full_volume_distance: 7.0,
             range: 70.0,
             max_sounds: 16,
-            max_engines: 5,
+            max_engines: 4,
             max_squeals: 3,
-            engine_idle_pitch: 0.55,
-            engine_top_pitch: 1.45,
+            engine_idle_pitch: 0.6,
+            engine_speed_pitch: 0.35,
+            engine_gears: 4,
+            engine_gear_pitch: 0.4,
             engine_throttle_pitch: 0.1,
-            engine_boost_pitch: 0.2,
-            engine_idle_volume: 0.35,
+            engine_boost_pitch: 0.25,
+            engine_idle_volume: 0.3,
             engine_load_volume: 0.45,
+            engine_speed_volume: 0.15,
+            engine_boost_volume: 0.15,
+            engine_shift_dip: 0.35,
+            engine_shift_width: 0.15,
+            engine_detune: 0.06,
+            other_engine_volume: 0.8,
+            engine_ref_distance: 6.0,
+            engine_rolloff: 1.0,
+            engine_range: 50.0,
+            engine_pan: 0.8,
+            engine_far_lowpass: 900.0,
+            doppler_sound_speed: 80.0,
+            doppler_max: 0.25,
+            engine_pitch_response: 20.0,
             engine_response: 10.0,
             switch_response: 40.0,
             cry_interval: 0.8,
