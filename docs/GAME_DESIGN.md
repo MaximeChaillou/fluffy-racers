@@ -1482,6 +1482,13 @@ L'image du runner de la CI a changé (#227), et les courses de bots avec elle, a
 
 ![La descente du serpent en anti-gravité, à 40 m : en contrebas, la suite du serpent et le champ (#219)](img/coteau-serpent-antigravite.jpg)
 
+### Notre implémentation (#267) : la Forêt Frimousse sans sortie de route
+
+Sur des graines jamais mesurées (1000 à 1007, 2000 à 2031), trois bots Difficile de la Forêt sortaient de la route en conduite libre sur 96 courses. Même tracé, rien de raccourci, aucun virage retiré : **ses deux bosses s'allongent**, et lancent moins haut.
+- **La bosse de la ligne droite de départ fait 36 m** (`at: 1.0, length: 36.0` ; 22 m avant). Un kart lancé de biais, poussé par le peloton ou au départ fusée (37,6 m/s), décollait de sa crête, volait 1,5 s, 4 m/s de travers, et retombait au-delà du muret gauche de la ligne droite.
+- **La bosse de la sortie du ruisseau fait 40 m** (`at: 124.4, length: 40.0` ; 30 m avant), comme celle des Falaises. Un bot boosté par son mini-turbo (37 m/s) retombait 30 m après elle, rebondissait et volait encore pendant le premier virage du renflement, puis passait son bord sans muret.
+- **Mesuré** (**aucun seuil changé**, 12 bots, circuit et miroir, graines 0-7, 1000-1007 et 2000-2031) : bots Difficile, **aucun pélican en conduite libre** (3 avant), 3 figures par tour (2) ; bots Normal, aucun pélican, 4,4 drifts (4), 2,8 oranges (2), 2,4 figures (1,5) par tour, comme avant.
+
 ### Notre implémentation (#255, #228) : le Coteau Citrouille sans sortie de route, ses figures avec de la marge
 
 Sur des graines jamais mesurées (2000 à 2031), les bots Difficile du Coteau sortaient de la route dans la montée nord en anti-gravité (4 pélicans en conduite libre sur 64 courses). Ses figures Difficile étaient aussi au ras de leur seuil (2,17 par tour pour 2). Même tracé vu d'en haut, rien de raccourci, aucun virage retiré, la boucle et son pont gardés :
