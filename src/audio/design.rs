@@ -1469,7 +1469,7 @@ fn loop_note(tuning: &SoundTuning, kind: LoopKind, heard: &Heard) -> (f32, f32) 
 fn loop_family(tuning: &SoundTuning, kind: LoopKind) -> f32 {
     match kind {
         LoopKind::Engine => tuning.engine_volume,
-        LoopKind::Squeal => tuning.drive_volume,
+        LoopKind::Squeal => tuning.drive_volume * tuning.squeal_volume,
         LoopKind::Wind | LoopKind::Rumble => tuning.world_volume,
     }
     .clamp(0.0, 2.0)

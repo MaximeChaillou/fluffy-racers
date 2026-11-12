@@ -14,6 +14,9 @@ pub struct SoundTuning {
     pub engine_volume: f32,
     /// The drift (its squeal, its chimes, the mini-turbos) and the boosts.
     pub drive_volume: f32,
+    /// Issue #272: the drift's squeal, as a share of `drive_volume` (0.5: Max found it too loud
+    /// once the engine was quieter; the chimes and the mini-turbos keep `drive_volume`).
+    pub squeal_volume: f32,
     /// The items.
     pub item_volume: f32,
     /// Hits, shocks, falls, the pelican.
@@ -109,6 +112,7 @@ impl Default for SoundTuning {
         Self {
             engine_volume: 0.28,
             drive_volume: 0.8,
+            squeal_volume: 0.5,
             item_volume: 0.9,
             hit_volume: 0.9,
             race_volume: 0.9,
